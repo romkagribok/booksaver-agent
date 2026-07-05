@@ -8,7 +8,10 @@ from pathlib import Path
 
 from booksaver.application.load_config import load_config
 from booksaver.application.register_booking import register_booking
+from booksaver.daemon import lifecycle
+from booksaver.daemon import scheduler as scheduler_mod
 from booksaver.domain.errors import BookingRejectedError, ConfigValidationError
+from booksaver.domain.models import Config
 from booksaver.domain.value_objects import (
     ConfirmationId,
     Money,
@@ -54,7 +57,7 @@ def _config_path(args: argparse.Namespace) -> Path:
     return Path(env) if env else DEFAULT_CONFIG_PATH
 
 
-def _db_path_for(args: argparse.Namespace) -> tuple[SqliteStore.__class__, Path]:
+def _db_path_for(args: argparse.Namespace) -> tuple[Config, Path]:
     source = TomlEnvConfigSource(_config_path(args))
     try:
         cfg = load_config(source)
@@ -228,6 +231,47 @@ def cmd_bookings_list(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── run ───────────────────────────────────────────────────────────────────────
+
+def cmd_run(args: argparse.Namespace) -> int:
+    source = TomlEnvConfigSource(_config_path(args))
+    try:
+        cfg = load_config(source)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    except ConfigValidationError as e:
+        print("Config validation failed:", file=sys.stderr)
+        for err in e.errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 2
+
+    sched = scheduler_mod.Scheduler()
+
+    def _placeholder_job() -> None:
+        import logging
+        logging.getLogger(__name__).info("Price check tick (no monitor registered yet)")
+
+    sched.register("placeholder_check", _placeholder_job)
+
+    print(f"BookSaver daemon starting (interval={cfg.check_interval}, data={cfg.data_directory.path})")  # noqa: E501
+    print("Press Ctrl-C or send SIGTERM to stop cleanly.")
+    lifecycle.start(cfg, sched)
+    return 0
+
+
+# ── stop ──────────────────────────────────────────────────────────────────────
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    source = TomlEnvConfigSource(_config_path(args))
+    try:
+        cfg = load_config(source)
+    except (FileNotFoundError, ConfigValidationError) as e:
+        print(f"Error loading config: {e}", file=sys.stderr)
+        return 2
+    return lifecycle.stop(cfg.data_directory)
+
+
 # ── parser ────────────────────────────────────────────────────────────────────
 
 def _no_subcommand(parser: argparse.ArgumentParser) -> argparse.Namespace:
@@ -282,6 +326,14 @@ def create_parser() -> argparse.ArgumentParser:
     p_reg.add_argument("--refund-deadline", metavar="YYYY-MM-DD", dest="refund_deadline",
                        help="Refund deadline date (optional)")
     p_reg.set_defaults(func=cmd_register)
+
+    # run
+    p_run = sub.add_parser("run", help="Start the daemon (foreground; Ctrl-C or SIGTERM to stop)")
+    p_run.set_defaults(func=cmd_run)
+
+    # stop
+    p_stop = sub.add_parser("stop", help="Stop the running daemon gracefully")
+    p_stop.set_defaults(func=cmd_stop)
 
     # bookings
     p_bk = sub.add_parser("bookings", help="Booking commands")
