@@ -1,6 +1,7 @@
 # Story Index
 
 Global index of BookSaver Agent stories after migration to the official specs.md AI-DLC memory bank.
+Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 ## 001-booksaver-agent-mvp
 
@@ -53,10 +54,34 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 | `US-015` | Add a second booking platform | Future | Ready | `005-extensibility-future/stories/001-add-a-second-booking-platform.md` |
 | `US-016` | Support non-hotel product types | Future | Ready | `005-extensibility-future/stories/002-support-non-hotel-product-types.md` |
 
+## 002-agentic-search-monitor
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-search-journey-monitor` | 3 stories | Planned (bolt 006) |
+| `002-agentic-escalation` | 3 stories | Planned (bolt 007) |
+
+### 001-search-journey-monitor: Search Journey Monitor
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-017` | Capture occupancy at registration | Phase 2 | Ready | `001-search-journey-monitor/stories/001-capture-occupancy-at-registration.md` |
+| `US-018` | Run scripted search journey to verified property page | Phase 2 | Ready | `001-search-journey-monitor/stories/002-run-scripted-search-journey.md` |
+| `US-019` | Extract equivalent offer total and feed savings pipeline | Phase 2 | Ready | `001-search-journey-monitor/stories/003-extract-equivalent-offer-total.md` |
+
+### 002-agentic-escalation: Agentic Escalation
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-020` | LLM browser agent takes over failed journey steps | Phase 2 | Ready | `002-agentic-escalation/stories/001-llm-agent-step-takeover.md` |
+| `US-021` | Enforce action guard and hard cost caps | Phase 2 | Ready | `002-agentic-escalation/stories/002-action-guard-and-hard-caps.md` |
+| `US-022` | Trace and inspect agent runs locally | Phase 2 | Ready | `002-agentic-escalation/stories/003-trace-and-inspect-agent-runs.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
 |--------|-------|---------|--------|
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
+| `002-agentic-search-monitor` | 2 | 6 | Inception complete; bolts 006–007 planned |
 
-All 16 original stories are assigned exactly once.
+All 22 stories (16 original + 6 Phase 2) are assigned exactly once.
