@@ -1,3 +1,9 @@
+---
+id: US-012
+status: Ready
+implemented: false
+---
+
 # US-012 Log rebook outcomes locally
 
 **Intent:** `001-booksaver-agent-mvp`  

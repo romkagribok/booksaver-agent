@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-07-05T00:00:00Z
-total_decisions: 11
+total_decisions: 12
 ---
 
 # Decision Index
@@ -17,6 +17,14 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-012: Guided final click — MVP does not automate the destructive button press
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 005-guided-rebook (guided-rebook)
+- **Path**: `bolts/005-guided-rebook/adr-012-guided-final-click.md`
+- **Summary**: After each explicit confirmation the browser opens the correct cancel/rebook page; the human performs Booking.com's final click. State machine, gates, and audit trail are fully automated; the irreversible action is not. Strongest reading of "no autonomous cancel or purchase".
+- **Read when**: Working on the rebook flow, considering automating final cancel/purchase clicks, or extending the RebookSession state machine.
 
 ### ADR-011: Stdlib-only notification transports (smtplib + urllib Telegram Bot API)
 - **Status**: accepted
