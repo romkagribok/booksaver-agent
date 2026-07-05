@@ -3,16 +3,25 @@ id: 007-agentic-escalation
 unit: 002-agentic-escalation
 intent: 002-agentic-search-monitor
 type: ddd-construction-bolt
-status: planned
+status: in-progress
 stories:
   - 001-llm-agent-step-takeover
   - 002-action-guard-and-hard-caps
   - 003-trace-and-inspect-agent-runs
 created: 2026-07-05T23:10:00Z
-started: null
+started: 2026-07-06T00:15:00Z
 completed: null
-current_stage: null
-stages_completed: []
+current_stage: implement
+stages_completed:
+  - name: model
+    completed: 2026-07-06T00:20:00Z
+    artifact: ddd-01-domain-model.md
+  - name: design
+    completed: 2026-07-06T00:25:00Z
+    artifact: ddd-02-technical-design.md
+  - name: adr
+    completed: 2026-07-06T00:30:00Z
+    artifact: adr-015-tiered-agent-observations.md, adr-016-bounded-action-vocabulary.md, adr-017-hard-caps-now-adaptive-later.md
 requires_bolts:
   - 006-search-journey-monitor
 enables_bolts: []

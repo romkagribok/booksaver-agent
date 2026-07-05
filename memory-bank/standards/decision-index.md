@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-05T23:40:00Z
-total_decisions: 14
+last_updated: 2026-07-06T00:30:00Z
+total_decisions: 17
 ---
 
 # Decision Index
@@ -17,6 +17,30 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-017: Hard per-check cost caps now; adaptive budgeting is named future work
+- **Status**: accepted
+- **Date**: 2026-07-06
+- **Bolt**: 007-agentic-escalation (agentic-escalation)
+- **Path**: `bolts/007-agentic-escalation/adr-017-hard-caps-now-adaptive-later.md`
+- **Summary**: `[agent]` config caps per check — max_steps 15 (screenshot turns ×2), max_llm_calls 20 (shared pool with extraction), check_timeout_seconds 180. Breach → `BUDGET_EXCEEDED`, daemon continues. Documented as the deliberately simple version; adaptive budgeting (per-day budgets, backoff, model downshift) is named future work.
+- **Read when**: Touching agent/LLM cost controls, adding LLM calls to the check path, tuning cap defaults, or picking up the adaptive-budgeting follow-up.
+
+### ADR-016: Bounded action vocabulary via SDK tool-use, guarded at the adapter
+- **Status**: accepted
+- **Date**: 2026-07-06
+- **Bolt**: 007-agentic-escalation (agentic-escalation)
+- **Path**: `bolts/007-agentic-escalation/adr-016-bounded-action-vocabulary.md`
+- **Summary**: Agent acts only via click/fill/select/scroll/extract/request_screenshot/give_up on observation-enumerated element refs — no computer-use API, no model CSS/JS, no agent frameworks. ActionGuard (reserve/cancel/checkout/payment denylist) enforced at the adapter boundary + post-action URL check; safety never depends on the prompt.
+- **Read when**: Modifying the agent loop or its tools, the ActionGuard rules, considering computer-use, or any change that lets a model influence browser actions.
+
+### ADR-015: Tiered agent observations — text/DOM first, screenshot on demand
+- **Status**: accepted
+- **Date**: 2026-07-06
+- **Bolt**: 007-agentic-escalation (agentic-escalation)
+- **Path**: `bolts/007-agentic-escalation/adr-015-tiered-agent-observations.md`
+- **Summary**: Tier 1 = URL/title/bounded text + enumerated interactive elements; screenshot attaches only on explicit request or after two consecutive failed actions, and such turns cost double budget. Vision is a deliberate spend, not the default.
+- **Read when**: Changing agent observations, element enumeration, screenshot handling, or budget accounting per turn.
 
 ### ADR-014: Occupancy is a required registration field — no silent default
 - **Status**: accepted
