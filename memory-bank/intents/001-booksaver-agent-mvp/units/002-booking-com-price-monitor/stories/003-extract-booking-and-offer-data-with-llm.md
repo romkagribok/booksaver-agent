@@ -1,3 +1,9 @@
+---
+id: US-006
+status: Ready
+implemented: false
+---
+
 # US-006 Extract booking and offer data with LLM
 
 **Intent:** `001-booksaver-agent-mvp`  

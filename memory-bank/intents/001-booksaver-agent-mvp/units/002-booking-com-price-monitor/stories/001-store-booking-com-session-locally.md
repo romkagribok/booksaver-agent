@@ -1,3 +1,9 @@
+---
+id: US-004
+status: Ready
+implemented: false
+---
+
 # US-004 Store Booking.com session locally
 
 **Intent:** `001-booksaver-agent-mvp`  

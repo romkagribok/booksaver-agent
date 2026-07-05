@@ -1,3 +1,9 @@
+---
+id: US-014
+status: Ready
+implemented: false
+---
+
 # US-014 Handle check failures gracefully
 
 **Intent:** `001-booksaver-agent-mvp`  

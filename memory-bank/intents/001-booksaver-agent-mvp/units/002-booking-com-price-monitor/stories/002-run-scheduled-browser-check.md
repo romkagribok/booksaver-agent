@@ -1,3 +1,9 @@
+---
+id: US-005
+status: Ready
+implemented: false
+---
+
 # US-005 Run scheduled browser check
 
 **Intent:** `001-booksaver-agent-mvp`  
