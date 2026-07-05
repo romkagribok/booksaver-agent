@@ -45,3 +45,18 @@ CREATE TABLE IF NOT EXISTS check_history (
 
 CREATE INDEX IF NOT EXISTS idx_check_history_booking
     ON check_history(booking_id, checked_at DESC);
+
+-- v3: added by Unit 3 (savings-detection-notifications)
+CREATE TABLE IF NOT EXISTS savings_opportunities (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id  TEXT NOT NULL UNIQUE,
+    booking_id      TEXT NOT NULL REFERENCES bookings(booking_id),
+    check_id        TEXT NOT NULL,
+    baseline_amount TEXT NOT NULL,
+    live_amount     TEXT NOT NULL,
+    currency        TEXT NOT NULL,
+    amount_saved    TEXT NOT NULL,
+    percent_saved   TEXT NOT NULL,
+    validated_at    TEXT NOT NULL,
+    notified_at     TEXT
+);

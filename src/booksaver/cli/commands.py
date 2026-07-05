@@ -45,7 +45,10 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 
 [notifications]
 # Non-secret identifiers go here. Secrets come from environment variables.
-# email = "your@email.com"           # password: export BOOKSAVER_SMTP_PASSWORD=...
+# email = "your@email.com"           # alert recipient
+# smtp_host = "smtp.gmail.com"       # sender SMTP server (STARTTLS)
+# smtp_port = 587
+# smtp_username = "your@email.com"   # SMTP login + From; pw: export BOOKSAVER_SMTP_PASSWORD=...
 # telegram_chat_id = "123456789"     # token:    export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
 
 [extraction]
@@ -272,23 +275,73 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
     from booksaver.monitor.session_manager import SessionManager
 
     def _job() -> None:
+        from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
         from booksaver.infrastructure.browser.playwright_adapter import PlaywrightBrowserSession
+        from booksaver.infrastructure.persistence.sqlite_store import SqliteSavingsRepository
 
         llm = _make_llm_extractor(cfg)
         db_path = cfg.data_directory.path / "booksaver.db"
         with SqliteStore(db_path) as store, PlaywrightBrowserSession(headless=True) as browser:
             history = SqliteCheckHistoryRepository(store)
+            booking_repo = SqliteBookingRepository(store)
             monitor = BookingComMonitor(
                 browser=browser,
                 session_manager=SessionManager(LocalSessionRepository(cfg.data_directory)),
                 check_history=history,
-                booking_repo=SqliteBookingRepository(store),
+                booking_repo=booking_repo,
                 failure_tracker=FailureTracker(history),
                 llm=llm,
             )
-            monitor.run_all_active()
+            results = monitor.run_all_active()
+
+            pipeline = SavingsPipeline(
+                booking_repo=booking_repo,
+                savings_repo=SqliteSavingsRepository(store),
+                dispatcher=NotificationDispatcher(_make_notifiers(cfg)),
+            )
+            pipeline.process(results)
 
     return _job
+
+
+def _make_notifiers(cfg: Config) -> list[Any]:
+    """Build the configured notification channels; unconfigured ones are skipped."""
+    import logging
+
+    notifiers: list[Any] = []
+    ns = cfg.notification_settings
+
+    smtp_password = os.environ.get("BOOKSAVER_SMTP_PASSWORD")
+    if ns.email and ns.smtp_host and ns.smtp_username and smtp_password:
+        from booksaver.infrastructure.notifications.smtp_notifier import SmtpEmailNotifier
+
+        notifiers.append(
+            SmtpEmailNotifier(
+                host=ns.smtp_host,
+                port=ns.smtp_port,
+                username=ns.smtp_username,
+                password=smtp_password,
+                recipient=ns.email,
+            )
+        )
+    else:
+        logging.getLogger(__name__).info(
+            "Email channel not fully configured (need notifications.email/smtp_host/"
+            "smtp_username + BOOKSAVER_SMTP_PASSWORD) — skipping"
+        )
+
+    telegram_token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
+    if ns.telegram_chat_id and telegram_token:
+        from booksaver.infrastructure.notifications.telegram_notifier import TelegramNotifier
+
+        notifiers.append(TelegramNotifier(bot_token=telegram_token, chat_id=ns.telegram_chat_id))
+    else:
+        logging.getLogger(__name__).info(
+            "Telegram channel not fully configured (need notifications.telegram_chat_id "
+            "+ BOOKSAVER_TELEGRAM_BOT_TOKEN) — skipping"
+        )
+
+    return notifiers
 
 
 def _make_llm_extractor(cfg: Config) -> Any:
@@ -374,6 +427,45 @@ def cmd_stop(args: argparse.Namespace) -> int:
     return lifecycle.stop(cfg.data_directory)
 
 
+# ── savings list ──────────────────────────────────────────────────────────────
+
+def cmd_savings_list(args: argparse.Namespace) -> int:
+    from booksaver.infrastructure.persistence.sqlite_store import SqliteSavingsRepository
+
+    cfg, db_path = _db_path_for(args)
+
+    if not db_path.exists():
+        print("No savings opportunities detected yet.")
+        return 0
+
+    with SqliteStore(db_path) as store:
+        opportunities = SqliteSavingsRepository(store).list_all()
+
+    if not opportunities:
+        print("No savings opportunities detected yet.")
+        return 0
+
+    header = (
+        f"{'OPPORTUNITY':36}  {'BOOKING':8}  {'BASELINE':>12}  "
+        f"{'LIVE':>12}  {'SAVED':>16}  {'NOTIFIED':8}"
+    )
+    print(header)
+    print("-" * len(header))
+    for o in opportunities:
+        saved_label = f"{o.amount_saved.amount} {o.amount_saved.currency} ({o.percent_saved}%)"
+        print(
+            f"{o.opportunity_id:36}  "
+            f"{o.booking_id[:8]:8}  "
+            f"{str(o.baseline_price.amount):>12}  "
+            f"{str(o.live_price.amount):>12}  "
+            f"{saved_label:>16}  "
+            f"{'yes' if o.notified_at else 'no':8}"
+        )
+    print()
+    print("Start a guided rebook with:  booksaver rebook <OPPORTUNITY>")
+    return 0
+
+
 # ── parser ────────────────────────────────────────────────────────────────────
 
 def _no_subcommand(parser: argparse.ArgumentParser) -> argparse.Namespace:
@@ -448,5 +540,12 @@ def create_parser() -> argparse.ArgumentParser:
     p_bk_list = bk_sub.add_parser("list", help="List registered bookings")
     p_bk_list.add_argument("--all", action="store_true", help="Include archived bookings")
     p_bk_list.set_defaults(func=cmd_bookings_list)
+
+    # savings
+    p_sv = sub.add_parser("savings", help="Savings opportunity commands")
+    p_sv.set_defaults(func=_no_subcommand(p_sv))
+    sv_sub = p_sv.add_subparsers(dest="savings_command")
+    p_sv_list = sv_sub.add_parser("list", help="List detected savings opportunities")
+    p_sv_list.set_defaults(func=cmd_savings_list)
 
     return parser

@@ -1,7 +1,7 @@
 ---
 id: US-007
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-007 Compare live price to baseline

@@ -1,7 +1,7 @@
 ---
 id: US-009
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-009 Notify via email and Telegram

@@ -3,18 +3,31 @@ id: 004-savings-detection-notifications
 unit: 003-savings-detection-notifications
 intent: 001-booksaver-agent-mvp
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-compare-live-price-to-baseline
   - 002-enforce-pragmatic-equivalence-and-refundability
   - 003-notify-via-email-and-telegram
-created: 2026-07-05T00:00:00Z
-started: 2026-07-05T00:00:00Z
-completed: null
-current_stage: model
-stages_completed: []
-
-# Bolt Dependencies
+created: 2026-07-05T00:00:00.000Z
+started: 2026-07-05T00:00:00.000Z
+completed: "2026-07-05T19:11:45Z"
+current_stage: null
+stages_completed:
+  - name: model
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-01-domain-model.md
+  - name: design
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-02-technical-design.md
+  - name: adr
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: adr-011-stdlib-notification-transports.md
+  - name: implement
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: src/booksaver/domain/savings.py + application/savings_pipeline.py + infrastructure/notifications/
+  - name: test
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-03-test-report.md
 requires_bolts:
   - 001-core-local-data
   - 002-core-local-data
@@ -22,13 +35,11 @@ requires_bolts:
 enables_bolts: []
 requires_units: []
 blocks: false
-
-# Complexity Assessment
 complexity:
-  avg_complexity: 2        # pure domain rules + two thin notification adapters
-  avg_uncertainty: 1       # rules fully specified by stories; stdlib SMTP/HTTP
-  max_dependencies: 2      # Booking (Unit 1) + CheckResult (Unit 2)
-  testing_scope: 2         # equivalence gate matrix + notification fan-out
+  avg_complexity: 2
+  avg_uncertainty: 1
+  max_dependencies: 2
+  testing_scope: 2
 ---
 
 # Bolt: 004-savings-detection-notifications
@@ -59,11 +70,11 @@ channel attempted independently.
 
 ## Stages
 
-- [ ] **1. Domain Model**: Pending → ddd-01-domain-model.md
-- [ ] **2. Technical Design**: Pending → ddd-02-technical-design.md
-- [ ] **3. ADR Analysis**: Pending → adr-*.md
-- [ ] **4. Implement**: Pending → src/
-- [ ] **5. Test**: Pending → ddd-03-test-report.md
+- ✅ **1. Domain Model**: Complete → ddd-01-domain-model.md
+- ✅ **2. Technical Design**: Complete → ddd-02-technical-design.md
+- ✅ **3. ADR Analysis**: Complete → adr-011
+- ✅ **4. Implement**: Complete → domain/savings.py + savings_pipeline + notifiers
+- ✅ **5. Test**: Complete → ddd-03-test-report.md (168/168)
 
 ## Dependencies
 

@@ -29,6 +29,7 @@ from booksaver.domain.value_objects import (
 )
 from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
 from booksaver.infrastructure.persistence.sqlite_store import (
+    SCHEMA_VERSION,
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteStore,
@@ -189,12 +190,12 @@ class TestSchemaMigration:
             ]
 
         assert loaded.outcome is CheckOutcome.SUCCESS
-        assert versions == [1, 2]
+        assert versions == list(range(1, SCHEMA_VERSION + 1))
 
-    def test_fresh_database_gets_v2_directly(self, tmp_path: Path) -> None:
+    def test_fresh_database_gets_latest_version_directly(self, tmp_path: Path) -> None:
         with SqliteStore(tmp_path / "new.db") as store:
             row = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
-        assert row[0] == 2
+        assert row[0] == SCHEMA_VERSION
 
 
 class TestLocalSessionRepository:

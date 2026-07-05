@@ -1,7 +1,7 @@
 ---
 id: US-008
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-008 Enforce pragmatic equivalence and refundability

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from booksaver.domain.check_result import CheckResult
 from booksaver.domain.models import Booking
+from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.session import SessionState
 from booksaver.domain.value_objects import ConfirmationId, Money, Platform
 
@@ -57,6 +59,22 @@ class BrowserSession(Protocol):
 @runtime_checkable
 class LLMExtractor(Protocol):
     def extract_price(self, page_text: str, booking: Booking) -> ExtractionResult: ...
+
+
+@runtime_checkable
+class Notifier(Protocol):
+    @property
+    def channel_name(self) -> str: ...
+    def send(self, subject: str, body: str) -> None: ...
+
+
+@runtime_checkable
+class SavingsRepository(Protocol):
+    def add(self, opportunity: SavingsOpportunity) -> None: ...
+    def get(self, opportunity_id: str) -> SavingsOpportunity | None: ...
+    def list_for_booking(self, booking_id: str) -> list[SavingsOpportunity]: ...
+    def list_all(self) -> list[SavingsOpportunity]: ...
+    def mark_notified(self, opportunity_id: str, at: datetime) -> None: ...
 
 
 @runtime_checkable

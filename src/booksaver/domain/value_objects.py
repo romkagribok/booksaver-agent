@@ -155,3 +155,6 @@ class DataDirectory:
 class NotificationSettings:
     email: str | None = None
     telegram_chat_id: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None

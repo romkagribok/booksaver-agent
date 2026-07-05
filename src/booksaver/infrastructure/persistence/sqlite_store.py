@@ -16,6 +16,7 @@ from booksaver.domain.check_result import (
     RefundIndicators,
 )
 from booksaver.domain.models import Booking, BookingStatus
+from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.value_objects import (
     ConfirmationId,
     Money,
@@ -27,14 +28,17 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 # v1 -> v2: the v1 check_history table was a contract-only stub (id, booking_id,
 # recorded_at) that never held real data; it is dropped and recreated with the
 # full column set from schema.sql.
+# v2 -> v3: savings_opportunities is purely additive; the CREATE IF NOT EXISTS in
+# schema.sql covers it, so no migration statements are needed.
 _MIGRATIONS: dict[int, list[str]] = {
     2: ["DROP TABLE IF EXISTS check_history"],
+    3: [],
 }
 
 
@@ -311,4 +315,77 @@ class SqliteCheckHistoryRepository:
             refund_indicators=refund_indicators,
             extracted_fields=extracted_fields,
             failure_reason=failure_reason,
+        )
+
+
+class SqliteSavingsRepository:
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def add(self, opportunity: SavingsOpportunity) -> None:
+        self._store.conn.execute(
+            """
+            INSERT INTO savings_opportunities (
+                opportunity_id, booking_id, check_id, baseline_amount,
+                live_amount, currency, amount_saved, percent_saved,
+                validated_at, notified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                opportunity.opportunity_id,
+                opportunity.booking_id,
+                opportunity.check_id,
+                str(opportunity.baseline_price.amount),
+                str(opportunity.live_price.amount),
+                opportunity.baseline_price.currency,
+                str(opportunity.amount_saved.amount),
+                str(opportunity.percent_saved),
+                opportunity.validated_at.isoformat(),
+                opportunity.notified_at.isoformat() if opportunity.notified_at else None,
+            ),
+        )
+        self._store.conn.commit()
+
+    def get(self, opportunity_id: str) -> SavingsOpportunity | None:
+        row = self._store.conn.execute(
+            "SELECT * FROM savings_opportunities WHERE opportunity_id = ?",
+            (opportunity_id,),
+        ).fetchone()
+        return self._row_to_opportunity(row) if row else None
+
+    def list_for_booking(self, booking_id: str) -> list[SavingsOpportunity]:
+        rows = self._store.conn.execute(
+            "SELECT * FROM savings_opportunities WHERE booking_id = ? "
+            "ORDER BY validated_at DESC",
+            (booking_id,),
+        ).fetchall()
+        return [self._row_to_opportunity(r) for r in rows]
+
+    def list_all(self) -> list[SavingsOpportunity]:
+        rows = self._store.conn.execute(
+            "SELECT * FROM savings_opportunities ORDER BY validated_at DESC"
+        ).fetchall()
+        return [self._row_to_opportunity(r) for r in rows]
+
+    def mark_notified(self, opportunity_id: str, at: datetime) -> None:
+        self._store.conn.execute(
+            "UPDATE savings_opportunities SET notified_at = ? WHERE opportunity_id = ?",
+            (at.isoformat(), opportunity_id),
+        )
+        self._store.conn.commit()
+
+    def _row_to_opportunity(self, row: sqlite3.Row) -> SavingsOpportunity:
+        currency = row["currency"]
+        return SavingsOpportunity(
+            opportunity_id=row["opportunity_id"],
+            booking_id=row["booking_id"],
+            check_id=row["check_id"],
+            baseline_price=Money(amount=Decimal(row["baseline_amount"]), currency=currency),
+            live_price=Money(amount=Decimal(row["live_amount"]), currency=currency),
+            amount_saved=Money(amount=Decimal(row["amount_saved"]), currency=currency),
+            percent_saved=Decimal(row["percent_saved"]),
+            validated_at=datetime.fromisoformat(row["validated_at"]),
+            notified_at=(
+                datetime.fromisoformat(row["notified_at"]) if row["notified_at"] else None
+            ),
         )

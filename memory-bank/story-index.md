@@ -8,7 +8,7 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 |------|---------|--------|
 | `001-core-local-data` | 4 stories | Complete |
 | `002-booking-com-price-monitor` | 4 stories | Complete |
-| `003-savings-detection-notifications` | 3 stories | Ready |
+| `003-savings-detection-notifications` | 3 stories | Complete |
 | `004-guided-rebook` | 3 stories | Ready |
 | `005-extensibility-future` | 2 stories | Future |
 
@@ -34,9 +34,9 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-007` | Compare live price to baseline | MVP | Ready | `003-savings-detection-notifications/stories/001-compare-live-price-to-baseline.md` |
-| `US-008` | Enforce pragmatic equivalence and refundability | MVP | Ready | `003-savings-detection-notifications/stories/002-enforce-pragmatic-equivalence-and-refundability.md` |
-| `US-009` | Notify via email and Telegram | MVP | Ready | `003-savings-detection-notifications/stories/003-notify-via-email-and-telegram.md` |
+| `US-007` | Compare live price to baseline | MVP | Complete | `003-savings-detection-notifications/stories/001-compare-live-price-to-baseline.md` |
+| `US-008` | Enforce pragmatic equivalence and refundability | MVP | Complete | `003-savings-detection-notifications/stories/002-enforce-pragmatic-equivalence-and-refundability.md` |
+| `US-009` | Notify via email and Telegram | MVP | Complete | `003-savings-detection-notifications/stories/003-notify-via-email-and-telegram.md` |
 
 ### 004-guided-rebook: Guided Rebook
 

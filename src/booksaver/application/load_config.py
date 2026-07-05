@@ -40,9 +40,17 @@ def load_config(source: ConfigSource) -> Config:
     assert check_interval is not None
     assert data_directory is not None
 
+    notifications_raw = raw.get("notifications", {})
     notification_settings = NotificationSettings(
-        email=raw.get("notifications", {}).get("email"),
-        telegram_chat_id=raw.get("notifications", {}).get("telegram_chat_id"),
+        email=notifications_raw.get("email"),
+        telegram_chat_id=(
+            str(notifications_raw["telegram_chat_id"])
+            if notifications_raw.get("telegram_chat_id") is not None
+            else None
+        ),
+        smtp_host=notifications_raw.get("smtp_host"),
+        smtp_port=int(notifications_raw.get("smtp_port", 587)),
+        smtp_username=notifications_raw.get("smtp_username"),
     )
 
     extraction_settings = {
