@@ -18,6 +18,7 @@ from booksaver.domain.models import Config
 from booksaver.domain.value_objects import (
     ConfirmationId,
     Money,
+    Occupancy,
     Platform,
     ProductType,
     Property,
@@ -169,6 +170,7 @@ def cmd_register(args: argparse.Namespace) -> int:
             note=args.refund_note,
             deadline=date.fromisoformat(args.refund_deadline) if args.refund_deadline else None,
         )
+        occupancy = Occupancy(adults=args.adults, children=args.children, rooms=args.rooms)
     except ValueError as e:
         print(f"Invalid input: {e}", file=sys.stderr)
         return 2
@@ -187,6 +189,7 @@ def cmd_register(args: argparse.Namespace) -> int:
                 room_type=room_type,
                 baseline_price=baseline_price,
                 refundability=refundability,
+                occupancy=occupancy,
             )
         except BookingRejectedError as e:
             print(f"Registration rejected: {e}", file=sys.stderr)
@@ -198,6 +201,34 @@ def cmd_register(args: argparse.Namespace) -> int:
     print(f"  Stay         : {booking.stay_dates.check_in} → {booking.stay_dates.check_out}")
     print(f"  Room         : {booking.room_type.label}")
     print(f"  Baseline     : {booking.baseline_price.amount} {booking.baseline_price.currency}")
+    print(f"  Occupancy    : {booking.occupancy}")
+    return 0
+
+
+# ── bookings set-occupancy ────────────────────────────────────────────────────
+
+def cmd_bookings_set_occupancy(args: argparse.Namespace) -> int:
+    cfg, db_path = _db_path_for(args)
+    if not db_path.exists():
+        print("No bookings registered yet.", file=sys.stderr)
+        return 2
+
+    try:
+        occupancy = Occupancy(adults=args.adults, children=args.children, rooms=args.rooms)
+    except ValueError as e:
+        print(f"Invalid input: {e}", file=sys.stderr)
+        return 2
+
+    with SqliteStore(db_path) as store:
+        repo = SqliteBookingRepository(store)
+        try:
+            repo.set_occupancy(args.booking_id, occupancy)
+        except KeyError as e:
+            print(f"Error: {e.args[0]}", file=sys.stderr)
+            return 2
+
+    print(f"Occupancy set to {occupancy} for booking {args.booking_id}")
+    print("Scheduled checks for this booking will now run the search journey.")
     return 0
 
 
@@ -221,11 +252,12 @@ def cmd_bookings_list(args: argparse.Namespace) -> int:
 
     header = (
         f"{'ID':8}  {'CONFIRMATION':20}  {'PROPERTY':25}  "
-        f"{'CHECK-IN':10}  {'CHECK-OUT':10}  {'BASELINE':>14}  {'STATUS':8}"
+        f"{'CHECK-IN':10}  {'CHECK-OUT':10}  {'BASELINE':>14}  {'OCC':>7}  {'STATUS':8}"
     )
     print(header)
     print("-" * len(header))
     for b in bookings:
+        occ = str(b.occupancy) if b.occupancy else "MISSING"
         print(
             f"{b.booking_id[:8]:8}  "
             f"{b.confirmation_id.value[:20]:20}  "
@@ -233,7 +265,14 @@ def cmd_bookings_list(args: argparse.Namespace) -> int:
             f"{str(b.stay_dates.check_in):10}  "
             f"{str(b.stay_dates.check_out):10}  "
             f"{str(b.baseline_price.amount) + ' ' + b.baseline_price.currency:>14}  "
+            f"{occ:>7}  "
             f"{b.status.value:8}"
+        )
+    if any(b.occupancy is None for b in bookings):
+        print()
+        print(
+            "Bookings marked OCC=MISSING predate the occupancy field; set it with:\n"
+            "  booksaver bookings set-occupancy <BOOKING_ID> --adults N"
         )
     return 0
 
@@ -270,21 +309,26 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
     daemon holds no browser between intervals.
     """
     from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
-    from booksaver.monitor.check_job import BookingComMonitor
     from booksaver.monitor.failure_tracker import FailureTracker
+    from booksaver.monitor.search_check_job import BookingComSearchMonitor
     from booksaver.monitor.session_manager import SessionManager
 
     def _job() -> None:
         from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
-        from booksaver.infrastructure.browser.playwright_adapter import PlaywrightBrowserSession
+        from booksaver.infrastructure.browser.playwright_adapter import (
+            PlaywrightInteractiveBrowser,
+        )
         from booksaver.infrastructure.persistence.sqlite_store import SqliteSavingsRepository
 
         llm = _make_llm_extractor(cfg)
         db_path = cfg.data_directory.path / "booksaver.db"
-        with SqliteStore(db_path) as store, PlaywrightBrowserSession(headless=True) as browser:
+        with (
+            SqliteStore(db_path) as store,
+            PlaywrightInteractiveBrowser(headless=True) as browser,
+        ):
             history = SqliteCheckHistoryRepository(store)
             booking_repo = SqliteBookingRepository(store)
-            monitor = BookingComMonitor(
+            monitor = BookingComSearchMonitor(
                 browser=browser,
                 session_manager=SessionManager(LocalSessionRepository(cfg.data_directory)),
                 check_history=history,
@@ -614,6 +658,12 @@ def create_parser() -> argparse.ArgumentParser:
                        help="Refundability confirmation (e.g. 'Free cancellation until Aug 1')")
     p_reg.add_argument("--refund-deadline", metavar="YYYY-MM-DD", dest="refund_deadline",
                        help="Refund deadline date (optional)")
+    p_reg.add_argument("--adults", required=True, type=int, metavar="N",
+                       help="Adults the booking is for (search checks use the real party size)")
+    p_reg.add_argument("--children", type=int, default=0, metavar="N",
+                       help="Children the booking is for (default: 0)")
+    p_reg.add_argument("--rooms", type=int, default=1, metavar="N",
+                       help="Rooms booked (default: 1)")
     p_reg.set_defaults(func=cmd_register)
 
     # run
@@ -635,6 +685,15 @@ def create_parser() -> argparse.ArgumentParser:
     p_bk_list = bk_sub.add_parser("list", help="List registered bookings")
     p_bk_list.add_argument("--all", action="store_true", help="Include archived bookings")
     p_bk_list.set_defaults(func=cmd_bookings_list)
+    p_bk_occ = bk_sub.add_parser(
+        "set-occupancy",
+        help="Set occupancy on a booking registered before the occupancy field existed",
+    )
+    p_bk_occ.add_argument("booking_id", metavar="BOOKING_ID")
+    p_bk_occ.add_argument("--adults", required=True, type=int, metavar="N")
+    p_bk_occ.add_argument("--children", type=int, default=0, metavar="N")
+    p_bk_occ.add_argument("--rooms", type=int, default=1, metavar="N")
+    p_bk_occ.set_defaults(func=cmd_bookings_set_occupancy)
 
     # rebook
     p_rb = sub.add_parser(

@@ -26,6 +26,12 @@ class FailureCode(Enum):
     LLM_ERROR = "llm_error"
     TIMEOUT = "timeout"
     UNKNOWN = "unknown"
+    # Search-journey codes (bolt 006, ADR-013/014)
+    OCCUPANCY_MISSING = "occupancy_missing"
+    STEP_FAILED = "step_failed"
+    PROPERTY_NOT_FOUND = "property_not_found"
+    NO_EQUIVALENT_OFFER = "no_equivalent_offer"
+    BOT_WALL = "bot_wall"
 
 
 @dataclass(frozen=True)

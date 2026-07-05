@@ -19,17 +19,24 @@ CREATE TABLE IF NOT EXISTS bookings (
     refund_note      TEXT    NOT NULL DEFAULT '',
     refund_deadline  TEXT,
     registered_at    TEXT    NOT NULL,
-    status           TEXT    NOT NULL DEFAULT 'active'
+    status           TEXT    NOT NULL DEFAULT 'active',
+    -- v5: occupancy (ADR-014). NULL is reserved for rows registered before v5;
+    -- new registrations always set all three (enforced in the domain layer).
+    occ_adults       INTEGER CHECK(occ_adults IS NULL OR occ_adults >= 1),
+    occ_children     INTEGER CHECK(occ_children IS NULL OR occ_children >= 0),
+    occ_rooms        INTEGER CHECK(occ_rooms IS NULL OR occ_rooms >= 1)
 );
 
 -- v2: finalised by Unit 2 (booking-com-price-monitor)
+-- v5: extraction_method also allows 'agent' (bolt 007 agent-assisted checks)
 CREATE TABLE IF NOT EXISTS check_history (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     check_id              TEXT    NOT NULL UNIQUE,
     booking_id            TEXT    NOT NULL REFERENCES bookings(booking_id),
     checked_at            TEXT    NOT NULL,
     outcome               TEXT    NOT NULL CHECK(outcome IN ('success', 'failure')),
-    extraction_method     TEXT    NOT NULL CHECK(extraction_method IN ('dom', 'llm', 'none')),
+    extraction_method     TEXT    NOT NULL
+        CHECK(extraction_method IN ('dom', 'llm', 'none', 'agent')),
     live_amount           TEXT,
     live_currency         TEXT,
     refundable            INTEGER,

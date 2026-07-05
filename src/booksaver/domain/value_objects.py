@@ -92,6 +92,26 @@ class RefundabilityPolicy:
     deadline: date | None = None
 
 
+@dataclass(frozen=True)
+class Occupancy:
+    """Party size the booking was made for; drives search-based price checks (ADR-014)."""
+
+    adults: int
+    children: int = 0
+    rooms: int = 1
+
+    def __post_init__(self) -> None:
+        if self.adults < 1:
+            raise ValueError(f"Occupancy requires at least 1 adult, got {self.adults}")
+        if self.children < 0:
+            raise ValueError(f"Occupancy children must be >= 0, got {self.children}")
+        if self.rooms < 1:
+            raise ValueError(f"Occupancy requires at least 1 room, got {self.rooms}")
+
+    def __str__(self) -> str:
+        return f"{self.adults}+{self.children}/{self.rooms}"
+
+
 _DURATION_RE = re.compile(r"^(\d+)(m|h|d)$")
 _MIN_INTERVAL = timedelta(minutes=15)
 

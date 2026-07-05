@@ -6,6 +6,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from booksaver.domain.check_result import CheckResult
 from booksaver.domain.models import Booking
+from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.rebook import (
     ConfirmationAnswer,
     ConfirmationPrompt,
@@ -14,7 +15,7 @@ from booksaver.domain.rebook import (
 )
 from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.session import SessionState
-from booksaver.domain.value_objects import ConfirmationId, Money, Platform
+from booksaver.domain.value_objects import ConfirmationId, Money, Occupancy, Platform
 
 
 @runtime_checkable
@@ -24,6 +25,7 @@ class BookingRepository(Protocol):
     def get_by_confirmation(self, confirmation_id: ConfirmationId) -> Booking | None: ...
     def list_active(self) -> list[Booking]: ...
     def exists(self, confirmation_id: ConfirmationId) -> bool: ...
+    def set_occupancy(self, booking_id: str, occupancy: Occupancy) -> None: ...
 
 
 @runtime_checkable
@@ -62,9 +64,41 @@ class BrowserSession(Protocol):
     def is_authenticated(self) -> bool: ...
 
 
+@dataclass(frozen=True)
+class PageSnapshot:
+    """What the journey (and, in bolt 007, the agent) sees of the current page."""
+
+    url: str
+    title: str
+    text: str
+
+
+@runtime_checkable
+class InteractiveBrowser(Protocol):
+    """Interactive superset of BrowserSession for the search journey (ADR-013).
+
+    Scripted steps drive it with CSS selectors; bolt 007's agent drives the same
+    port. All actions raise on failure (missing selector, timeout) — the journey
+    turns exceptions into StepOutcome failures.
+    """
+
+    def goto(self, url: str) -> None: ...
+    def click(self, selector: str) -> None: ...
+    def fill(self, selector: str, text: str) -> None: ...
+    def press(self, selector: str, key: str) -> None: ...
+    def wait_for(self, selector: str, timeout_ms: int | None = None) -> None: ...
+    def exists(self, selector: str) -> bool: ...
+    def query_text(self, selector: str) -> list[str]: ...
+    def snapshot(self) -> PageSnapshot: ...
+    def get_cookies(self) -> bytes: ...
+    def restore_cookies(self, data: bytes) -> None: ...
+    def is_authenticated(self) -> bool: ...
+
+
 @runtime_checkable
 class LLMExtractor(Protocol):
     def extract_price(self, page_text: str, booking: Booking) -> ExtractionResult: ...
+    def extract_offers(self, page_text: str, booking: Booking) -> list[OfferCandidate]: ...
 
 
 @runtime_checkable

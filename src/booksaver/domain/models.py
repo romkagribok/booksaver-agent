@@ -11,6 +11,7 @@ from .value_objects import (
     DataDirectory,
     Money,
     NotificationSettings,
+    Occupancy,
     Platform,
     ProductType,
     Property,
@@ -38,6 +39,9 @@ class Booking:
     refundability: RefundabilityPolicy
     registered_at: datetime
     status: BookingStatus = BookingStatus.ACTIVE
+    # None is reserved for rows registered before schema v5 (ADR-014); new
+    # registrations always carry occupancy via create().
+    occupancy: Occupancy | None = None
 
     @classmethod
     def create(
@@ -51,6 +55,7 @@ class Booking:
         baseline_price: Money,
         refundability: RefundabilityPolicy,
         registered_at: datetime,
+        occupancy: Occupancy,
     ) -> Booking:
         return cls(
             booking_id=str(uuid.uuid4()),
@@ -63,6 +68,7 @@ class Booking:
             baseline_price=baseline_price,
             refundability=refundability,
             registered_at=registered_at,
+            occupancy=occupancy,
         )
 
 

@@ -6,6 +6,7 @@ from booksaver.domain.services import BookingRegistrationService
 from booksaver.domain.value_objects import (
     ConfirmationId,
     Money,
+    Occupancy,
     Platform,
     ProductType,
     Property,
@@ -27,6 +28,7 @@ def register_booking(
     room_type: RoomType,
     baseline_price: Money,
     refundability: RefundabilityPolicy,
+    occupancy: Occupancy,
 ) -> tuple[Booking, BookingRegistered]:
     service = BookingRegistrationService()
     booking, event = service.register(
@@ -38,6 +40,7 @@ def register_booking(
         room_type=room_type,
         baseline_price=baseline_price,
         refundability=refundability,
+        occupancy=occupancy,
         exists_fn=repo.exists,
     )
     repo.add(booking)

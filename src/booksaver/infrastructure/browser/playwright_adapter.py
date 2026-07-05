@@ -5,13 +5,14 @@ import logging
 import re
 from typing import Any
 
-from booksaver.application.ports import PageContent
+from booksaver.application.ports import PageContent, PageSnapshot
 
 logger = logging.getLogger(__name__)
 
 _SIGN_IN_MARKERS = re.compile(r"(sign in to manage|log in to your account|create an account)", re.I)
 
 _PAGE_TIMEOUT_MS = 45_000
+_ACTION_TIMEOUT_MS = 15_000
 
 
 class PlaywrightBrowserSession:
@@ -75,6 +76,104 @@ class PlaywrightBrowserSession:
             self._playwright = None
 
     def __enter__(self) -> PlaywrightBrowserSession:
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.close()
+
+
+class PlaywrightInteractiveBrowser:
+    """InteractiveBrowser adapter for the search journey (ADR-013).
+
+    Unlike PlaywrightBrowserSession's page-per-call model, the journey needs one
+    persistent page whose state accumulates across steps.
+    """
+
+    def __init__(self, headless: bool = True) -> None:
+        self._headless = headless
+        self._playwright: Any = None
+        self._browser: Any = None
+        self._context: Any = None
+        self._page: Any = None
+
+    def _ensure_page(self) -> Any:
+        if self._page is not None:
+            return self._page
+        from playwright.sync_api import sync_playwright
+
+        self._playwright = sync_playwright().start()
+        self._browser = self._playwright.chromium.launch(headless=self._headless)
+        self._context = self._browser.new_context()
+        self._page = self._context.new_page()
+        self._page.set_default_timeout(_ACTION_TIMEOUT_MS)
+        return self._page
+
+    def goto(self, url: str) -> None:
+        page = self._ensure_page()
+        page.goto(url, timeout=_PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+
+    def click(self, selector: str) -> None:
+        self._ensure_page().locator(selector).first.click()
+
+    def fill(self, selector: str, text: str) -> None:
+        self._ensure_page().locator(selector).first.fill(text)
+
+    def press(self, selector: str, key: str) -> None:
+        self._ensure_page().locator(selector).first.press(key)
+
+    def wait_for(self, selector: str, timeout_ms: int | None = None) -> None:
+        self._ensure_page().locator(selector).first.wait_for(
+            state="visible", timeout=timeout_ms or _ACTION_TIMEOUT_MS
+        )
+
+    def exists(self, selector: str) -> bool:
+        count: int = self._ensure_page().locator(selector).count()
+        return count > 0
+
+    def query_text(self, selector: str) -> list[str]:
+        page = self._ensure_page()
+        locator = page.locator(selector)
+        texts: list[str] = []
+        for i in range(locator.count()):
+            element = locator.nth(i)
+            value = element.input_value() if element.evaluate(
+                "el => el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'"
+            ) else element.inner_text()
+            texts.append(value.strip())
+        return texts
+
+    def snapshot(self) -> PageSnapshot:
+        page = self._ensure_page()
+        return PageSnapshot(url=page.url, title=page.title(), text=page.inner_text("body"))
+
+    def get_cookies(self) -> bytes:
+        self._ensure_page()
+        return json.dumps(self._context.cookies()).encode("utf-8")
+
+    def restore_cookies(self, data: bytes) -> None:
+        self._ensure_page()
+        self._context.add_cookies(json.loads(data.decode("utf-8")))
+
+    def is_authenticated(self) -> bool:
+        try:
+            return not _SIGN_IN_MARKERS.search(self.snapshot().text)
+        except Exception:
+            return False
+
+    def close(self) -> None:
+        for attr in ("_page", "_context", "_browser"):
+            obj = getattr(self, attr)
+            if obj is not None:
+                try:
+                    obj.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        if self._playwright is not None:
+            self._playwright.stop()
+            self._playwright = None
+
+    def __enter__(self) -> PlaywrightInteractiveBrowser:
         return self
 
     def __exit__(self, *_: Any) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -30,6 +31,7 @@ from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.value_objects import (
     ConfirmationId,
     Money,
+    Occupancy,
     Platform,
     ProductType,
     Property,
@@ -38,18 +40,96 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
-# v1 -> v2: the v1 check_history table was a contract-only stub (id, booking_id,
-# recorded_at) that never held real data; it is dropped and recreated with the
-# full column set from schema.sql.
+# Columns shared by the v2/v4 and v5 check_history definitions (v5 only relaxes
+# the extraction_method CHECK to include 'agent'); used to copy data across the
+# table rebuild.
+_CHECK_HISTORY_COLUMNS = (
+    "id, check_id, booking_id, checked_at, outcome, extraction_method, "
+    "live_amount, live_currency, refundable, cancellation_deadline, "
+    "refund_raw_text, extracted_property, extracted_room, "
+    "extracted_check_in, extracted_check_out, failure_code, failure_detail"
+)
+
+def _migrate_v2(conn: sqlite3.Connection) -> None:
+    # The v1 check_history table was a contract-only stub (id, booking_id,
+    # recorded_at) that never held real data; drop it so schema.sql recreates it
+    # with the full column set.
+    conn.execute("DROP TABLE IF EXISTS check_history")
+
+
+def _migrate_v5(conn: sqlite3.Connection) -> None:
+    # bookings occupancy columns (ADR-014, NULL = legacy occupancy-missing) and a
+    # check_history rebuild so extraction_method also allows 'agent' (bolt 007) —
+    # SQLite cannot alter a CHECK constraint in place. Guarded per table: a very
+    # old database may not have these tables yet (schema.sql creates them fresh,
+    # already in v5 shape, after migrations run).
+    tables = {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+
+    if "bookings" in tables:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(bookings)")}
+        if "occ_adults" not in columns:
+            conn.execute(
+                "ALTER TABLE bookings ADD COLUMN occ_adults INTEGER "
+                "CHECK(occ_adults IS NULL OR occ_adults >= 1)"
+            )
+            conn.execute(
+                "ALTER TABLE bookings ADD COLUMN occ_children INTEGER "
+                "CHECK(occ_children IS NULL OR occ_children >= 0)"
+            )
+            conn.execute(
+                "ALTER TABLE bookings ADD COLUMN occ_rooms INTEGER "
+                "CHECK(occ_rooms IS NULL OR occ_rooms >= 1)"
+            )
+
+    if "check_history" in tables:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'check_history'"
+        ).fetchone()
+        if row and "'agent'" not in row[0]:
+            conn.execute(
+                """
+                CREATE TABLE check_history_v5 (
+                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                    check_id              TEXT    NOT NULL UNIQUE,
+                    booking_id            TEXT    NOT NULL REFERENCES bookings(booking_id),
+                    checked_at            TEXT    NOT NULL,
+                    outcome               TEXT    NOT NULL
+                        CHECK(outcome IN ('success', 'failure')),
+                    extraction_method     TEXT    NOT NULL
+                        CHECK(extraction_method IN ('dom', 'llm', 'none', 'agent')),
+                    live_amount           TEXT,
+                    live_currency         TEXT,
+                    refundable            INTEGER,
+                    cancellation_deadline TEXT,
+                    refund_raw_text       TEXT,
+                    extracted_property    TEXT,
+                    extracted_room        TEXT,
+                    extracted_check_in    TEXT,
+                    extracted_check_out   TEXT,
+                    failure_code          TEXT,
+                    failure_detail        TEXT
+                )
+                """
+            )
+            conn.execute(
+                f"INSERT INTO check_history_v5 ({_CHECK_HISTORY_COLUMNS}) "
+                f"SELECT {_CHECK_HISTORY_COLUMNS} FROM check_history"
+            )
+            conn.execute("DROP TABLE check_history")
+            conn.execute("ALTER TABLE check_history_v5 RENAME TO check_history")
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
-_MIGRATIONS: dict[int, list[str]] = {
-    2: ["DROP TABLE IF EXISTS check_history"],
-    3: [],
-    4: [],
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    2: _migrate_v2,
+    5: _migrate_v5,
 }
 
 
@@ -97,8 +177,9 @@ class SqliteStore:
 
         if current is not None and current < SCHEMA_VERSION:
             for version in range(current + 1, SCHEMA_VERSION + 1):
-                for stmt in _MIGRATIONS.get(version, []):
-                    self.conn.execute(stmt)
+                migrate = _MIGRATIONS.get(version)
+                if migrate is not None:
+                    migrate(self.conn)
                 self.conn.execute(
                     "INSERT INTO schema_meta (version, applied_at) VALUES (?, ?)",
                     (version, datetime.now(UTC).isoformat()),
@@ -126,8 +207,8 @@ class SqliteBookingRepository:
                 property_name, property_ref, check_in, check_out,
                 room_type, baseline_amount, baseline_currency,
                 refundable, refund_note, refund_deadline,
-                registered_at, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                registered_at, status, occ_adults, occ_children, occ_rooms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 booking.booking_id,
@@ -148,9 +229,22 @@ class SqliteBookingRepository:
                 else None,
                 booking.registered_at.isoformat(),
                 booking.status.value,
+                booking.occupancy.adults if booking.occupancy else None,
+                booking.occupancy.children if booking.occupancy else None,
+                booking.occupancy.rooms if booking.occupancy else None,
             ),
         )
         self._store.conn.commit()
+
+    def set_occupancy(self, booking_id: str, occupancy: Occupancy) -> None:
+        cursor = self._store.conn.execute(
+            "UPDATE bookings SET occ_adults = ?, occ_children = ?, occ_rooms = ? "
+            "WHERE booking_id = ?",
+            (occupancy.adults, occupancy.children, occupancy.rooms, booking_id),
+        )
+        self._store.conn.commit()
+        if cursor.rowcount == 0:
+            raise KeyError(f"No booking with id '{booking_id}'")
 
     def get_by_id(self, booking_id: str) -> Booking | None:
         row = self._store.conn.execute(
@@ -184,6 +278,15 @@ class SqliteBookingRepository:
 
     def _row_to_booking(self, row: sqlite3.Row) -> Booking:
         deadline_str: str | None = row["refund_deadline"]
+        occupancy = (
+            Occupancy(
+                adults=row["occ_adults"],
+                children=row["occ_children"] if row["occ_children"] is not None else 0,
+                rooms=row["occ_rooms"] if row["occ_rooms"] is not None else 1,
+            )
+            if row["occ_adults"] is not None
+            else None
+        )
         return Booking(
             booking_id=row["booking_id"],
             platform=Platform(row["platform"]),
@@ -209,6 +312,7 @@ class SqliteBookingRepository:
             ),
             registered_at=datetime.fromisoformat(row["registered_at"]),
             status=BookingStatus(row["status"]),
+            occupancy=occupancy,
         )
 
 
