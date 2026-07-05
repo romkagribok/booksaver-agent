@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-01T00:00:00Z
-total_decisions: 6
+last_updated: 2026-07-05T00:00:00Z
+total_decisions: 10
 ---
 
 # Decision Index
@@ -17,6 +17,38 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-010: JSON file (not SQLite) for Booking.com session cookies
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
+- **Path**: `bolts/003-booking-com-price-monitor/adr-010-json-session-file.md`
+- **Summary**: Session cookies live in `{data_directory}/session_booking_com.json` (0600), matching Playwright's native cookie JSON shape. One file per platform; delete-to-logout; volatile auth material stays out of the booking DB.
+- **Read when**: Working on session persistence, reauth flows, Unit 4 browser reuse, or adding a second platform's session storage.
+
+### ADR-009: Anthropic SDK with a small default model for LLM extraction
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
+- **Path**: `bolts/003-booking-com-price-monitor/adr-009-anthropic-sdk-llm-extraction.md`
+- **Summary**: Official `anthropic` SDK, default model `claude-haiku-4-5` (config-overridable), key from `BOOKSAVER_LLM_API_KEY` only. Missing key degrades to DOM-only mode, never crashes.
+- **Read when**: Touching LLM extraction, changing the extraction prompt or model, handling LLM errors, or adding another LLM provider adapter.
+
+### ADR-008: Synchronous Playwright API in the scheduler loop
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
+- **Path**: `bolts/003-booking-com-price-monitor/adr-008-sync-playwright-api.md`
+- **Summary**: `playwright.sync_api` — checks run sequentially in the synchronous scheduler loop; no asyncio in the codebase. Port isolates the choice if concurrency is ever needed.
+- **Read when**: Writing browser adapter code, considering concurrent checks, or tempted to introduce asyncio.
+
+### ADR-007: Playwright for browser automation
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
+- **Path**: `bolts/003-booking-com-price-monitor/adr-007-playwright-browser-automation.md`
+- **Summary**: Playwright + bundled Chromium over Selenium/HTTP: first-class cookie export/import for sessions, headed mode for `booksaver auth`, headless for checks, auto-waiting for a dynamic site. Requires `playwright install chromium` post-install.
+- **Read when**: Any browser automation work (Units 2 and 4), session login flows, navigation failure handling, or environment setup docs.
 
 ### ADR-006: threading.Event sleep loop as the scheduler mechanism
 - **Status**: accepted
