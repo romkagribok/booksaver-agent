@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from booksaver.application.load_config import load_config
 from booksaver.application.register_booking import register_booking
@@ -29,6 +32,7 @@ from booksaver.infrastructure.config.toml_env_source import (
 from booksaver.infrastructure.paths import ensure_data_dir
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
+    SqliteCheckHistoryRepository,
     SqliteStore,
 )
 
@@ -247,16 +251,114 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     sched = scheduler_mod.Scheduler()
-
-    def _placeholder_job() -> None:
-        import logging
-        logging.getLogger(__name__).info("Price check tick (no monitor registered yet)")
-
-    sched.register("placeholder_check", _placeholder_job)
+    sched.register("booking_com_check", _make_check_job(cfg))
 
     print(f"BookSaver daemon starting (interval={cfg.check_interval}, data={cfg.data_directory.path})")  # noqa: E501
     print("Press Ctrl-C or send SIGTERM to stop cleanly.")
     lifecycle.start(cfg, sched)
+    return 0
+
+
+def _make_check_job(cfg: Config) -> Callable[[], None]:
+    """Build the scheduler job for Booking.com checks.
+
+    All heavyweight resources (browser, DB connection) are created per tick and
+    released afterwards, so a crashed tick never poisons the next one and the
+    daemon holds no browser between intervals.
+    """
+    from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
+    from booksaver.monitor.check_job import BookingComMonitor
+    from booksaver.monitor.failure_tracker import FailureTracker
+    from booksaver.monitor.session_manager import SessionManager
+
+    def _job() -> None:
+        from booksaver.infrastructure.browser.playwright_adapter import PlaywrightBrowserSession
+
+        llm = _make_llm_extractor(cfg)
+        db_path = cfg.data_directory.path / "booksaver.db"
+        with SqliteStore(db_path) as store, PlaywrightBrowserSession(headless=True) as browser:
+            history = SqliteCheckHistoryRepository(store)
+            monitor = BookingComMonitor(
+                browser=browser,
+                session_manager=SessionManager(LocalSessionRepository(cfg.data_directory)),
+                check_history=history,
+                booking_repo=SqliteBookingRepository(store),
+                failure_tracker=FailureTracker(history),
+                llm=llm,
+            )
+            monitor.run_all_active()
+
+    return _job
+
+
+def _make_llm_extractor(cfg: Config) -> Any:
+    import logging
+
+    api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
+    if not api_key:
+        logging.getLogger(__name__).warning(
+            "BOOKSAVER_LLM_API_KEY not set — LLM extraction disabled (DOM-only mode)"
+        )
+        return None
+    try:
+        from booksaver.infrastructure.llm.anthropic_adapter import (
+            DEFAULT_MODEL,
+            AnthropicExtractor,
+        )
+        model = cfg.extraction_settings.get("model", DEFAULT_MODEL)
+        return AnthropicExtractor(api_key=api_key, model=model)
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "anthropic package not installed — LLM extraction disabled (DOM-only mode)"
+        )
+        return None
+
+
+# ── auth ──────────────────────────────────────────────────────────────────────
+
+def cmd_auth(args: argparse.Namespace) -> int:
+    source = TomlEnvConfigSource(_config_path(args))
+    try:
+        cfg = load_config(source)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    except ConfigValidationError as e:
+        print("Config validation failed:", file=sys.stderr)
+        for err in e.errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 2
+
+    try:
+        from booksaver.infrastructure.browser.playwright_adapter import interactive_login
+    except ImportError:
+        print(
+            "Error: playwright is not installed.\n"
+            "Run: pip install playwright && playwright install chromium",
+            file=sys.stderr,
+        )
+        return 2
+
+    from datetime import UTC, datetime
+
+    from booksaver.domain.session import SessionState
+    from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
+
+    print("Opening a browser window for Booking.com login...")
+    cookies = interactive_login()
+    if not json.loads(cookies.decode("utf-8")):
+        print("No cookies captured — login may not have completed.", file=sys.stderr)
+        return 2
+
+    ensure_data_dir(cfg.data_directory)
+    session = SessionState.new(
+        platform=Platform.BOOKING_COM,
+        cookies=cookies,
+        authenticated_at=datetime.now(UTC),
+    )
+    LocalSessionRepository(cfg.data_directory).save(session)
+    print(f"Session saved to {cfg.data_directory.path}/session_booking_com.json")
+    print("Scheduled checks will now reuse this session until it expires.")
     return 0
 
 
@@ -330,6 +432,10 @@ def create_parser() -> argparse.ArgumentParser:
     # run
     p_run = sub.add_parser("run", help="Start the daemon (foreground; Ctrl-C or SIGTERM to stop)")
     p_run.set_defaults(func=cmd_run)
+
+    # auth
+    p_auth = sub.add_parser("auth", help="Log in to Booking.com in a browser; save session locally")
+    p_auth.set_defaults(func=cmd_auth)
 
     # stop
     p_stop = sub.add_parser("stop", help="Stop the running daemon gracefully")

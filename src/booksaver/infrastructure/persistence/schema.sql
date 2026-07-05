@@ -22,9 +22,26 @@ CREATE TABLE IF NOT EXISTS bookings (
     status           TEXT    NOT NULL DEFAULT 'active'
 );
 
--- Contract stub: columns extended by Unit 2 (booking_com_price_monitor)
+-- v2: finalised by Unit 2 (booking-com-price-monitor)
 CREATE TABLE IF NOT EXISTS check_history (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    booking_id  TEXT    NOT NULL REFERENCES bookings(booking_id),
-    recorded_at TEXT    NOT NULL
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id              TEXT    NOT NULL UNIQUE,
+    booking_id            TEXT    NOT NULL REFERENCES bookings(booking_id),
+    checked_at            TEXT    NOT NULL,
+    outcome               TEXT    NOT NULL CHECK(outcome IN ('success', 'failure')),
+    extraction_method     TEXT    NOT NULL CHECK(extraction_method IN ('dom', 'llm', 'none')),
+    live_amount           TEXT,
+    live_currency         TEXT,
+    refundable            INTEGER,
+    cancellation_deadline TEXT,
+    refund_raw_text       TEXT,
+    extracted_property    TEXT,
+    extracted_room        TEXT,
+    extracted_check_in    TEXT,
+    extracted_check_out   TEXT,
+    failure_code          TEXT,
+    failure_detail        TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_check_history_booking
+    ON check_history(booking_id, checked_at DESC);

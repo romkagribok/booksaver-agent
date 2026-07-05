@@ -7,7 +7,10 @@ name = "booksaver-agent"
 version = "0.1.0"
 description = "Local daemon that monitors Booking.com hotel prices for refundable reservations"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "playwright>=1.40",   # browser automation (ADR-007); run `playwright install chromium`
+    "anthropic>=0.40",    # LLM extraction fallback (ADR-009)
+]
 
 [project.optional-dependencies]
 dev = ["ruff", "pytest", "mypy"]

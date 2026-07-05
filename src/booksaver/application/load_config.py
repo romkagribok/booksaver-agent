@@ -45,9 +45,14 @@ def load_config(source: ConfigSource) -> Config:
         telegram_chat_id=raw.get("notifications", {}).get("telegram_chat_id"),
     )
 
+    extraction_settings = {
+        str(k): str(v) for k, v in raw.get("extraction", {}).items() if v is not None
+    }
+
     return Config(
         check_interval=check_interval,
         data_directory=data_directory,
         notification_settings=notification_settings,
         loaded_at=datetime.now(UTC),
+        extraction_settings=extraction_settings,
     )

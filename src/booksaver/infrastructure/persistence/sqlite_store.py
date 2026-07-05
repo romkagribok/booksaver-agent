@@ -6,6 +6,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from booksaver.domain.check_result import (
+    CheckOutcome,
+    CheckResult,
+    ExtractedBookingFields,
+    ExtractionMethod,
+    FailureCode,
+    FailureReason,
+    RefundIndicators,
+)
 from booksaver.domain.models import Booking, BookingStatus
 from booksaver.domain.value_objects import (
     ConfirmationId,
@@ -18,8 +27,15 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
+
+# v1 -> v2: the v1 check_history table was a contract-only stub (id, booking_id,
+# recorded_at) that never held real data; it is dropped and recreated with the
+# full column set from schema.sql.
+_MIGRATIONS: dict[int, list[str]] = {
+    2: ["DROP TABLE IF EXISTS check_history"],
+}
 
 
 class SqliteStore:
@@ -57,14 +73,30 @@ class SqliteStore:
         return self._conn
 
     def _apply_schema(self) -> None:
-        self.conn.executescript(_SCHEMA_SQL.read_text())
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_meta ("
+            "version INTEGER NOT NULL, applied_at TEXT NOT NULL)"
+        )
         row = self.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
-        if row[0] is None:
+        current: int | None = row[0]
+
+        if current is not None and current < SCHEMA_VERSION:
+            for version in range(current + 1, SCHEMA_VERSION + 1):
+                for stmt in _MIGRATIONS.get(version, []):
+                    self.conn.execute(stmt)
+                self.conn.execute(
+                    "INSERT INTO schema_meta (version, applied_at) VALUES (?, ?)",
+                    (version, datetime.now(UTC).isoformat()),
+                )
+
+        self.conn.executescript(_SCHEMA_SQL.read_text())
+
+        if current is None:
             self.conn.execute(
                 "INSERT INTO schema_meta (version, applied_at) VALUES (?, ?)",
                 (SCHEMA_VERSION, datetime.now(UTC).isoformat()),
             )
-            self.conn.commit()
+        self.conn.commit()
 
 
 class SqliteBookingRepository:
@@ -169,16 +201,114 @@ class SqliteCheckHistoryRepository:
     def __init__(self, store: SqliteStore) -> None:
         self._store = store
 
-    def append(self, booking_id: str, record: Any) -> None:
+    def add(self, result: CheckResult) -> None:
+        ri = result.refund_indicators
+        ef = result.extracted_fields
         self._store.conn.execute(
-            "INSERT INTO check_history (booking_id, recorded_at) VALUES (?, ?)",
-            (booking_id, datetime.now(UTC).isoformat()),
+            """
+            INSERT INTO check_history (
+                check_id, booking_id, checked_at, outcome, extraction_method,
+                live_amount, live_currency, refundable, cancellation_deadline,
+                refund_raw_text, extracted_property, extracted_room,
+                extracted_check_in, extracted_check_out, failure_code, failure_detail
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                result.check_id,
+                result.booking_id,
+                result.checked_at.isoformat(),
+                result.outcome.value,
+                result.extraction_method.value,
+                str(result.live_price.amount) if result.live_price else None,
+                result.live_price.currency if result.live_price else None,
+                (None if ri is None or ri.is_refundable is None else int(ri.is_refundable)),
+                (
+                    ri.cancellation_deadline.isoformat()
+                    if ri and ri.cancellation_deadline
+                    else None
+                ),
+                ri.raw_text if ri else None,
+                ef.property_name if ef else None,
+                ef.room_label if ef else None,
+                ef.check_in.isoformat() if ef and ef.check_in else None,
+                ef.check_out.isoformat() if ef and ef.check_out else None,
+                result.failure_reason.code.value if result.failure_reason else None,
+                result.failure_reason.detail if result.failure_reason else None,
+            ),
         )
         self._store.conn.commit()
 
-    def list_for_booking(self, booking_id: str) -> list[Any]:
+    def get_recent(self, booking_id: str, limit: int = 10) -> list[CheckResult]:
         rows = self._store.conn.execute(
-            "SELECT * FROM check_history WHERE booking_id = ? ORDER BY recorded_at",
+            "SELECT * FROM check_history WHERE booking_id = ? "
+            "ORDER BY checked_at DESC, id DESC LIMIT ?",
+            (booking_id, limit),
+        ).fetchall()
+        return [self._row_to_result(r) for r in rows]
+
+    def count_consecutive_failures(self, booking_id: str) -> int:
+        rows = self._store.conn.execute(
+            "SELECT outcome FROM check_history WHERE booking_id = ? "
+            "ORDER BY checked_at DESC, id DESC",
             (booking_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        count = 0
+        for row in rows:
+            if row["outcome"] != "failure":
+                break
+            count += 1
+        return count
+
+    def _row_to_result(self, row: sqlite3.Row) -> CheckResult:
+        live_price = (
+            Money(amount=Decimal(row["live_amount"]), currency=row["live_currency"])
+            if row["live_amount"] and row["live_currency"]
+            else None
+        )
+        refund_indicators = None
+        if row["refundable"] is not None or row["refund_raw_text"] or row["cancellation_deadline"]:
+            refund_indicators = RefundIndicators(
+                is_refundable=(None if row["refundable"] is None else bool(row["refundable"])),
+                cancellation_deadline=(
+                    date.fromisoformat(row["cancellation_deadline"])
+                    if row["cancellation_deadline"]
+                    else None
+                ),
+                raw_text=row["refund_raw_text"],
+            )
+        extracted_fields = None
+        if any(
+            row[k]
+            for k in ("extracted_property", "extracted_room", "extracted_check_in",
+                      "extracted_check_out")
+        ):
+            extracted_fields = ExtractedBookingFields(
+                property_name=row["extracted_property"],
+                room_label=row["extracted_room"],
+                check_in=(
+                    date.fromisoformat(row["extracted_check_in"])
+                    if row["extracted_check_in"]
+                    else None
+                ),
+                check_out=(
+                    date.fromisoformat(row["extracted_check_out"])
+                    if row["extracted_check_out"]
+                    else None
+                ),
+            )
+        failure_reason = (
+            FailureReason(code=FailureCode(row["failure_code"]), detail=row["failure_detail"])
+            if row["failure_code"]
+            else None
+        )
+        return CheckResult(
+            check_id=row["check_id"],
+            booking_id=row["booking_id"],
+            checked_at=datetime.fromisoformat(row["checked_at"]),
+            outcome=CheckOutcome(row["outcome"]),
+            extraction_method=ExtractionMethod(row["extraction_method"]),
+            live_price=live_price,
+            refund_indicators=refund_indicators,
+            extracted_fields=extracted_fields,
+            failure_reason=failure_reason,
+        )
