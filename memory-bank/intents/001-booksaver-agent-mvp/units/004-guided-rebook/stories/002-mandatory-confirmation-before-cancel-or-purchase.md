@@ -1,7 +1,7 @@
 ---
 id: US-011
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-011 Mandatory confirmation before cancel or purchase

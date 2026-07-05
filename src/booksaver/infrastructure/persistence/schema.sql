@@ -46,6 +46,27 @@ CREATE TABLE IF NOT EXISTS check_history (
 CREATE INDEX IF NOT EXISTS idx_check_history_booking
     ON check_history(booking_id, checked_at DESC);
 
+-- v4: added by Unit 4 (guided-rebook) — session state + append-only audit trail
+CREATE TABLE IF NOT EXISTS rebook_sessions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id     TEXT NOT NULL UNIQUE,
+    opportunity_id TEXT NOT NULL,
+    booking_id     TEXT NOT NULL REFERENCES bookings(booking_id),
+    state          TEXT NOT NULL,
+    started_at     TEXT NOT NULL,
+    ended_at       TEXT,
+    end_reason     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rebook_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id    TEXT NOT NULL UNIQUE,
+    session_id  TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    detail      TEXT NOT NULL DEFAULT '',
+    occurred_at TEXT NOT NULL
+);
+
 -- v3: added by Unit 3 (savings-detection-notifications)
 CREATE TABLE IF NOT EXISTS savings_opportunities (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

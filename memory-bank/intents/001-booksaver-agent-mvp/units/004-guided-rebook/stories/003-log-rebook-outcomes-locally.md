@@ -1,7 +1,7 @@
 ---
 id: US-012
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-012 Log rebook outcomes locally

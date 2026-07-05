@@ -466,6 +466,101 @@ def cmd_savings_list(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── rebook ────────────────────────────────────────────────────────────────────
+
+def _open_or_print(url: str, description: str, use_browser: bool) -> None:
+    print(f"\n>>> {description}:\n    {url}")
+    if not use_browser:
+        return
+    try:
+        import webbrowser
+
+        webbrowser.open(url)
+        print("    (opened in your browser)")
+    except Exception:
+        print("    (could not open a browser — visit the URL manually)")
+
+
+def cmd_rebook(args: argparse.Namespace) -> int:
+    from booksaver.application.rebook_service import (
+        RebookSessionService,
+        UnknownOpportunityError,
+    )
+    from booksaver.domain.rebook import SessionState
+    from booksaver.infrastructure.cli_confirmation import TerminalConfirmationGate
+    from booksaver.infrastructure.persistence.sqlite_store import (
+        SqliteRebookEventRepository,
+        SqliteRebookSessionRepository,
+        SqliteSavingsRepository,
+    )
+
+    cfg, db_path = _db_path_for(args)
+    if not db_path.exists():
+        print("No local database yet — no savings opportunities to rebook.", file=sys.stderr)
+        return 2
+
+    use_browser = not getattr(args, "no_browser", False)
+
+    with SqliteStore(db_path) as store:
+        service = RebookSessionService(
+            savings_repo=SqliteSavingsRepository(store),
+            booking_repo=SqliteBookingRepository(store),
+            session_repo=SqliteRebookSessionRepository(store),
+            event_repo=SqliteRebookEventRepository(store),
+            gate=TerminalConfirmationGate(),
+            navigator=lambda url, desc: _open_or_print(url, desc, use_browser),
+        )
+        try:
+            session = service.run(args.opportunity_id)
+        except UnknownOpportunityError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+        except Exception as e:
+            print(f"Rebook session failed: {e}", file=sys.stderr)
+            return 2
+
+    print()
+    if session.state is SessionState.COMPLETED:
+        print(f"Guided rebook session {session.session_id} completed.")
+        print("Remember: the final cancel/booking clicks on Booking.com are yours to make.")
+    elif session.state is SessionState.DECLINED:
+        print(f"Session {session.session_id} ended: declined. Nothing was changed.")
+    print(f"Audit trail: booksaver rebook-log {session.session_id}")
+    return 0
+
+
+def cmd_rebook_log(args: argparse.Namespace) -> int:
+    from booksaver.infrastructure.persistence.sqlite_store import (
+        SqliteRebookEventRepository,
+        SqliteRebookSessionRepository,
+    )
+
+    cfg, db_path = _db_path_for(args)
+    if not db_path.exists():
+        print("No local database yet.", file=sys.stderr)
+        return 2
+
+    with SqliteStore(db_path) as store:
+        session = SqliteRebookSessionRepository(store).get(args.session_id)
+        events = SqliteRebookEventRepository(store).list_for_session(args.session_id)
+
+    if session is None:
+        print(f"No rebook session found with id '{args.session_id}'.", file=sys.stderr)
+        return 2
+
+    print(f"Session : {session.session_id}")
+    print(f"Booking : {session.booking_id}")
+    print(f"State   : {session.state.value}")
+    print(f"Started : {session.started_at.isoformat()}")
+    if session.ended_at:
+        print(f"Ended   : {session.ended_at.isoformat()}  ({session.end_reason})")
+    print()
+    for event in events:
+        detail = f"  — {event.detail}" if event.detail else ""
+        print(f"{event.occurred_at.isoformat()}  {event.event_type.value:24}{detail}")
+    return 0
+
+
 # ── parser ────────────────────────────────────────────────────────────────────
 
 def _no_subcommand(parser: argparse.ArgumentParser) -> argparse.Namespace:
@@ -540,6 +635,22 @@ def create_parser() -> argparse.ArgumentParser:
     p_bk_list = bk_sub.add_parser("list", help="List registered bookings")
     p_bk_list.add_argument("--all", action="store_true", help="Include archived bookings")
     p_bk_list.set_defaults(func=cmd_bookings_list)
+
+    # rebook
+    p_rb = sub.add_parser(
+        "rebook",
+        help="Start a guided rebook (explicit confirmations before any cancel/purchase)",
+    )
+    p_rb.add_argument("opportunity_id", metavar="OPPORTUNITY_ID",
+                      help="Savings opportunity id (see: booksaver savings list)")
+    p_rb.add_argument("--no-browser", action="store_true", dest="no_browser",
+                      help="Print URLs instead of opening a browser")
+    p_rb.set_defaults(func=cmd_rebook)
+
+    # rebook-log
+    p_rl = sub.add_parser("rebook-log", help="Show the audit trail of a rebook session")
+    p_rl.add_argument("session_id", metavar="SESSION_ID")
+    p_rl.set_defaults(func=cmd_rebook_log)
 
     # savings
     p_sv = sub.add_parser("savings", help="Savings opportunity commands")

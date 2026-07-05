@@ -3,18 +3,31 @@ id: 005-guided-rebook
 unit: 004-guided-rebook
 intent: 001-booksaver-agent-mvp
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-start-guided-rebook-only-after-explicit-intent
   - 002-mandatory-confirmation-before-cancel-or-purchase
   - 003-log-rebook-outcomes-locally
-created: 2026-07-05T00:00:00Z
-started: 2026-07-05T00:00:00Z
-completed: null
-current_stage: model
-stages_completed: []
-
-# Bolt Dependencies
+created: 2026-07-05T00:00:00.000Z
+started: 2026-07-05T00:00:00.000Z
+completed: "2026-07-05T19:19:40Z"
+current_stage: null
+stages_completed:
+  - name: model
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-01-domain-model.md
+  - name: design
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-02-technical-design.md
+  - name: adr
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: adr-012-guided-final-click.md
+  - name: implement
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: src/booksaver/domain/rebook.py + application/rebook_service.py + cli_confirmation.py
+  - name: test
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-03-test-report.md
 requires_bolts:
   - 001-core-local-data
   - 002-core-local-data
@@ -23,13 +36,11 @@ requires_bolts:
 enables_bolts: []
 requires_units: []
 blocks: false
-
-# Complexity Assessment
 complexity:
-  avg_complexity: 2        # session state machine + confirmation gates; browser reuse
-  avg_uncertainty: 2       # Booking.com rebook flow specifics; MVP keeps browser steps guided
-  max_dependencies: 3      # SavingsOpportunity, Booking, BrowserSession
-  testing_scope: 2         # state machine + confirmation gate matrix + audit log
+  avg_complexity: 2
+  avg_uncertainty: 2
+  max_dependencies: 3
+  testing_scope: 2
 ---
 
 # Bolt: 005-guided-rebook
@@ -61,11 +72,11 @@ cancel or purchase.
 
 ## Stages
 
-- [ ] **1. Domain Model**: Pending → ddd-01-domain-model.md
-- [ ] **2. Technical Design**: Pending → ddd-02-technical-design.md
-- [ ] **3. ADR Analysis**: Pending → adr-*.md
-- [ ] **4. Implement**: Pending → src/
-- [ ] **5. Test**: Pending → ddd-03-test-report.md
+- ✅ **1. Domain Model**: Complete → ddd-01-domain-model.md
+- ✅ **2. Technical Design**: Complete → ddd-02-technical-design.md
+- ✅ **3. ADR Analysis**: Complete → adr-012
+- ✅ **4. Implement**: Complete → domain/rebook.py + rebook_service + gates
+- ✅ **5. Test**: Complete → ddd-03-test-report.md (211/211)
 
 ## Dependencies
 

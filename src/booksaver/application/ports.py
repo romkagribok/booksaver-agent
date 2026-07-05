@@ -6,6 +6,12 @@ from typing import Any, Protocol, runtime_checkable
 
 from booksaver.domain.check_result import CheckResult
 from booksaver.domain.models import Booking
+from booksaver.domain.rebook import (
+    ConfirmationAnswer,
+    ConfirmationPrompt,
+    RebookEvent,
+    RebookSession,
+)
 from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.session import SessionState
 from booksaver.domain.value_objects import ConfirmationId, Money, Platform
@@ -75,6 +81,24 @@ class SavingsRepository(Protocol):
     def list_for_booking(self, booking_id: str) -> list[SavingsOpportunity]: ...
     def list_all(self) -> list[SavingsOpportunity]: ...
     def mark_notified(self, opportunity_id: str, at: datetime) -> None: ...
+
+
+@runtime_checkable
+class ConfirmationGate(Protocol):
+    def ask(self, prompt: ConfirmationPrompt) -> ConfirmationAnswer: ...
+
+
+@runtime_checkable
+class RebookSessionRepository(Protocol):
+    def add(self, session: RebookSession) -> None: ...
+    def update(self, session: RebookSession) -> None: ...
+    def get(self, session_id: str) -> RebookSession | None: ...
+
+
+@runtime_checkable
+class RebookEventRepository(Protocol):
+    def append(self, event: RebookEvent) -> None: ...
+    def list_for_session(self, session_id: str) -> list[RebookEvent]: ...
 
 
 @runtime_checkable

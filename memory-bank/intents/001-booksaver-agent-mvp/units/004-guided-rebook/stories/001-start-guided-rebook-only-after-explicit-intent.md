@@ -1,7 +1,7 @@
 ---
 id: US-010
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-010 Start guided rebook only after explicit intent

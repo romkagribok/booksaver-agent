@@ -16,6 +16,16 @@ from booksaver.domain.check_result import (
     RefundIndicators,
 )
 from booksaver.domain.models import Booking, BookingStatus
+from booksaver.domain.rebook import (
+    EventType as RebookEventType,
+)
+from booksaver.domain.rebook import (
+    RebookEvent,
+    RebookSession,
+)
+from booksaver.domain.rebook import (
+    SessionState as RebookSessionState,
+)
 from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.value_objects import (
     ConfirmationId,
@@ -28,17 +38,18 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 # v1 -> v2: the v1 check_history table was a contract-only stub (id, booking_id,
 # recorded_at) that never held real data; it is dropped and recreated with the
 # full column set from schema.sql.
-# v2 -> v3: savings_opportunities is purely additive; the CREATE IF NOT EXISTS in
-# schema.sql covers it, so no migration statements are needed.
+# v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
+# v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 _MIGRATIONS: dict[int, list[str]] = {
     2: ["DROP TABLE IF EXISTS check_history"],
     3: [],
+    4: [],
 }
 
 
@@ -389,3 +400,94 @@ class SqliteSavingsRepository:
                 datetime.fromisoformat(row["notified_at"]) if row["notified_at"] else None
             ),
         )
+
+
+class SqliteRebookSessionRepository:
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def add(self, session: RebookSession) -> None:
+        self._store.conn.execute(
+            """
+            INSERT INTO rebook_sessions (
+                session_id, opportunity_id, booking_id, state,
+                started_at, ended_at, end_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.session_id,
+                session.opportunity_id,
+                session.booking_id,
+                session.state.value,
+                session.started_at.isoformat(),
+                session.ended_at.isoformat() if session.ended_at else None,
+                session.end_reason,
+            ),
+        )
+        self._store.conn.commit()
+
+    def update(self, session: RebookSession) -> None:
+        self._store.conn.execute(
+            "UPDATE rebook_sessions SET state = ?, ended_at = ?, end_reason = ? "
+            "WHERE session_id = ?",
+            (
+                session.state.value,
+                session.ended_at.isoformat() if session.ended_at else None,
+                session.end_reason,
+                session.session_id,
+            ),
+        )
+        self._store.conn.commit()
+
+    def get(self, session_id: str) -> RebookSession | None:
+        row = self._store.conn.execute(
+            "SELECT * FROM rebook_sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return RebookSession(
+            session_id=row["session_id"],
+            opportunity_id=row["opportunity_id"],
+            booking_id=row["booking_id"],
+            state=RebookSessionState(row["state"]),
+            started_at=datetime.fromisoformat(row["started_at"]),
+            ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
+            end_reason=row["end_reason"],
+        )
+
+
+class SqliteRebookEventRepository:
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def append(self, event: RebookEvent) -> None:
+        self._store.conn.execute(
+            """
+            INSERT INTO rebook_events (event_id, session_id, event_type, detail, occurred_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                event.event_id,
+                event.session_id,
+                event.event_type.value,
+                event.detail,
+                event.occurred_at.isoformat(),
+            ),
+        )
+        self._store.conn.commit()
+
+    def list_for_session(self, session_id: str) -> list[RebookEvent]:
+        rows = self._store.conn.execute(
+            "SELECT * FROM rebook_events WHERE session_id = ? ORDER BY occurred_at, id",
+            (session_id,),
+        ).fetchall()
+        return [
+            RebookEvent(
+                event_id=r["event_id"],
+                session_id=r["session_id"],
+                event_type=RebookEventType(r["event_type"]),
+                detail=r["detail"],
+                occurred_at=datetime.fromisoformat(r["occurred_at"]),
+            )
+            for r in rows
+        ]
