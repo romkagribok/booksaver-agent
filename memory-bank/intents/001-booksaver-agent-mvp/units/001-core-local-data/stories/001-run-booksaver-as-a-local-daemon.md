@@ -1,7 +1,7 @@
 ---
 id: US-001
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-001 Run BookSaver as a local daemon

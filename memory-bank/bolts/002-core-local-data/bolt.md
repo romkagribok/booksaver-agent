@@ -3,28 +3,24 @@ id: 002-core-local-data
 unit: 001-core-local-data
 intent: 001-booksaver-agent-mvp
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-run-booksaver-as-a-local-daemon
-created: 2026-06-16T16:25:59Z
-started: 2026-06-17T21:10:00Z
-completed: null
-current_stage: model
+created: 2026-06-16T16:25:59.000Z
+started: 2026-06-17T21:10:00.000Z
+completed: "2026-07-05T17:20:26Z"
+current_stage: null
 stages_completed: []
-
-# Bolt Dependencies (for execution ordering)
 requires_bolts:
   - 001-core-local-data
 enables_bolts: []
 requires_units: []
-blocks: true                # waiting on 001-core-local-data (incomplete at planning time)
-
-# Complexity Assessment (aggregate of included stories)
+blocks: true
 complexity:
-  avg_complexity: 2        # background process lifecycle + clean shutdown
-  avg_uncertainty: 2       # daemonization + scheduler library TBD
-  max_dependencies: 2      # needs Config and LocalStore from bolt 001
-  testing_scope: 2         # start/stop + scheduled-trigger behavior = integration
+  avg_complexity: 2
+  avg_uncertainty: 2
+  max_dependencies: 2
+  testing_scope: 2
 ---
 
 # Bolt: 002-core-local-data
