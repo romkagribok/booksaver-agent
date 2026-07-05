@@ -1,7 +1,7 @@
 ---
 id: US-019
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-019 Extract equivalent offer total and feed savings pipeline

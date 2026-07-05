@@ -58,16 +58,16 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Unit | Stories | Status |
 |------|---------|--------|
-| `001-search-journey-monitor` | 3 stories | Planned (bolt 006) |
+| `001-search-journey-monitor` | 3 stories | Complete (bolt 006) |
 | `002-agentic-escalation` | 3 stories | Planned (bolt 007) |
 
 ### 001-search-journey-monitor: Search Journey Monitor
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-017` | Capture occupancy at registration | Phase 2 | Ready | `001-search-journey-monitor/stories/001-capture-occupancy-at-registration.md` |
-| `US-018` | Run scripted search journey to verified property page | Phase 2 | Ready | `001-search-journey-monitor/stories/002-run-scripted-search-journey.md` |
-| `US-019` | Extract equivalent offer total and feed savings pipeline | Phase 2 | Ready | `001-search-journey-monitor/stories/003-extract-equivalent-offer-total.md` |
+| `US-017` | Capture occupancy at registration | Phase 2 | Complete | `001-search-journey-monitor/stories/001-capture-occupancy-at-registration.md` |
+| `US-018` | Run scripted search journey to verified property page | Phase 2 | Complete | `001-search-journey-monitor/stories/002-run-scripted-search-journey.md` |
+| `US-019` | Extract equivalent offer total and feed savings pipeline | Phase 2 | Complete | `001-search-journey-monitor/stories/003-extract-equivalent-offer-total.md` |
 
 ### 002-agentic-escalation: Agentic Escalation
 

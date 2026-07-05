@@ -1,7 +1,7 @@
 ---
 id: US-017
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-017 Capture occupancy at registration

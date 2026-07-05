@@ -3,25 +3,31 @@ id: 006-search-journey-monitor
 unit: 001-search-journey-monitor
 intent: 002-agentic-search-monitor
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-capture-occupancy-at-registration
   - 002-run-scripted-search-journey
   - 003-extract-equivalent-offer-total
-created: 2026-07-05T23:10:00Z
-started: 2026-07-05T23:25:00Z
-completed: null
-current_stage: implement
+created: 2026-07-05T23:10:00.000Z
+started: 2026-07-05T23:25:00.000Z
+completed: "2026-07-05T23:25:58Z"
+current_stage: null
 stages_completed:
   - name: model
-    completed: 2026-07-05T23:30:00Z
+    completed: 2026-07-05T23:30:00.000Z
     artifact: ddd-01-domain-model.md
   - name: design
-    completed: 2026-07-05T23:35:00Z
+    completed: 2026-07-05T23:35:00.000Z
     artifact: ddd-02-technical-design.md
   - name: adr
-    completed: 2026-07-05T23:40:00Z
+    completed: 2026-07-05T23:40:00.000Z
     artifact: adr-013-search-journey-price-source.md, adr-014-occupancy-required-no-default.md
+  - name: implement
+    completed: 2026-07-06T00:00:00.000Z
+    artifact: src/booksaver/monitor/{search_journey,search_check_job,room_table}.py + domain/{journey,offer}.py + occupancy across domain/persistence/CLI
+  - name: test
+    completed: 2026-07-06T00:05:00.000Z
+    artifact: ddd-03-test-report.md
 requires_bolts:
   - 001-core-local-data
   - 002-core-local-data
@@ -69,16 +75,11 @@ savings/notification/rebook interfaces and tests remain untouched.
 
 ## Stages
 
-- ⬜ **1. Domain Model**: `Occupancy` VO, journey-step model (named steps + outcomes), offer-candidate
-  and equivalence-judgment concepts, new failure codes (`OCCUPANCY_MISSING`, `PROPERTY_NOT_FOUND`,
-  `NO_EQUIVALENT_OFFER`, `BOT_WALL`)
-- ⬜ **2. Technical Design**: journey orchestrator in monitor layer; browser-port extensions;
-  DOM-first extraction with LLM judgment calls; migration plan for `bookings` table
-- ⬜ **3. ADR Analysis**: search-journey-replaces-manage-page (price source); occupancy-required
-  (no default); step-decomposition designed for Unit-2 escalation points
-- ⬜ **4. Implement**
-- ⬜ **5. Test**: journey step machine with fake browser pages; extraction/equivalence exclusion
-  rules; migration + occupancy-missing behavior; savings pipeline regression (existing 211 tests pass)
+- ✅ **1. Domain Model**: Complete → ddd-01-domain-model.md
+- ✅ **2. Technical Design**: Complete → ddd-02-technical-design.md
+- ✅ **3. ADR Analysis**: Complete → adr-013, adr-014
+- ✅ **4. Implement**: Complete → search journey + occupancy + offer selection + daemon rewire
+- ✅ **5. Test**: Complete → ddd-03-test-report.md (277/277; 66 new)
 
 ## Dependencies
 

@@ -17,7 +17,7 @@ flowchart LR
 
 | Unit | Responsibility | Stories | Depends On | Build Order | Status |
 |------|----------------|---------|------------|-------------|--------|
-| `001-search-journey-monitor` | Occupancy at registration; scripted full search journey; equivalent-offer extraction; replace manage-page price source | US-017, US-018, US-019 | intent-001 units 001–003 (existing code) | 1 | Planned |
+| `001-search-journey-monitor` | Occupancy at registration; scripted full search journey; equivalent-offer extraction; replace manage-page price source | US-017, US-018, US-019 | intent-001 units 001–003 (existing code) | 1 | Complete |
 | `002-agentic-escalation` | LLM browser-agent step takeover (tiered observations); action guard + hard cost caps; step traces + failure snapshots + CLI | US-020, US-021, US-022 | 001-search-journey-monitor | 2 | Planned |
 
 ## Cross-Cutting Constraint

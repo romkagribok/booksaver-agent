@@ -1,7 +1,7 @@
 ---
 id: US-018
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-018 Run scripted search journey to verified property page
