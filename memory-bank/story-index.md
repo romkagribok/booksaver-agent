@@ -9,7 +9,7 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 | `001-core-local-data` | 4 stories | Complete |
 | `002-booking-com-price-monitor` | 4 stories | Complete |
 | `003-savings-detection-notifications` | 3 stories | Complete |
-| `004-guided-rebook` | 3 stories | Ready |
+| `004-guided-rebook` | 3 stories | Complete |
 | `005-extensibility-future` | 2 stories | Future |
 
 ### 001-core-local-data: Core & Local Data
@@ -42,9 +42,9 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-010` | Start guided rebook only after explicit intent | MVP | Ready | `004-guided-rebook/stories/001-start-guided-rebook-only-after-explicit-intent.md` |
-| `US-011` | Mandatory confirmation before cancel or purchase | MVP | Ready | `004-guided-rebook/stories/002-mandatory-confirmation-before-cancel-or-purchase.md` |
-| `US-012` | Log rebook outcomes locally | MVP | Ready | `004-guided-rebook/stories/003-log-rebook-outcomes-locally.md` |
+| `US-010` | Start guided rebook only after explicit intent | MVP | Complete | `004-guided-rebook/stories/001-start-guided-rebook-only-after-explicit-intent.md` |
+| `US-011` | Mandatory confirmation before cancel or purchase | MVP | Complete | `004-guided-rebook/stories/002-mandatory-confirmation-before-cancel-or-purchase.md` |
+| `US-012` | Log rebook outcomes locally | MVP | Complete | `004-guided-rebook/stories/003-log-rebook-outcomes-locally.md` |
 
 ### 005-extensibility-future: Extensibility
 
@@ -57,6 +57,6 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 
 | Intent | Units | Stories | Status |
 |--------|-------|---------|--------|
-| `001-booksaver-agent-mvp` | 5 | 16 | Ready for Construction planning |
+| `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
 
 All 16 original stories are assigned exactly once.

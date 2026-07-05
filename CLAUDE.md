@@ -10,8 +10,10 @@ interpretation**, notifies the user (email/Telegram), and offers a **guided rebo
 confirmation**. It is explicitly *not* a web app, hosted service, or multi-tenant SaaS, uses *no* official
 Booking.com API, and keeps all credentials, sessions, and data on the user's machine.
 
-**Current state: Bolt `001-core-local-data` implement stage complete.** Python scaffold, domain model,
-SQLite store, config loader, and CLI are in place. `project_type` is `cli-tool`
+**Current state: all 4 MVP units complete (bolts 001–005, 14/14 MVP stories, 211 tests).**
+Daemon + scheduler, Booking.com price monitor (Playwright + Anthropic LLM extraction),
+savings detection with email/Telegram alerts, and the guided-rebook confirmation state
+machine are implemented. Unit 5 (extensibility) is post-MVP. `project_type` is `cli-tool`
 (`memory-bank/project.yaml`).
 
 ## Build / Lint / Test Commands
@@ -30,14 +32,24 @@ python3 -m mypy src/
 # Tests
 python3 -m pytest
 
+# One-time: install the browser Playwright drives
+playwright install chromium
+
 # Run CLI
 python3 -m booksaver.cli <command>
 # or, after pip install -e .:
 booksaver <command>
 ```
 
-**Python 3.11+ required** (uses stdlib `tomllib`). Zero third-party runtime dependencies for the
-core; add new runtime deps only when stdlib genuinely cannot satisfy the need (ADR-003).
+CLI commands: `init`, `config validate|show`, `register`, `bookings list`, `run`, `stop`,
+`auth` (headed Booking.com login), `savings list`, `rebook <opportunity-id>`,
+`rebook-log <session-id>`.
+
+**Python 3.11+ required** (uses stdlib `tomllib`). Runtime deps are **playwright** (ADR-007)
+and **anthropic** (ADR-009) only; everything else is stdlib-first (ADR-003) — notifications
+use stdlib smtplib/urllib (ADR-011). Secrets come only from env vars:
+`BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN` (ADR-002).
+See `memory-bank/standards/decision-index.md` for all 12 ADRs.
 
 ## This repo is driven by the specs.md AI-DLC flow
 
@@ -85,8 +97,9 @@ designing or coding:
 - `system-architecture.md` — single-process local daemon; modular components
   (`LocalConfig → Scheduler → BookingComMonitor → {BrowserAutomation, LLMClient, LocalPersistence} →
   SavingsDetection → {Notifications, GuidedRebook}`), not distributed services.
-- `tech-stack.md` — Python, single local daemon with CLI entry points; local-only persistence; browser
-  automation + LLM + notification libraries all TBD until the scaffold bolt.
+- `tech-stack.md` — Python 3.11+ stdlib-first; SQLite persistence; Playwright (sync) browser
+  automation; anthropic SDK for extraction; stdlib smtplib/urllib notifications. All decided —
+  see the ADRs in `standards/decision-index.md`.
 - `coding-standards.md` — explicit domain types for bookings/prices/check-results/savings/rebook events;
   keep browser automation, LLM extraction, savings evaluation, notification, and rebook-confirmation
   logic in separate module boundaries; first test coverage targets config validation, persistence
@@ -94,12 +107,12 @@ designing or coding:
 
 ## Current intent: `001-booksaver-agent-mvp`
 
-5 units, 16 stories, "Ready for Construction planning". **Build order (from `system-architecture.md`):**
+5 units, 16 stories. **Units 1–4 complete (bolts 001–005); Unit 5 is post-MVP.**
 
-1. `001-core-local-data` — config, booking registration, local persistence, daemon lifecycle/scheduler (root dependency)
-2. `002-booking-com-price-monitor` — local session, scheduled browser check, LLM extraction, failure handling
-3. `003-savings-detection-notifications` — baseline comparison, equivalence/refundability gate, email + Telegram
-4. `004-guided-rebook` — explicit-intent start, mandatory confirmation before cancel/purchase, local outcome logging
+1. `001-core-local-data` — ✅ complete (bolts 001+002): config, registration, SQLite, daemon/scheduler
+2. `002-booking-com-price-monitor` — ✅ complete (bolt 003): session, browser checks, LLM extraction, failure handling
+3. `003-savings-detection-notifications` — ✅ complete (bolt 004): equivalence gate, price rule, email + Telegram
+4. `004-guided-rebook` — ✅ complete (bolt 005): explicit intent, confirmation state machine, audit trail
 5. `005-extensibility-future` — pluggable second platform / non-hotel types (post-MVP only)
 
 ## Product constraints to preserve in every design and code change
