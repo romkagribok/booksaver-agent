@@ -1,3 +1,9 @@
+---
+id: US-008
+status: Ready
+implemented: false
+---
+
 # US-008 Enforce pragmatic equivalence and refundability
 
 **Intent:** `001-booksaver-agent-mvp`  

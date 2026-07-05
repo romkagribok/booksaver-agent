@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-07-05T00:00:00Z
-total_decisions: 10
+total_decisions: 11
 ---
 
 # Decision Index
@@ -17,6 +17,14 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-011: Stdlib-only notification transports (smtplib + urllib Telegram Bot API)
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 004-savings-detection-notifications (savings-detection-notifications)
+- **Path**: `bolts/004-savings-detection-notifications/adr-011-stdlib-notification-transports.md`
+- **Summary**: Email via stdlib smtplib (STARTTLS), Telegram via one urllib POST to the Bot API. No requests/python-telegram-bot deps; Notifier port isolates the choice for the future interactive-bot direction.
+- **Read when**: Adding/altering notification channels, SMTP/Telegram config fields, or considering an interactive Telegram bot interface.
 
 ### ADR-010: JSON file (not SQLite) for Booking.com session cookies
 - **Status**: accepted
