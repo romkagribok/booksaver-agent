@@ -3,16 +3,25 @@ id: 006-search-journey-monitor
 unit: 001-search-journey-monitor
 intent: 002-agentic-search-monitor
 type: ddd-construction-bolt
-status: planned
+status: in-progress
 stories:
   - 001-capture-occupancy-at-registration
   - 002-run-scripted-search-journey
   - 003-extract-equivalent-offer-total
 created: 2026-07-05T23:10:00Z
-started: null
+started: 2026-07-05T23:25:00Z
 completed: null
-current_stage: null
-stages_completed: []
+current_stage: implement
+stages_completed:
+  - name: model
+    completed: 2026-07-05T23:30:00Z
+    artifact: ddd-01-domain-model.md
+  - name: design
+    completed: 2026-07-05T23:35:00Z
+    artifact: ddd-02-technical-design.md
+  - name: adr
+    completed: 2026-07-05T23:40:00Z
+    artifact: adr-013-search-journey-price-source.md, adr-014-occupancy-required-no-default.md
 requires_bolts:
   - 001-core-local-data
   - 002-core-local-data

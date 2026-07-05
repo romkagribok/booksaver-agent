@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-05T00:00:00Z
-total_decisions: 12
+last_updated: 2026-07-05T23:40:00Z
+total_decisions: 14
 ---
 
 # Decision Index
@@ -17,6 +17,22 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-014: Occupancy is a required registration field — no silent default
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 006-search-journey-monitor (search-journey-monitor)
+- **Path**: `bolts/006-search-journey-monitor/adr-014-occupancy-required-no-default.md`
+- **Summary**: Search prices depend on party size, so `Occupancy(adults, children, rooms)` is required at registration; legacy bookings migrate to an explicit occupancy-missing state whose checks fail with `OCCUPANCY_MISSING` until `bookings set-occupancy` backfills them. Never a silent 2-adult guess.
+- **Read when**: Touching registration, the bookings schema, search-query construction, or considering defaults for any user-specific search parameter.
+
+### ADR-013: Full search journey replaces the manage page as the sole price source
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 006-search-journey-monitor (search-journey-monitor)
+- **Path**: `bolts/006-search-journey-monitor/adr-013-search-journey-price-source.md`
+- **Summary**: Live prices come exclusively from the full customer search journey (home → search → results → verified property → room table) with the saved session; no deep-link shortcut, and `myreservations.html` is never opened for prices. Journey steps are named seams for bolt 007's LLM-agent escalation.
+- **Read when**: Working on the price monitor, journey steps, navigation failure codes, bot-wall handling, or reconsidering deep-linking/manage-page extraction.
 
 ### ADR-012: Guided final click — MVP does not automate the destructive button press
 - **Status**: accepted
