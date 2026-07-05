@@ -6,8 +6,8 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 
 | Unit | Stories | Status |
 |------|---------|--------|
-| `001-core-local-data` | 4 stories | In Progress (3/4 complete, US-001 pending) |
-| `002-booking-com-price-monitor` | 4 stories | Ready |
+| `001-core-local-data` | 4 stories | Complete |
+| `002-booking-com-price-monitor` | 4 stories | Complete |
 | `003-savings-detection-notifications` | 3 stories | Ready |
 | `004-guided-rebook` | 3 stories | Ready |
 | `005-extensibility-future` | 2 stories | Future |
@@ -16,7 +16,7 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-001` | Run BookSaver as a local daemon | MVP | Ready | `001-core-local-data/stories/001-run-booksaver-as-a-local-daemon.md` |
+| `US-001` | Run BookSaver as a local daemon | MVP | Complete | `001-core-local-data/stories/001-run-booksaver-as-a-local-daemon.md` |
 | `US-002` | Configure daemon locally | MVP | Complete | `001-core-local-data/stories/002-configure-daemon-locally.md` |
 | `US-003` | Register a refundable Booking.com hotel | MVP | Complete | `001-core-local-data/stories/003-register-a-refundable-booking-com-hotel.md` |
 | `US-013` | Operate without a BookSaver cloud | MVP | Complete | `001-core-local-data/stories/004-operate-without-a-booksaver-cloud.md` |
@@ -25,10 +25,10 @@ Global index of BookSaver Agent stories after migration to the official specs.md
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-004` | Store Booking.com session locally | MVP | Ready | `002-booking-com-price-monitor/stories/001-store-booking-com-session-locally.md` |
-| `US-005` | Run scheduled browser check | MVP | Ready | `002-booking-com-price-monitor/stories/002-run-scheduled-browser-check.md` |
-| `US-006` | Extract booking and offer data with LLM | MVP | Ready | `002-booking-com-price-monitor/stories/003-extract-booking-and-offer-data-with-llm.md` |
-| `US-014` | Handle check failures gracefully | MVP | Ready | `002-booking-com-price-monitor/stories/004-handle-check-failures-gracefully.md` |
+| `US-004` | Store Booking.com session locally | MVP | Complete | `002-booking-com-price-monitor/stories/001-store-booking-com-session-locally.md` |
+| `US-005` | Run scheduled browser check | MVP | Complete | `002-booking-com-price-monitor/stories/002-run-scheduled-browser-check.md` |
+| `US-006` | Extract booking and offer data with LLM | MVP | Complete | `002-booking-com-price-monitor/stories/003-extract-booking-and-offer-data-with-llm.md` |
+| `US-014` | Handle check failures gracefully | MVP | Complete | `002-booking-com-price-monitor/stories/004-handle-check-failures-gracefully.md` |
 
 ### 003-savings-detection-notifications: Savings Detection & Notifications
 

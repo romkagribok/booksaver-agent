@@ -1,7 +1,7 @@
 ---
 id: US-004
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-004 Store Booking.com session locally

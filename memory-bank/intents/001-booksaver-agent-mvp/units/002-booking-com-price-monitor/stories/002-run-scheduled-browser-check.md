@@ -1,7 +1,7 @@
 ---
 id: US-005
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-005 Run scheduled browser check

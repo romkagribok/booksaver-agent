@@ -1,7 +1,7 @@
 ---
 id: US-006
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-006 Extract booking and offer data with LLM
