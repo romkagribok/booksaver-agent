@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from booksaver.application.ports import ExtractionResult
+from booksaver.domain.agent import AgentAction, AgentActionType, Observation
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.value_objects import Money
@@ -218,3 +219,164 @@ def parse_offers_response(raw: str) -> list[OfferCandidate]:
             )
         )
     return candidates
+
+
+# ── Browser-agent brain (bolt 007, ADR-015/016) ──────────────────────────────
+
+_AGENT_SYSTEM = """\
+You are a browser agent completing ONE stuck step of a Booking.com hotel search.
+You are strictly READ-ONLY on the user's account: never reserve, book, pay, or
+cancel anything, and never navigate into checkout, payment, or cancellation
+flows. Interact only through the provided tools, one action per turn, using
+element refs from the current observation. If the page shows a captcha or login
+wall, or the goal seems unreachable, call give_up with a short reason. Prefer
+give_up over guessing."""
+
+_AGENT_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "click",
+        "description": "Click an element from the observation list.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"ref": {"type": "string", "description": "Element ref, e.g. e7"}},
+            "required": ["ref"],
+        },
+    },
+    {
+        "name": "fill",
+        "description": "Clear and type text into an input element.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {"type": "string"},
+                "text": {"type": "string"},
+            },
+            "required": ["ref", "text"],
+        },
+    },
+    {
+        "name": "select",
+        "description": "Choose an option in a select element.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ref": {"type": "string"},
+                "value": {"type": "string"},
+            },
+            "required": ["ref", "value"],
+        },
+    },
+    {
+        "name": "scroll",
+        "description": "Scroll the page.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"direction": {"type": "string", "enum": ["up", "down"]}},
+            "required": ["direction"],
+        },
+    },
+    {
+        "name": "request_screenshot",
+        "description": "Ask for a screenshot of the page when the text observation "
+        "is not enough to orient yourself. Costs double budget.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "give_up",
+        "description": "Stop trying; the step cannot or should not be completed.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"reason": {"type": "string"}},
+            "required": ["reason"],
+        },
+    },
+]
+
+_ACTION_BY_TOOL = {
+    "click": AgentActionType.CLICK,
+    "fill": AgentActionType.FILL,
+    "select": AgentActionType.SELECT,
+    "scroll": AgentActionType.SCROLL,
+    "request_screenshot": AgentActionType.REQUEST_SCREENSHOT,
+    "give_up": AgentActionType.GIVE_UP,
+}
+
+
+def action_from_tool_call(name: str, tool_input: dict[str, Any]) -> AgentAction:
+    """Map a tool call to an AgentAction; unknown tools become give_up."""
+    action_type = _ACTION_BY_TOOL.get(name)
+    if action_type is None:
+        return AgentAction(
+            type=AgentActionType.GIVE_UP, value=f"model called unknown tool {name!r}"
+        )
+    ref = tool_input.get("ref")
+    value = (
+        tool_input.get("text")
+        or tool_input.get("value")
+        or tool_input.get("direction")
+        or tool_input.get("reason")
+    )
+    return AgentAction(
+        type=action_type,
+        ref=str(ref) if ref is not None else None,
+        value=str(value) if value is not None else None,
+    )
+
+
+class AnthropicAgentBrain:
+    """AgentBrain adapter: one tool-use messages.create call per turn (ADR-016)."""
+
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL) -> None:
+        import anthropic
+
+        self._client = anthropic.Anthropic(api_key=api_key)
+        self._model = model
+
+    def decide(
+        self, goal: str, observation: Observation, history: list[str]
+    ) -> AgentAction:
+        content: list[dict[str, Any]] = []
+        if observation.screenshot is not None:
+            import base64
+
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": base64.standard_b64encode(observation.screenshot).decode(),
+                    },
+                }
+            )
+        history_text = "\n".join(f"- {h}" for h in history) or "- (first turn)"
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    f"GOAL: {goal}\n\nWhat happened so far:\n{history_text}\n\n"
+                    f"Current page observation:\n{observation.describe()}\n\n"
+                    "Choose exactly one tool call."
+                ),
+            }
+        )
+        from typing import cast
+
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=1024,
+            system=_AGENT_SYSTEM,
+            tools=cast("Any", _AGENT_TOOLS),
+            tool_choice={"type": "any"},
+            messages=cast("Any", [{"role": "user", "content": content}]),
+        )
+        from anthropic.types import ToolUseBlock
+
+        for block in response.content:
+            if isinstance(block, ToolUseBlock):
+                tool_input = block.input if isinstance(block.input, dict) else {}
+                return action_from_tool_call(block.name, tool_input)
+        logger.warning("Agent brain reply contained no tool call")
+        return AgentAction(
+            type=AgentActionType.GIVE_UP, value="model produced no tool call"
+        )

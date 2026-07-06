@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from booksaver.domain.agent import AgentSettings
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.models import Config
 from booksaver.domain.value_objects import CheckInterval, DataDirectory, NotificationSettings
@@ -34,11 +35,26 @@ def load_config(source: ConfigSource) -> Config:
         except ValueError as e:
             errors.append(f"storage.data_directory: {e}")
 
+    agent_settings: AgentSettings | None = None
+    agent_raw = raw.get("agent", {})
+    try:
+        defaults = AgentSettings()
+        agent_settings = AgentSettings(
+            max_steps=int(agent_raw.get("max_steps", defaults.max_steps)),
+            max_llm_calls=int(agent_raw.get("max_llm_calls", defaults.max_llm_calls)),
+            check_timeout_seconds=int(
+                agent_raw.get("check_timeout_seconds", defaults.check_timeout_seconds)
+            ),
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"agent: {e}")
+
     if errors:
         raise ConfigValidationError(errors)
 
     assert check_interval is not None
     assert data_directory is not None
+    assert agent_settings is not None
 
     notifications_raw = raw.get("notifications", {})
     notification_settings = NotificationSettings(
@@ -63,4 +79,5 @@ def load_config(source: ConfigSource) -> Config:
         notification_settings=notification_settings,
         loaded_at=datetime.now(UTC),
         extraction_settings=extraction_settings,
+        agent_settings=agent_settings,
     )

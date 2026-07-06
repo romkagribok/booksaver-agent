@@ -17,6 +17,7 @@ class ExtractionMethod(Enum):
     DOM = "dom"
     LLM = "llm"
     NONE = "none"
+    AGENT = "agent"  # bolt 007: any journey step needed LLM-agent takeover
 
 
 class FailureCode(Enum):
@@ -32,6 +33,10 @@ class FailureCode(Enum):
     PROPERTY_NOT_FOUND = "property_not_found"
     NO_EQUIVALENT_OFFER = "no_equivalent_offer"
     BOT_WALL = "bot_wall"
+    # Agentic-escalation codes (bolt 007, ADR-015/016/017)
+    AGENT_GAVE_UP = "agent_gave_up"
+    BLOCKED_ACTION = "blocked_action"
+    BUDGET_EXCEEDED = "budget_exceeded"
 
 
 @dataclass(frozen=True)

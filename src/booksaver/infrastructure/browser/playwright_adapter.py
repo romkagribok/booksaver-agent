@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from booksaver.application.ports import PageContent, PageSnapshot
+from booksaver.domain.agent import AgentAction, AgentActionType, ElementInfo, Observation
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,10 @@ _SIGN_IN_MARKERS = re.compile(r"(sign in to manage|log in to your account|create
 
 _PAGE_TIMEOUT_MS = 45_000
 _ACTION_TIMEOUT_MS = 15_000
+
+_INTERACTIVE_SELECTOR = "a, button, input, select, textarea, [role='button']"
+_MAX_ELEMENTS = 120
+_OBSERVATION_TEXT_CHARS = 30_000
 
 
 class PlaywrightBrowserSession:
@@ -145,6 +150,64 @@ class PlaywrightInteractiveBrowser:
     def snapshot(self) -> PageSnapshot:
         page = self._ensure_page()
         return PageSnapshot(url=page.url, title=page.title(), text=page.inner_text("body"))
+
+    # ── agent surface (bolt 007, ADR-015/016) ────────────────────────────────
+
+    def observe(self) -> Observation:
+        """Tier-1 observation: URL, title, bounded text, and enumerated visible
+        interactive elements. Refs are valid until the next observe()."""
+        page = self._ensure_page()
+        locator = page.locator(_INTERACTIVE_SELECTOR)
+        elements: list[ElementInfo] = []
+        self._ref_map: dict[str, Any] = {}
+        count = min(locator.count(), _MAX_ELEMENTS * 3)  # scan cap before visibility filter
+        for i in range(count):
+            if len(elements) >= _MAX_ELEMENTS:
+                break
+            handle = locator.nth(i)
+            try:
+                if not handle.is_visible():
+                    continue
+                tag = handle.evaluate("el => el.tagName.toLowerCase()")
+                role = {"a": "link", "input": "input", "select": "select",
+                        "textarea": "input"}.get(tag, "button")
+                label = (handle.inner_text() or handle.get_attribute("aria-label")
+                         or handle.get_attribute("placeholder") or "").strip()[:120]
+                href = handle.get_attribute("href") if role == "link" else None
+            except Exception:
+                continue
+            ref = f"e{len(elements)}"
+            self._ref_map[ref] = handle
+            elements.append(ElementInfo(ref=ref, role=role, label=label, href=href))
+        return Observation(
+            url=page.url,
+            title=page.title(),
+            text=page.inner_text("body")[:_OBSERVATION_TEXT_CHARS],
+            elements=tuple(elements),
+        )
+
+    def act(self, action: AgentAction) -> None:
+        """Dispatch a bounded agent action (ADR-016). Unknown/stale refs raise."""
+        page = self._ensure_page()
+        if action.type is AgentActionType.SCROLL:
+            delta = -600 if (action.value or "").lower() == "up" else 600
+            page.mouse.wheel(0, delta)
+            return
+        handle = getattr(self, "_ref_map", {}).get(action.ref or "")
+        if handle is None:
+            raise RuntimeError(f"Unknown or stale element ref: {action.ref!r}")
+        if action.type is AgentActionType.CLICK:
+            handle.click()
+        elif action.type is AgentActionType.FILL:
+            handle.fill(action.value or "")
+        elif action.type is AgentActionType.SELECT:
+            handle.select_option(action.value or "")
+        else:
+            raise RuntimeError(f"Action {action.type.value} is not a browser action")
+
+    def screenshot(self) -> bytes:
+        result: bytes = self._ensure_page().screenshot(type="png")
+        return result
 
     def get_cookies(self) -> bytes:
         self._ensure_page()

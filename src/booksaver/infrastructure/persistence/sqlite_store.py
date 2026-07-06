@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from booksaver.domain.agent import CheckTrace, TraceEvent, TraceKind
 from booksaver.domain.check_result import (
     CheckOutcome,
     CheckResult,
@@ -40,7 +41,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 # Columns shared by the v2/v4 and v5 check_history definitions (v5 only relaxes
@@ -127,6 +128,7 @@ def _migrate_v5(conn: sqlite3.Connection) -> None:
 
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
+# v5 -> v6: check_traces, also purely additive.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -595,3 +597,53 @@ class SqliteRebookEventRepository:
             )
             for r in rows
         ]
+
+
+class SqliteCheckTraceRepository:
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def add(self, trace: CheckTrace) -> None:
+        import json as _json
+
+        payload = _json.dumps(
+            [
+                {
+                    "seq": e.seq,
+                    "at": e.at.isoformat(),
+                    "kind": e.kind.value,
+                    "detail": e.detail,
+                }
+                for e in trace.events
+            ]
+        )
+        self._store.conn.execute(
+            "INSERT INTO check_traces (check_id, booking_id, created_at, trace_json) "
+            "VALUES (?, ?, ?, ?)",
+            (trace.check_id, trace.booking_id, trace.created_at.isoformat(), payload),
+        )
+        self._store.conn.commit()
+
+    def get(self, check_id: str) -> CheckTrace | None:
+        import json as _json
+
+        row = self._store.conn.execute(
+            "SELECT * FROM check_traces WHERE check_id = ?", (check_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        events = tuple(
+            TraceEvent(
+                seq=item["seq"],
+                at=datetime.fromisoformat(item["at"]),
+                kind=TraceKind(item["kind"]),
+                detail=item["detail"],
+            )
+            for item in _json.loads(row["trace_json"])
+        )
+        return CheckTrace(
+            check_id=row["check_id"],
+            booking_id=row["booking_id"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            events=events,
+        )

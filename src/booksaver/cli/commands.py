@@ -55,6 +55,13 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 [extraction]
 # LLM model selection goes here. API key comes from an environment variable.
 # model = "claude-sonnet-4-6"        # key:      export BOOKSAVER_LLM_API_KEY=...
+
+[agent]
+# Hard cost caps per price check (ADR-017). Deliberately simple for now —
+# smarter adaptive budgeting is planned future work if these prove too blunt.
+# max_steps = 15              # LLM browser-agent turns (screenshot turns count double)
+# max_llm_calls = 20          # all LLM calls in one check (agent + extraction)
+# check_timeout_seconds = 180 # wall-clock limit per booking check
 """
 
 
@@ -318,9 +325,14 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
         from booksaver.infrastructure.browser.playwright_adapter import (
             PlaywrightInteractiveBrowser,
         )
-        from booksaver.infrastructure.persistence.sqlite_store import SqliteSavingsRepository
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteCheckTraceRepository,
+            SqliteSavingsRepository,
+        )
+        from booksaver.monitor.trace import SnapshotWriter
 
         llm = _make_llm_extractor(cfg)
+        brain = _make_agent_brain(cfg)
         db_path = cfg.data_directory.path / "booksaver.db"
         with (
             SqliteStore(db_path) as store,
@@ -335,6 +347,10 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
                 booking_repo=booking_repo,
                 failure_tracker=FailureTracker(history),
                 llm=llm,
+                brain=brain,
+                agent_settings=cfg.agent_settings,
+                trace_repo=SqliteCheckTraceRepository(store),
+                snapshot_writer=SnapshotWriter(cfg.data_directory.path / "snapshots"),
             )
             results = monitor.run_all_active()
 
@@ -407,6 +423,29 @@ def _make_llm_extractor(cfg: Config) -> Any:
     except ImportError:
         logging.getLogger(__name__).warning(
             "anthropic package not installed — LLM extraction disabled (DOM-only mode)"
+        )
+        return None
+
+
+def _make_agent_brain(cfg: Config) -> Any:
+    import logging
+
+    api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
+    if not api_key:
+        logging.getLogger(__name__).warning(
+            "BOOKSAVER_LLM_API_KEY not set — agent escalation disabled (scripted-only)"
+        )
+        return None
+    try:
+        from booksaver.infrastructure.llm.anthropic_adapter import (
+            DEFAULT_MODEL,
+            AnthropicAgentBrain,
+        )
+        model = cfg.extraction_settings.get("model", DEFAULT_MODEL)
+        return AnthropicAgentBrain(api_key=api_key, model=model)
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "anthropic package not installed — agent escalation disabled (scripted-only)"
         )
         return None
 
@@ -605,6 +644,64 @@ def cmd_rebook_log(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── checks ────────────────────────────────────────────────────────────────────
+
+def cmd_checks_list(args: argparse.Namespace) -> int:
+    cfg, db_path = _db_path_for(args)
+    if not db_path.exists():
+        print("No checks recorded yet.")
+        return 0
+
+    with SqliteStore(db_path) as store:
+        history = SqliteCheckHistoryRepository(store)
+        results = history.get_recent(args.booking_id, limit=args.limit)
+
+    if not results:
+        print(f"No checks recorded for booking '{args.booking_id}'.")
+        return 0
+
+    header = f"{'CHECK':36}  {'CHECKED AT':25}  {'OUTCOME':8}  {'METHOD':6}  {'DETAIL'}"
+    print(header)
+    print("-" * 100)
+    for r in results:
+        if r.failure_reason is not None:
+            detail = f"{r.failure_reason.code.value}: {r.failure_reason.detail[:50]}"
+        else:
+            assert r.live_price is not None
+            detail = f"{r.live_price.amount} {r.live_price.currency}"
+        print(
+            f"{r.check_id:36}  {r.checked_at.isoformat()[:25]:25}  "
+            f"{r.outcome.value:8}  {r.extraction_method.value:6}  {detail}"
+        )
+    print()
+    print("Inspect a check with:  booksaver checks trace <CHECK>")
+    return 0
+
+
+def cmd_checks_trace(args: argparse.Namespace) -> int:
+    from booksaver.infrastructure.persistence.sqlite_store import SqliteCheckTraceRepository
+
+    cfg, db_path = _db_path_for(args)
+    if not db_path.exists():
+        print("No local database yet.", file=sys.stderr)
+        return 2
+
+    with SqliteStore(db_path) as store:
+        trace = SqliteCheckTraceRepository(store).get(args.check_id)
+
+    if trace is None:
+        print(f"No trace found for check '{args.check_id}'.", file=sys.stderr)
+        return 2
+
+    print(f"Check   : {trace.check_id}")
+    print(f"Booking : {trace.booking_id}")
+    print(f"Recorded: {trace.created_at.isoformat()}")
+    print()
+    for event in trace.events:
+        print(f"{event.seq:3}  {event.at.isoformat()}  {event.kind.value:19}  {event.detail}")
+    return 0
+
+
 # ── parser ────────────────────────────────────────────────────────────────────
 
 def _no_subcommand(parser: argparse.ArgumentParser) -> argparse.Namespace:
@@ -710,6 +807,21 @@ def create_parser() -> argparse.ArgumentParser:
     p_rl = sub.add_parser("rebook-log", help="Show the audit trail of a rebook session")
     p_rl.add_argument("session_id", metavar="SESSION_ID")
     p_rl.set_defaults(func=cmd_rebook_log)
+
+    # checks
+    p_ck = sub.add_parser("checks", help="Price-check history and traces")
+    p_ck.set_defaults(func=_no_subcommand(p_ck))
+    ck_sub = p_ck.add_subparsers(dest="checks_command")
+    p_ck_list = ck_sub.add_parser("list", help="List recent checks for a booking")
+    p_ck_list.add_argument("booking_id", metavar="BOOKING_ID",
+                           help="Booking id (see: booksaver bookings list)")
+    p_ck_list.add_argument("--limit", type=int, default=10, metavar="N")
+    p_ck_list.set_defaults(func=cmd_checks_list)
+    p_ck_trace = ck_sub.add_parser(
+        "trace", help="Show the step-by-step trace of one check (incl. agent actions)"
+    )
+    p_ck_trace.add_argument("check_id", metavar="CHECK_ID")
+    p_ck_trace.set_defaults(func=cmd_checks_trace)
 
     # savings
     p_sv = sub.add_parser("savings", help="Savings opportunity commands")

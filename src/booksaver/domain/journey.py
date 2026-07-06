@@ -44,6 +44,7 @@ class JourneyResult:
 
     outcomes: tuple[StepOutcome, ...]
     failure_code: FailureCode | None = None
+    agent_assisted: bool = False  # any step needed LLM-agent takeover (bolt 007)
 
     @property
     def ok(self) -> bool:

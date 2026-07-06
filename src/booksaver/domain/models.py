@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
+from .agent import AgentSettings
 from .value_objects import (
     CheckInterval,
     ConfirmationId,
@@ -79,3 +80,4 @@ class Config:
     notification_settings: NotificationSettings
     loaded_at: datetime
     extraction_settings: dict[str, str] = field(default_factory=dict)
+    agent_settings: AgentSettings = field(default_factory=AgentSettings)

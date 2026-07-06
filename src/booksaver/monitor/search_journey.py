@@ -3,13 +3,23 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from booksaver.application.ports import InteractiveBrowser
+from booksaver.domain.agent import BudgetExceeded
 from booksaver.domain.check_result import FailureCode
 from booksaver.domain.journey import JourneyResult, JourneyStep, StepOutcome
 from booksaver.domain.models import Booking
 
+if TYPE_CHECKING:
+    from .browser_agent import BrowserAgent
+    from .trace import TraceRecorder
+
 logger = logging.getLogger(__name__)
+
+# Failures the agent cannot fix: captchas and logged-out sessions need the human
+# (booksaver auth) — escalating would only burn budget.
+_NON_ESCALATABLE = frozenset({FailureCode.BOT_WALL, FailureCode.AUTH_REQUIRED})
 
 _HOME_URL = "https://www.booking.com"
 
@@ -48,8 +58,17 @@ class SearchJourney:
     the monitor; this class only gets the browser onto the right page.
     """
 
-    def __init__(self, browser: InteractiveBrowser) -> None:
+    def __init__(
+        self,
+        browser: InteractiveBrowser,
+        escalator: BrowserAgent | None = None,
+        recorder: TraceRecorder | None = None,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> None:
         self._browser = browser
+        self._escalator = escalator
+        self._recorder = recorder
+        self._checkpoint = checkpoint  # budget wall-clock check between steps
 
     def run(self, booking: Booking) -> JourneyResult:
         steps: list[tuple[JourneyStep, Callable[[Booking], str]]] = [
@@ -63,16 +82,121 @@ class SearchJourney:
             (JourneyStep.READ_ROOM_TABLE, self._await_room_table),
         ]
         outcomes: list[StepOutcome] = []
+        agent_assisted = False
         for step, action in steps:
             try:
+                if self._checkpoint is not None:
+                    self._checkpoint()
                 detail = action(booking)
+            except BudgetExceeded as exc:
+                outcome = StepOutcome.failed(step, str(exc))
+                self._record(outcome)
+                outcomes.append(outcome)
+                return JourneyResult(
+                    outcomes=tuple(outcomes),
+                    failure_code=FailureCode.BUDGET_EXCEEDED,
+                    agent_assisted=agent_assisted,
+                )
             except Exception as exc:
-                outcomes.append(StepOutcome.failed(step, str(exc)))
                 code = self._classify_failure(step)
+                if self._escalator is not None and code not in _NON_ESCALATABLE:
+                    def _verify(s: JourneyStep = step, b: Booking = booking) -> bool:
+                        return self._step_verified(s, b)
+
+                    escalation = self._escalator.complete_step(
+                        step,
+                        goal=self._step_goal(step, booking),
+                        verify=_verify,
+                        trigger=str(exc),
+                    )
+                    if escalation.ok:
+                        agent_assisted = True
+                        outcome = StepOutcome.success(step, escalation.detail)
+                        self._record(outcome)
+                        outcomes.append(outcome)
+                        continue
+                    outcome = StepOutcome.failed(step, escalation.detail)
+                    self._record(outcome)
+                    outcomes.append(outcome)
+                    assert escalation.failure_code is not None
+                    return JourneyResult(
+                        outcomes=tuple(outcomes),
+                        failure_code=escalation.failure_code,
+                        agent_assisted=True,
+                    )
+                outcome = StepOutcome.failed(step, str(exc))
+                self._record(outcome)
+                outcomes.append(outcome)
                 logger.warning("Journey step %s failed (%s): %s", step.value, code.value, exc)
-                return JourneyResult(outcomes=tuple(outcomes), failure_code=code)
-            outcomes.append(StepOutcome.success(step, detail))
-        return JourneyResult(outcomes=tuple(outcomes))
+                return JourneyResult(
+                    outcomes=tuple(outcomes),
+                    failure_code=code,
+                    agent_assisted=agent_assisted,
+                )
+            outcome = StepOutcome.success(step, detail)
+            self._record(outcome)
+            outcomes.append(outcome)
+        return JourneyResult(outcomes=tuple(outcomes), agent_assisted=agent_assisted)
+
+    def _record(self, outcome: StepOutcome) -> None:
+        if self._recorder is not None:
+            self._recorder.journey_step(outcome)
+
+    # ── escalation support (US-020) ──────────────────────────────────────────
+
+    def _step_goal(self, step: JourneyStep, booking: Booking) -> str:
+        occ = booking.occupancy
+        goals = {
+            JourneyStep.OPEN_HOME: "Get the Booking.com home page open with its "
+            "accommodation search box visible.",
+            JourneyStep.DISMISS_OVERLAYS: "Close any popup, banner, or overlay hiding "
+            "the search form (cookie consent, sign-in nags, promos).",
+            JourneyStep.FILL_SEARCH: (
+                f"Fill the accommodation search: destination/property "
+                f"{booking.property.name!r}, check-in "
+                f"{booking.stay_dates.check_in.isoformat()}, check-out "
+                f"{booking.stay_dates.check_out.isoformat()}"
+                + (f", {occ.adults} adults, {occ.children} children, {occ.rooms} room(s)."
+                   if occ else ".")
+            ),
+            JourneyStep.SUBMIT_SEARCH: "Submit the search so property results are shown.",
+            JourneyStep.LOCATE_PROPERTY: f"Find the property {booking.property.name!r} "
+            "in the search results list.",
+            JourneyStep.OPEN_PROPERTY: f"Open the property page for "
+            f"{booking.property.name!r} so its room/rate table is visible.",
+            JourneyStep.VERIFY_CONTEXT: "Ensure the property page shows prices for "
+            f"check-in {booking.stay_dates.check_in.isoformat()} to check-out "
+            f"{booking.stay_dates.check_out.isoformat()} with the right party size.",
+            JourneyStep.READ_ROOM_TABLE: "Make the room/rate table with prices and "
+            "cancellation policies fully visible.",
+        }
+        return goals[step]
+
+    def _step_verified(self, step: JourneyStep, booking: Booking) -> bool:
+        """Postcondition check so agent success is verified, not assumed."""
+        try:
+            if step is JourneyStep.OPEN_HOME:
+                return self._browser.exists(_SEL_SEARCH_BOX)
+            if step is JourneyStep.SUBMIT_SEARCH:
+                return self._browser.exists(_SEL_PROPERTY_CARD)
+            if step is JourneyStep.LOCATE_PROPERTY:
+                wanted = _normalise(booking.property.name)
+                return any(
+                    _normalise(t) == wanted
+                    for t in self._browser.query_text(_SEL_PROPERTY_TITLE)
+                )
+            if step is JourneyStep.OPEN_PROPERTY:
+                return any(self._browser.exists(a) for a in _SEL_ROOM_TABLE_ANCHORS)
+            if step is JourneyStep.VERIFY_CONTEXT:
+                self._verify_context(booking)
+                return True
+            if step in (JourneyStep.DISMISS_OVERLAYS, JourneyStep.READ_ROOM_TABLE):
+                return not _CAPTCHA_MARKERS.search(self._safe_text())
+            if step is JourneyStep.FILL_SEARCH:
+                return True  # no reliable postcondition; submit_search verifies next
+        except Exception:
+            return False
+        return False
 
     def _classify_failure(self, step: JourneyStep) -> FailureCode:
         page_text = self._safe_text()

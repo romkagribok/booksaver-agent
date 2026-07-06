@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS rebook_events (
     occurred_at TEXT NOT NULL
 );
 
+-- v6: added by intent 002 bolt 007 (agentic-escalation) — one trace per check
+CREATE TABLE IF NOT EXISTS check_traces (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id   TEXT NOT NULL UNIQUE,
+    booking_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    trace_json TEXT NOT NULL
+);
+
 -- v3: added by Unit 3 (savings-detection-notifications)
 CREATE TABLE IF NOT EXISTS savings_opportunities (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
