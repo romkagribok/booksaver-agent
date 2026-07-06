@@ -71,9 +71,11 @@ real bookable totals for equivalent refundable rooms and feeds the existing savi
 
 ## Next Steps
 
-1. Checkpoint 3: artifacts review (this batch)
-2. On approval: commit + push planning artifacts to `phase-2-agentic-search-monitor`
-3. Begin Construction: `/specsmd-construction-agent` on bolt `006-search-journey-monitor`
+Construction complete (bolts 006 + 007 closed 2026-07-06; 345 tests, 20/22 stories across
+both intents). Remaining follow-ups live outside this intent:
+- Operations verification against the live site (real browser run of the search journey)
+- Adaptive budgeting if hard caps prove too blunt (ADR-017 future work)
+- Unit 005-extensibility-future (intent 001, post-MVP)
 
 ## Dependencies
 

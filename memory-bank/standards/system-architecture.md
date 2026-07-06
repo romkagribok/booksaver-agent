@@ -6,11 +6,14 @@ Use a single-process, local-first daemon architecture. Keep components modular i
 
 ```mermaid
 flowchart TB
-    Config["LocalConfig"] --> Scheduler["Scheduler"]
-    Scheduler --> Monitor["BookingComMonitor"]
-    Monitor --> Browser["BrowserAutomation"]
-    Monitor --> LLM["LLMClient"]
-    Monitor --> Store["LocalPersistence"]
+    Config["LocalConfig (+ agent caps)"] --> Scheduler["Scheduler"]
+    Scheduler --> Monitor["BookingComSearchMonitor"]
+    Monitor --> Journey["SearchJourney (scripted steps)"]
+    Journey --> Browser["BrowserAutomation"]
+    Journey -- "step failed" --> Agent["BrowserAgent (LLM, guarded)"]
+    Agent --> Browser
+    Monitor --> LLM["LLMClient (offer extraction + agent brain)"]
+    Monitor --> Store["LocalPersistence (+ check traces)"]
     Store --> Savings["SavingsDetection"]
     Savings --> Notify["Notifications"]
     Savings --> Rebook["GuidedRebook"]
@@ -20,8 +23,12 @@ flowchart TB
 
 ## Boundaries
 
-- Booking.com integration happens through browser automation only.
-- The LLM is used for extraction and reasoning when DOM parsing is insufficient.
+- Booking.com integration happens through browser automation only. Live prices come from
+  the full search journey (ADR-013); the manage page is never a price source.
+- The LLM is used for extraction and reasoning when DOM parsing is insufficient, and as a
+  guarded browser agent when a scripted journey step fails (ADR-015/016): bounded action
+  vocabulary, adapter-level denylist against reserve/checkout/payment/cancel, hard
+  per-check cost caps (ADR-017).
 - Notification adapters send directly through the user's configured services.
 - Guided rebook must never execute cancel or purchase actions without explicit local confirmation.
 - All secrets, sessions, booking data, logs, and check history remain on the user's machine.

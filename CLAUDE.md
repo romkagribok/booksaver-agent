@@ -10,11 +10,16 @@ interpretation**, notifies the user (email/Telegram), and offers a **guided rebo
 confirmation**. It is explicitly *not* a web app, hosted service, or multi-tenant SaaS, uses *no* official
 Booking.com API, and keeps all credentials, sessions, and data on the user's machine.
 
-**Current state: all 4 MVP units complete (bolts 001–005, 14/14 MVP stories, 211 tests).**
-Daemon + scheduler, Booking.com price monitor (Playwright + Anthropic LLM extraction),
-savings detection with email/Telegram alerts, and the guided-rebook confirmation state
-machine are implemented. Unit 5 (extensibility) is post-MVP. `project_type` is `cli-tool`
-(`memory-bank/project.yaml`).
+**Current state: MVP (intent 001, bolts 001–005) + Phase 2 agentic search monitor
+(intent 002, bolts 006–007) complete — 20/22 stories, 345 tests.**
+Daemon + scheduler, savings detection with email/Telegram alerts, and the guided-rebook
+confirmation state machine are implemented. **Phase 2 replaced the manage-page price
+check**: live prices now come from a scripted full search journey (search → results →
+verified property page → room table, using the booking's required occupancy), with an
+LLM browser agent that takes over failed journey steps (tiered text→screenshot
+observations, bounded action vocabulary, adapter-level guard against
+reserve/checkout/cancel, hard cost caps, per-check traces). Unit 005-extensibility-future
+is post-MVP. `project_type` is `cli-tool` (`memory-bank/project.yaml`).
 
 ## Build / Lint / Test Commands
 
@@ -41,15 +46,18 @@ python3 -m booksaver.cli <command>
 booksaver <command>
 ```
 
-CLI commands: `init`, `config validate|show`, `register`, `bookings list`, `run`, `stop`,
-`auth` (headed Booking.com login), `savings list`, `rebook <opportunity-id>`,
+CLI commands: `init`, `config validate|show`, `register` (requires `--adults`; `--children`,
+`--rooms` optional), `bookings list`, `bookings set-occupancy <booking-id>` (backfill for
+pre-v5 bookings), `run`, `stop`, `auth` (headed Booking.com login), `checks list <booking-id>`,
+`checks trace <check-id>` (step/agent trace), `savings list`, `rebook <opportunity-id>`,
 `rebook-log <session-id>`.
 
 **Python 3.11+ required** (uses stdlib `tomllib`). Runtime deps are **playwright** (ADR-007)
 and **anthropic** (ADR-009) only; everything else is stdlib-first (ADR-003) — notifications
-use stdlib smtplib/urllib (ADR-011). Secrets come only from env vars:
+use stdlib smtplib/urllib (ADR-011), and the browser agent is a plain anthropic tool-use
+loop, no agent frameworks (ADR-016). Secrets come only from env vars:
 `BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN` (ADR-002).
-See `memory-bank/standards/decision-index.md` for all 12 ADRs.
+See `memory-bank/standards/decision-index.md` for all 17 ADRs.
 
 ## This repo is driven by the specs.md AI-DLC flow
 
@@ -105,15 +113,26 @@ designing or coding:
   logic in separate module boundaries; first test coverage targets config validation, persistence
   invariants, savings equivalence rules, and confirmation gates.
 
-## Current intent: `001-booksaver-agent-mvp`
+## Intents
 
-5 units, 16 stories. **Units 1–4 complete (bolts 001–005); Unit 5 is post-MVP.**
+### `001-booksaver-agent-mvp` — complete (except post-MVP unit 5)
 
 1. `001-core-local-data` — ✅ complete (bolts 001+002): config, registration, SQLite, daemon/scheduler
-2. `002-booking-com-price-monitor` — ✅ complete (bolt 003): session, browser checks, LLM extraction, failure handling
+2. `002-booking-com-price-monitor` — ✅ complete (bolt 003): session, browser checks, LLM extraction, failure handling. **Superseded as price source by intent 002** (manage page kept for session validation only, ADR-013)
 3. `003-savings-detection-notifications` — ✅ complete (bolt 004): equivalence gate, price rule, email + Telegram
 4. `004-guided-rebook` — ✅ complete (bolt 005): explicit intent, confirmation state machine, audit trail
 5. `005-extensibility-future` — pluggable second platform / non-hotel types (post-MVP only)
+
+### `002-agentic-search-monitor` — complete
+
+1. `001-search-journey-monitor` — ✅ complete (bolt 006): required `Occupancy` at registration
+   (ADR-014, schema v5 migration + CLI backfill), scripted full search journey with named
+   `JourneyStep` seams (ADR-013), equivalent-offer extraction (DOM heuristics + LLM
+   `extract_offers`), `select_offer` exclusion rules, new failure codes
+2. `002-agentic-escalation` — ✅ complete (bolt 007): `BrowserAgent` loop with tiered
+   observations (ADR-015), bounded tool-use action vocabulary + adapter-level `ActionGuard`
+   (ADR-016), hard `[agent]` config caps (ADR-017), `check_traces` (schema v6), rotated
+   redacted failure snapshots, `checks list|trace` CLI
 
 ## Product constraints to preserve in every design and code change
 
