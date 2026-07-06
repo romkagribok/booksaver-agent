@@ -1,7 +1,7 @@
 ---
 id: US-022
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-022 Trace and inspect agent runs locally

@@ -1,7 +1,7 @@
 ---
 id: US-021
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-021 Enforce action guard and hard cost caps

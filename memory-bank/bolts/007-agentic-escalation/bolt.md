@@ -3,25 +3,31 @@ id: 007-agentic-escalation
 unit: 002-agentic-escalation
 intent: 002-agentic-search-monitor
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-llm-agent-step-takeover
   - 002-action-guard-and-hard-caps
   - 003-trace-and-inspect-agent-runs
-created: 2026-07-05T23:10:00Z
-started: 2026-07-06T00:15:00Z
-completed: null
-current_stage: implement
+created: 2026-07-05T23:10:00.000Z
+started: 2026-07-06T00:15:00.000Z
+completed: "2026-07-06T12:45:43Z"
+current_stage: null
 stages_completed:
   - name: model
-    completed: 2026-07-06T00:20:00Z
+    completed: 2026-07-06T00:20:00.000Z
     artifact: ddd-01-domain-model.md
   - name: design
-    completed: 2026-07-06T00:25:00Z
+    completed: 2026-07-06T00:25:00.000Z
     artifact: ddd-02-technical-design.md
   - name: adr
-    completed: 2026-07-06T00:30:00Z
+    completed: 2026-07-06T00:30:00.000Z
     artifact: adr-015-tiered-agent-observations.md, adr-016-bounded-action-vocabulary.md, adr-017-hard-caps-now-adaptive-later.md
+  - name: implement
+    completed: 2026-07-06T01:10:00.000Z
+    artifact: domain/agent.py + monitor/{browser_agent,trace}.py + journey escalation seams + AnthropicAgentBrain + Playwright observe/act/screenshot + schema v6 + checks CLI
+  - name: test
+    completed: 2026-07-06T01:20:00.000Z
+    artifact: ddd-03-test-report.md
 requires_bolts:
   - 006-search-journey-monitor
 enables_bolts: []
@@ -63,16 +69,11 @@ trace.
 
 ## Stages
 
-- ⬜ **1. Domain Model**: agent-step/observation/action vocabulary, escalation trigger rules,
-  budget model (steps, calls, wall-clock; screenshot turns count double), guard rules, trace records
-- ⬜ **2. Technical Design**: agent loop on anthropic SDK (tool-use loop, no agent frameworks);
-  browser-port extensions (element references, screenshot); denylist guard placement; trace/snapshot
-  persistence + rotation; CLI command
-- ⬜ **3. ADR Analysis**: tiered observations (text/DOM first, screenshot escalation);
-  bounded action vocabulary vs computer-use; hard caps now / adaptive budgeting later (documented)
-- ⬜ **4. Implement**
-- ⬜ **5. Test**: agent loop with scripted fake LLM (deterministic action sequences); guard blocks
-  mutating URLs/submissions; cap breach → `BUDGET_EXCEEDED`; trace redaction; snapshot rotation
+- ✅ **1. Domain Model**: Complete → ddd-01-domain-model.md
+- ✅ **2. Technical Design**: Complete → ddd-02-technical-design.md
+- ✅ **3. ADR Analysis**: Complete → adr-015, adr-016, adr-017
+- ✅ **4. Implement**: Complete → agent loop + guard + caps + traces + CLI
+- ✅ **5. Test**: Complete → ddd-03-test-report.md (345/345; 68 new)
 
 ## Dependencies
 

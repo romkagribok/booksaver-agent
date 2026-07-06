@@ -4,6 +4,12 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from booksaver.application.ports import ExtractionResult, PageContent, PageSnapshot
+from booksaver.domain.agent import (
+    AgentAction,
+    AgentActionType,
+    ElementInfo,
+    Observation,
+)
 from booksaver.domain.check_result import CheckResult
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
@@ -178,6 +184,9 @@ class FakeInteractiveBrowser:
         self.authenticated = authenticated
         self.present_selectors = present_selectors or set()
         self.property_url: str | None = None  # url after clicking a result title
+        self.elements: tuple[ElementInfo, ...] = ()  # agent observation elements
+        self.fail_refs: set[str] = set()  # refs whose act() raises
+        self.on_act = None  # optional hook: (browser, action) -> None
         self.actions: list[tuple[str, str]] = []
         self.restored_cookies: list[bytes] = []
 
@@ -226,6 +235,31 @@ class FakeInteractiveBrowser:
     def snapshot(self) -> PageSnapshot:
         return PageSnapshot(url=self.url, title="", text=self.page_text)
 
+    # ── agent surface (bolt 007) ────────────────────────────────────────────
+
+    def observe(self) -> Observation:
+        return Observation(
+            url=self.url,
+            title="",
+            text=self.page_text,
+            elements=tuple(getattr(self, "elements", ())),
+        )
+
+    def act(self, action: AgentAction) -> None:
+        self.actions.append(("act", f"{action.type.value} ref={action.ref}"))
+        fail_refs = getattr(self, "fail_refs", set())
+        if action.ref in fail_refs:
+            raise RuntimeError(f"element {action.ref} not interactable")
+        if action.type is AgentActionType.SCROLL:
+            return
+        on_act = getattr(self, "on_act", None)
+        if on_act is not None:
+            on_act(self, action)
+
+    def screenshot(self) -> bytes:
+        self.actions.append(("screenshot", ""))
+        return b"\x89PNG-fake"
+
     def get_cookies(self) -> bytes:
         return b'[{"name": "fresh"}]'
 
@@ -242,3 +276,20 @@ def make_session(cookies: bytes = b"[]") -> SessionState:
         cookies=cookies,
         authenticated_at=datetime.now(UTC),
     )
+
+
+class FakeAgentBrain:
+    """Scripted AgentBrain: returns queued actions in order; gives up when the
+    script runs dry."""
+
+    def __init__(self, script: list[AgentAction]) -> None:
+        self.script = list(script)
+        self.decisions: list[Observation] = []
+
+    def decide(
+        self, goal: str, observation: Observation, history: list[str]
+    ) -> AgentAction:
+        self.decisions.append(observation)
+        if self.script:
+            return self.script.pop(0)
+        return AgentAction(type=AgentActionType.GIVE_UP, value="script exhausted")

@@ -59,7 +59,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Unit | Stories | Status |
 |------|---------|--------|
 | `001-search-journey-monitor` | 3 stories | Complete (bolt 006) |
-| `002-agentic-escalation` | 3 stories | Planned (bolt 007) |
+| `002-agentic-escalation` | 3 stories | Complete (bolt 007) |
 
 ### 001-search-journey-monitor: Search Journey Monitor
 
@@ -73,15 +73,15 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-020` | LLM browser agent takes over failed journey steps | Phase 2 | Ready | `002-agentic-escalation/stories/001-llm-agent-step-takeover.md` |
-| `US-021` | Enforce action guard and hard cost caps | Phase 2 | Ready | `002-agentic-escalation/stories/002-action-guard-and-hard-caps.md` |
-| `US-022` | Trace and inspect agent runs locally | Phase 2 | Ready | `002-agentic-escalation/stories/003-trace-and-inspect-agent-runs.md` |
+| `US-020` | LLM browser agent takes over failed journey steps | Phase 2 | Complete | `002-agentic-escalation/stories/001-llm-agent-step-takeover.md` |
+| `US-021` | Enforce action guard and hard cost caps | Phase 2 | Complete | `002-agentic-escalation/stories/002-action-guard-and-hard-caps.md` |
+| `US-022` | Trace and inspect agent runs locally | Phase 2 | Complete | `002-agentic-escalation/stories/003-trace-and-inspect-agent-runs.md` |
 
 ## Summary
 
 | Intent | Units | Stories | Status |
 |--------|-------|---------|--------|
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
-| `002-agentic-search-monitor` | 2 | 6 | Inception complete; bolts 006–007 planned |
+| `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
 
 All 22 stories (16 original + 6 Phase 2) are assigned exactly once.

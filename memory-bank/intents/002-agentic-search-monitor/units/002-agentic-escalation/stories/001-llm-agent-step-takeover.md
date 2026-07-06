@@ -1,7 +1,7 @@
 ---
 id: US-020
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-020 LLM browser agent takes over failed journey steps
