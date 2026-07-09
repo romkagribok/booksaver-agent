@@ -60,6 +60,15 @@ class TestCalendarHelpers:
             ),
         )
         assert _property_already_in_form(text, [], westin)
+        # Homepage carousel mentions must NOT count as "already set"
+        homepage = (
+            "Genius deals\nThe Westin Hapuna Beach Resort\n"
+            "Stay at our top unique properties\nMauna Kea Beach Hotel"
+        )
+        assert _property_already_in_form(homepage, [], westin) is False
+        assert _property_already_in_form(
+            homepage, ["The Westin Hapuna Beach Resort"], westin
+        )
 
 
 class TestFillSearchGoal:
@@ -81,7 +90,7 @@ class TestFillSearchGoal:
         assert "do not" in goal.lower()
         assert "2026-08-01" in goal
 
-    def test_scripted_fill_skips_search_box_when_property_set(self):
+    def test_scripted_fill_always_retypes_destination(self):
         westin = replace(
             make_booking(),
             property=Property(
@@ -106,7 +115,7 @@ class TestFillSearchGoal:
         result = SearchJourney(browser).run(westin)
         assert result.ok
         fills = [a for k, a in browser.actions if k == "fill" and 'name="ss"' in a]
-        assert not fills
+        assert fills  # session prefill must not skip retyping + autocomplete
 
 
 class TestCalendarNavigation:

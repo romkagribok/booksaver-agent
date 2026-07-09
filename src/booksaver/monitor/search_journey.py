@@ -51,13 +51,17 @@ _SEL_AUTOCOMPLETE_ANY = '[data-testid="autocomplete-result"]'
 # Scope to the searchbox datepicker — bare aria-label*="Next" matches homepage
 # carousels and pages the wrong UI for 24 turns without ever moving the calendar.
 _SEL_DATEPICKER = '[data-testid="searchbox-datepicker-calendar"]'
+# Prefer datepicker-scoped arrows; fall back to exact month labels only (never
+# aria-label*="Next" — that matches homepage carousels).
 _SEL_CALENDAR_PREV = (
     f'{_SEL_DATEPICKER} button[aria-label="Previous month"], '
-    f'{_SEL_DATEPICKER} button[aria-label="Scroll backward"]'
+    f'{_SEL_DATEPICKER} button[aria-label="Scroll backward"], '
+    'button[aria-label="Previous month"]'
 )
 _SEL_CALENDAR_NEXT = (
     f'{_SEL_DATEPICKER} button[aria-label="Next month"], '
-    f'{_SEL_DATEPICKER} button[aria-label="Scroll forward"]'
+    f'{_SEL_DATEPICKER} button[aria-label="Scroll forward"], '
+    'button[aria-label="Next month"]'
 )
 _MAX_CALENDAR_NAV = 24
 
@@ -159,23 +163,35 @@ def _dates_visible_in_form(text: str, check_in: date, check_out: date) -> bool:
 def _property_already_in_form(
     text: str, search_box_values: list[str], booking: Booking
 ) -> bool:
-    """True when the destination field already shows the target property."""
+    """True when the destination field already shows the target property.
+
+    Only trust the search-box value (or an explicit 'N results found' autocomplete
+    state). Never scan the full page body — Booking's homepage often mentions the
+    same hotel in recommendation carousels, which falsely skipped fill_search.
+    """
     wanted = _normalise(booking.property.name)
     if not wanted:
         return False
     if search_box_values:
         box = _normalise(search_box_values[0])
-        if wanted in box or box in wanted:
+        if wanted in box or (box and box in wanted):
             return True
-    norm_text = _normalise(text)
-    if wanted in norm_text and re.search(r"\d+\s+results?\s+found", text, re.I):
-        return True
-    # Long distinctive names are unlikely to be false positives elsewhere on the page.
-    return len(wanted) >= 12 and wanted in norm_text
+    # Autocomplete confirmation line next to the typed destination.
+    if re.search(r"\d+\s+results?\s+found", text, re.I):
+        # Prefer the first ~500 chars (search form region) over the whole page.
+        head = _normalise(text[:800])
+        return wanted in head
+    return False
 
 
-def _search_results_url(booking: Booking) -> str:
-    """searchresults URL with stay dates + occupancy (homepage Search drops dates)."""
+def _search_results_url(
+    booking: Booking, *, dest_id: str | None = None, dest_type: str | None = None
+) -> str:
+    """searchresults URL with stay dates + occupancy (homepage Search drops dates).
+
+    `src=searchresults` keeps query params; `src=index` often redirects to a city
+    landing page with no property cards.
+    """
     occ = booking.occupancy
     assert occ is not None
     params = {
@@ -186,8 +202,11 @@ def _search_results_url(booking: Booking) -> str:
         "group_children": str(occ.children),
         "no_rooms": str(occ.rooms),
         "sb": "1",
-        "src": "index",
+        "src": "searchresults",
     }
+    if dest_id and dest_type:
+        params["dest_id"] = dest_id
+        params["dest_type"] = dest_type
     return f"{_SEARCH_RESULTS_URL}?{urlencode(params)}"
 
 
@@ -429,16 +448,14 @@ class SearchJourney:
     def _fill_search(self, booking: Booking) -> str:
         occ = booking.occupancy
         assert occ is not None  # monitor guards OCCUPANCY_MISSING before the journey
-        text = self._safe_text()
-        box_values = self._search_box_values()
-        prop_set = _property_already_in_form(text, box_values, booking)
-        if not prop_set:
-            self._browser.fill(_SEL_SEARCH_BOX, booking.property.name)
-            try:
-                self._browser.wait_for(_SEL_AUTOCOMPLETE_ANY, timeout_ms=3000)
-            except Exception:
-                pass
-            self._pick_destination_suggestion()
+        # Always (re)type + pick hotel autocomplete. A session-prefilled name alone
+        # is not enough — skipping autocomplete made submit land on city pages.
+        self._browser.fill(_SEL_SEARCH_BOX, booking.property.name)
+        try:
+            self._browser.wait_for(_SEL_AUTOCOMPLETE_ANY, timeout_ms=3000)
+        except Exception:
+            pass
+        self._pick_destination_suggestion()
 
         self._browser.click(_SEL_DATES_CONTAINER)
         self._wait_for_date_picker()
@@ -450,9 +467,8 @@ class SearchJourney:
         self._set_counter("group_adults", occ.adults)
         self._set_counter("group_children", occ.children)
         self._set_counter("no_rooms", occ.rooms)
-        skipped = " (property already set)" if prop_set else ""
         return (
-            f"query={booking.property.name!r}{skipped} dates={booking.stay_dates.check_in}"
+            f"query={booking.property.name!r} dates={booking.stay_dates.check_in}"
             f"..{booking.stay_dates.check_out} occ={occ}"
         )
 
@@ -501,6 +517,13 @@ class SearchJourney:
 
     def _click_calendar_nav(self, direction: str) -> None:
         nav_selector = _SEL_CALENDAR_PREV if direction == "prev" else _SEL_CALENDAR_NEXT
+        if not self._browser.exists(nav_selector):
+            # Picker may have closed; reopen once and retry.
+            try:
+                self._browser.click(_SEL_DATES_CONTAINER)
+                self._wait_for_date_picker()
+            except Exception:
+                pass
         if not self._browser.exists(nav_selector):
             raise RuntimeError(
                 f"Calendar navigation control not found while paging {direction}"
