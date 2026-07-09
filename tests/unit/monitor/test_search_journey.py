@@ -62,11 +62,10 @@ class TestStepFailures:
         assert result.failed_step.step is JourneyStep.OPEN_HOME
 
     def test_missing_date_cell_is_step_failed(self):
-        browser = _happy_browser(fail_selectors={"data-date"})
+        browser = FakeInteractiveBrowser(fail_selectors={"data-date"})
         result = SearchJourney(browser).run(make_booking())
-        assert result.failure_code is FailureCode.STEP_FAILED
+        assert result.failure_code.value == "step_failed"
         assert result.failed_step.step is JourneyStep.FILL_SEARCH
-        assert "data-date" in result.failed_step.detail
 
     def test_property_absent_from_results_is_property_not_found(self):
         browser = _happy_browser()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -174,6 +175,7 @@ class FakeInteractiveBrowser:
         fail_goto: bool = False,
         authenticated: bool = True,
         present_selectors: set[str] | None = None,
+        calendar_month: date | None = date(2026, 9, 1),
     ) -> None:
         self.titles = titles or []
         self.page_text = page_text
@@ -189,6 +191,38 @@ class FakeInteractiveBrowser:
         self.on_act = None  # optional hook: (browser, action) -> None
         self.actions: list[tuple[str, str]] = []
         self.restored_cookies: list[bytes] = []
+        # When set, [data-date] cells exist only for this month and the next.
+        self.calendar_month = calendar_month
+
+    def _month_index(self, d: date) -> int:
+        return d.year * 12 + (d.month - 1)
+
+    def _calendar_date_visible(self, iso_date: str) -> bool:
+        if "data-date" in self.fail_selectors:
+            return False
+        if self.calendar_month is None:
+            return True
+        try:
+            cell = date.fromisoformat(iso_date)
+        except ValueError:
+            return False
+        anchor = self._month_index(self.calendar_month)
+        cell_idx = self._month_index(cell)
+        return anchor <= cell_idx <= anchor + 1
+
+    def _shift_calendar(self, direction: str) -> None:
+        if self.calendar_month is None:
+            return
+        month = self.calendar_month.month + (1 if direction == "next" else -1)
+        year = self.calendar_month.year
+        if month < 1:
+            month, year = 12, year - 1
+        elif month > 12:
+            month, year = 1, year + 1
+        self.calendar_month = date(year, month, 1)
+        name = self.calendar_month.strftime("%B %Y")
+        next_month = date(year + (1 if month == 12 else 0), (month % 12) + 1, 1)
+        self.page_text = f"{name}\n{next_month.strftime('%B %Y')}\n{self.page_text}"
 
     def _check(self, selector: str) -> None:
         for fragment in self.fail_selectors:
@@ -203,6 +237,10 @@ class FakeInteractiveBrowser:
 
     def click(self, selector: str) -> None:
         self.actions.append(("click", selector))
+        if "Previous month" in selector or "calendar-prev" in selector:
+            self._shift_calendar("prev")
+        elif "Next month" in selector or "calendar-next" in selector:
+            self._shift_calendar("next")
         self._check(selector)
         if "title" in selector and self.property_url:
             self.url = self.property_url
@@ -220,7 +258,16 @@ class FakeInteractiveBrowser:
         self._check(selector)
 
     def exists(self, selector: str) -> bool:
-        return selector in self.present_selectors
+        if selector in self.present_selectors:
+            return True
+        match = re.search(r'\[data-date="(\d{4}-\d{2}-\d{2})"\]', selector)
+        if match is not None:
+            return self._calendar_date_visible(match.group(1))
+        if "Previous month" in selector or "calendar-prev" in selector:
+            return "calendar-prev" not in self.fail_selectors
+        if "Next month" in selector or "calendar-next" in selector:
+            return "calendar-next" not in self.fail_selectors
+        return False
 
     def query_text(self, selector: str) -> list[str]:
         self._check(selector)

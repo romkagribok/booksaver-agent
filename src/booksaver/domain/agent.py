@@ -66,6 +66,7 @@ class AgentSettings:
     max_steps: int = 15
     max_llm_calls: int = 20
     check_timeout_seconds: int = 180
+    model: str = "claude-sonnet-4-6"
 
     def __post_init__(self) -> None:
         if self.max_steps < 1:

@@ -81,6 +81,7 @@ class TestAgentAssistedMarker:
 
         def _fix(b: FakeInteractiveBrowser, action: AgentAction) -> None:
             b.fail_selectors.clear()
+            b.page_text = f"{b.page_text}\nSep 1 — Sep 5"
 
         browser.on_act = _fix
         brain = FakeAgentBrain([AgentAction(type=AgentActionType.CLICK, ref="e0")])
@@ -119,6 +120,7 @@ class TestTracePersistence:
 
         def _fix(b: FakeInteractiveBrowser, action: AgentAction) -> None:
             b.fail_selectors.clear()
+            b.page_text = f"{b.page_text}\nSep 1 — Sep 5"
 
         browser.on_act = _fix
         trace_repo = FakeCheckTraceRepository()

@@ -52,11 +52,12 @@ class BrowserAgent:
         goal: str,
         verify: Callable[[], bool],
         trigger: str,
+        screenshot_first: bool = False,
     ) -> EscalationResult:
         self._recorder.escalation_started(step, trigger)
         history: list[str] = [f"scripted attempt failed: {trigger}"]
         consecutive_failures = 0
-        tier2_pending = False
+        tier2_pending = screenshot_first
         used_screenshot = False
 
         try:
@@ -66,6 +67,9 @@ class BrowserAgent:
                 if tier2_pending:
                     observation = self._with_screenshot(observation)
                     used_screenshot = True
+                    if screenshot_first:
+                        self._recorder.screenshot_tier(step, "visual step — screenshot on entry")
+                        screenshot_first = False
                 self._budget.consume_step(tier2=tier2_pending)
                 tier2 = tier2_pending
                 tier2_pending = False

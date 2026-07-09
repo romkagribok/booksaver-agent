@@ -51,6 +51,7 @@ class TestEscalationInJourney:
 
         def _fix(b: FakeInteractiveBrowser, action: AgentAction) -> None:
             b.fail_selectors.clear()  # agent "closed the datepicker overlay"
+            b.page_text = f"{b.page_text}\nSep 1 — Sep 5"
 
         browser.on_act = _fix
         journey = _journey_with_agent(

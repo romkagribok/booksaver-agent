@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
+from datetime import date
 from typing import TYPE_CHECKING
 
 from booksaver.application.ports import InteractiveBrowser
@@ -41,6 +42,42 @@ _SEL_SUBMIT = 'button[type="submit"]'
 _SEL_PROPERTY_CARD = '[data-testid="property-card"]'
 _SEL_PROPERTY_TITLE = '[data-testid="property-card"] [data-testid="title"]'
 _SEL_ROOM_TABLE_ANCHORS = ("#hprt-table", '[data-testid="rt-room-table"]')
+_SEL_CALENDAR_PREV = (
+    'button[aria-label="Previous month"], '
+    'button[aria-label="Scroll backward"], '
+    'button[aria-label*="Previous"], '
+    'button[aria-label*="previous"], '
+    '[data-testid="calendar-prev"], '
+    'button[data-bui-ref="previous-month"]'
+)
+_SEL_CALENDAR_NEXT = (
+    'button[aria-label="Next month"], '
+    'button[aria-label="Scroll forward"], '
+    'button[aria-label*="Next"], '
+    'button[aria-label*="next"], '
+    '[data-testid="calendar-next"], '
+    'button[data-bui-ref="next-month"]'
+)
+_MAX_CALENDAR_NAV = 24
+
+_MONTH_NAME_TO_NUM = {
+    "January": 1,
+    "February": 2,
+    "March": 3,
+    "April": 4,
+    "May": 5,
+    "June": 6,
+    "July": 7,
+    "August": 8,
+    "September": 9,
+    "October": 10,
+    "November": 11,
+    "December": 12,
+}
+_CALENDAR_MONTH_RE = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|"
+    r"October|November|December)\s+(\d{4})\b"
+)
 
 _STEP_FAILURE_CODES = {
     JourneyStep.OPEN_HOME: FailureCode.NAVIGATION_ERROR,
@@ -50,6 +87,48 @@ _STEP_FAILURE_CODES = {
 
 def _normalise(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+
+
+def _month_index(d: date) -> int:
+    return d.year * 12 + (d.month - 1)
+
+
+def _parse_calendar_months(page_text: str) -> list[int]:
+    """Month indices visible in the open date picker (year*12 + month-1)."""
+    found: list[int] = []
+    for match in _CALENDAR_MONTH_RE.finditer(page_text):
+        month = _MONTH_NAME_TO_NUM[match.group(1)]
+        year = int(match.group(2))
+        found.append(_month_index(date(year, month, 1)))
+    return found
+
+
+def _calendar_nav_direction(target: date, visible_month_indices: list[int]) -> str:
+    """Which calendar arrow brings the target month into view."""
+    if not visible_month_indices:
+        return "next"
+    target_idx = _month_index(target)
+    if target_idx < min(visible_month_indices):
+        return "prev"
+    if target_idx > max(visible_month_indices):
+        return "next"
+    return "next"
+
+
+def _date_label_present(text: str, d: date) -> bool:
+    """Best-effort check that a stay date appears in the search form text."""
+    if d.isoformat() in text:
+        return True
+    month_abbr = d.strftime("%b")
+    month_full = d.strftime("%B")
+    return bool(
+        re.search(rf"\b{month_abbr}\s+0?{d.day}\b", text)
+        or re.search(rf"\b{month_full}\s+0?{d.day}\b", text)
+    )
+
+
+def _dates_visible_in_form(text: str, check_in: date, check_out: date) -> bool:
+    return _date_label_present(text, check_in) and _date_label_present(text, check_out)
 
 
 class SearchJourney:
@@ -108,6 +187,8 @@ class SearchJourney:
                         goal=self._step_goal(step, booking),
                         verify=_verify,
                         trigger=str(exc),
+                        screenshot_first=step
+                        in (JourneyStep.FILL_SEARCH, JourneyStep.SUBMIT_SEARCH),
                     )
                     if escalation.ok:
                         agent_assisted = True
@@ -193,7 +274,11 @@ class SearchJourney:
             if step in (JourneyStep.DISMISS_OVERLAYS, JourneyStep.READ_ROOM_TABLE):
                 return not _CAPTCHA_MARKERS.search(self._safe_text())
             if step is JourneyStep.FILL_SEARCH:
-                return True  # no reliable postcondition; submit_search verifies next
+                return _dates_visible_in_form(
+                    self._safe_text(),
+                    booking.stay_dates.check_in,
+                    booking.stay_dates.check_out,
+                )
         except Exception:
             return False
         return False
@@ -239,8 +324,9 @@ class SearchJourney:
         self._browser.fill(_SEL_SEARCH_BOX, booking.property.name)
 
         self._browser.click(_SEL_DATES_CONTAINER)
-        self._browser.click(f'[data-date="{booking.stay_dates.check_in.isoformat()}"]')
-        self._browser.click(f'[data-date="{booking.stay_dates.check_out.isoformat()}"]')
+        self._select_calendar_date(booking.stay_dates.check_in)
+        self._select_calendar_date(booking.stay_dates.check_out)
+        self._close_date_picker()
 
         self._browser.click(_SEL_OCCUPANCY_CONFIG)
         self._set_counter("group_adults", occ.adults)
@@ -250,6 +336,33 @@ class SearchJourney:
             f"query={booking.property.name!r} dates={booking.stay_dates.check_in}"
             f"..{booking.stay_dates.check_out} occ={occ}"
         )
+
+    def _select_calendar_date(self, target: date) -> None:
+        """Click a calendar day, paging prev/next until the target month is visible."""
+        selector = f'[data-date="{target.isoformat()}"]'
+        for _ in range(_MAX_CALENDAR_NAV):
+            if self._browser.exists(selector):
+                self._browser.click(selector)
+                return
+            direction = _calendar_nav_direction(
+                target, _parse_calendar_months(self._safe_text())
+            )
+            nav_selector = _SEL_CALENDAR_PREV if direction == "prev" else _SEL_CALENDAR_NEXT
+            if not self._browser.exists(nav_selector):
+                raise RuntimeError(
+                    f"Calendar navigation control not found while seeking {target.isoformat()}"
+                )
+            self._browser.click(nav_selector)
+        raise RuntimeError(
+            f"Calendar date {target.isoformat()} not found after {_MAX_CALENDAR_NAV} page turns"
+        )
+
+    def _close_date_picker(self) -> None:
+        """Dismiss an open calendar overlay so Search can submit."""
+        try:
+            self._browser.press(_SEL_DATES_CONTAINER, "Escape")
+        except Exception:
+            pass
 
     def _set_counter(self, input_id: str, target: int) -> None:
         """Booking.com occupancy counters are +/- steppers around a numeric input."""
@@ -266,6 +379,7 @@ class SearchJourney:
             self._browser.click(minus)
 
     def _submit_search(self, booking: Booking) -> str:
+        self._close_date_picker()
         self._browser.click(_SEL_SUBMIT)
         self._browser.wait_for(_SEL_PROPERTY_CARD)
         return "results loaded"

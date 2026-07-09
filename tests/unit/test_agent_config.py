@@ -26,20 +26,30 @@ def _base(agent: dict | None = None) -> dict:
 
 class TestAgentConfig:
     def test_defaults_when_section_absent(self):
+        from booksaver.domain.agent import AgentSettings
+
         cfg = load_config(DictSource(_base()))
-        assert cfg.agent_settings.max_steps == 15
+        defaults = AgentSettings()
+        assert cfg.agent_settings.max_steps == defaults.max_steps
         assert cfg.agent_settings.max_llm_calls == 20
         assert cfg.agent_settings.check_timeout_seconds == 180
+        assert cfg.agent_settings.model == "claude-sonnet-4-6"
 
     def test_explicit_values_parsed(self):
         cfg = load_config(
             DictSource(
-                _base({"max_steps": 5, "max_llm_calls": 8, "check_timeout_seconds": 90})
+                _base({
+                    "max_steps": 5,
+                    "max_llm_calls": 8,
+                    "check_timeout_seconds": 90,
+                    "model": "claude-haiku-4-5",
+                })
             )
         )
         assert cfg.agent_settings.max_steps == 5
         assert cfg.agent_settings.max_llm_calls == 8
         assert cfg.agent_settings.check_timeout_seconds == 90
+        assert cfg.agent_settings.model == "claude-haiku-4-5"
 
     def test_partial_section_keeps_other_defaults(self):
         cfg = load_config(DictSource(_base({"max_steps": 30})))

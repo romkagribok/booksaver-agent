@@ -45,6 +45,7 @@ def load_config(source: ConfigSource) -> Config:
             check_timeout_seconds=int(
                 agent_raw.get("check_timeout_seconds", defaults.check_timeout_seconds)
             ),
+            model=str(agent_raw.get("model", defaults.model)),
         )
     except (ValueError, TypeError) as e:
         errors.append(f"agent: {e}")

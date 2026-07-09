@@ -13,6 +13,7 @@ from booksaver.domain.value_objects import Money
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-haiku-4-5"
+DEFAULT_AGENT_MODEL = "claude-sonnet-4-6"
 
 _MAX_PAGE_CHARS = 30_000  # keep prompts bounded; manage pages are text-heavy
 
@@ -230,7 +231,13 @@ cancel anything, and never navigate into checkout, payment, or cancellation
 flows. Interact only through the provided tools, one action per turn, using
 element refs from the current observation. If the page shows a captcha or login
 wall, or the goal seems unreachable, call give_up with a short reason. Prefer
-give_up over guessing."""
+give_up over guessing.
+
+Date-picker tips: the calendar often opens on the wrong month. Use the
+previous/next month arrow buttons until the target month is visible, click the
+check-in day, then the check-out day, then close the calendar (Escape or click
+outside) before submitting search. Request a screenshot when the text list of
+elements is not enough to identify calendar controls."""
 
 _AGENT_TOOLS: list[dict[str, Any]] = [
     {
@@ -326,7 +333,7 @@ def action_from_tool_call(name: str, tool_input: dict[str, Any]) -> AgentAction:
 class AnthropicAgentBrain:
     """AgentBrain adapter: one tool-use messages.create call per turn (ADR-016)."""
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL) -> None:
+    def __init__(self, api_key: str, model: str = DEFAULT_AGENT_MODEL) -> None:
         import anthropic
 
         self._client = anthropic.Anthropic(api_key=api_key)

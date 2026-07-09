@@ -75,6 +75,22 @@ class TestLoopOutcomes:
 
 
 class TestScreenshotTiers:
+    def test_screenshot_first_on_entry(self):
+        browser = _browser()
+        done = {"ok": False}
+        browser.on_act = lambda b, a: done.update(ok=True)
+        agent, brain, _ = _agent(browser, [_click()])
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH,
+            "goal",
+            verify=lambda: done["ok"],
+            trigger="boom",
+            screenshot_first=True,
+        )
+        assert result.ok
+        assert result.used_screenshot
+        assert brain.decisions[0].screenshot is not None
+
     def test_requested_screenshot_arrives_next_turn(self):
         browser = _browser()
         done = {"ok": False}

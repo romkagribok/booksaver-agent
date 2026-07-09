@@ -59,6 +59,7 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 [agent]
 # Hard cost caps per price check (ADR-017). Deliberately simple for now —
 # smarter adaptive budgeting is planned future work if these prove too blunt.
+# model = "claude-sonnet-4-6"        # browser-agent model (extraction uses [extraction])
 # max_steps = 15              # LLM browser-agent turns (screenshot turns count double)
 # max_llm_calls = 20          # all LLM calls in one check (agent + extraction)
 # check_timeout_seconds = 180 # wall-clock limit per booking check
@@ -438,10 +439,9 @@ def _make_agent_brain(cfg: Config) -> Any:
         return None
     try:
         from booksaver.infrastructure.llm.anthropic_adapter import (
-            DEFAULT_MODEL,
             AnthropicAgentBrain,
         )
-        model = cfg.extraction_settings.get("model", DEFAULT_MODEL)
+        model = cfg.agent_settings.model
         return AnthropicAgentBrain(api_key=api_key, model=model)
     except ImportError:
         logging.getLogger(__name__).warning(
