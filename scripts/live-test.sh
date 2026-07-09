@@ -80,25 +80,53 @@ repair_config_if_needed() {
 }
 
 apply_test_tuning() {
-  local marker="# live-test tuning applied"
-  if grep -qF "$marker" "$CONFIG" 2>/dev/null; then
-    return 0
-  fi
+  info "Applying live-test config tuning (Sonnet agent + relaxed caps)"
 
-  info "Applying live-test config tuning (30m interval + relaxed agent caps)"
-  sed -i '' \
-    -e 's/^check_interval = .*/check_interval = "30m"/' \
-    -e 's/^# model = .*/model = "claude-sonnet-4-6"/' \
-    -e 's/^model = .*/model = "claude-sonnet-4-6"/' \
-    -e 's/^# max_steps = .*/max_steps = 40/' \
-    -e 's/^# max_llm_calls = .*/max_llm_calls = 40/' \
-    -e 's/^# check_timeout_seconds = .*/check_timeout_seconds = 420/' \
-    -e 's/^max_steps = .*/max_steps = 40/' \
-    -e 's/^max_llm_calls = .*/max_llm_calls = 40/' \
-    -e 's/^check_timeout_seconds = .*/check_timeout_seconds = 420/' \
-    "$CONFIG"
-  printf '\n%s\n' "$marker" >>"$CONFIG"
-  chmod 600 "$CONFIG"
+  sed -i '' '/# live-test tuning applied/d' "$CONFIG" 2>/dev/null || true
+  sed -i '' 's/^check_interval = .*/check_interval = "30m"/' "$CONFIG"
+
+  python3 - "$CONFIG" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+
+AGENT = {
+    "model": '"claude-sonnet-4-6"',
+    "max_steps": "40",
+    "max_llm_calls": "40",
+    "check_timeout_seconds": "420",
+}
+EXTRACTION_MODEL = '"claude-haiku-4-5"'
+
+
+def patch_section(src: str, section: str, values: dict[str, str]) -> str:
+    pattern = rf"(\[{re.escape(section)}\][^\[]*)"
+    match = re.search(pattern, src, re.DOTALL)
+    block = match.group(1) if match else f"[{section}]\n"
+    for key, val in values.items():
+        line = f"{key} = {val}"
+        if re.search(rf"^{re.escape(key)} = ", block, re.MULTILINE):
+            block = re.sub(rf"^{re.escape(key)} = .*$", line, block, count=1, flags=re.MULTILINE)
+        elif re.search(rf"^# {re.escape(key)} = ", block, re.MULTILINE):
+            block = re.sub(rf"^# {re.escape(key)} = .*$", line, block, count=1, flags=re.MULTILINE)
+        else:
+            block = block.rstrip() + f"\n{line}\n"
+    if match:
+        return src[: match.start(1)] + block + src[match.end(1) :]
+    return src.rstrip() + f"\n\n{block}"
+
+
+text = patch_section(text, "agent", AGENT)
+text = patch_section(text, "extraction", {"model": EXTRACTION_MODEL})
+if not text.endswith("\n"):
+    text += "\n"
+text += "# live-test tuning applied\n"
+path.write_text(text)
+path.chmod(0o600)
+PY
 }
 
 ensure_config() {
