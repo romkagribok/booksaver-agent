@@ -236,6 +236,8 @@ class FakeInteractiveBrowser:
         if self.fail_goto:
             raise TimeoutError(f"Navigation to {url} timed out")
         self.url = url
+        if "/hotel/" in url or "checkin=" in url:
+            self.present_selectors.update({"#hprt-table", '[data-testid="rt-room-table"]'})
 
     def click(self, selector: str) -> None:
         self.actions.append(("click", selector))
@@ -290,6 +292,10 @@ class FakeInteractiveBrowser:
 
     def query_attr(self, selector: str, attr: str) -> list[str]:
         self._check(selector)
+        if attr == "href" and "title-link" in selector:
+            if self.property_url:
+                return [self.property_url for _ in self.titles] or [self.property_url]
+            return []
         if attr == "data-date" and "data-date" in selector:
             if self.calendar_month is None:
                 return []

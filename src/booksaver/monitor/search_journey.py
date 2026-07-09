@@ -576,7 +576,14 @@ class SearchJourney:
         titles = self._browser.query_text(_SEL_PROPERTY_TITLE)
         wanted = _normalise(booking.property.name)
         index = next(i for i, t in enumerate(titles) if _normalise(t) == wanted)
-        self._browser.click(f"{_SEL_PROPERTY_TITLE} >> nth={index}")
+        # Property cards open target=_blank; clicking leaves the journey on the
+        # results page. Navigate the same tab via the title-link href instead.
+        hrefs = self._browser.query_attr('[data-testid="title-link"]', "href")
+        if index >= len(hrefs) or not hrefs[index]:
+            raise RuntimeError(
+                f"No title-link href for property {booking.property.name!r} at index {index}"
+            )
+        self._browser.goto(hrefs[index])
         last_error: Exception | None = None
         for anchor in _SEL_ROOM_TABLE_ANCHORS:
             try:
