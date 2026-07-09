@@ -14,6 +14,13 @@ _SIGN_IN_MARKERS = re.compile(r"(sign in to manage|log in to your account|create
 
 _PAGE_TIMEOUT_MS = 45_000
 _ACTION_TIMEOUT_MS = 15_000
+# Booking.com strips searchresults query params for Playwright's default headless
+# UA (empty results shell). A normal Chrome UA keeps dates/destination + cards.
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/122.0.0.0 Safari/537.36"
+)
 
 # Include Booking.com calendar day cells (role=checkbox + data-date) so the agent
 # can click check-in/out dates — they are not <button>s.
@@ -46,7 +53,10 @@ class PlaywrightBrowserSession:
 
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=self._headless)
-        self._context = self._browser.new_context()
+        self._context = self._browser.new_context(
+            user_agent=_BROWSER_USER_AGENT,
+            locale="en-US",
+        )
         return self._context
 
     def open_page(self, url: str) -> PageContent:
@@ -113,7 +123,10 @@ class PlaywrightInteractiveBrowser:
 
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=self._headless)
-        self._context = self._browser.new_context()
+        self._context = self._browser.new_context(
+            user_agent=_BROWSER_USER_AGENT,
+            locale="en-US",
+        )
         self._page = self._context.new_page()
         self._page.set_default_timeout(_ACTION_TIMEOUT_MS)
         return self._page
