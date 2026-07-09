@@ -176,6 +176,7 @@ class FakeInteractiveBrowser:
         authenticated: bool = True,
         present_selectors: set[str] | None = None,
         calendar_month: date | None = date(2026, 9, 1),
+        search_box_value: str = "",
     ) -> None:
         self.titles = titles or []
         self.page_text = page_text
@@ -193,6 +194,7 @@ class FakeInteractiveBrowser:
         self.restored_cookies: list[bytes] = []
         # When set, [data-date] cells exist only for this month and the next.
         self.calendar_month = calendar_month
+        self.search_box_value = search_box_value
 
     def _month_index(self, d: date) -> int:
         return d.year * 12 + (d.month - 1)
@@ -245,8 +247,13 @@ class FakeInteractiveBrowser:
         if "title" in selector and self.property_url:
             self.url = self.property_url
 
+    def click_first_visible(self, selector: str) -> None:
+        self.click(selector)
+
     def fill(self, selector: str, text: str) -> None:
         self.actions.append(("fill", f"{selector}={text}"))
+        if 'name="ss"' in selector:
+            self.search_box_value = text
         self._check(selector)
 
     def press(self, selector: str, key: str) -> None:
@@ -277,6 +284,29 @@ class FakeInteractiveBrowser:
             name = selector.removeprefix("input#")
             if name in self.counters:
                 return [str(self.counters[name])]
+        if 'name="ss"' in selector and self.search_box_value:
+            return [self.search_box_value]
+        return []
+
+    def query_attr(self, selector: str, attr: str) -> list[str]:
+        self._check(selector)
+        if attr == "data-date" and "data-date" in selector:
+            if self.calendar_month is None:
+                return []
+            # Two visible months of day cells, matching Booking.com's dual calendar.
+            values: list[str] = []
+            for offset in (0, 1):
+                month = self.calendar_month.month + offset
+                year = self.calendar_month.year
+                if month > 12:
+                    month, year = month - 12, year + 1
+                # First of month through a few days is enough for month detection.
+                for day in range(1, 8):
+                    try:
+                        values.append(date(year, month, day).isoformat())
+                    except ValueError:
+                        break
+            return values
         return []
 
     def snapshot(self) -> PageSnapshot:

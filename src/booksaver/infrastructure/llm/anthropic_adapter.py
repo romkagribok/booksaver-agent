@@ -236,8 +236,10 @@ give_up over guessing.
 Date-picker tips: the calendar often opens on the wrong month. Use the
 previous/next month arrow buttons until the target month is visible, click the
 check-in day, then the check-out day, then close the calendar (Escape or click
-outside) before submitting search. Request a screenshot when the text list of
-elements is not enough to identify calendar controls."""
+outside) before submitting search. If the destination or property name is already
+shown in the search form (or "1 result found"), do NOT refill the search box —
+click the date display and fix dates only. Request a screenshot when the text list
+of elements is not enough to identify calendar controls."""
 
 _AGENT_TOOLS: list[dict[str, Any]] = [
     {

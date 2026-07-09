@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from datetime import date
 from typing import TYPE_CHECKING
+from urllib.parse import urlencode
 
 from booksaver.application.ports import InteractiveBrowser
 from booksaver.domain.agent import BudgetExceeded
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 _NON_ESCALATABLE = frozenset({FailureCode.BOT_WALL, FailureCode.AUTH_REQUIRED})
 
 _HOME_URL = "https://www.booking.com"
+_SEARCH_RESULTS_URL = "https://www.booking.com/searchresults.html"
 
 _CAPTCHA_MARKERS = re.compile(
     r"(are you a human|verify you are human|hcaptcha|px-captcha|unusual traffic)", re.I
@@ -42,21 +44,20 @@ _SEL_SUBMIT = 'button[type="submit"]'
 _SEL_PROPERTY_CARD = '[data-testid="property-card"]'
 _SEL_PROPERTY_TITLE = '[data-testid="property-card"] [data-testid="title"]'
 _SEL_ROOM_TABLE_ANCHORS = ("#hprt-table", '[data-testid="rt-room-table"]')
+_SEL_AUTOCOMPLETE_HOTEL = (
+    '[data-testid="autocomplete-result"]:has([data-testid="autocomplete-icon-hotel"])'
+)
+_SEL_AUTOCOMPLETE_ANY = '[data-testid="autocomplete-result"]'
+# Scope to the searchbox datepicker — bare aria-label*="Next" matches homepage
+# carousels and pages the wrong UI for 24 turns without ever moving the calendar.
+_SEL_DATEPICKER = '[data-testid="searchbox-datepicker-calendar"]'
 _SEL_CALENDAR_PREV = (
-    'button[aria-label="Previous month"], '
-    'button[aria-label="Scroll backward"], '
-    'button[aria-label*="Previous"], '
-    'button[aria-label*="previous"], '
-    '[data-testid="calendar-prev"], '
-    'button[data-bui-ref="previous-month"]'
+    f'{_SEL_DATEPICKER} button[aria-label="Previous month"], '
+    f'{_SEL_DATEPICKER} button[aria-label="Scroll backward"]'
 )
 _SEL_CALENDAR_NEXT = (
-    'button[aria-label="Next month"], '
-    'button[aria-label="Scroll forward"], '
-    'button[aria-label*="Next"], '
-    'button[aria-label*="next"], '
-    '[data-testid="calendar-next"], '
-    'button[data-bui-ref="next-month"]'
+    f'{_SEL_DATEPICKER} button[aria-label="Next month"], '
+    f'{_SEL_DATEPICKER} button[aria-label="Scroll forward"]'
 )
 _MAX_CALENDAR_NAV = 24
 
@@ -94,7 +95,11 @@ def _month_index(d: date) -> int:
 
 
 def _parse_calendar_months(page_text: str) -> list[int]:
-    """Month indices visible in the open date picker (year*12 + month-1)."""
+    """Month indices from calendar headers in page text (year*12 + month-1).
+
+    Prefer `_months_from_data_dates` when day cells are present — full-page text
+    can mention other months and send navigation the wrong way.
+    """
     found: list[int] = []
     for match in _CALENDAR_MONTH_RE.finditer(page_text):
         month = _MONTH_NAME_TO_NUM[match.group(1)]
@@ -103,16 +108,36 @@ def _parse_calendar_months(page_text: str) -> list[int]:
     return found
 
 
+def _months_from_data_dates(iso_dates: list[str]) -> list[int]:
+    """Unique month indices derived from visible `[data-date]` day cells."""
+    found: list[int] = []
+    seen: set[int] = set()
+    for raw in iso_dates:
+        try:
+            d = date.fromisoformat(raw)
+        except ValueError:
+            continue
+        idx = _month_index(d)
+        if idx not in seen:
+            seen.add(idx)
+            found.append(idx)
+    return found
+
+
 def _calendar_nav_direction(target: date, visible_month_indices: list[int]) -> str:
     """Which calendar arrow brings the target month into view."""
     if not visible_month_indices:
-        return "next"
+        return "prev"  # Booking defaults near "today"+; targets are usually earlier
     target_idx = _month_index(target)
     if target_idx < min(visible_month_indices):
         return "prev"
     if target_idx > max(visible_month_indices):
         return "next"
-    return "next"
+    # Target month is already showing but the day cell is missing — do not thrash.
+    raise RuntimeError(
+        f"Calendar shows months covering {target.isoformat()} but that day cell "
+        f"is missing (visible month indices={visible_month_indices})"
+    )
 
 
 def _date_label_present(text: str, d: date) -> bool:
@@ -129,6 +154,41 @@ def _date_label_present(text: str, d: date) -> bool:
 
 def _dates_visible_in_form(text: str, check_in: date, check_out: date) -> bool:
     return _date_label_present(text, check_in) and _date_label_present(text, check_out)
+
+
+def _property_already_in_form(
+    text: str, search_box_values: list[str], booking: Booking
+) -> bool:
+    """True when the destination field already shows the target property."""
+    wanted = _normalise(booking.property.name)
+    if not wanted:
+        return False
+    if search_box_values:
+        box = _normalise(search_box_values[0])
+        if wanted in box or box in wanted:
+            return True
+    norm_text = _normalise(text)
+    if wanted in norm_text and re.search(r"\d+\s+results?\s+found", text, re.I):
+        return True
+    # Long distinctive names are unlikely to be false positives elsewhere on the page.
+    return len(wanted) >= 12 and wanted in norm_text
+
+
+def _search_results_url(booking: Booking) -> str:
+    """searchresults URL with stay dates + occupancy (homepage Search drops dates)."""
+    occ = booking.occupancy
+    assert occ is not None
+    params = {
+        "ss": booking.property.name,
+        "checkin": booking.stay_dates.check_in.isoformat(),
+        "checkout": booking.stay_dates.check_out.isoformat(),
+        "group_adults": str(occ.adults),
+        "group_children": str(occ.children),
+        "no_rooms": str(occ.rooms),
+        "sb": "1",
+        "src": "index",
+    }
+    return f"{_SEARCH_RESULTS_URL}?{urlencode(params)}"
 
 
 class SearchJourney:
@@ -182,11 +242,13 @@ class SearchJourney:
                     def _verify(s: JourneyStep = step, b: Booking = booking) -> bool:
                         return self._step_verified(s, b)
 
+                    trigger = self._escalation_trigger(step, booking, exc)
+
                     escalation = self._escalator.complete_step(
                         step,
                         goal=self._step_goal(step, booking),
                         verify=_verify,
-                        trigger=str(exc),
+                        trigger=trigger,
                         screenshot_first=step
                         in (JourneyStep.FILL_SEARCH, JourneyStep.SUBMIT_SEARCH),
                     )
@@ -226,20 +288,13 @@ class SearchJourney:
     # ── escalation support (US-020) ──────────────────────────────────────────
 
     def _step_goal(self, step: JourneyStep, booking: Booking) -> str:
-        occ = booking.occupancy
+        if step is JourneyStep.FILL_SEARCH:
+            return self._fill_search_goal(booking)
         goals = {
             JourneyStep.OPEN_HOME: "Get the Booking.com home page open with its "
             "accommodation search box visible.",
             JourneyStep.DISMISS_OVERLAYS: "Close any popup, banner, or overlay hiding "
             "the search form (cookie consent, sign-in nags, promos).",
-            JourneyStep.FILL_SEARCH: (
-                f"Fill the accommodation search: destination/property "
-                f"{booking.property.name!r}, check-in "
-                f"{booking.stay_dates.check_in.isoformat()}, check-out "
-                f"{booking.stay_dates.check_out.isoformat()}"
-                + (f", {occ.adults} adults, {occ.children} children, {occ.rooms} room(s)."
-                   if occ else ".")
-            ),
             JourneyStep.SUBMIT_SEARCH: "Submit the search so property results are shown.",
             JourneyStep.LOCATE_PROPERTY: f"Find the property {booking.property.name!r} "
             "in the search results list.",
@@ -252,6 +307,59 @@ class SearchJourney:
             "cancellation policies fully visible.",
         }
         return goals[step]
+
+    def _fill_search_goal(self, booking: Booking) -> str:
+        text = self._safe_text()
+        box_values = self._search_box_values()
+        check_in = booking.stay_dates.check_in.isoformat()
+        check_out = booking.stay_dates.check_out.isoformat()
+        occ = booking.occupancy
+        occ_suffix = ""
+        if occ:
+            occ_suffix = (
+                f", then set occupancy to {occ.adults} adults, "
+                f"{occ.children} children, {occ.rooms} room(s)"
+            )
+        if _property_already_in_form(text, box_values, booking):
+            return (
+                "The destination/property is ALREADY set — do NOT re-type or refill "
+                "the search box. ONLY fix the dates: click the date display or "
+                "calendar icon to open the picker, use previous/next month arrows "
+                f"until the right month is visible, select check-in {check_in} then "
+                f"check-out {check_out}, close the calendar (Escape or click outside)"
+                f"{occ_suffix}. Both dates must appear in the search form before stopping."
+            )
+        occ_clause = ""
+        if occ:
+            occ_clause = (
+                f", {occ.adults} adults, {occ.children} children, {occ.rooms} room(s)."
+            )
+        return (
+            f"Fill the accommodation search: destination/property "
+            f"{booking.property.name!r}, check-in {check_in}, check-out {check_out}"
+            f"{occ_clause}"
+        )
+
+    def _escalation_trigger(
+        self, step: JourneyStep, booking: Booking, exc: Exception
+    ) -> str:
+        trigger = str(exc)
+        if step is not JourneyStep.FILL_SEARCH:
+            return trigger
+        text = self._safe_text()
+        if not _property_already_in_form(text, self._search_box_values(), booking):
+            return trigger
+        return (
+            f"{trigger}; property already set in search form — only fix dates "
+            f"({booking.stay_dates.check_in.isoformat()} to "
+            f"{booking.stay_dates.check_out.isoformat()}), do not refill destination"
+        )
+
+    def _search_box_values(self) -> list[str]:
+        try:
+            return self._browser.query_text(_SEL_SEARCH_BOX)
+        except Exception:
+            return []
 
     def _step_verified(self, step: JourneyStep, booking: Booking) -> bool:
         """Postcondition check so agent success is verified, not assumed."""
@@ -321,9 +429,19 @@ class SearchJourney:
     def _fill_search(self, booking: Booking) -> str:
         occ = booking.occupancy
         assert occ is not None  # monitor guards OCCUPANCY_MISSING before the journey
-        self._browser.fill(_SEL_SEARCH_BOX, booking.property.name)
+        text = self._safe_text()
+        box_values = self._search_box_values()
+        prop_set = _property_already_in_form(text, box_values, booking)
+        if not prop_set:
+            self._browser.fill(_SEL_SEARCH_BOX, booking.property.name)
+            try:
+                self._browser.wait_for(_SEL_AUTOCOMPLETE_ANY, timeout_ms=3000)
+            except Exception:
+                pass
+            self._pick_destination_suggestion()
 
         self._browser.click(_SEL_DATES_CONTAINER)
+        self._wait_for_date_picker()
         self._select_calendar_date(booking.stay_dates.check_in)
         self._select_calendar_date(booking.stay_dates.check_out)
         self._close_date_picker()
@@ -332,30 +450,62 @@ class SearchJourney:
         self._set_counter("group_adults", occ.adults)
         self._set_counter("group_children", occ.children)
         self._set_counter("no_rooms", occ.rooms)
+        skipped = " (property already set)" if prop_set else ""
         return (
-            f"query={booking.property.name!r} dates={booking.stay_dates.check_in}"
+            f"query={booking.property.name!r}{skipped} dates={booking.stay_dates.check_in}"
             f"..{booking.stay_dates.check_out} occ={occ}"
         )
+
+    def _pick_destination_suggestion(self) -> None:
+        """Click the hotel autocomplete row when Booking offers one (best-effort)."""
+        for selector in (_SEL_AUTOCOMPLETE_HOTEL, _SEL_AUTOCOMPLETE_ANY):
+            if not self._browser.exists(selector):
+                continue
+            try:
+                self._browser.click(selector)
+                return
+            except Exception:
+                continue
+
+    def _wait_for_date_picker(self) -> None:
+        """Give the calendar overlay time to render after opening the date field."""
+        try:
+            self._browser.wait_for('[data-date]', timeout_ms=5000)
+        except Exception:
+            pass
 
     def _select_calendar_date(self, target: date) -> None:
         """Click a calendar day, paging prev/next until the target month is visible."""
         selector = f'[data-date="{target.isoformat()}"]'
         for _ in range(_MAX_CALENDAR_NAV):
             if self._browser.exists(selector):
-                self._browser.click(selector)
+                self._browser.click_first_visible(selector)
                 return
-            direction = _calendar_nav_direction(
-                target, _parse_calendar_months(self._safe_text())
-            )
-            nav_selector = _SEL_CALENDAR_PREV if direction == "prev" else _SEL_CALENDAR_NEXT
-            if not self._browser.exists(nav_selector):
-                raise RuntimeError(
-                    f"Calendar navigation control not found while seeking {target.isoformat()}"
-                )
-            self._browser.click(nav_selector)
+            visible = self._visible_calendar_months()
+            direction = _calendar_nav_direction(target, visible)
+            self._click_calendar_nav(direction)
         raise RuntimeError(
             f"Calendar date {target.isoformat()} not found after {_MAX_CALENDAR_NAV} page turns"
         )
+
+    def _visible_calendar_months(self) -> list[int]:
+        """Months currently shown in the datepicker, from day-cell data-dates."""
+        try:
+            iso_dates = self._browser.query_attr("[data-date]", "data-date")
+        except Exception:
+            iso_dates = []
+        months = _months_from_data_dates(iso_dates)
+        if months:
+            return months
+        return _parse_calendar_months(self._safe_text())
+
+    def _click_calendar_nav(self, direction: str) -> None:
+        nav_selector = _SEL_CALENDAR_PREV if direction == "prev" else _SEL_CALENDAR_NEXT
+        if not self._browser.exists(nav_selector):
+            raise RuntimeError(
+                f"Calendar navigation control not found while paging {direction}"
+            )
+        self._browser.click_first_visible(nav_selector)
 
     def _close_date_picker(self) -> None:
         """Dismiss an open calendar overlay so Search can submit."""
@@ -380,9 +530,13 @@ class SearchJourney:
 
     def _submit_search(self, booking: Booking) -> str:
         self._close_date_picker()
-        self._browser.click(_SEL_SUBMIT)
+        # Homepage Search often omits check-in/out from the request (SPA quirk under
+        # automation). Load searchresults with the dates/occupancy we just set —
+        # still the search journey (results list → property), not a direct hotel URL.
+        url = _search_results_url(booking)
+        self._browser.goto(url)
         self._browser.wait_for(_SEL_PROPERTY_CARD)
-        return "results loaded"
+        return f"results loaded ({url})"
 
     def _locate_property(self, booking: Booking) -> str:
         titles = self._browser.query_text(_SEL_PROPERTY_TITLE)

@@ -38,11 +38,12 @@ class FailureTracker:
             self._warned.add(booking_id)
             logger.warning(
                 "Booking %s has failed %d consecutive checks (threshold %d). "
-                "The booking remains registered; check your session with 'booksaver auth' "
-                "or review the failure reasons in check history.",
+                "Checks still run — review failure reasons with "
+                "'booksaver checks list %s'. Session OK? Run 'booksaver auth'.",
                 booking_id,
                 consecutive,
                 self._threshold,
+                booking_id,
             )
             return True
         return False

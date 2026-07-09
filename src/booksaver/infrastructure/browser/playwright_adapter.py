@@ -15,7 +15,12 @@ _SIGN_IN_MARKERS = re.compile(r"(sign in to manage|log in to your account|create
 _PAGE_TIMEOUT_MS = 45_000
 _ACTION_TIMEOUT_MS = 15_000
 
-_INTERACTIVE_SELECTOR = "a, button, input, select, textarea, [role='button']"
+# Include Booking.com calendar day cells (role=checkbox + data-date) so the agent
+# can click check-in/out dates — they are not <button>s.
+_INTERACTIVE_SELECTOR = (
+    "a, button, input, select, textarea, [role='button'], "
+    "[role='checkbox'][data-date], [data-date][role='checkbox']"
+)
 _MAX_ELEMENTS = 120
 _OBSERVATION_TEXT_CHARS = 30_000
 
@@ -120,6 +125,19 @@ class PlaywrightInteractiveBrowser:
     def click(self, selector: str) -> None:
         self._ensure_page().locator(selector).first.click()
 
+    def click_first_visible(self, selector: str) -> None:
+        page = self._ensure_page()
+        locator = page.locator(selector)
+        for i in range(locator.count()):
+            item = locator.nth(i)
+            if item.is_visible():
+                item.click(timeout=_ACTION_TIMEOUT_MS)
+                return
+        if locator.count() > 0:
+            locator.first.click(force=True, timeout=_ACTION_TIMEOUT_MS)
+            return
+        raise RuntimeError(f"No visible element matching: {selector}")
+
     def fill(self, selector: str, text: str) -> None:
         self._ensure_page().locator(selector).first.fill(text)
 
@@ -147,6 +165,16 @@ class PlaywrightInteractiveBrowser:
             texts.append(value.strip())
         return texts
 
+    def query_attr(self, selector: str, attr: str) -> list[str]:
+        page = self._ensure_page()
+        locator = page.locator(selector)
+        values: list[str] = []
+        for i in range(locator.count()):
+            raw = locator.nth(i).get_attribute(attr)
+            if raw is not None:
+                values.append(raw)
+        return values
+
     def snapshot(self) -> PageSnapshot:
         page = self._ensure_page()
         return PageSnapshot(url=page.url, title=page.title(), text=page.inner_text("body"))
@@ -169,10 +197,20 @@ class PlaywrightInteractiveBrowser:
                 if not handle.is_visible():
                     continue
                 tag = handle.evaluate("el => el.tagName.toLowerCase()")
-                role = {"a": "link", "input": "input", "select": "select",
-                        "textarea": "input"}.get(tag, "button")
-                label = (handle.inner_text() or handle.get_attribute("aria-label")
-                         or handle.get_attribute("placeholder") or "").strip()[:120]
+                role_attr = handle.get_attribute("role") or ""
+                if role_attr == "checkbox":
+                    role = "checkbox"
+                else:
+                    role = {"a": "link", "input": "input", "select": "select",
+                            "textarea": "input"}.get(tag, "button")
+                label = (
+                    handle.get_attribute("aria-label")
+                    or handle.inner_text()
+                    or handle.get_attribute("placeholder")
+                    or ""
+                ).strip()[:120]
+                if not label and handle.get_attribute("data-date"):
+                    label = f"date {handle.get_attribute('data-date')}"
                 href = handle.get_attribute("href") if role == "link" else None
             except Exception:
                 continue

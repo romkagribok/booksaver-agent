@@ -41,6 +41,39 @@ def _browser() -> FakeInteractiveBrowser:
     return browser
 
 
+class TestScreenshotRequestCap:
+    def test_repeated_screenshot_requests_are_denied_then_give_up(self):
+        req = AgentAction(type=AgentActionType.REQUEST_SCREENSHOT)
+        agent, brain, _ = _agent(_browser(), [req] * 8)
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
+        )
+        assert result.failure_code is FailureCode.AGENT_GAVE_UP
+        assert "screenshot" in result.detail.lower()
+        # 2 granted + denied attempts until give-up on 5th consecutive request
+        assert len(brain.decisions) < 8
+
+
+class TestLoopDetection:
+    def test_repeated_identical_action_gives_up_before_budget(self):
+        agent, brain, _ = _agent(_browser(), [_click()] * 10)
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
+        )
+        assert result.failure_code is FailureCode.AGENT_GAVE_UP
+        assert "loop" in result.detail.lower()
+        assert len(brain.decisions) == 5
+
+    def test_loop_hint_escalates_to_screenshot(self):
+        browser = _browser()
+        agent, brain, _ = _agent(browser, [_click()] * 5)
+        agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
+        )
+        # fourth decision (index 3) follows three identical unverified clicks
+        assert brain.decisions[3].screenshot is not None
+
+
 class TestLoopOutcomes:
     def test_action_then_verified_success(self):
         browser = _browser()

@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from booksaver.application.ports import AgentBrain, InteractiveBrowser
 from booksaver.domain.agent import (
+    AgentAction,
     AgentActionType,
     AgentBudget,
     BudgetExceeded,
@@ -22,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 # Two consecutive failed actions auto-escalate the observation to tier 2 (ADR-015).
 _FAILURES_BEFORE_SCREENSHOT = 2
+# Identical successful-but-unverified actions signal the agent is stuck (e.g. refilling
+# an already-correct search box). Nudge early, give up before burning the step budget.
+_LOOP_HINT_AFTER = 3
+_LOOP_GIVE_UP_AFTER = 5
+# Screenshot requests are expensive (2x step cost) and agents can spam them when stuck.
+_MAX_SCREENSHOT_REQUESTS = 2
 
 
 class BrowserAgent:
@@ -59,6 +66,8 @@ class BrowserAgent:
         consecutive_failures = 0
         tier2_pending = screenshot_first
         used_screenshot = False
+        recent_action_keys: list[str] = []
+        screenshot_requests = 0
 
         try:
             while True:
@@ -89,6 +98,27 @@ class BrowserAgent:
                     )
 
                 if action.type is AgentActionType.REQUEST_SCREENSHOT:
+                    recent_action_keys.append(_action_key(action))
+                    screenshot_requests += 1
+                    if screenshot_requests > _MAX_SCREENSHOT_REQUESTS:
+                        streak = _action_streak(recent_action_keys)
+                        if streak >= _LOOP_GIVE_UP_AFTER:
+                            detail = (
+                                f"agent stuck requesting screenshots at {step.value} "
+                                f"without acting on the calendar"
+                            )
+                            self._recorder.agent_result(step, detail)
+                            return EscalationResult(
+                                ok=False,
+                                detail=detail,
+                                failure_code=FailureCode.AGENT_GAVE_UP,
+                                used_screenshot=used_screenshot,
+                            )
+                        history.append(
+                            "Screenshot already provided — stop requesting. Click the date "
+                            "display, previous/next month arrows, or a calendar day cell."
+                        )
+                        continue
                     self._recorder.screenshot_tier(step, "requested by agent")
                     tier2_pending = True
                     history.append("screenshot requested; provided next turn")
@@ -102,6 +132,8 @@ class BrowserAgent:
 
                 try:
                     self._browser.act(action)
+                    action_key = _action_key(action)
+                    recent_action_keys.append(action_key)
                     history.append(f"did {action.type.value} ref={action.ref}")
                     consecutive_failures = 0
                 except Exception as exc:
@@ -133,6 +165,22 @@ class BrowserAgent:
                         used_screenshot=used_screenshot,
                     )
                 history.append("step goal not yet met after that action")
+                streak = _action_streak(recent_action_keys)
+                if streak >= _LOOP_GIVE_UP_AFTER:
+                    detail = (
+                        f"agent stuck in loop at {step.value}: repeated "
+                        f"{action_key} {_LOOP_GIVE_UP_AFTER} times without progress"
+                    )
+                    self._recorder.agent_result(step, detail)
+                    return EscalationResult(
+                        ok=False,
+                        detail=detail,
+                        failure_code=FailureCode.AGENT_GAVE_UP,
+                        used_screenshot=used_screenshot,
+                    )
+                if streak >= _LOOP_HINT_AFTER:
+                    history.append(_loop_nudge(step, action))
+                    tier2_pending = True
 
         except BudgetExceeded as exc:
             self._recorder.agent_result(step, f"budget exceeded: {exc}")
@@ -152,3 +200,38 @@ class BrowserAgent:
         except Exception as exc:
             logger.warning("Screenshot capture failed, staying on tier 1: %s", exc)
             return observation
+
+
+def _action_key(action: AgentAction) -> str:
+    return f"{action.type.value}:{action.ref or ''}:{action.value or ''}"
+
+
+def _action_streak(recent_keys: list[str]) -> int:
+    if not recent_keys:
+        return 0
+    last = recent_keys[-1]
+    streak = 0
+    for key in reversed(recent_keys):
+        if key != last:
+            break
+        streak += 1
+    return streak
+
+
+def _loop_nudge(step: JourneyStep, action: AgentAction) -> str:
+    base = (
+        "LOOP WARNING: that same action did not progress the goal. "
+        "Try a DIFFERENT element — do not repeat it."
+    )
+    if step is JourneyStep.FILL_SEARCH and action.type is AgentActionType.FILL:
+        return (
+            f"{base} The destination is likely already set; open the DATE picker "
+            "(click the date display or month arrows), select the correct check-in "
+            "and check-out days, then close the calendar. Do not refill the search box."
+        )
+    if step is JourneyStep.FILL_SEARCH and action.type is AgentActionType.CLICK:
+        return (
+            f"{base} Try a different calendar control — month arrows, a day cell, "
+            "or the date display — until check-in and check-out dates match the goal."
+        )
+    return base
