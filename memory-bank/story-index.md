@@ -77,11 +77,61 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-021` | Enforce action guard and hard cost caps | Phase 2 | Complete | `002-agentic-escalation/stories/002-action-guard-and-hard-caps.md` |
 | `US-022` | Trace and inspect agent runs locally | Phase 2 | Complete | `002-agentic-escalation/stories/003-trace-and-inspect-agent-runs.md` |
 
+## 003-telegram-interface
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-telegram-bot-gateway` | 3 stories | Planned (bolt 008) |
+| `002-user-access-and-keys` | 4 stories | Planned (bolt 009) |
+| `003-conversational-booking-ops` | 3 stories | Planned (bolt 010) |
+| `004-telegram-rebook-gate` | 2 stories | Planned (bolt 011) |
+| `005-vps-deployment` | 2 stories | Planned (bolt 012) |
+
+### 001-telegram-bot-gateway: Telegram Bot Gateway
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-023` | Run Telegram update loop inside the daemon | Phase 3 | Ready | `001-telegram-bot-gateway/stories/001-run-telegram-update-loop.md` |
+| `US-024` | Route commands and multi-step dialogs | Phase 3 | Ready | `001-telegram-bot-gateway/stories/002-route-commands-and-dialogs.md` |
+| `US-036` | Inspect daemon health and history from chat | Phase 3 | Ready | `001-telegram-bot-gateway/stories/003-inspect-daemon-from-chat.md` |
+
+### 002-user-access-and-keys: User Access & Keys
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-026` | Enforce access modes for a discoverable bot | Phase 3 | Ready | `002-user-access-and-keys/stories/001-enforce-access-modes.md` |
+| `US-027` | Bring your own Anthropic API key | Phase 3 | Ready | `002-user-access-and-keys/stories/002-bring-your-own-anthropic-key.md` |
+| `US-028` | Owner admin commands | Phase 3 | Ready | `002-user-access-and-keys/stories/003-owner-admin-commands.md` |
+| `US-029` | User-scoped persistence (schema v7) | Phase 3 | Ready | `002-user-access-and-keys/stories/004-user-scoped-persistence.md` |
+
+### 003-conversational-booking-ops: Conversational Booking Ops
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-025` | Register a booking via chat dialog | Phase 3 | Ready | `003-conversational-booking-ops/stories/001-register-booking-via-chat.md` |
+| `US-030` | Route savings alerts to the booking owner | Phase 3 | Ready | `003-conversational-booking-ops/stories/002-route-alerts-to-owner.md` |
+| `US-031` | Per-user cost caps and abuse limits | Phase 3 | Ready | `003-conversational-booking-ops/stories/003-per-user-limits.md` |
+
+### 004-telegram-rebook-gate: Telegram Rebook Gate
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-032` | Confirm rebook steps in Telegram | Phase 3 | Ready | `004-telegram-rebook-gate/stories/001-confirm-rebook-in-telegram.md` |
+| `US-033` | Device handoff for the final booking click | Phase 3 | Ready | `004-telegram-rebook-gate/stories/002-device-handoff-final-click.md` |
+
+### 005-vps-deployment: VPS Deployment
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-034` | Deploy daemon and bot on a VPS | Phase 3 | Ready | `005-vps-deployment/stories/001-deploy-on-vps.md` |
+| `US-035` | Logged-out checks with optional cookie import | Phase 3 | Ready | `005-vps-deployment/stories/002-logged-out-checks-and-cookie-import.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
 |--------|-------|---------|--------|
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
+| `003-telegram-interface` | 5 | 14 | Inception draft — pending validation (bolts 008–012 planned) |
 
-All 22 stories (16 original + 6 Phase 2) are assigned exactly once.
+All 36 stories (16 original + 6 Phase 2 + 14 Phase 3) are assigned exactly once.
