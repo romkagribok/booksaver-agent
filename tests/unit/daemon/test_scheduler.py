@@ -25,7 +25,6 @@ def test_register_after_run_started_raises() -> None:
     sched = Scheduler()
     sched.register("job_a", lambda: None)
 
-    started = threading.Event()
     original_run = sched.run
 
     def _run_briefly() -> None:

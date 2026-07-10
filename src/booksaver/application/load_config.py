@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from booksaver.domain.agent import AgentSettings
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.models import Config
 from booksaver.domain.value_objects import CheckInterval, DataDirectory, NotificationSettings
@@ -34,20 +35,50 @@ def load_config(source: ConfigSource) -> Config:
         except ValueError as e:
             errors.append(f"storage.data_directory: {e}")
 
+    agent_settings: AgentSettings | None = None
+    agent_raw = raw.get("agent", {})
+    try:
+        defaults = AgentSettings()
+        agent_settings = AgentSettings(
+            max_steps=int(agent_raw.get("max_steps", defaults.max_steps)),
+            max_llm_calls=int(agent_raw.get("max_llm_calls", defaults.max_llm_calls)),
+            check_timeout_seconds=int(
+                agent_raw.get("check_timeout_seconds", defaults.check_timeout_seconds)
+            ),
+            model=str(agent_raw.get("model", defaults.model)),
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"agent: {e}")
+
     if errors:
         raise ConfigValidationError(errors)
 
     assert check_interval is not None
     assert data_directory is not None
+    assert agent_settings is not None
 
+    notifications_raw = raw.get("notifications", {})
     notification_settings = NotificationSettings(
-        email=raw.get("notifications", {}).get("email"),
-        telegram_chat_id=raw.get("notifications", {}).get("telegram_chat_id"),
+        email=notifications_raw.get("email"),
+        telegram_chat_id=(
+            str(notifications_raw["telegram_chat_id"])
+            if notifications_raw.get("telegram_chat_id") is not None
+            else None
+        ),
+        smtp_host=notifications_raw.get("smtp_host"),
+        smtp_port=int(notifications_raw.get("smtp_port", 587)),
+        smtp_username=notifications_raw.get("smtp_username"),
     )
+
+    extraction_settings = {
+        str(k): str(v) for k, v in raw.get("extraction", {}).items() if v is not None
+    }
 
     return Config(
         check_interval=check_interval,
         data_directory=data_directory,
         notification_settings=notification_settings,
         loaded_at=datetime.now(UTC),
+        extraction_settings=extraction_settings,
+        agent_settings=agent_settings,
     )

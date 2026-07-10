@@ -1,4 +1,3 @@
-import sqlite3
 from datetime import date
 from decimal import Decimal
 
@@ -6,10 +5,11 @@ import pytest
 
 from booksaver.application.register_booking import register_booking
 from booksaver.domain.errors import BookingRejectedError
-from booksaver.domain.models import Booking, BookingStatus
+from booksaver.domain.models import BookingStatus
 from booksaver.domain.value_objects import (
     ConfirmationId,
     Money,
+    Occupancy,
     Platform,
     ProductType,
     Property,
@@ -44,6 +44,7 @@ def _make_booking(confirmation: str = "BKG-001") -> dict:
         room_type=RoomType(label="Deluxe Double"),
         baseline_price=Money.of("350.00", "EUR"),
         refundability=RefundabilityPolicy(is_refundable=True, note="Free cancellation"),
+        occupancy=Occupancy(adults=2),
     )
 
 

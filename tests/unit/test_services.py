@@ -1,6 +1,5 @@
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
@@ -11,6 +10,7 @@ from booksaver.domain.value_objects import (
     ConfirmationId,
     DataDirectory,
     Money,
+    Occupancy,
     Platform,
     ProductType,
     Property,
@@ -30,6 +30,7 @@ def _valid_inputs() -> dict:
         room_type=RoomType(label="Standard"),
         baseline_price=Money.of("200.00", "EUR"),
         refundability=RefundabilityPolicy(is_refundable=True, note="Free cancellation"),
+        occupancy=Occupancy(adults=2),
         exists_fn=lambda _: False,
     )
 

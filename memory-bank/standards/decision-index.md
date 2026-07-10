@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-01T00:00:00Z
-total_decisions: 6
+last_updated: 2026-07-06T00:30:00Z
+total_decisions: 17
 ---
 
 # Decision Index
@@ -17,6 +17,94 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-017: Hard per-check cost caps now; adaptive budgeting is named future work
+- **Status**: accepted
+- **Date**: 2026-07-06
+- **Bolt**: 007-agentic-escalation (agentic-escalation)
+- **Path**: `bolts/007-agentic-escalation/adr-017-hard-caps-now-adaptive-later.md`
+- **Summary**: `[agent]` config caps per check — max_steps 15 (screenshot turns ×2), max_llm_calls 20 (shared pool with extraction), check_timeout_seconds 180. Breach → `BUDGET_EXCEEDED`, daemon continues. Documented as the deliberately simple version; adaptive budgeting (per-day budgets, backoff, model downshift) is named future work.
+- **Read when**: Touching agent/LLM cost controls, adding LLM calls to the check path, tuning cap defaults, or picking up the adaptive-budgeting follow-up.
+
+### ADR-016: Bounded action vocabulary via SDK tool-use, guarded at the adapter
+- **Status**: accepted
+- **Date**: 2026-07-06
+- **Bolt**: 007-agentic-escalation (agentic-escalation)
+- **Path**: `bolts/007-agentic-escalation/adr-016-bounded-action-vocabulary.md`
+- **Summary**: Agent acts only via click/fill/select/scroll/extract/request_screenshot/give_up on observation-enumerated element refs — no computer-use API, no model CSS/JS, no agent frameworks. ActionGuard (reserve/cancel/checkout/payment denylist) enforced at the adapter boundary + post-action URL check; safety never depends on the prompt.
+- **Read when**: Modifying the agent loop or its tools, the ActionGuard rules, considering computer-use, or any change that lets a model influence browser actions.
+
+### ADR-015: Tiered agent observations — text/DOM first, screenshot on demand
+- **Status**: accepted
+- **Date**: 2026-07-06
+- **Bolt**: 007-agentic-escalation (agentic-escalation)
+- **Path**: `bolts/007-agentic-escalation/adr-015-tiered-agent-observations.md`
+- **Summary**: Tier 1 = URL/title/bounded text + enumerated interactive elements; screenshot attaches only on explicit request or after two consecutive failed actions, and such turns cost double budget. Vision is a deliberate spend, not the default.
+- **Read when**: Changing agent observations, element enumeration, screenshot handling, or budget accounting per turn.
+
+### ADR-014: Occupancy is a required registration field — no silent default
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 006-search-journey-monitor (search-journey-monitor)
+- **Path**: `bolts/006-search-journey-monitor/adr-014-occupancy-required-no-default.md`
+- **Summary**: Search prices depend on party size, so `Occupancy(adults, children, rooms)` is required at registration; legacy bookings migrate to an explicit occupancy-missing state whose checks fail with `OCCUPANCY_MISSING` until `bookings set-occupancy` backfills them. Never a silent 2-adult guess.
+- **Read when**: Touching registration, the bookings schema, search-query construction, or considering defaults for any user-specific search parameter.
+
+### ADR-013: Full search journey replaces the manage page as the sole price source
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 006-search-journey-monitor (search-journey-monitor)
+- **Path**: `bolts/006-search-journey-monitor/adr-013-search-journey-price-source.md`
+- **Summary**: Live prices come exclusively from the full customer search journey (home → search → results → verified property → room table) with the saved session; no deep-link shortcut, and `myreservations.html` is never opened for prices. Journey steps are named seams for bolt 007's LLM-agent escalation.
+- **Read when**: Working on the price monitor, journey steps, navigation failure codes, bot-wall handling, or reconsidering deep-linking/manage-page extraction.
+
+### ADR-012: Guided final click — MVP does not automate the destructive button press
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 005-guided-rebook (guided-rebook)
+- **Path**: `bolts/005-guided-rebook/adr-012-guided-final-click.md`
+- **Summary**: After each explicit confirmation the browser opens the correct cancel/rebook page; the human performs Booking.com's final click. State machine, gates, and audit trail are fully automated; the irreversible action is not. Strongest reading of "no autonomous cancel or purchase".
+- **Read when**: Working on the rebook flow, considering automating final cancel/purchase clicks, or extending the RebookSession state machine.
+
+### ADR-011: Stdlib-only notification transports (smtplib + urllib Telegram Bot API)
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 004-savings-detection-notifications (savings-detection-notifications)
+- **Path**: `bolts/004-savings-detection-notifications/adr-011-stdlib-notification-transports.md`
+- **Summary**: Email via stdlib smtplib (STARTTLS), Telegram via one urllib POST to the Bot API. No requests/python-telegram-bot deps; Notifier port isolates the choice for the future interactive-bot direction.
+- **Read when**: Adding/altering notification channels, SMTP/Telegram config fields, or considering an interactive Telegram bot interface.
+
+### ADR-010: JSON file (not SQLite) for Booking.com session cookies
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
+- **Path**: `bolts/003-booking-com-price-monitor/adr-010-json-session-file.md`
+- **Summary**: Session cookies live in `{data_directory}/session_booking_com.json` (0600), matching Playwright's native cookie JSON shape. One file per platform; delete-to-logout; volatile auth material stays out of the booking DB.
+- **Read when**: Working on session persistence, reauth flows, Unit 4 browser reuse, or adding a second platform's session storage.
+
+### ADR-009: Anthropic SDK with a small default model for LLM extraction
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
+- **Path**: `bolts/003-booking-com-price-monitor/adr-009-anthropic-sdk-llm-extraction.md`
+- **Summary**: Official `anthropic` SDK, default model `claude-haiku-4-5` (config-overridable), key from `BOOKSAVER_LLM_API_KEY` only. Missing key degrades to DOM-only mode, never crashes.
+- **Read when**: Touching LLM extraction, changing the extraction prompt or model, handling LLM errors, or adding another LLM provider adapter.
+
+### ADR-008: Synchronous Playwright API in the scheduler loop
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
+- **Path**: `bolts/003-booking-com-price-monitor/adr-008-sync-playwright-api.md`
+- **Summary**: `playwright.sync_api` — checks run sequentially in the synchronous scheduler loop; no asyncio in the codebase. Port isolates the choice if concurrency is ever needed.
+- **Read when**: Writing browser adapter code, considering concurrent checks, or tempted to introduce asyncio.
+
+### ADR-007: Playwright for browser automation
+- **Status**: accepted
+- **Date**: 2026-07-05
+- **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
+- **Path**: `bolts/003-booking-com-price-monitor/adr-007-playwright-browser-automation.md`
+- **Summary**: Playwright + bundled Chromium over Selenium/HTTP: first-class cookie export/import for sessions, headed mode for `booksaver auth`, headless for checks, auto-waiting for a dynamic site. Requires `playwright install chromium` post-install.
+- **Read when**: Any browser automation work (Units 2 and 4), session login flows, navigation failure handling, or environment setup docs.
 
 ### ADR-006: threading.Event sleep loop as the scheduler mechanism
 - **Status**: accepted

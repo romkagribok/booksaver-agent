@@ -1,3 +1,9 @@
+---
+id: US-009
+status: complete
+implemented: true
+---
+
 # US-009 Notify via email and Telegram
 
 **Intent:** `001-booksaver-agent-mvp`  

@@ -1,3 +1,9 @@
+---
+id: US-011
+status: complete
+implemented: true
+---
+
 # US-011 Mandatory confirmation before cancel or purchase
 
 **Intent:** `001-booksaver-agent-mvp`  

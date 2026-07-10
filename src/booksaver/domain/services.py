@@ -11,6 +11,7 @@ from .value_objects import (
     ConfirmationId,
     DataDirectory,
     Money,
+    Occupancy,
     Platform,
     ProductType,
     Property,
@@ -31,6 +32,7 @@ class BookingRegistrationService:
         room_type: RoomType,
         baseline_price: Money,
         refundability: RefundabilityPolicy,
+        occupancy: Occupancy,
         exists_fn: Callable[[ConfirmationId], bool],
     ) -> tuple[Booking, BookingRegistered]:
         if platform != Platform.BOOKING_COM:
@@ -55,6 +57,7 @@ class BookingRegistrationService:
             baseline_price=baseline_price,
             refundability=refundability,
             registered_at=now,
+            occupancy=occupancy,
         )
         event = BookingRegistered(
             booking_id=booking.booking_id,

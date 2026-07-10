@@ -19,12 +19,81 @@ CREATE TABLE IF NOT EXISTS bookings (
     refund_note      TEXT    NOT NULL DEFAULT '',
     refund_deadline  TEXT,
     registered_at    TEXT    NOT NULL,
-    status           TEXT    NOT NULL DEFAULT 'active'
+    status           TEXT    NOT NULL DEFAULT 'active',
+    -- v5: occupancy (ADR-014). NULL is reserved for rows registered before v5;
+    -- new registrations always set all three (enforced in the domain layer).
+    occ_adults       INTEGER CHECK(occ_adults IS NULL OR occ_adults >= 1),
+    occ_children     INTEGER CHECK(occ_children IS NULL OR occ_children >= 0),
+    occ_rooms        INTEGER CHECK(occ_rooms IS NULL OR occ_rooms >= 1)
 );
 
--- Contract stub: columns extended by Unit 2 (booking_com_price_monitor)
+-- v2: finalised by Unit 2 (booking-com-price-monitor)
+-- v5: extraction_method also allows 'agent' (bolt 007 agent-assisted checks)
 CREATE TABLE IF NOT EXISTS check_history (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id              TEXT    NOT NULL UNIQUE,
+    booking_id            TEXT    NOT NULL REFERENCES bookings(booking_id),
+    checked_at            TEXT    NOT NULL,
+    outcome               TEXT    NOT NULL CHECK(outcome IN ('success', 'failure')),
+    extraction_method     TEXT    NOT NULL
+        CHECK(extraction_method IN ('dom', 'llm', 'none', 'agent')),
+    live_amount           TEXT,
+    live_currency         TEXT,
+    refundable            INTEGER,
+    cancellation_deadline TEXT,
+    refund_raw_text       TEXT,
+    extracted_property    TEXT,
+    extracted_room        TEXT,
+    extracted_check_in    TEXT,
+    extracted_check_out   TEXT,
+    failure_code          TEXT,
+    failure_detail        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_check_history_booking
+    ON check_history(booking_id, checked_at DESC);
+
+-- v4: added by Unit 4 (guided-rebook) — session state + append-only audit trail
+CREATE TABLE IF NOT EXISTS rebook_sessions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id     TEXT NOT NULL UNIQUE,
+    opportunity_id TEXT NOT NULL,
+    booking_id     TEXT NOT NULL REFERENCES bookings(booking_id),
+    state          TEXT NOT NULL,
+    started_at     TEXT NOT NULL,
+    ended_at       TEXT,
+    end_reason     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rebook_events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    booking_id  TEXT    NOT NULL REFERENCES bookings(booking_id),
-    recorded_at TEXT    NOT NULL
+    event_id    TEXT NOT NULL UNIQUE,
+    session_id  TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    detail      TEXT NOT NULL DEFAULT '',
+    occurred_at TEXT NOT NULL
+);
+
+-- v6: added by intent 002 bolt 007 (agentic-escalation) — one trace per check
+CREATE TABLE IF NOT EXISTS check_traces (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id   TEXT NOT NULL UNIQUE,
+    booking_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    trace_json TEXT NOT NULL
+);
+
+-- v3: added by Unit 3 (savings-detection-notifications)
+CREATE TABLE IF NOT EXISTS savings_opportunities (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id  TEXT NOT NULL UNIQUE,
+    booking_id      TEXT NOT NULL REFERENCES bookings(booking_id),
+    check_id        TEXT NOT NULL,
+    baseline_amount TEXT NOT NULL,
+    live_amount     TEXT NOT NULL,
+    currency        TEXT NOT NULL,
+    amount_saved    TEXT NOT NULL,
+    percent_saved   TEXT NOT NULL,
+    validated_at    TEXT NOT NULL,
+    notified_at     TEXT
 );

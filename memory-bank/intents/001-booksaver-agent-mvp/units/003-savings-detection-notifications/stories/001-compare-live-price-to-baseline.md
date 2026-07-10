@@ -1,3 +1,9 @@
+---
+id: US-007
+status: complete
+implemented: true
+---
+
 # US-007 Compare live price to baseline
 
 **Intent:** `001-booksaver-agent-mvp`  

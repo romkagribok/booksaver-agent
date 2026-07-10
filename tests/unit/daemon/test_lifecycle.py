@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import os
 import signal
-import threading
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-from datetime import datetime, timezone
 
 from booksaver.daemon import lifecycle
 from booksaver.daemon.scheduler import Scheduler
@@ -26,7 +23,7 @@ def _make_config(data_dir: DataDirectory) -> Config:
         check_interval=_FAST,
         data_directory=data_dir,
         notification_settings=NotificationSettings(),
-        loaded_at=datetime.now(tz=timezone.utc),
+        loaded_at=datetime.now(tz=UTC),
     )
 
 

@@ -1,7 +1,7 @@
 ---
 id: US-014
-status: Ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-014 Handle check failures gracefully

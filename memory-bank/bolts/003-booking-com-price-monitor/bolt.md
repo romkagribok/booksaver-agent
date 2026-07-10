@@ -3,32 +3,43 @@ id: 003-booking-com-price-monitor
 unit: 002-booking-com-price-monitor
 intent: 001-booksaver-agent-mvp
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-store-booking-com-session-locally
   - 002-run-scheduled-browser-check
   - 003-extract-booking-and-offer-data-with-llm
   - 004-handle-check-failures-gracefully
-created: 2026-07-05T00:00:00Z
-started: 2026-07-05T00:00:00Z
-completed: null
-current_stage: model
-stages_completed: []
-
-# Bolt Dependencies
+created: 2026-07-05T00:00:00.000Z
+started: 2026-07-05T00:00:00.000Z
+completed: "2026-07-05T18:39:02Z"
+current_stage: null
+stages_completed:
+  - name: model
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-01-domain-model.md
+  - name: design
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-02-technical-design.md
+  - name: adr
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: adr-007-playwright-browser-automation.md, adr-008-sync-playwright-api.md, adr-009-anthropic-sdk-llm-extraction.md, adr-010-json-session-file.md
+  - name: implement
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: src/booksaver/monitor/ + domain/check_result.py + domain/session.py + infrastructure adapters
+  - name: test
+    completed: 2026-07-05T00:00:00.000Z
+    artifact: ddd-03-test-report.md
 requires_bolts:
   - 001-core-local-data
   - 002-core-local-data
 enables_bolts: []
 requires_units: []
 blocks: false
-
-# Complexity Assessment
 complexity:
-  avg_complexity: 3        # browser automation + LLM + external site = high
-  avg_uncertainty: 3       # Booking.com DOM changes, session handling, LLM extraction
-  max_dependencies: 3      # needs Config, Booking, Scheduler, LocalStore from Unit 1
-  testing_scope: 3         # integration with real browser + mock LLM responses
+  avg_complexity: 3
+  avg_uncertainty: 3
+  max_dependencies: 3
+  testing_scope: 3
 ---
 
 # Bolt: 003-booking-com-price-monitor
@@ -61,11 +72,11 @@ failures without losing the booking or crashing the daemon.
 
 ## Stages
 
-- [ ] **1. Domain Model**: Pending → ddd-01-domain-model.md
-- [ ] **2. Technical Design**: Pending → ddd-02-technical-design.md
-- [ ] **3. ADR Analysis**: Pending → adr-*.md
-- [ ] **4. Implement**: Pending → src/
-- [ ] **5. Test**: Pending → ddd-03-test-report.md
+- ✅ **1. Domain Model**: Complete → ddd-01-domain-model.md
+- ✅ **2. Technical Design**: Complete → ddd-02-technical-design.md
+- ✅ **3. ADR Analysis**: Complete → adr-007 through adr-010
+- ✅ **4. Implement**: Complete → src/booksaver/monitor/ + adapters
+- ✅ **5. Test**: Complete → ddd-03-test-report.md (136/136)
 
 ## Dependencies
 
