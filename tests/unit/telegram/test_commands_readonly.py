@@ -112,6 +112,12 @@ def test_status_reports_bookings_and_recent_check(tmp_path: Path) -> None:
     assert "success" in text
 
 
+def test_status_reports_logged_out_session_mode_by_default(tmp_path: Path) -> None:
+    _db, router, sent, _sched = _setup(tmp_path)
+    router.dispatch(_cmd("/status"))
+    assert "Session: logged out (public rates" in sent[0][1]
+
+
 def test_bookings_lists_active_bookings(tmp_path: Path) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
     user_id = _register_caller(db_path, telegram_id=1)

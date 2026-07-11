@@ -10,18 +10,22 @@ interpretation**, notifies the user (email/Telegram), and offers a **guided rebo
 confirmation**. It is explicitly *not* a web app, hosted service, or multi-tenant SaaS, uses *no* official
 Booking.com API, and keeps all credentials, sessions, and data on the user's machine.
 
-**Current state: MVP (intent 001, bolts 001–005) + Phase 2 agentic search monitor
-(intent 002, bolts 006–007) complete — 20/22 stories, 360 tests. Intent 003
-(Telegram as main interface, units 001–005, US-023–036) is validated and in
-construction on branch `phase-3-telegram-interface` (bolts 008–012).**
-Daemon + scheduler, savings detection with email/Telegram alerts, and the guided-rebook
-confirmation state machine are implemented. **Phase 2 replaced the manage-page price
-check**: live prices now come from a scripted full search journey (search → results →
-verified property page → room table, using the booking's required occupancy), with an
-LLM browser agent that takes over failed journey steps (tiered text→screenshot
-observations, bounded action vocabulary, adapter-level guard against
-reserve/checkout/cancel, hard cost caps, per-check traces). Unit 005-extensibility-future
-is post-MVP. `project_type` is `cli-tool` (`memory-bank/project.yaml`).
+**Current state: intents 001 (MVP, bolts 001–005), 002 (agentic search monitor,
+bolts 006–007), and 003 (Telegram as main interface, bolts 008–012) complete —
+34/36 stories, 640 tests.** Daemon + scheduler, savings detection with email/Telegram
+alerts, and the guided-rebook confirmation state machine are implemented. **Phase 2
+replaced the manage-page price check**: live prices come from a scripted full search
+journey (search → results → verified property page → room table, using the booking's
+required occupancy), with an LLM browser agent that takes over failed journey steps
+(tiered text→screenshot observations, bounded action vocabulary, adapter-level guard
+against reserve/checkout/cancel, hard cost caps, per-check traces). **Phase 3 made a
+Telegram bot the primary UI**: long-poll gateway thread in the daemon, owner/invite
+access, multi-user scoping (schema v8), hybrid LLM billing with Fernet-encrypted
+optional personal keys, `/register` dialog, per-user alerts + limits, inline-keyboard
+rebook confirmations with device-handoff deep links, Docker/systemd VPS deployment with
+logged-out checks + cookie import (`memory-bank/operations/vps-deployment-runbook.md`).
+Unit 005-extensibility-future is post-MVP. `project_type` is `cli-tool`
+(`memory-bank/project.yaml`).
 
 ## Build / Lint / Test Commands
 
@@ -50,7 +54,8 @@ booksaver <command>
 
 CLI commands: `init`, `config validate|show`, `register` (requires `--adults`; `--children`,
 `--rooms` optional), `bookings list`, `bookings set-occupancy <booking-id>` (backfill for
-pre-v5 bookings), `run`, `stop`, `auth` (headed Booking.com login), `checks list <booking-id>`,
+pre-v5 bookings), `run`, `stop`, `auth` (headed Booking.com login), `auth import <file>` (cookie import
+for headless VPS deployments), `checks list <booking-id>`,
 `checks trace <check-id>` (step/agent trace), `savings list`, `rebook <opportunity-id>`,
 `rebook-log <session-id>`.
 
@@ -136,7 +141,7 @@ designing or coding:
    (ADR-016), hard `[agent]` config caps (ADR-017), `check_traces` (schema v6), rotated
    redacted failure snapshots, `checks list|trace` CLI
 
-### `003-telegram-interface` — validated, in construction (bolts 008–012)
+### `003-telegram-interface` — complete (bolts 008–012)
 
 Telegram bot as the primary UI on an owner-operated VPS. Checkpoint 1 decisions (2026-07-11):
 access modes `owner`/`invite` only (no public mode); hybrid LLM billing (owner key + per-user
@@ -145,11 +150,11 @@ approved); VPS-first deployment with an early Booking.com-journey smoke test fro
 logged-out checks by default (headed auth impossible on a VPS); rebook confirmations via inline
 keyboards with the final booking click handed off to the user's device via deep link.
 
-1. `001-telegram-bot-gateway` — long-poll update loop thread + router + dialogs, read-only commands (bolt 008)
-2. `002-user-access-and-keys` — schema v7 users table + scoping, access modes, key store (bolt 009)
-3. `003-conversational-booking-ops` — `/register` dialog, per-user alert routing + limits (bolt 010)
-4. `004-telegram-rebook-gate` — Telegram `ConfirmationGate` + device-handoff deep link (bolt 011)
-5. `005-vps-deployment` — Dockerfile/systemd, ops runbook, logged-out sessions + cookie import (bolt 012)
+1. `001-telegram-bot-gateway` — ✅ complete (bolt 008): long-poll update loop thread + router + dialogs, read-only commands, ADR-018
+2. `002-user-access-and-keys` — ✅ complete (bolt 009): schema v7 users table + scoping, owner/invite access, v8 invite codes, Fernet key store (ADR-019)
+3. `003-conversational-booking-ops` — ✅ complete (bolt 010): `/register` dialog, per-user alert routing, `[limits]` + fair scheduling
+4. `004-telegram-rebook-gate` — ✅ complete (bolt 011): inline-keyboard `ConfirmationGate` (blocking bridge, state machine frozen) + device-handoff deep link
+5. `005-vps-deployment` — ✅ complete (bolt 012): Dockerfile/systemd, ops runbook, logged-out sessions + `auth import` cookie import
 
 ## Product constraints to preserve in every design and code change
 

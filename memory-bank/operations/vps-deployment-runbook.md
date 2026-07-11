@@ -133,9 +133,11 @@ docker compose logs -f booksaver  # confirm it comes back up cleanly
 ```
 
 The `restart: unless-stopped` policy plus `docker compose up -d` handles the kill-and-restart
-guarantee from US-034: stop the container (`docker compose stop booksaver`), start it again
+guarantee from US-034: stop the container (`docker compose stop booksaver` — note a stop issued
+mid-check waits for the in-flight browser check to finish, up to `check_timeout_seconds` ≈ 180 s;
+`stop_grace_period`/`TimeoutStopSec` are sized for this), start it again
 (`docker compose start booksaver`) or just let Docker's restart policy bring it back after a crash
-— the scheduler resumes on its own interval and, once the Telegram bot gateway (Unit 001) lands,
+— the scheduler resumes on its own interval and, with the Telegram bot gateway (Unit 001, shipped),
 long-polling with `offset`-based acknowledgement means no update is lost or double-delivered across
 a restart (Telegram redelivers only un-acknowledged updates).
 
@@ -143,7 +145,7 @@ a restart (Telegram redelivers only un-acknowledged updates).
 
 `/data` (the named `booksaver-data` volume) contains the SQLite database, the Booking.com session
 file, per-check traces, and redacted failure snapshots. **This is guest PII** — booking
-confirmation numbers, property names, stay dates, and (once Unit 002 lands) other users' encrypted
+confirmation numbers, property names, stay dates, and other users' encrypted
 API keys. Treat backups with the same care as the live deployment: encrypt them at rest, don't
 copy them to a shared or third-party host, and delete backups you no longer need.
 

@@ -93,6 +93,22 @@ def register_readonly_commands(
             f"Next scheduled run: {next_run.isoformat() if next_run else 'pending first tick'}"
         )
 
+        # US-035: session mode is explicit per deployment — logged-out checks
+        # see public rates only; imported cookies unlock member rates.
+        from booksaver.domain.session import SessionMode
+        from booksaver.domain.value_objects import DataDirectory
+        from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
+        from booksaver.monitor.session_manager import SessionManager
+
+        mode = SessionManager(
+            LocalSessionRepository(DataDirectory(path=db_path.parent))
+        ).current_mode()
+        lines.append(
+            "Session: authenticated (member rates)"
+            if mode is SessionMode.AUTHENTICATED
+            else "Session: logged out (public rates; `booksaver auth import` for member rates)"
+        )
+
         if not db_path.exists():
             lines.append("No bookings registered yet.")
             reply(cmd.chat_id, "\n".join(lines))

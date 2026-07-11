@@ -1,8 +1,8 @@
 ---
 intent: 003-telegram-interface
 created: 2026-07-10T02:15:00Z
-status: validated
-updated: 2026-07-11T17:39:20Z
+status: complete
+updated: 2026-07-11T20:18:09Z
 ---
 
 # Inception Log: telegram-interface
@@ -67,8 +67,18 @@ in chat. Discoverable-bot safety via access modes + bring-your-own-key.
 - [x] System context defined (draft)
 - [x] Units decomposed (draft)
 - [x] Stories created for all units (draft)
-- [ ] Bolts created (at construction start)
+- [x] Bolts created and executed (008–012, all complete 2026-07-11)
 - [x] Human review complete — Checkpoint 1 validated 2026-07-11T17:39:20Z (all open questions in requirements.md resolved; `open` access mode cut; hybrid billing; VPS-first with early IP validation)
+
+## Construction Outcome (2026-07-11T20:18:09Z)
+
+All 14 stories (US-023–036) complete across bolts 008–012, executed as three waves of
+parallel workers with orchestrated merges. 640 tests (280 net new), ruff + mypy clean.
+New ADRs: 018 (self-hosted deployment), 019 (Fernet key encryption). Schema advanced
+v6 → v8 (v7 users + scoping, v8 invite codes). Remaining operational follow-ups live in
+the VPS runbook (`memory-bank/operations/vps-deployment-runbook.md`): run the VPS-IP
+smoke test on the real host, first `docker build` on the VPS, and the documented
+in-memory daily-counter restart caveat + per-user LLM-call ceiling enforcement.
 
 ## Dependencies
 

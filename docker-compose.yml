@@ -24,6 +24,10 @@ services:
     # kills in `docker inspect booksaver` (look for OOMKilled: true).
     mem_limit: 1g
     memswap_limit: 2g
+    # Stop is honored between scheduler jobs (ADR-006): an in-flight browser
+    # check finishes first (bounded by [agent] check_timeout_seconds, default
+    # 180s). Give SIGTERM that long before Docker escalates to SIGKILL.
+    stop_grace_period: 200s
     healthcheck:
       # Freshness probe against /data/heartbeat, which the daemon's main
       # thread refreshes every ~15s while all its threads (scheduler +

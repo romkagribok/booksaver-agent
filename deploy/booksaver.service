@@ -39,6 +39,11 @@ ExecStart=/opt/booksaver/.venv/bin/booksaver run
 Restart=on-failure
 RestartSec=10s
 
+# Stop is honored between scheduler jobs (ADR-006): an in-flight browser
+# check finishes first (bounded by [agent] check_timeout_seconds, default
+# 180s). Give SIGTERM that long before systemd escalates to SIGKILL.
+TimeoutStopSec=200s
+
 # Chromium is the resource-hungry part of a check; give the unit headroom on
 # a 2GB VPS (see the runbook's provisioning section) without letting a stuck
 # browser process take the whole box down.
