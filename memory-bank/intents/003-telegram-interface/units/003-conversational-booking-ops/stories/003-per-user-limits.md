@@ -1,14 +1,14 @@
 ---
 id: US-031
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-031 Per-user cost caps and abuse limits
 
 **Intent:** `003-telegram-interface`
 **Unit:** `003-conversational-booking-ops`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story

@@ -2,7 +2,7 @@
 
 **Unit ID:** `003-conversational-booking-ops`
 **Intent:** `003-telegram-interface`
-**Status:** Planned
+**Status:** Complete (bolt 010)
 **Build order:** 3
 
 ## Purpose

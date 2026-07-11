@@ -83,7 +83,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 |------|---------|--------|
 | `001-telegram-bot-gateway` | 3 stories | Complete (bolt 008) |
 | `002-user-access-and-keys` | 4 stories | In construction (bolt 009; US-029 complete) |
-| `003-conversational-booking-ops` | 3 stories | Planned (bolt 010) |
+| `003-conversational-booking-ops` | 3 stories | Complete (bolt 010) |
 | `004-telegram-rebook-gate` | 2 stories | Planned (bolt 011) |
 | `005-vps-deployment` | 2 stories | In construction (bolt 012; US-034 complete, cookie import pending) |
 
@@ -108,9 +108,9 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-025` | Register a booking via chat dialog | Phase 3 | Ready | `003-conversational-booking-ops/stories/001-register-booking-via-chat.md` |
-| `US-030` | Route savings alerts to the booking owner | Phase 3 | Ready | `003-conversational-booking-ops/stories/002-route-alerts-to-owner.md` |
-| `US-031` | Per-user cost caps and abuse limits | Phase 3 | Ready | `003-conversational-booking-ops/stories/003-per-user-limits.md` |
+| `US-025` | Register a booking via chat dialog | Phase 3 | Complete | `003-conversational-booking-ops/stories/001-register-booking-via-chat.md` |
+| `US-030` | Route savings alerts to the booking owner | Phase 3 | Complete | `003-conversational-booking-ops/stories/002-route-alerts-to-owner.md` |
+| `US-031` | Per-user cost caps and abuse limits | Phase 3 | Complete | `003-conversational-booking-ops/stories/003-per-user-limits.md` |
 
 ### 004-telegram-rebook-gate: Telegram Rebook Gate
 

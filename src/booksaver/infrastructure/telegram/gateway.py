@@ -15,6 +15,7 @@ from .client import TelegramBotClient
 from .commands_readonly import register_readonly_commands
 from .dialogs import DialogManager
 from .offset_store import TelegramOffsetStore
+from .register_dialog import register_booking_dialog  # US-025 (bolt 010)
 from .router import CommandRouter, IncomingCommand
 
 logger = logging.getLogger(__name__)
@@ -63,14 +64,38 @@ def build_bot_runner(
     )
     offset_store = TelegramOffsetStore(config.data_directory)
 
+    # ── US-031: per-chat outbound message rate limiting ────────────────────
+    # Protects against reply loops / runaway dialogs driving unbounded sends.
+    # A breach degrades gracefully (drop + log) rather than crashing the loop
+    # or spamming the chat further.
+    message_limiter = RateLimiter(
+        max_events=config.limits_settings.messages_per_minute_per_chat, window_seconds=60.0
+    )
+
     def _reply(chat_id: int, text: str) -> None:
+        if not message_limiter.allow(chat_id):
+            logger.warning(
+                "Per-chat message rate limit exceeded for chat %s; dropping reply", chat_id
+            )
+            return
         client.send_message(chat_id, text)
+
+    # ── end US-031 rate limiting ────────────────────────────────────────────
 
     register_readonly_commands(
         router=router,
         reply=_reply,
         db_path=db_path,
         scheduler=scheduler,
+    )
+
+    # US-025 (bolt 010): /register guided dialog
+    register_booking_dialog(
+        router=router,
+        dialog_manager=dialog_manager,
+        reply=_reply,
+        db_path=db_path,
+        limits_settings=config.limits_settings,
     )
 
     def _cancelflow(cmd: IncomingCommand) -> None:

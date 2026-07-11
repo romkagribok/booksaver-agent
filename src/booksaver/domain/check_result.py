@@ -37,6 +37,8 @@ class FailureCode(Enum):
     AGENT_GAVE_UP = "agent_gave_up"
     BLOCKED_ACTION = "blocked_action"
     BUDGET_EXCEEDED = "budget_exceeded"
+    # Per-user fair-scheduling code (bolt 010, US-031)
+    USER_CHECK_LIMIT_REACHED = "user_check_limit_reached"
 
 
 @dataclass(frozen=True)

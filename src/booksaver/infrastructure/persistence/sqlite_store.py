@@ -415,6 +415,15 @@ class SqliteBookingRepository:
         ).fetchall()
         return [self._row_to_booking(r) for r in rows]
 
+    def get_owner_user_id(self, booking_id: str) -> int | None:
+        """Resolve the local `user_id` that owns `booking_id` (US-030 alert
+        routing). None if the booking doesn't exist.
+        """
+        row = self._store.conn.execute(
+            "SELECT user_id FROM bookings WHERE booking_id = ?", (booking_id,)
+        ).fetchone()
+        return int(row[0]) if row is not None else None
+
     def exists(self, confirmation_id: ConfirmationId) -> bool:
         row = self._store.conn.execute(
             "SELECT 1 FROM bookings WHERE confirmation_id = ?", (confirmation_id.value,)

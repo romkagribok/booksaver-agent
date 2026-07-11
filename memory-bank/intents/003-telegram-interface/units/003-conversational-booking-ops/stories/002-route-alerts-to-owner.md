@@ -1,14 +1,14 @@
 ---
 id: US-030
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-030 Route savings alerts to the booking owner
 
 **Intent:** `003-telegram-interface`
 **Unit:** `003-conversational-booking-ops`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story

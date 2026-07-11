@@ -10,6 +10,7 @@ from .value_objects import (
     CheckInterval,
     ConfirmationId,
     DataDirectory,
+    LimitsSettings,
     Money,
     NotificationSettings,
     Occupancy,
@@ -83,3 +84,4 @@ class Config:
     extraction_settings: dict[str, str] = field(default_factory=dict)
     agent_settings: AgentSettings = field(default_factory=AgentSettings)
     telegram_bot_settings: TelegramBotSettings = field(default_factory=TelegramBotSettings)
+    limits_settings: LimitsSettings = field(default_factory=LimitsSettings)
