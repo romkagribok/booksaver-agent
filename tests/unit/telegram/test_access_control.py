@@ -32,6 +32,29 @@ class TestOwnerMode:
         ac = AccessControl(owner_chat_id=OWNER_CHAT_ID, db_path=tmp_path / "t.db", mode="owner")
         assert ac.authorize(999, 999, "/start", "ABCDEF") is False
 
+    def test_owner_first_message_links_telegram_id_to_owner_row(self, tmp_path):
+        db_path = tmp_path / "t.db"
+        with _store(tmp_path) as store:
+            assert SqliteUserRepository(store).get_owner().telegram_user_id is None
+        ac = AccessControl(owner_chat_id=OWNER_CHAT_ID, db_path=db_path, mode="owner")
+        assert ac.authorize(OWNER_CHAT_ID, OWNER_CHAT_ID, "/register", "") is True
+        with _store(tmp_path) as store:
+            users = SqliteUserRepository(store)
+            owner = users.get_owner()
+            assert owner.telegram_user_id == OWNER_CHAT_ID
+            # sender-scoped handlers can now resolve the owner as a user
+            assert users.get_by_telegram_id(OWNER_CHAT_ID) is not None
+
+    def test_owner_link_never_rebinds_an_existing_telegram_id(self, tmp_path):
+        db_path = tmp_path / "t.db"
+        with _store(tmp_path) as store:
+            users = SqliteUserRepository(store)
+            users.link_telegram_id(users.get_owner().user_id, 111)
+        ac = AccessControl(owner_chat_id=OWNER_CHAT_ID, db_path=db_path, mode="owner")
+        assert ac.authorize(222, OWNER_CHAT_ID, "/status", "") is True
+        with _store(tmp_path) as store:
+            assert SqliteUserRepository(store).get_owner().telegram_user_id == 111
+
 
 class TestInviteMode:
     def test_stranger_without_a_code_is_refused(self, tmp_path):

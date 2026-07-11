@@ -887,6 +887,17 @@ class SqliteUserRepository:
         if cursor.rowcount == 0:
             raise KeyError(f"No user with id '{user_id}'")
 
+    def link_telegram_id(self, user_id: int, telegram_user_id: int) -> None:
+        """Attach a Telegram identity to an existing user row (used to link
+        the config-designated owner chat to the owner row on first contact).
+        Only fills a NULL telegram_user_id — never rebinds an existing one."""
+        self._store.conn.execute(
+            "UPDATE users SET telegram_user_id = ? "
+            "WHERE user_id = ? AND telegram_user_id IS NULL",
+            (telegram_user_id, user_id),
+        )
+        self._store.conn.commit()
+
     def get_owner_of_booking(self, booking_id: str) -> User | None:
         """US-027: resolve a booking's owning user, for per-booking LLM key
         resolution (`LLMClientFactory.for_booking`). Joins through

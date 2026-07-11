@@ -93,6 +93,7 @@ class AccessControl:
         self._db_path = db_path
         self._mode = mode
         self._limiter = refusal_limiter or RateLimiter(max_events=1, window_seconds=3600.0)
+        self._owner_linked = False
 
     @property
     def mode(self) -> str:
@@ -112,6 +113,7 @@ class AccessControl:
         """Whether this sender may proceed. Never raises; never touches the
         database unless a stranger/known-user lookup is actually required."""
         if self.is_owner(chat_id):
+            self._ensure_owner_linked(telegram_user_id)
             return True
 
         if self._mode == "owner":
@@ -148,6 +150,33 @@ class AccessControl:
                         return True
 
             return False
+
+    def _ensure_owner_linked(self, telegram_user_id: int) -> None:
+        """Sender-scoped handlers (/register, /bookings, …) resolve users via
+        `get_by_telegram_id`, but the v7 owner row is created with a NULL
+        telegram_user_id (the laptop-mode owner has none). Link it on the
+        owner's first authorized message so the owner is a first-class user
+        on a VPS. Once per process; only fills NULL, never rebinds."""
+        if self._owner_linked:
+            return
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteStore,
+            SqliteUserRepository,
+        )
+
+        try:
+            with SqliteStore(self._db_path) as store:
+                users = SqliteUserRepository(store)
+                owner = users.get_owner()
+                if owner.telegram_user_id is None:
+                    users.link_telegram_id(owner.user_id, telegram_user_id)
+                    logger.info(
+                        "Linked owner user row to Telegram user id %s", telegram_user_id
+                    )
+        except Exception:  # noqa: BLE001 - linking must never block the owner
+            logger.warning("Could not link owner Telegram identity", exc_info=True)
+            return
+        self._owner_linked = True
 
     def should_send_refusal(self, chat_id: int) -> bool:
         return self._limiter.allow(chat_id)
