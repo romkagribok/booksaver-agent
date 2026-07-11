@@ -163,7 +163,7 @@ class TestV7Migration:
                 users[0].user_id
             )
 
-        assert versions[-1] == SCHEMA_VERSION == 7
+        assert versions[-1] == SCHEMA_VERSION == 8
         assert len(users) == 1
         assert users[0].role is UserRole.OWNER
         assert users[0].access_state is UserAccessState.ACTIVE
@@ -186,7 +186,7 @@ class TestV7Migration:
         with SqliteStore(tmp_path / "fresh.db") as store:
             row = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
             users = SqliteUserRepository(store).list_all()
-        assert row[0] == SCHEMA_VERSION == 7
+        assert row[0] == SCHEMA_VERSION == 8
         assert len(users) == 1
         assert users[0].role is UserRole.OWNER
 
@@ -328,3 +328,169 @@ class TestCrossUserIsolation:
         assert owner.user_id != invited.user_id
         assert owner.role is UserRole.OWNER
         assert invited.role is UserRole.USER
+
+
+class TestGetOwnerOfBooking:
+    """US-027: resolving a booking's owning user for per-booking key resolution."""
+
+    def test_resolves_the_booking_owner(self, tmp_path):
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            bookings = SqliteBookingRepository(store)
+            invited = users.get_or_create_by_telegram_id(555)
+            booking, _ = register_booking(
+                repo=bookings, user_id=invited.user_id, **_booking_kwargs("CONF-OWNER")
+            )
+            owner_of_booking = users.get_owner_of_booking(booking.booking_id)
+
+        assert owner_of_booking is not None
+        assert owner_of_booking.user_id == invited.user_id
+
+    def test_unknown_booking_returns_none(self, tmp_path):
+        with SqliteStore(tmp_path / "t.db") as store:
+            assert SqliteUserRepository(store).get_owner_of_booking("nope") is None
+
+
+class TestSetEncryptedKey:
+    """US-027: storing/clearing a user's encrypted personal key."""
+
+    def test_set_and_clear_round_trips(self, tmp_path):
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            user = users.get_or_create_by_telegram_id(101)
+            users.set_encrypted_key(user.user_id, b"ciphertext")
+            with_key = users.get_by_id(user.user_id)
+            users.set_encrypted_key(user.user_id, None)
+            without_key = users.get_by_id(user.user_id)
+
+        assert with_key is not None and with_key.encrypted_key == b"ciphertext"
+        assert without_key is not None and without_key.encrypted_key is None
+
+    def test_unknown_user_raises(self, tmp_path):
+        with SqliteStore(tmp_path / "t.db") as store:
+            with pytest.raises(KeyError):
+                SqliteUserRepository(store).set_encrypted_key(9999, b"x")
+
+
+class TestPurgeUser:
+    """US-028 `/admin purge`: deletes a non-owner user and everything scoped
+    through their bookings."""
+
+    def test_purge_deletes_user_and_their_bookings(self, tmp_path):
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            bookings = SqliteBookingRepository(store)
+            victim = users.get_or_create_by_telegram_id(202)
+            booking, _ = register_booking(
+                repo=bookings, user_id=victim.user_id, **_booking_kwargs("CONF-PURGE")
+            )
+
+            users.purge(victim.user_id)
+
+            remaining_user = users.get_by_id(victim.user_id)
+            remaining_booking = bookings.get_by_id(booking.booking_id)
+
+        assert remaining_user is None
+        assert remaining_booking is None
+
+    def test_purge_owner_is_rejected(self, tmp_path):
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            owner = users.get_owner()
+            with pytest.raises(ValueError, match="owner"):
+                users.purge(owner.user_id)
+
+    def test_purge_unknown_user_raises(self, tmp_path):
+        with SqliteStore(tmp_path / "t.db") as store:
+            with pytest.raises(KeyError):
+                SqliteUserRepository(store).purge(9999)
+
+
+class TestInviteCodeRepository:
+    """US-026: schema v8 single-use invite codes."""
+
+    def test_issue_then_redeem_admits_a_new_user(self, tmp_path):
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteInviteCodeRepository,
+        )
+
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            invites = SqliteInviteCodeRepository(store)
+            owner = users.get_owner()
+
+            invite = invites.issue(issued_by=owner.user_id)
+            new_user = users.get_or_create_by_telegram_id(303)
+            redeemed = invites.redeem(invite.code, used_by=new_user.user_id, now=_now())
+
+        assert redeemed is not None
+        assert redeemed.used_by == new_user.user_id
+        assert redeemed.is_used
+
+    def test_redeeming_twice_fails_the_second_time(self, tmp_path):
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteInviteCodeRepository,
+        )
+
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            invites = SqliteInviteCodeRepository(store)
+            owner = users.get_owner()
+            invite = invites.issue(issued_by=owner.user_id)
+            user_a = users.get_or_create_by_telegram_id(404)
+            user_b = users.get_or_create_by_telegram_id(405)
+
+            first = invites.redeem(invite.code, used_by=user_a.user_id, now=_now())
+            second = invites.redeem(invite.code, used_by=user_b.user_id, now=_now())
+
+        assert first is not None
+        assert second is None
+
+    def test_redeeming_unknown_code_returns_none(self, tmp_path):
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteInviteCodeRepository,
+        )
+
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            invites = SqliteInviteCodeRepository(store)
+            user_a = users.get_or_create_by_telegram_id(406)
+            assert invites.redeem("does-not-exist", used_by=user_a.user_id, now=_now()) is None
+
+    def test_expired_code_cannot_be_redeemed(self, tmp_path):
+        from datetime import timedelta
+
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteInviteCodeRepository,
+        )
+
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            invites = SqliteInviteCodeRepository(store)
+            owner = users.get_owner()
+            now = _now()
+            invite = invites.issue(issued_by=owner.user_id, expires_at=now - timedelta(hours=1))
+            user_a = users.get_or_create_by_telegram_id(407)
+
+            result = invites.redeem(invite.code, used_by=user_a.user_id, now=now)
+
+        assert result is None
+
+    def test_issued_codes_are_unique(self, tmp_path):
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteInviteCodeRepository,
+        )
+
+        with SqliteStore(tmp_path / "t.db") as store:
+            users = SqliteUserRepository(store)
+            invites = SqliteInviteCodeRepository(store)
+            owner = users.get_owner()
+            codes = {invites.issue(issued_by=owner.user_id).code for _ in range(10)}
+
+        assert len(codes) == 10
+
+
+def _now():
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC)

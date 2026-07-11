@@ -1,14 +1,14 @@
 ---
 id: US-026
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-026 Enforce access modes for a discoverable bot
 
 **Intent:** `003-telegram-interface`
 **Unit:** `002-user-access-and-keys`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story

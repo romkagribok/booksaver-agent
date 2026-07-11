@@ -3,7 +3,7 @@ unit: 002-user-access-and-keys
 bolt: 009-user-access-and-keys
 stage: model
 status: complete
-updated: 2026-07-11T17:50:00Z
+updated: 2026-07-11T19:42:53Z
 ---
 
 # Domain Model — User Access & Keys
@@ -91,3 +91,21 @@ service. It owns:
   keeps `Booking.create()` and every existing call site (23+ across the domain/application
   test suite) untouched; only the repository boundary (`add(booking, user_id=...)`) and the
   read-side scoping methods know about ownership. See ddd-02 for the full rationale.
+
+## Implementation notes (US-026/027/028 pass, 2026-07-11T19:42:53Z)
+
+The model above held with one addition and one confirmed simplification:
+
+- **`InviteCode` (domain/user.py)**: added as designed (code, issued_by, issued_at, expires_at,
+  used_by, used_at) with `is_used`/`is_expired` helpers. Schema v8 (not the originally-numbered
+  "future" v-next) since v7 landed in the US-029 pass.
+- **`AccessMode` was NOT modeled as a domain enum** — `access_mode` stays a plain `str` ("owner"/
+  "invite") on `TelegramBotSettings` and on `AccessControl`, validated at the config and
+  value-object boundaries (`_VALID_ACCESS_MODES`). An enum added no safety a two-element string
+  literal set + `__post_init__`/`set_mode` validation didn't already provide, and it would have
+  meant converting at every config/CLI boundary for no behavioral gain.
+- **`PerUserCaps` remains unmodeled** — out of this bolt's scope (FR-6/US-031, bolt 010's `[limits]`
+  section, explicitly not touched here per the coordination constraints for this pass).
+- Domain rules 1–4 for access control, billing, and administration (as drafted) all held as
+  written and are now implemented — see ddd-02's "Implementation notes" for the module-level
+  detail and ddd-03-test-report.md for verification.

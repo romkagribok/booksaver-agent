@@ -1,14 +1,14 @@
 ---
 id: US-027
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-027 Optional personal Anthropic API key (hybrid billing)
 
 **Intent:** `003-telegram-interface`
 **Unit:** `002-user-access-and-keys`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story

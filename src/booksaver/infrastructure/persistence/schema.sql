@@ -20,6 +20,19 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_owner
     ON users(role) WHERE role = 'owner';
 
+-- v8: added by intent 003 bolt 009 (user-access-and-keys, US-026) — owner-issued
+-- single-use invite codes for `invite` access mode. Purely additive (no rebuild
+-- of an existing table needed), per the same CREATE-IF-NOT-EXISTS pattern as
+-- savings_opportunities (v3), rebook_sessions/events (v4), and check_traces (v6).
+CREATE TABLE IF NOT EXISTS invite_codes (
+    code       TEXT    PRIMARY KEY,
+    issued_by  INTEGER NOT NULL REFERENCES users(user_id),
+    issued_at  TEXT    NOT NULL,
+    expires_at TEXT,
+    used_by    INTEGER REFERENCES users(user_id),
+    used_at    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS bookings (
     booking_id       TEXT    PRIMARY KEY,
     platform         TEXT    NOT NULL CHECK(platform = 'booking_com'),

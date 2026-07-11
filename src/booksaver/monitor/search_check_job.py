@@ -11,6 +11,7 @@ from booksaver.application.ports import (
     CheckHistoryRepository,
     CheckTraceRepository,
     InteractiveBrowser,
+    LLMClientFactory,
     LLMExtractor,
 )
 from booksaver.domain.agent import AgentBudget, AgentSettings, BudgetExceeded
@@ -22,6 +23,7 @@ from booksaver.domain.check_result import (
     FailureReason,
     RefundIndicators,
 )
+from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate, select_offer
 from booksaver.domain.session import SessionMode
@@ -50,6 +52,7 @@ class BookingComSearchMonitor:
         failure_tracker: FailureTracker,
         llm: LLMExtractor | None = None,
         brain: AgentBrain | None = None,
+        llm_factory: LLMClientFactory | None = None,
         agent_settings: AgentSettings | None = None,
         trace_repo: CheckTraceRepository | None = None,
         snapshot_writer: SnapshotWriter | None = None,
@@ -62,6 +65,13 @@ class BookingComSearchMonitor:
         self._failures = failure_tracker
         self._llm = llm
         self._brain = brain
+        # US-027 hybrid billing: when set, `_run_check_inner` re-resolves
+        # `self._llm`/`self._brain` per booking (owner key or the booking
+        # owner's personal key) instead of using the constructor-injected
+        # `llm`/`brain` for every booking. `llm`/`brain` above remain the
+        # values used when no factory is supplied (every existing caller/test
+        # is unaffected).
+        self._llm_factory = llm_factory
         self._agent_settings = agent_settings or AgentSettings()
         self._trace_repo = trace_repo
         self._snapshots = snapshot_writer
@@ -145,6 +155,17 @@ class BookingComSearchMonitor:
     ) -> CheckResult:
         now = datetime.now(UTC)
         self._last_escalator = None
+
+        if self._llm_factory is not None:
+            try:
+                self._llm = self._llm_factory.for_booking(booking)
+                self._brain = self._llm_factory.agent_brain_for_booking(booking)
+            except UserKeyInvalidError as exc:
+                return CheckResult.failure(
+                    booking.booking_id,
+                    now,
+                    FailureReason(code=FailureCode.USER_KEY_INVALID, detail=str(exc)),
+                )
 
         if booking.occupancy is None:
             return CheckResult.failure(

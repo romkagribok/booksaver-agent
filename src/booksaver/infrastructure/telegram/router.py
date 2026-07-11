@@ -13,6 +13,10 @@ class IncomingCommand:
     command: str
     args: str
     raw_text: str
+    # Telegram message_id of the incoming message (US-027: needed to delete a
+    # chat message containing a pasted API key). Defaults to 0 so existing
+    # test/call sites that don't care about it keep working unchanged.
+    message_id: int = 0
 
 
 CommandHandler = Callable[[IncomingCommand], None]

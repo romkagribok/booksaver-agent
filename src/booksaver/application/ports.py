@@ -16,7 +16,7 @@ from booksaver.domain.rebook import (
 )
 from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.session import SessionState
-from booksaver.domain.user import User, UserAccessState, UserRole
+from booksaver.domain.user import InviteCode, User, UserAccessState, UserRole
 from booksaver.domain.value_objects import ConfirmationId, Money, Occupancy, Platform
 
 
@@ -45,6 +45,20 @@ class UserRepository(Protocol):
     def list_all(self) -> list[User]: ...
     def list_active(self) -> list[User]: ...
     def set_access_state(self, user_id: int, access_state: UserAccessState) -> None: ...
+    def get_owner_of_booking(self, booking_id: str) -> User | None: ...
+    def set_encrypted_key(self, user_id: int, encrypted_key: bytes | None) -> None: ...
+    def purge(self, user_id: int) -> None: ...
+
+
+@runtime_checkable
+class InviteCodeRepository(Protocol):
+    """Schema v8 (US-026). Single-use, owner-issued admission codes."""
+
+    def issue(
+        self, issued_by: int, expires_at: datetime | None = None
+    ) -> InviteCode: ...
+    def redeem(self, code: str, used_by: int, now: datetime) -> InviteCode | None: ...
+    def get(self, code: str) -> InviteCode | None: ...
 
 
 @runtime_checkable

@@ -192,3 +192,61 @@ class TestRunAllActive:
         }
         assert codes["b-1"] is FailureCode.OCCUPANCY_MISSING
         assert codes["b-2"] is None  # succeeded
+
+
+class _FakeLLMClientFactory:
+    """Fakes the US-027 hybrid-billing seam: raises on `for_booking` to
+    simulate a booking owner's invalid/undecryptable personal key."""
+
+    def __init__(self, raise_error: bool = True) -> None:
+        self._raise_error = raise_error
+        self.calls: list[str] = []
+
+    def for_booking(self, booking):
+        self.calls.append(booking.booking_id if booking else "none")
+        if self._raise_error:
+            from booksaver.domain.errors import UserKeyInvalidError
+
+            raise UserKeyInvalidError(user_id=7, detail="stub")
+        return None
+
+    def agent_brain_for_booking(self, booking):
+        return None
+
+
+class TestHybridBillingIntegration:
+    """US-027: a per-booking LLMClientFactory that raises UserKeyInvalidError
+    fails only that booking's check with FailureCode.USER_KEY_INVALID —
+    every other constructor-injected-llm test above is unaffected because
+    `llm_factory` defaults to None."""
+
+    def test_invalid_user_key_fails_the_check_with_user_key_invalid(self):
+        history = FakeCheckHistoryRepository()
+        factory = _FakeLLMClientFactory(raise_error=True)
+        monitor = BookingComSearchMonitor(
+            browser=_happy_browser(),
+            session_manager=SessionManager(FakeSessionRepository(make_session())),
+            check_history=history,
+            booking_repo=FakeBookingRepository([]),
+            failure_tracker=FailureTracker(history),
+            llm_factory=factory,
+        )
+        result = monitor.run_check(make_booking())
+        assert result.outcome is CheckOutcome.FAILURE
+        assert result.failure_reason.code is FailureCode.USER_KEY_INVALID
+        assert factory.calls == ["b-1"]
+
+    def test_no_user_key_error_uses_the_factory_resolved_clients(self):
+        history = FakeCheckHistoryRepository()
+        factory = _FakeLLMClientFactory(raise_error=False)
+        monitor = BookingComSearchMonitor(
+            browser=_happy_browser(),
+            session_manager=SessionManager(FakeSessionRepository(make_session())),
+            check_history=history,
+            booking_repo=FakeBookingRepository([]),
+            failure_tracker=FailureTracker(history),
+            llm_factory=factory,
+        )
+        result = monitor.run_check(make_booking())
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert factory.calls == ["b-1"]

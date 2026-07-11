@@ -82,7 +82,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Unit | Stories | Status |
 |------|---------|--------|
 | `001-telegram-bot-gateway` | 3 stories | Complete (bolt 008) |
-| `002-user-access-and-keys` | 4 stories | In construction (bolt 009; US-029 complete) |
+| `002-user-access-and-keys` | 4 stories | Complete (bolt 009) |
 | `003-conversational-booking-ops` | 3 stories | Planned (bolt 010) |
 | `004-telegram-rebook-gate` | 2 stories | Planned (bolt 011) |
 | `005-vps-deployment` | 2 stories | In construction (bolt 012; US-034 complete, cookie import pending) |
@@ -99,9 +99,9 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-026` | Enforce access modes for a discoverable bot | Phase 3 | Ready | `002-user-access-and-keys/stories/001-enforce-access-modes.md` |
-| `US-027` | Optional personal Anthropic API key (hybrid billing) | Phase 3 | Ready | `002-user-access-and-keys/stories/002-bring-your-own-anthropic-key.md` |
-| `US-028` | Owner admin commands | Phase 3 | Ready | `002-user-access-and-keys/stories/003-owner-admin-commands.md` |
+| `US-026` | Enforce access modes for a discoverable bot | Phase 3 | Complete | `002-user-access-and-keys/stories/001-enforce-access-modes.md` |
+| `US-027` | Optional personal Anthropic API key (hybrid billing) | Phase 3 | Complete | `002-user-access-and-keys/stories/002-bring-your-own-anthropic-key.md` |
+| `US-028` | Owner admin commands | Phase 3 | Complete | `002-user-access-and-keys/stories/003-owner-admin-commands.md` |
 | `US-029` | User-scoped persistence (schema v7) | Phase 3 | Complete | `002-user-access-and-keys/stories/004-user-scoped-persistence.md` |
 
 ### 003-conversational-booking-ops: Conversational Booking Ops
@@ -132,6 +132,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 |--------|-------|---------|--------|
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
-| `003-telegram-interface` | 5 | 14 | Validated, in construction (bolts 008–012); Wave 1 complete: US-023/024/036 (bolt 008), US-029, US-034 |
+| `003-telegram-interface` | 5 | 14 | Validated, in construction (bolts 008–012); units 001–002 complete: US-023/024/036 (bolt 008), US-026/027/028/029 (bolt 009); US-034 (bolt 012, cookie import pending) |
 
 All 36 stories (16 original + 6 Phase 2 + 14 Phase 3) are assigned exactly once.

@@ -2,7 +2,7 @@
 
 **Unit ID:** `002-user-access-and-keys`
 **Intent:** `003-telegram-interface`
-**Status:** Planned
+**Status:** Complete (bolt 009)
 **Build order:** 2
 
 ## Purpose

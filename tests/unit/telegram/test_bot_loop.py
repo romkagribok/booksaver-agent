@@ -62,7 +62,7 @@ def _data_dir(tmp_path: Path) -> DataDirectory:
 def _make_loop(
     client: FakeClient,
     tmp_path: Path,
-    access_guard=lambda chat_id: True,
+    access_guard=lambda cmd: True,
     dialog_handler=None,
 ) -> tuple[BotLoop, CommandRouter, list[int]]:
     router = CommandRouter()
@@ -74,7 +74,7 @@ def _make_loop(
         offset_store=offset_store,
         poll_timeout_seconds=30,
         access_guard=access_guard,
-        on_refused=refused.append,
+        on_refused=lambda cmd: refused.append(cmd.chat_id),
         dialog_handler=dialog_handler,
     )
     return loop, router, refused
@@ -109,7 +109,7 @@ def test_non_owner_chat_is_refused_and_router_not_invoked(tmp_path: Path) -> Non
     update = _message_update(1, chat_id=999, user_id=999, text="/status")
     client = FakeClient([[update]], stop_event)
     loop, router, refused = _make_loop(
-        client, tmp_path, access_guard=lambda chat_id: chat_id == 10
+        client, tmp_path, access_guard=lambda cmd: cmd.chat_id == 10
     )
     seen: list[IncomingCommand] = []
     router.register("/status", seen.append)
@@ -135,8 +135,8 @@ def test_offset_advances_past_last_processed_update_and_persists(tmp_path: Path)
         router=router,
         offset_store=offset_store,
         poll_timeout_seconds=30,
-        access_guard=lambda chat_id: True,
-        on_refused=lambda chat_id: None,
+        access_guard=lambda cmd: True,
+        on_refused=lambda cmd: None,
     )
 
     loop.run(stop_event)
@@ -156,8 +156,8 @@ def test_restart_resumes_from_persisted_offset(tmp_path: Path) -> None:
         router=router,
         offset_store=TelegramOffsetStore(data_dir),
         poll_timeout_seconds=30,
-        access_guard=lambda chat_id: True,
-        on_refused=lambda chat_id: None,
+        access_guard=lambda cmd: True,
+        on_refused=lambda cmd: None,
     )
 
     loop.run(stop_event)

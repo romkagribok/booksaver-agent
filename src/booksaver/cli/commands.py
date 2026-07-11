@@ -355,11 +355,10 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
         from booksaver.infrastructure.persistence.sqlite_store import (
             SqliteCheckTraceRepository,
             SqliteSavingsRepository,
+            SqliteUserRepository,
         )
         from booksaver.monitor.trace import SnapshotWriter
 
-        llm = _make_llm_extractor(cfg)
-        brain = _make_agent_brain(cfg)
         db_path = cfg.data_directory.path / "booksaver.db"
         with (
             SqliteStore(db_path) as store,
@@ -367,14 +366,17 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
         ):
             history = SqliteCheckHistoryRepository(store)
             booking_repo = SqliteBookingRepository(store)
+            # US-027 hybrid billing: the factory resolves owner-vs-personal
+            # key per booking, so the monitor gets no fixed llm/brain here —
+            # see BookingComSearchMonitor's llm_factory parameter.
+            llm_factory = _make_llm_client_factory(cfg, store=store)
             monitor = BookingComSearchMonitor(
                 browser=browser,
                 session_manager=SessionManager(LocalSessionRepository(cfg.data_directory)),
                 check_history=history,
                 booking_repo=booking_repo,
                 failure_tracker=FailureTracker(history),
-                llm=llm,
-                brain=brain,
+                llm_factory=llm_factory,
                 agent_settings=cfg.agent_settings,
                 trace_repo=SqliteCheckTraceRepository(store),
                 snapshot_writer=SnapshotWriter(cfg.data_directory.path / "snapshots"),
@@ -388,7 +390,53 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
             )
             pipeline.process(results)
 
+            _notify_invalid_user_keys(SqliteUserRepository(store), results)
+
     return _job
+
+
+def _notify_invalid_user_keys(user_repo: Any, results: list[Any]) -> None:
+    """US-027: when a check failed with USER_KEY_INVALID, tell the booking's
+    owner via a direct Telegram message (best-effort — a missing bot token or
+    a user with no Telegram identity just means no message is sent, never a
+    raised error). Kept self-contained here rather than routed through the
+    general savings/alert notifier, which only handles savings opportunities.
+    """
+    import logging
+
+    from booksaver.domain.check_result import FailureCode
+
+    invalid = [
+        r
+        for r in results
+        if r.failure_reason is not None and r.failure_reason.code is FailureCode.USER_KEY_INVALID
+    ]
+    if not invalid:
+        return
+
+    token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
+    if not token:
+        return
+
+    from booksaver.infrastructure.telegram.client import TelegramBotClient
+
+    client = TelegramBotClient(bot_token=token)
+    notified_users: set[int] = set()
+    for result in invalid:
+        owner = user_repo.get_owner_of_booking(result.booking_id)
+        if owner is None or owner.telegram_user_id is None or owner.user_id in notified_users:
+            continue
+        notified_users.add(owner.user_id)
+        try:
+            client.send_message(
+                owner.telegram_user_id,
+                "Your personal Anthropic key failed on a recent price check. "
+                "Send /setkey to replace it, or /deletekey to revert to the shared key.",
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Could not notify user %s about an invalid personal key", owner.user_id
+            )
 
 
 def _make_notifiers(cfg: Config) -> list[Any]:
@@ -431,14 +479,21 @@ def _make_notifiers(cfg: Config) -> list[Any]:
     return notifiers
 
 
-def _make_llm_client_factory(cfg: Config) -> Any:
-    """The LLMClientFactory seam (US-029). Wraps env-var key resolution today;
-    a later slice swaps this for per-user (owner-or-personal-key) resolution
-    without touching `_make_llm_extractor`/`_make_agent_brain` call sites.
+def _make_llm_client_factory(cfg: Config, store: Any = None) -> Any:
+    """The LLMClientFactory seam (US-029/US-027). Without `store` (the CLI
+    paths below that don't have a `Booking` in hand yet), this resolves only
+    the owner env-var key — unchanged pre-US-027 behavior. With `store` (the
+    scheduler's check job), it also resolves each booking's owning user and,
+    if they have a personal key, decrypts and uses it instead (hybrid
+    billing).
     """
+    from booksaver.infrastructure.crypto.fernet_key_store import FernetKeyStore
     from booksaver.infrastructure.llm.client_factory import AnthropicLLMClientFactory
+    from booksaver.infrastructure.persistence.sqlite_store import SqliteUserRepository
 
-    return AnthropicLLMClientFactory(cfg)
+    user_repo = SqliteUserRepository(store) if store is not None else None
+    key_store = FernetKeyStore() if store is not None else None
+    return AnthropicLLMClientFactory(cfg, user_repo=user_repo, key_store=key_store)
 
 
 def _make_llm_extractor(cfg: Config) -> Any:

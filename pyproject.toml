@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "playwright>=1.40",   # browser automation (ADR-007); run `playwright install chromium`
     "anthropic>=0.40",    # LLM extraction fallback (ADR-009)
+    "cryptography>=42",   # Fernet encryption of personal Anthropic keys at rest (ADR-019)
 ]
 
 [project.optional-dependencies]

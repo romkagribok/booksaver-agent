@@ -72,6 +72,32 @@ class TestTelegramBotConfig:
         assert cfg.telegram_bot_settings.enabled is False
         assert cfg.telegram_bot_settings.owner_chat_id is None
 
+    def test_access_mode_defaults_to_owner(self):
+        cfg = load_config(DictSource(_base()))
+        assert cfg.telegram_bot_settings.access_mode == "owner"
+
+    def test_access_mode_invite_accepted(self):
+        cfg = load_config(
+            DictSource(
+                _base({"enabled": True, "owner_chat_id": 1, "access_mode": "invite"})
+            )
+        )
+        assert cfg.telegram_bot_settings.access_mode == "invite"
+
+    def test_access_mode_open_rejected(self):
+        with pytest.raises(ConfigValidationError, match="access_mode"):
+            load_config(
+                DictSource(_base({"enabled": True, "owner_chat_id": 1, "access_mode": "open"}))
+            )
+
+    def test_access_mode_unknown_value_rejected(self):
+        with pytest.raises(ConfigValidationError, match="no public/open mode"):
+            load_config(
+                DictSource(
+                    _base({"enabled": True, "owner_chat_id": 1, "access_mode": "public"})
+                )
+            )
+
 
 class TestTelegramBotSettingsValueObject:
     def test_enabled_requires_owner_chat_id(self):
@@ -86,3 +112,8 @@ class TestTelegramBotSettingsValueObject:
         settings = TelegramBotSettings()
         assert settings.enabled is False
         assert settings.poll_timeout_seconds == 30
+        assert settings.access_mode == "owner"
+
+    def test_open_access_mode_rejected_by_direct_construction(self):
+        with pytest.raises(ValueError, match="no public/open mode"):
+            TelegramBotSettings(access_mode="open")

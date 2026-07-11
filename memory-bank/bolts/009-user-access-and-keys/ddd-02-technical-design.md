@@ -3,7 +3,7 @@ unit: 002-user-access-and-keys
 bolt: 009-user-access-and-keys
 stage: design
 status: complete
-updated: 2026-07-11T17:52:00Z
+updated: 2026-07-11T19:42:53Z
 ---
 
 # Technical Design — User Access & Keys
@@ -159,3 +159,29 @@ database, since the owner is the only user.
   (`tests/unit/savings/test_pipeline.py`, `tests/unit/rebook/test_rebook_service.py`) and the
   shared `FakeBookingRepository` (`tests/unit/monitor/fakes.py`) gained the new protocol
   methods so mypy structural conformance holds.
+
+## Implementation notes (US-026/027/028 pass, 2026-07-11T19:42:53Z)
+
+The module map above was followed with these refinements, made while implementing:
+
+| Module | What actually landed |
+|--------|----------------------|
+| `infrastructure/telegram/access.py` | `AccessControl` added **alongside** (not replacing) `OwnerGuard` — bolt 008's tests construct `OwnerGuard` directly, and keeping it avoids an unrelated test rewrite. Production wiring (`gateway.py`) uses `AccessControl` exclusively. |
+| `infrastructure/persistence/schema.sql` / `sqlite_store.py` | Schema **v8**: `invite_codes` (code PK, issued_by/used_by FK → users, issued_at, expires_at, used_at), purely additive — no `_migrate_v8` function needed (same pattern as v3/v4/v6). `SqliteUserRepository` gained `get_owner_of_booking`, `set_encrypted_key`, `purge`; new `SqliteInviteCodeRepository` (`issue`/`redeem`/`get`). |
+| `application/ports.py` | `UserRepository` extended with the three new methods; new `InviteCodeRepository` Protocol. |
+| `infrastructure/crypto/fernet_key_store.py` | **New** (not anticipated as a separate package in ddd-01, which named it `fernet_key_store.py` directly under `infrastructure/`) — `FernetKeyStore.encrypt`/`decrypt`, lazy `BOOKSAVER_SECRET_KEY` read (constructing the store never fails; only an actual encrypt/decrypt call can raise `SecretKeyError`), so an owner-only deployment that never sets the env var is unaffected. |
+| `infrastructure/telegram/key_validator.py` | **New** — `KeyValidator` Protocol + `AnthropicKeyValidator` (one `client.models.list(limit=1)` call). Faked in tests. |
+| `infrastructure/telegram/key_dialogs.py` | **New** — `KeyIntakeFlow` (`/setkey`) and `handle_deletekey` (`/deletekey`). `KeyIntakeFlow` is deliberately **not** built on `DialogManager`/`DialogDefinition`: that framework's `on_complete(user_id, chat_id, answers)` doesn't receive the raw Telegram `message_id`, which is required to delete the chat message containing the pasted key. A small per-chat pending-set is simpler than extending the shared dialog machinery's signature for one caller (which bolt 010's `/register` dialog also uses and shouldn't need to change). |
+| `infrastructure/telegram/admin_commands.py` | **New** — `register_admin_commands` wires `/admin users\|revoke\|purge\|invite\|mode`. Every branch re-checks `access_control.is_owner` independently (never trusts "reached the handler" alone). `purge`/`mode` require an explicit `... confirm` resend rather than an inline-keyboard confirmation (inline keyboards are bolt 011's rebook-gate concern; a resend-to-confirm pattern needed no new Bot API surface). |
+| `infrastructure/llm/client_factory.py` | `AnthropicLLMClientFactory` gained `user_repo`/`key_store` constructor params. `_resolve_api_key(booking)`: booking → `user_repo.get_owner_of_booking(booking.booking_id)` → if `encrypted_key` set, `key_store.decrypt(...)`, raising `UserKeyInvalidError(user_id)` on failure; else the owner env-var key (unchanged). `for_booking`/`agent_brain_for_booking` propagate the exception rather than swallowing it. |
+| `monitor/search_check_job.py` | `BookingComSearchMonitor` gained an **additive** `llm_factory: LLMClientFactory \| None` constructor param. When set, `_run_check_inner` re-resolves `self._llm`/`self._brain` per booking at the top of the method (mutating the instance attributes the rest of the method already reads — matching the existing `self._last_escalator` per-call-reset pattern) instead of using the constructor-injected `llm`/`brain`. A `UserKeyInvalidError` short-circuits to `CheckResult.failure(..., FailureCode.USER_KEY_INVALID)` before the occupancy check. Every existing test/call site that passes `llm=`/`brain=` directly (no `llm_factory`) is byte-identical to before — `llm_factory` defaults to `None`. |
+| `cli/commands.py` | `_make_check_job`'s `_job()` now builds one `AnthropicLLMClientFactory` per tick (with `user_repo`/`key_store` wired from the tick's open `SqliteStore`) and passes it as `llm_factory=` instead of pre-resolving `llm`/`brain` once for all bookings — this is what makes per-booking key resolution possible without changing `BookingComSearchMonitor`'s per-tick construction pattern. A new `_notify_invalid_user_keys` helper sends a direct Telegram DM (best-effort, self-contained — not routed through the general notifier, which only handles savings) to a user whose personal key failed. |
+| `domain/check_result.py` | `FailureCode.USER_KEY_INVALID = "user_key_invalid"` added next to the bolt-007 agentic-escalation codes. |
+| `domain/errors.py` | `UserKeyInvalidError(user_id, detail)` and `SecretKeyError` added — both `BookSaverError` subclasses. |
+| `monitor/trace.py` | `redact()` extended with a second, unconditional `sk-ant-[A-Za-z0-9_-]{10,}` pattern (Anthropic keys are shaped distinctively regardless of a `key=`/`token=` label) — applied in addition to, not instead of, the existing labelled-secret pattern. |
+| `infrastructure/telegram/router.py` | `IncomingCommand` gained `message_id: int = 0` (default preserves every existing construction site). |
+| `infrastructure/telegram/bot_loop.py` | `access_guard`/`on_refused` callback types changed from `Callable[[int], bool/None]` to `Callable[[IncomingCommand], bool/None]` — `invite` mode's `/start <code>` admission needs the command and args, not just the chat id. Command parsing was moved before the access-guard call (was after) so the guard can see it. |
+| `infrastructure/telegram/gateway.py` | `OwnerGuard` swapped for `AccessControl`; `/setkey`/`/deletekey`/`/admin *` registered in a clearly delimited block per the coordination note (bolt 010 registers its own commands in the same file). `/cancelflow` now also cancels a pending `KeyIntakeFlow`. |
+| `pyproject.toml` | `cryptography>=42` added to `dependencies` (ADR-019). |
+
+No deviation from the ddd-01 domain rules; see ddd-03-test-report.md for full verification.

@@ -44,3 +44,25 @@ class User:
     @property
     def is_active(self) -> bool:
         return self.access_state is UserAccessState.ACTIVE
+
+
+@dataclass
+class InviteCode:
+    """A single-use, owner-issued admission code for `invite` access mode
+    (schema v8, US-026). `used_by`/`used_at` are set atomically on redemption
+    by `InviteCodeRepository.redeem` — a code with `used_by` set can never be
+    redeemed again."""
+
+    code: str
+    issued_by: int
+    issued_at: datetime
+    expires_at: datetime | None = None
+    used_by: int | None = None
+    used_at: datetime | None = None
+
+    @property
+    def is_used(self) -> bool:
+        return self.used_by is not None
+
+    def is_expired(self, now: datetime) -> bool:
+        return self.expires_at is not None and now > self.expires_at

@@ -37,6 +37,10 @@ class FailureCode(Enum):
     AGENT_GAVE_UP = "agent_gave_up"
     BLOCKED_ACTION = "blocked_action"
     BUDGET_EXCEEDED = "budget_exceeded"
+    # Hybrid billing (bolt 009, US-027): the booking owner's personal Anthropic
+    # key could not be used (missing encryption key, corrupt ciphertext, or the
+    # decrypted key itself was rejected).
+    USER_KEY_INVALID = "user_key_invalid"
 
 
 @dataclass(frozen=True)

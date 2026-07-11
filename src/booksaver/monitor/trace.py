@@ -21,9 +21,17 @@ _SECRET_PATTERN = re.compile(
     r"((?:cookie|token|secret|password|authorization)\s*[=:]\s*)\S{16,}", re.IGNORECASE
 )
 
+# Anthropic API keys (owner env-var key or a user's personal `/setkey` key,
+# bolt 009 US-027) are shaped like `sk-ant-...` regardless of surrounding
+# text, so they're redacted unconditionally rather than only after a
+# `key=`/`token=` label — extends the same seam intent 002 built for
+# cookies/tokens (US-022).
+_ANTHROPIC_KEY_PATTERN = re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}")
+
 
 def redact(text: str) -> str:
-    return _SECRET_PATTERN.sub(r"\1[REDACTED]", text)
+    text = _SECRET_PATTERN.sub(r"\1[REDACTED]", text)
+    return _ANTHROPIC_KEY_PATTERN.sub("[REDACTED]", text)
 
 
 class TraceRecorder:

@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-11T17:39:20Z
-total_decisions: 18
+last_updated: 2026-07-11T19:42:53Z
+total_decisions: 19
 ---
 
 # Decision Index
@@ -17,6 +17,14 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-019: Fernet (via `cryptography`) for personal-key encryption at rest
+- **Status**: accepted
+- **Date**: 2026-07-11
+- **Bolt**: 009-user-access-and-keys (user-access-and-keys)
+- **Path**: `bolts/009-user-access-and-keys/adr-019-fernet-user-key-encryption.md`
+- **Summary**: Invited users' optional personal Anthropic keys (`/setkey`, hybrid billing) are encrypted at rest in `users.encrypted_key` with Fernet, keyed by `BOOKSAVER_SECRET_KEY` (env var, never config/git). Protects the DB file and its backups from exfiltration; explicitly does not protect against a fully compromised host (env-var trust boundary, same as every other secret in this project). Rejected: plaintext+chmod alone, stdlib obfuscation, OS keyring (headless VPS friction), per-user derived keys (no real safety gain, complicates rotation).
+- **Read when**: Touching `users.encrypted_key`, the `/setkey`/`/deletekey` flow, `LLMClientFactory` per-user key resolution, or writing/updating the VPS deployment runbook's secrets section.
 
 ### ADR-018: Self-hosted deployment amends "local-only" — owner-operated laptop or VPS
 - **Status**: accepted

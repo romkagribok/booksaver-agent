@@ -35,8 +35,8 @@ class BotLoop:
         router: CommandRouter,
         offset_store: TelegramOffsetStore,
         poll_timeout_seconds: int,
-        access_guard: Callable[[int], bool],
-        on_refused: Callable[[int], None],
+        access_guard: Callable[[IncomingCommand], bool],
+        on_refused: Callable[[IncomingCommand], None],
         dialog_handler: Callable[[IncomingCommand], bool] | None = None,
     ) -> None:
         self._client = client
@@ -86,18 +86,24 @@ class BotLoop:
         sender = message.get("from") or {}
         chat_id = chat.get("id")
         user_id = sender.get("id")
+        message_id = message.get("message_id", 0)
         text = message.get("text")
         if chat_id is None or user_id is None or not text:
             return
 
-        if not self._access_guard(chat_id):
-            self._on_refused(chat_id)
-            return
-
         command, args = _parse_command(text)
         incoming = IncomingCommand(
-            user_id=user_id, chat_id=chat_id, command=command, args=args, raw_text=text
+            user_id=user_id,
+            chat_id=chat_id,
+            command=command,
+            args=args,
+            raw_text=text,
+            message_id=message_id,
         )
+
+        if not self._access_guard(incoming):
+            self._on_refused(incoming)
+            return
 
         if command.startswith("/"):
             if not self._router.dispatch(incoming):

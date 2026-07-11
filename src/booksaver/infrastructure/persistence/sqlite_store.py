@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from collections.abc import Callable
 from datetime import UTC, date, datetime
@@ -29,7 +30,7 @@ from booksaver.domain.rebook import (
     SessionState as RebookSessionState,
 )
 from booksaver.domain.savings import SavingsOpportunity
-from booksaver.domain.user import User, UserAccessState, UserRole
+from booksaver.domain.user import InviteCode, User, UserAccessState, UserRole
 from booksaver.domain.value_objects import (
     ConfirmationId,
     Money,
@@ -42,7 +43,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 # Columns shared by the v2/v4 and v5 check_history definitions (v5 only relaxes
@@ -240,6 +241,9 @@ def _migrate_v7(conn: sqlite3.Connection) -> None:
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
 # v6 -> v7: users table + bookings.user_id (US-029).
+# v7 -> v8: invite_codes table, also purely additive (US-026) — no migrate
+# function needed; schema.sql's CREATE TABLE IF NOT EXISTS covers it, same as
+# v3/v4/v6.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -874,6 +878,68 @@ class SqliteUserRepository:
         if cursor.rowcount == 0:
             raise KeyError(f"No user with id '{user_id}'")
 
+    def get_owner_of_booking(self, booking_id: str) -> User | None:
+        """US-027: resolve a booking's owning user, for per-booking LLM key
+        resolution (`LLMClientFactory.for_booking`). Joins through
+        `bookings.user_id` rather than adding a `User` field to `Booking`
+        (see ddd-02 rationale)."""
+        row = self._store.conn.execute(
+            "SELECT u.* FROM users u JOIN bookings b ON b.user_id = u.user_id "
+            "WHERE b.booking_id = ?",
+            (booking_id,),
+        ).fetchone()
+        return self._row_to_user(row) if row else None
+
+    def set_encrypted_key(self, user_id: int, encrypted_key: bytes | None) -> None:
+        """US-027: store (or clear, when `encrypted_key` is None) a user's
+        Fernet-encrypted personal Anthropic key. `/setkey` rotates by calling
+        this again; `/deletekey` calls it with None to revert to owner-billed
+        checks."""
+        cursor = self._store.conn.execute(
+            "UPDATE users SET encrypted_key = ? WHERE user_id = ?",
+            (encrypted_key, user_id),
+        )
+        self._store.conn.commit()
+        if cursor.rowcount == 0:
+            raise KeyError(f"No user with id '{user_id}'")
+
+    def purge(self, user_id: int) -> None:
+        """US-028 `/admin purge`: irreversibly deletes a non-owner user and
+        everything scoped through their bookings. The owner row can never be
+        purged (guards the exactly-one-owner invariant)."""
+        user = self.get_by_id(user_id)
+        if user is None:
+            raise KeyError(f"No user with id '{user_id}'")
+        if user.is_owner:
+            raise ValueError("The owner user cannot be purged")
+
+        conn = self._store.conn
+        booking_ids = [
+            r[0]
+            for r in conn.execute(
+                "SELECT booking_id FROM bookings WHERE user_id = ?", (user_id,)
+            )
+        ]
+        for booking_id in booking_ids:
+            conn.execute(
+                "DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,)
+            )
+            conn.execute(
+                "DELETE FROM rebook_events WHERE session_id IN "
+                "(SELECT session_id FROM rebook_sessions WHERE booking_id = ?)",
+                (booking_id,),
+            )
+            conn.execute("DELETE FROM rebook_sessions WHERE booking_id = ?", (booking_id,))
+            conn.execute(
+                "DELETE FROM check_traces WHERE booking_id = ?", (booking_id,)
+            )
+            conn.execute("DELETE FROM check_history WHERE booking_id = ?", (booking_id,))
+            conn.execute("DELETE FROM bookings WHERE booking_id = ?", (booking_id,))
+        conn.execute("DELETE FROM invite_codes WHERE used_by = ?", (user_id,))
+        conn.execute("UPDATE invite_codes SET issued_by = NULL WHERE issued_by = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        conn.commit()
+
     def _row_to_user(self, row: sqlite3.Row) -> User:
         return User(
             user_id=row["user_id"],
@@ -882,4 +948,62 @@ class SqliteUserRepository:
             access_state=UserAccessState(row["access_state"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             encrypted_key=row["encrypted_key"],
+        )
+
+
+class SqliteInviteCodeRepository:
+    """Schema v8 (US-026). Single-use, owner-issued invite codes for
+    `access_mode = "invite"`."""
+
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def issue(self, issued_by: int, expires_at: datetime | None = None) -> InviteCode:
+        code = secrets.token_urlsafe(9)  # short enough to type/paste, unguessable
+        issued_at = datetime.now(UTC)
+        expires_at_str = expires_at.isoformat() if expires_at else None
+        self._store.conn.execute(
+            "INSERT INTO invite_codes (code, issued_by, issued_at, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (code, issued_by, issued_at.isoformat(), expires_at_str),
+        )
+        self._store.conn.commit()
+        return InviteCode(
+            code=code, issued_by=issued_by, issued_at=issued_at, expires_at=expires_at
+        )
+
+    def get(self, code: str) -> InviteCode | None:
+        row = self._store.conn.execute(
+            "SELECT * FROM invite_codes WHERE code = ?", (code,)
+        ).fetchone()
+        return self._row_to_invite(row) if row else None
+
+    def redeem(self, code: str, used_by: int, now: datetime) -> InviteCode | None:
+        """Atomically redeem `code` for `used_by`. Returns None (no state
+        change) when the code doesn't exist, is already used, or is expired —
+        callers treat every None the same as "invalid code", never leaking
+        which case applied (US-026)."""
+        invite = self.get(code)
+        if invite is None or invite.is_used or invite.is_expired(now):
+            return None
+        cursor = self._store.conn.execute(
+            "UPDATE invite_codes SET used_by = ?, used_at = ? "
+            "WHERE code = ? AND used_by IS NULL",
+            (used_by, now.isoformat(), code),
+        )
+        self._store.conn.commit()
+        if cursor.rowcount == 0:
+            return None  # lost a race with a concurrent redemption
+        return self.get(code)
+
+    def _row_to_invite(self, row: sqlite3.Row) -> InviteCode:
+        return InviteCode(
+            code=row["code"],
+            issued_by=row["issued_by"],
+            issued_at=datetime.fromisoformat(row["issued_at"]),
+            expires_at=(
+                datetime.fromisoformat(row["expires_at"]) if row["expires_at"] else None
+            ),
+            used_by=row["used_by"],
+            used_at=datetime.fromisoformat(row["used_at"]) if row["used_at"] else None,
         )

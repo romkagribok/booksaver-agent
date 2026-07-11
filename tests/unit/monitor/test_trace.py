@@ -82,6 +82,18 @@ class TestRedact:
         text = "Standard Double € 350.00 Free cancellation"
         assert redact(text) == text
 
+    def test_anthropic_key_redacted_even_without_a_label(self):
+        # bolt 009 (US-027): a personal key can appear bare in an error
+        # message, not just after "key=" — must still be redacted.
+        text = "anthropic.AuthenticationError: sk-ant-api03-abc123DEF456ghi789 is invalid"
+        redacted = redact(text)
+        assert "sk-ant-api03-abc123DEF456ghi789" not in redacted
+        assert "[REDACTED]" in redacted
+
+    def test_anthropic_key_redacted_with_key_equals_label(self):
+        redacted = redact("api_key=sk-ant-api03-abcdefghijklmnop")
+        assert "sk-ant-api03-abcdefghijklmnop" not in redacted
+
 
 class TestSnapshotWriter:
     def test_writes_text_and_optional_png(self, tmp_path):
