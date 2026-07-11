@@ -1,7 +1,7 @@
 # VPS Deployment Runbook
 
 **Unit:** `005-vps-deployment` (`003-telegram-interface`, bolt 012) · **Stories:** US-034 (done),
-US-035 core (done — cookie import is a later slice)
+US-035 (done — logged-out core + cookie import)
 
 Fresh VPS to a running BookSaver bot, in one documented command path, plus the operational
 procedures you'll need afterwards.
@@ -185,8 +185,18 @@ the scheduled check runs the same search → results → property → room-table
 cookies restored, and reports real public bookable totals. `AUTH_REQUIRED`-class failures cannot
 occur in this mode (`SearchJourney`'s failure classifier is gated on session mode — see
 `src/booksaver/monitor/search_journey.py` and `src/booksaver/domain/session.py`'s `SessionMode`).
-Public prices may miss member/Genius rates; a later slice of US-035 adds an optional cookie-import
-path (export cookies from your own browser, load them via CLI/bot) to unlock those.
+Public prices may miss member/Genius rates and are labeled "(public rate — member deals may be
+cheaper)" in savings alerts; §11 below covers the optional cookie-import path that unlocks
+member-rate checks on a VPS.
+
+By the time you run this smoke test, the Telegram bot gateway (Units 001–004) is also live: use
+`/status` from the owner chat instead of/alongside `docker compose exec booksaver booksaver
+checks list <booking-id>` for the same daemon-health + last-check view, `/register` to add a
+booking straight from chat instead of the `docker compose run --rm booksaver booksaver register
+...` one-off shown in §4, and a detected savings opportunity drives the guided-rebook flow
+end-to-end over Telegram (inline-keyboard confirmations, final booking click handed off to your
+own device via a deep link) — see `memory-bank/intents/003-telegram-interface/units/`
+`004-telegram-rebook-gate/` for that flow's details.
 
 **Datacenter IPs sometimes get walled by Booking.com's bot detection more aggressively than
 residential ones — validate this from your actual VPS before relying on it.** Do this once, right
@@ -246,6 +256,65 @@ See also `docs/DISCLAIMER.md` (linked from the README) — automated access to B
 any of the above may violate their Terms of Service; that risk is the operator's, not this
 project's, to accept.
 
+## 11. Cookie import for member/Genius rates (optional)
+
+Logged-out mode (§10) already produces real, bookable public prices — cookie import is optional,
+only needed if you want checks to see member/Genius discounts too. It never touches your
+Booking.com password: you export cookies from a browser where you're already logged in, and load
+them locally.
+
+**Security caution, read before you do this:** a Booking.com session cookie grants the same
+account access as your password would — anyone with the exported file can act as your logged-in
+session until it expires. Treat the export file exactly like a password:
+
+- Only export it on a device you control, never over a shared/public network.
+- Import it, confirm success, then **delete the export file immediately**
+  (`rm cookies.json` or your OS equivalent) — don't leave it sitting in a Downloads folder.
+- Never commit it to git, paste it into a chat, or attach it to an issue/ticket.
+- If you ever suspect it leaked, sign out of Booking.com everywhere (account settings) to
+  invalidate the session, then re-export a fresh one.
+
+**Exporting cookies from your browser** — any extension that exports cookies as JSON works; two
+common ones, both free:
+
+- **Cookie-Editor** (Chrome/Firefox/Edge): open booking.com while logged in, click the extension
+  icon, "Export" → "Export as JSON", save the file.
+- **EditThisCookie** (Chrome): same flow, "Export" copies JSON to your clipboard — paste it into a
+  new file and save as `cookies.json`.
+
+Either extension's export shape is accepted directly, as is Playwright's own native
+`context.cookies()` shape (what `booksaver auth` itself produces) — `booksaver auth import`
+detects and normalizes both. It also accepts a `{"cookies": [...]}` wrapper some tools use.
+
+**Importing:**
+
+```bash
+# on the VPS (copy the file up first, e.g. scp cookies.json vps:/tmp/, then):
+docker compose exec booksaver booksaver auth import /path/to/cookies.json
+# or, non-Docker / systemd install:
+booksaver auth import /path/to/cookies.json
+
+rm /path/to/cookies.json   # delete the export now that it's imported
+```
+
+On success it prints how many cookies were imported, for which domain(s), and the earliest
+expiry among them — **never the cookie values themselves**. The session is stored the same way
+`booksaver auth`'s headed login stores one (`{data_directory}/session_booking_com.json`, 0600,
+base64-encoded), and checks switch to authenticated mode immediately — confirm with `/status` (or
+`booksaver checks list <booking-id>` after the next tick).
+
+**Validation before anything is stored:** the file must be parseable JSON containing at least one
+cookie for a `booking.com` domain, and not every one of those cookies can already be expired.
+Anything else is rejected with an actionable error and nothing is written to disk.
+
+**Expiry:** the stored session expires when the earliest-expiring imported cookie does (a
+deliberately conservative choice — some cookies in a real export last much longer than others).
+Once that happens, checks fall back to logged-out mode automatically (never silently serving a
+stale/degraded price as if it were still a member rate) and the check-failure detail / logs
+mention `booksaver auth import` as the fix. Re-export and re-import when that happens; there's no
+notification for this yet beyond the failure detail and log lines — polling `/status` or `checks
+list` periodically is the only way to notice today.
+
 ---
 
 ## Open items / TODOs for whoever picks this up next
@@ -259,8 +328,10 @@ project's, to accept.
   thread dies).
 - **`/status` over Telegram** (US-036) shipped in the same merge — §10's smoke test can use
   `/status` from the owner chat alongside `checks list`.
-- **Cookie import** (rest of US-035) is a later slice of this bolt: a CLI file-import command
-  (and optionally a Telegram file-upload path with immediate message deletion) for
-  member/Genius-rate cookies exported from the user's own browser, with expiry producing a clear
-  re-import prompt rather than silent price degradation. Not implemented yet — logged-out mode is
-  the only session mode available today.
+- ~~**Cookie import**~~ — RESOLVED: `booksaver auth import <file>` (§11) parses/validates/stores
+  cookies exported from the user's own browser (Playwright-native or common browser-extension
+  export shapes), flips session mode to authenticated, and expiry falls back to logged-out with a
+  `booksaver auth import` re-import hint in the check-failure detail and session-manager logs —
+  never silent price degradation. A Telegram file-upload path (bot-side, with immediate message
+  deletion) is a possible future enhancement but is not needed for the CLI path to be fully usable
+  on a VPS today; not tracked as an open item since the CLI path fully satisfies US-035.

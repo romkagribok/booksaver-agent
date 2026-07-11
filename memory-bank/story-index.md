@@ -85,7 +85,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `002-user-access-and-keys` | 4 stories | Complete (bolt 009) |
 | `003-conversational-booking-ops` | 3 stories | Complete (bolt 010) |
 | `004-telegram-rebook-gate` | 2 stories | Complete (bolt 011) |
-| `005-vps-deployment` | 2 stories | In construction (bolt 012; US-034 complete, cookie import pending) |
+| `005-vps-deployment` | 2 stories | Complete (bolt 012) |
 
 ### 001-telegram-bot-gateway: Telegram Bot Gateway
 
@@ -124,7 +124,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-034` | Deploy daemon and bot on a VPS | Phase 3 | Complete | `005-vps-deployment/stories/001-deploy-on-vps.md` |
-| `US-035` | Logged-out checks with optional cookie import | Phase 3 | Ready | `005-vps-deployment/stories/002-logged-out-checks-and-cookie-import.md` |
+| `US-035` | Logged-out checks with optional cookie import | Phase 3 | Complete | `005-vps-deployment/stories/002-logged-out-checks-and-cookie-import.md` |
 
 ## Summary
 
@@ -132,6 +132,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 |--------|-------|---------|--------|
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
-| `003-telegram-interface` | 5 | 14 | Validated, in construction (bolts 008–012); units 001–002 complete: US-023/024/036 (bolt 008), US-026/027/028/029 (bolt 009); US-034 (bolt 012, cookie import pending) |
+| `003-telegram-interface` | 5 | 14 | Complete (bolts 008–012; all 14 stories US-023–036) |
 
 All 36 stories (16 original + 6 Phase 2 + 14 Phase 3) are assigned exactly once.

@@ -3,14 +3,14 @@ id: 012-vps-deployment
 unit: 005-vps-deployment
 intent: 003-telegram-interface
 type: ddd-construction-bolt
-status: in_progress
+status: complete
 stories:
   - 001-deploy-on-vps
   - 002-logged-out-checks-and-cookie-import
 created: 2026-07-11T17:30:00Z
 started: 2026-07-11T17:30:00Z
-completed: null
-current_stage: implement
+completed: 2026-07-11T20:10:00Z
+current_stage: test
 stages_completed:
   - name: model
     completed: 2026-07-11T17:45:00Z
@@ -30,6 +30,18 @@ stages_completed:
   - name: test
     completed: 2026-07-11T18:10:00Z
     artifact: ddd-03-test-report.md
+  - name: implement (slice 2 — cookie import)
+    completed: 2026-07-11T20:05:00Z
+    artifact: >
+      infrastructure/persistence/cookie_import.py (import_cookies) +
+      cli/commands.py (booksaver auth import <file>) +
+      monitor/session_manager.py + monitor/search_check_job.py (re-import
+      hints in warnings/failure detail) + domain/check_result.py
+      (session_mode field) + application/savings_pipeline.py (public-rate
+      alert label) + runbook §11 + README Telegram-bot section
+  - name: test (slice 2)
+    completed: 2026-07-11T20:10:00Z
+    artifact: ddd-03-test-report.md
 requires_bolts:
   - 007-agentic-escalation
 enables_bolts: []
@@ -47,24 +59,27 @@ complexity:
 
 ## Overview
 
-First slice of the unit that makes BookSaver runnable unattended on an owner-operated VPS. This
-slice covers US-034 in full (Dockerfile + systemd + ops runbook) and the **logged-out-checks
+The unit that makes BookSaver runnable unattended on an owner-operated VPS, in two slices.
+Slice 1 covers US-034 in full (Dockerfile + systemd + ops runbook) and the **logged-out-checks
 core** of US-035: the search journey runs cleanly with no saved Booking.com session, and
-`AUTH_REQUIRED`-class failures are structurally impossible in that mode. The **cookie-import**
-half of US-035 (exporting/loading member-rate cookies) is a later slice of this same bolt and is
-explicitly out of scope here.
+`AUTH_REQUIRED`-class failures are structurally impossible in that mode. Slice 2 completes US-035:
+`booksaver auth import <file>` loads cookies exported from the user's own browser (Playwright-
+native or common browser-extension export shapes), storing them with the same care as a headed-
+login session; expiry falls back to logged-out mode with an explicit re-import hint rather than
+silent price degradation; logged-out savings alerts are labeled as public rates.
 
 ## Objective
 
 A fresh VPS reaches a running, unattended BookSaver container/service via one documented command
-path, and scheduled checks succeed without ever requiring the impossible-on-a-VPS headed
-`booksaver auth` step.
+path, scheduled checks succeed without ever requiring the impossible-on-a-VPS headed
+`booksaver auth` step, and an operator who wants member/Genius-rate accuracy on that same VPS has
+a documented, secure cookie-import path to get it.
 
 ## Stories Included
 
-- **US-034**: Deploy daemon and bot on a VPS (Must) — **complete this bolt**
+- **US-034**: Deploy daemon and bot on a VPS (Must) — **complete**
 - **US-035**: Logged-out checks with optional cookie import (Must: deployment / Should: cookie
-  import) — **logged-out core complete this bolt; cookie import pending a later slice**
+  import) — **complete (both slices)**
 
 ## Bolt Type
 
@@ -75,11 +90,12 @@ path, and scheduled checks succeed without ever requiring the impossible-on-a-VP
 
 - ✅ **1. Domain Model**: Complete → ddd-01-domain-model.md
 - ✅ **2. Technical Design**: Complete → ddd-02-technical-design.md
-- ✅ **3. Implement**: Complete (this slice) → SessionMode + logged-out journey gating +
-  Dockerfile/compose/systemd + runbook
-- ✅ **4. Test**: Complete (this slice) → ddd-03-test-report.md (367/367; 7 new)
+- ✅ **3. Implement**: Complete → slice 1: SessionMode + logged-out journey gating +
+  Dockerfile/compose/systemd + runbook; slice 2: cookie-import parsing/validation/storage,
+  `booksaver auth import`, re-import hints, public-rate alert labeling
+- ✅ **4. Test**: Complete → ddd-03-test-report.md (609/609; 36 new across both slices)
 
-No ADR-analysis stage was needed: this slice reuses existing ADRs (ADR-005 foreground daemon,
+No ADR-analysis stage was needed: this bolt reuses existing ADRs (ADR-005 foreground daemon,
 ADR-002 env-var secrets, ADR-018 self-hosted) without introducing a new architecturally
 significant decision. The base-image choice (`python:3.12-slim` + explicit
 `playwright install --with-deps chromium` over Microsoft's prebuilt Playwright image) is recorded
@@ -89,14 +105,15 @@ standalone ADR.
 ## Dependencies
 
 ### Requires
-- Bolt 007 (search journey + failure-code vocabulary this slice gates `AUTH_REQUIRED` within)
+- Bolt 007 (search journey + failure-code vocabulary this bolt gates `AUTH_REQUIRED` within)
 
-### Requires (unit-level, not blocking this slice)
-- Unit 001 `telegram-bot-gateway` for the `/status` surface the runbook references as a TODO
-  follow-up (US-036 ships there, per the unit brief)
+### Requires (unit-level)
+- Unit 001 `telegram-bot-gateway` for the `/status` surface the runbook references (US-036
+  shipped there; `/status` doesn't yet render session mode explicitly, but
+  `SessionManager.current_mode()` is available for it to call)
 
 ### Enables
-- Real unattended VPS operation once cookie import (US-035 remainder) lands
+- Real unattended VPS operation, with or without member-rate accuracy via cookie import
 
 ## Success Criteria
 
@@ -110,20 +127,31 @@ standalone ADR.
       reviewed line-by-line (Docker daemon unavailable in this environment — build/run untested,
       flagged in the test report)
 - [x] Ops runbook covers provisioning, install, secrets, config, first-run, upgrade, backup,
-      logs, the VPS-IP smoke test, and the fallback ladder
+      logs, the VPS-IP smoke test, the fallback ladder, and cookie import
 - [x] README + `docs/DISCLAIMER.md` cover the "not affiliated, ToS risk is the operator's,
-      no public bot mode" disclaimer
-- [ ] Cookie-import CLI command, storage, and `/status` wiring — **deferred to the next slice**
+      no public bot mode" disclaimer, plus a Telegram-bot feature summary
+- [x] Cookie-import CLI command (`booksaver auth import <file>`), validated storage (0600, never
+      logs cookie values), expiry → re-import prompt, and public-rate alert labeling — all
+      implemented and tested in slice 2
 
 ## Notes
 
-- Coordination: this bolt ran alongside two other in-flight workers (Telegram gateway/daemon/CLI
-  owner; SQLite schema/repositories owner). This slice touched only
-  `monitor/session_manager.py`, `monitor/search_journey.py`, `monitor/search_check_job.py`,
-  `domain/session.py`, and new deployment/docs/test files — no daemon, CLI, schema, or repository
-  files were changed.
-- No DB schema change: session-mode annotation on a logged-out successful check is logging-only
-  (`search_check_job.py`), not a new `CheckResult`/persistence field, since the schema is owned by
-  another in-flight worker.
-- No new runtime dependency: `SessionMode` is a plain domain enum; Docker/systemd/runbook add no
-  Python dependency.
+- Coordination, slice 1: ran alongside two other in-flight workers (Telegram gateway/daemon/CLI
+  owner; SQLite schema/repositories owner). Touched only `monitor/session_manager.py`,
+  `monitor/search_journey.py`, `monitor/search_check_job.py`, `domain/session.py`, and new
+  deployment/docs/test files — no daemon, CLI, schema, or repository files were changed.
+- No DB schema change (slice 1 or 2): session-mode annotation on a logged-out successful check
+  stayed logging-only through slice 1; slice 2 threads it as an **unpersisted** `CheckResult`
+  field (`session_mode`, see its docstring in `domain/check_result.py`) that only needs to survive
+  the in-memory hop from `run_all_active()` to `SavingsPipeline.process()` within one scheduler
+  tick — no `check_history`/`check_traces` column, no migration, no schema-owner coordination
+  needed.
+- Coordination, slice 2: ran alongside a parallel worker on bolt 011 (Telegram rebook gate),
+  scoped to stay out of `infrastructure/telegram/`, rebook code, and `[telegram_bot]` config
+  parsing. Slice 2 touched `cli/commands.py` only in the `auth` parser/handler (new
+  `cmd_auth_import` + `import` subparser), plus `infrastructure/persistence/cookie_import.py`
+  (new), `domain/check_result.py`, `application/savings_pipeline.py`,
+  `monitor/session_manager.py`, and `monitor/search_check_job.py` — no telegram/rebook files.
+- No new runtime dependency in either slice: `SessionMode` is a plain domain enum;
+  `cookie_import.py` uses only stdlib `json`/`dataclasses`/`datetime`; Docker/systemd/runbook add
+  no Python dependency.

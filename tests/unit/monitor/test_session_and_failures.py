@@ -57,6 +57,33 @@ def test_mark_reauth_required_persists_status() -> None:
     assert repo.session.status is SessionStatus.REQUIRES_REAUTH
 
 
+def test_mark_reauth_required_mentions_vps_compatible_cookie_import(caplog) -> None:
+    """US-035: the re-auth prompt must point at the VPS-compatible fix, not
+    just the headed `booksaver auth` that can't run there."""
+    session = make_session()
+    manager = SessionManager(FakeSessionRepository(session))
+
+    with caplog.at_level("WARNING"):
+        manager.mark_reauth_required(session)
+
+    assert "booksaver auth import" in caplog.text
+
+
+def test_ensure_active_expired_session_log_mentions_cookie_import(caplog) -> None:
+    session = SessionState.new(
+        platform=Platform.BOOKING_COM,
+        cookies=b"[]",
+        authenticated_at=datetime.now(UTC) - timedelta(days=30),
+        expires_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    manager = SessionManager(FakeSessionRepository(session))
+
+    with caplog.at_level("WARNING"):
+        manager.ensure_active()
+
+    assert "booksaver auth import" in caplog.text
+
+
 def test_current_mode_logged_out_when_no_session() -> None:
     manager = SessionManager(FakeSessionRepository(None))
     assert manager.current_mode() is SessionMode.LOGGED_OUT

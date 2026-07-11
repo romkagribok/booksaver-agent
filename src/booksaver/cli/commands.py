@@ -665,6 +665,72 @@ def cmd_auth(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── auth import ──────────────────────────────────────────────────────────────
+
+def cmd_auth_import(args: argparse.Namespace) -> int:
+    """US-035: load Booking.com cookies exported from the user's own browser.
+
+    The VPS-compatible alternative to `booksaver auth` (which needs a display
+    for the headed login browser). See the runbook's "cookie-import" section
+    for how to export cookies and the security caution around them.
+    """
+    source = TomlEnvConfigSource(_config_path(args))
+    try:
+        cfg = load_config(source)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    except ConfigValidationError as e:
+        print("Config validation failed:", file=sys.stderr)
+        for err in e.errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 2
+
+    from booksaver.infrastructure.persistence.cookie_import import (
+        CookieImportError,
+        import_cookies,
+    )
+    from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
+
+    path = Path(args.file)
+    try:
+        raw_text = path.read_text()
+    except OSError as e:
+        print(f"Error reading {path}: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        session, summary = import_cookies(raw_text)
+    except CookieImportError as e:
+        print(f"Cookie import failed: {e}", file=sys.stderr)
+        print(
+            "See the 'cookie-import' section of "
+            "memory-bank/operations/vps-deployment-runbook.md for export "
+            "instructions.",
+            file=sys.stderr,
+        )
+        return 2
+
+    ensure_data_dir(cfg.data_directory)
+    LocalSessionRepository(cfg.data_directory).save(session)
+
+    print(f"Imported {summary.count} cookie(s) for domain(s): {', '.join(summary.domains)}")
+    if summary.earliest_expiry is not None:
+        print(f"Earliest expiry: {summary.earliest_expiry.isoformat()}")
+    else:
+        print("Earliest expiry: none of the imported cookies carry an explicit expiry")
+    print(f"Session saved to {cfg.data_directory.path}/session_booking_com.json")
+    print(
+        "Scheduled checks will now run authenticated until this session expires or "
+        "is flagged for re-auth — at which point re-run this import with a fresh export."
+    )
+    print(
+        "Security note: these cookies grant account access — treat the export file "
+        "like a password and delete it now that it's imported."
+    )
+    return 0
+
+
 # ── stop ──────────────────────────────────────────────────────────────────────
 
 def cmd_stop(args: argparse.Namespace) -> int:
@@ -936,8 +1002,22 @@ def create_parser() -> argparse.ArgumentParser:
     p_run.set_defaults(func=cmd_run)
 
     # auth
-    p_auth = sub.add_parser("auth", help="Log in to Booking.com in a browser; save session locally")
+    p_auth = sub.add_parser(
+        "auth", help="Log in to Booking.com in a browser; save session locally"
+    )
     p_auth.set_defaults(func=cmd_auth)
+    auth_sub = p_auth.add_subparsers(dest="auth_command")
+    p_auth_import = auth_sub.add_parser(
+        "import",
+        help=(
+            "Import cookies exported from your own browser (VPS-compatible — no "
+            "display needed; see the runbook's cookie-import section)"
+        ),
+    )
+    p_auth_import.add_argument(
+        "file", metavar="FILE", help="Path to a cookies JSON file exported from your browser"
+    )
+    p_auth_import.set_defaults(func=cmd_auth_import)
 
     # stop
     p_stop = sub.add_parser("stop", help="Stop the running daemon gracefully")

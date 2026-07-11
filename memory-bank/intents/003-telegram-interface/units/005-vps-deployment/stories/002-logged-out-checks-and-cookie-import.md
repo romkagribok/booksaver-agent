@@ -1,7 +1,7 @@
 ---
 id: US-035
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-035 Logged-out checks with optional cookie import

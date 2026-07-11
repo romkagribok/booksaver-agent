@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from booksaver.domain.check_result import CheckOutcome, CheckResult
 from booksaver.domain.models import Booking
 from booksaver.domain.savings import RejectionReason, SavingsOpportunity, detect_savings
+from booksaver.domain.session import SessionMode
 
 from .ports import BookingRepository, Notifier, SavingsRepository
 
@@ -25,13 +26,27 @@ class ChannelOutcome:
     error: str | None = None
 
 
-def render_alert(opportunity: SavingsOpportunity, booking: Booking) -> tuple[str, str]:
-    """Subject + body shared by all channels (US-009 core facts + rebook pointer)."""
+def render_alert(
+    opportunity: SavingsOpportunity,
+    booking: Booking,
+    session_mode: SessionMode | None = None,
+) -> tuple[str, str]:
+    """Subject + body shared by all channels (US-009 core facts + rebook pointer).
+
+    US-035: when the live price came from a logged-out (public) check,
+    `session_mode` carries that through so the alert never reads as more
+    authoritative than it is — a signed-in member/Genius rate could still be
+    cheaper. Unknown/absent `session_mode` (every pre-US-035 caller) omits
+    the line, matching prior behavior exactly.
+    """
     saved = opportunity.amount_saved
     subject = (
         f"BookSaver: save {saved.amount} {saved.currency} "
         f"({opportunity.percent_saved}%) on {booking.property.name}"
     )
+    live_price_line = f"Live price   : {opportunity.live_price.amount} {opportunity.live_price.currency}"  # noqa: E501
+    if session_mode is SessionMode.LOGGED_OUT:
+        live_price_line += "  (public rate — member deals may be cheaper)"
     body = (
         f"Savings opportunity found for your Booking.com reservation.\n"
         f"\n"
@@ -42,7 +57,7 @@ def render_alert(opportunity: SavingsOpportunity, booking: Booking) -> tuple[str
         f"\n"
         f"You paid     : {opportunity.baseline_price.amount} "
         f"{opportunity.baseline_price.currency}\n"
-        f"Live price   : {opportunity.live_price.amount} {opportunity.live_price.currency}\n"
+        f"{live_price_line}\n"
         f"You save     : {saved.amount} {saved.currency} ({opportunity.percent_saved}%)\n"
         f"\n"
         f"The cheaper offer is confirmed refundable and matches your stay and room.\n"
@@ -73,7 +88,12 @@ class NotificationDispatcher:
         self._notifiers = notifiers or []
         self._resolver = resolver
 
-    def dispatch(self, opportunity: SavingsOpportunity, booking: Booking) -> list[ChannelOutcome]:
+    def dispatch(
+        self,
+        opportunity: SavingsOpportunity,
+        booking: Booking,
+        session_mode: SessionMode | None = None,
+    ) -> list[ChannelOutcome]:
         notifiers = self._resolver(booking) if self._resolver is not None else self._notifiers
         if not notifiers:
             logger.warning(
@@ -82,7 +102,7 @@ class NotificationDispatcher:
             )
             return []
 
-        subject, body = render_alert(opportunity, booking)
+        subject, body = render_alert(opportunity, booking, session_mode)
         outcomes: list[ChannelOutcome] = []
         for notifier in notifiers:
             try:
@@ -136,7 +156,7 @@ class SavingsPipeline:
                 detection.percent_saved,
             )
 
-            outcomes = self._dispatcher.dispatch(detection, booking)
+            outcomes = self._dispatcher.dispatch(detection, booking, result.session_mode)
             if any(o.ok for o in outcomes):
                 self._savings.mark_notified(detection.opportunity_id, datetime.now(UTC))
 

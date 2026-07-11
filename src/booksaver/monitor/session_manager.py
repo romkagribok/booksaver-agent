@@ -20,13 +20,16 @@ class SessionManager:
         session = self._repo.load(self._platform)
         if session is None:
             logger.warning(
-                "No %s session found. Run 'booksaver auth' to log in.", self._platform.value
+                "No %s session found. Run 'booksaver auth' to log in (or "
+                "'booksaver auth import <file>' on a display-less VPS).",
+                self._platform.value,
             )
             return None
 
         if session.status is SessionStatus.REQUIRES_REAUTH:
             logger.warning(
-                "%s session requires re-authentication. Run 'booksaver auth'.",
+                "%s session requires re-authentication. Run 'booksaver auth' "
+                "(or 'booksaver auth import <file>' on a display-less VPS).",
                 self._platform.value,
             )
             return None
@@ -35,7 +38,8 @@ class SessionManager:
             expired = session.with_status(SessionStatus.EXPIRED)
             self._repo.save(expired)
             logger.warning(
-                "%s session expired. Run 'booksaver auth' to log in again.",
+                "%s session expired. Run 'booksaver auth' to log in again "
+                "(or 'booksaver auth import <file>' on a display-less VPS).",
                 self._platform.value,
             )
             return None
@@ -63,7 +67,8 @@ class SessionManager:
     def mark_reauth_required(self, session: SessionState) -> None:
         self._repo.save(session.with_status(SessionStatus.REQUIRES_REAUTH))
         logger.warning(
-            "%s session marked as requiring re-authentication. Run 'booksaver auth'.",
+            "%s session marked as requiring re-authentication. Run 'booksaver auth' "
+            "(or 'booksaver auth import <file>' on a display-less VPS).",
             self._platform.value,
         )
 
