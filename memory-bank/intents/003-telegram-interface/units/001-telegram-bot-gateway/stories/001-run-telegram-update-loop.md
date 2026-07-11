@@ -1,14 +1,14 @@
 ---
 id: US-023
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-023 Run Telegram update loop inside the daemon
 
 **Intent:** `003-telegram-interface`
 **Unit:** `001-telegram-bot-gateway`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story

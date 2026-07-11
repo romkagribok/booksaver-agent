@@ -1,14 +1,14 @@
 ---
 id: US-024
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-024 Route commands and multi-step dialogs
 
 **Intent:** `003-telegram-interface`
 **Unit:** `001-telegram-bot-gateway`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story

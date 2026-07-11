@@ -178,3 +178,24 @@ class NotificationSettings:
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
+
+
+@dataclass(frozen=True)
+class TelegramBotSettings:
+    """`[telegram_bot]` config (US-023). The bot token stays in the
+    ``BOOKSAVER_TELEGRAM_BOT_TOKEN`` env var (ADR-002) — never here."""
+
+    enabled: bool = False
+    owner_chat_id: int | None = None
+    poll_timeout_seconds: int = 30
+
+    def __post_init__(self) -> None:
+        if self.enabled and self.owner_chat_id is None:
+            raise ValueError(
+                "telegram_bot.owner_chat_id is required when telegram_bot.enabled is true"
+            )
+        if not 25 <= self.poll_timeout_seconds <= 50:
+            raise ValueError(
+                "telegram_bot.poll_timeout_seconds must be between 25 and 50, "
+                f"got {self.poll_timeout_seconds}"
+            )

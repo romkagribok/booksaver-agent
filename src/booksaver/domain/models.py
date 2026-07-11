@@ -19,6 +19,7 @@ from .value_objects import (
     RefundabilityPolicy,
     RoomType,
     StayDates,
+    TelegramBotSettings,
 )
 
 
@@ -81,3 +82,4 @@ class Config:
     loaded_at: datetime
     extraction_settings: dict[str, str] = field(default_factory=dict)
     agent_settings: AgentSettings = field(default_factory=AgentSettings)
+    telegram_bot_settings: TelegramBotSettings = field(default_factory=TelegramBotSettings)

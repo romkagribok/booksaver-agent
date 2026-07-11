@@ -4,6 +4,7 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from booksaver.domain.value_objects import CheckInterval
 
@@ -21,6 +22,26 @@ class Scheduler:
         self._jobs: list[_Job] = []
         self._stop_event = threading.Event()
         self._running = False
+        self.started_at: datetime | None = None
+        self._last_tick_at: datetime | None = None
+        self._interval: CheckInterval | None = None
+
+    @property
+    def stop_event(self) -> threading.Event:
+        """Shared shutdown signal (ADR-006) — other daemon threads (e.g. the
+        Telegram bot loop) watch this to shut down alongside the scheduler."""
+        return self._stop_event
+
+    @property
+    def last_tick_at(self) -> datetime | None:
+        return self._last_tick_at
+
+    @property
+    def next_run_at(self) -> datetime | None:
+        """Best-effort estimate for `/status`: None until the first tick completes."""
+        if self._last_tick_at is None or self._interval is None:
+            return None
+        return self._last_tick_at + self._interval.duration
 
     def register(self, name: str, handler: Callable[[], None]) -> None:
         if self._running:
@@ -35,6 +56,8 @@ class Scheduler:
         if not self._jobs:
             raise RuntimeError("No jobs registered — call register() before run()")
         self._running = True
+        self.started_at = datetime.now(UTC)
+        self._interval = interval
         interval_seconds = interval.duration.total_seconds()
         tick = 0
         logger.info("Scheduler started (interval=%s, jobs=%d)", interval, len(self._jobs))
@@ -48,6 +71,7 @@ class Scheduler:
                     logger.info("Job '%s' completed (tick %d)", job.name, tick)
                 except Exception as exc:
                     logger.error("Job '%s' failed (tick %d): %s", job.name, tick, exc)
+            self._last_tick_at = datetime.now(UTC)
 
             # Wait for the interval or until stop is requested
             self._stop_event.wait(timeout=interval_seconds)

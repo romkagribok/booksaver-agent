@@ -2,7 +2,7 @@
 
 **Unit ID:** `001-telegram-bot-gateway`
 **Intent:** `003-telegram-interface`
-**Status:** Planned
+**Status:** Complete (bolt 008)
 **Build order:** 1
 
 ## Purpose

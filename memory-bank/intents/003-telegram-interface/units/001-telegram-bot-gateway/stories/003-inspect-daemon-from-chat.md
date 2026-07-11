@@ -1,14 +1,14 @@
 ---
 id: US-036
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-036 Inspect daemon health and history from chat
 
 **Intent:** `003-telegram-interface`
 **Unit:** `001-telegram-bot-gateway`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story

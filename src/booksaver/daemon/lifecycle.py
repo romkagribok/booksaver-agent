@@ -4,6 +4,8 @@ import logging
 import os
 import signal
 import sys
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from booksaver.daemon.scheduler import Scheduler
@@ -42,8 +44,18 @@ def _write_pid(pid_file: Path) -> None:
     pid_file.chmod(0o600)
 
 
-def start(config: Config, scheduler: Scheduler) -> None:
-    """Start the daemon: check for existing instance, write PID file, run scheduler."""
+def start(
+    config: Config,
+    scheduler: Scheduler,
+    bot_runner: Callable[[threading.Event], None] | None = None,
+) -> None:
+    """Start the daemon: check for existing instance, write PID file, run scheduler
+    (and, if `bot_runner` is given, the Telegram bot update loop beside it — US-023).
+
+    Fail-fast watchdog: if either thread dies from an unhandled error, the other
+    is asked to stop too and the process exits nonzero once both have joined, so
+    systemd/Docker restarts the whole daemon rather than leaving it half-alive.
+    """
     pid_file = _pid_path(config.data_directory)
     config.data_directory.path.mkdir(mode=0o700, parents=True, exist_ok=True)
 
@@ -71,11 +83,43 @@ def start(config: Config, scheduler: Scheduler) -> None:
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
 
+    failures: list[BaseException] = []
+
+    def _run_scheduler() -> None:
+        try:
+            scheduler.run(config.check_interval)
+        except BaseException as exc:  # noqa: BLE001 - watchdog must catch everything
+            logger.error("Scheduler thread crashed: %s", exc, exc_info=True)
+            failures.append(exc)
+            scheduler.request_stop()
+
+    threads = [threading.Thread(target=_run_scheduler, name="scheduler")]
+
+    if bot_runner is not None:
+
+        def _run_bot() -> None:
+            try:
+                bot_runner(scheduler.stop_event)
+            except BaseException as exc:  # noqa: BLE001 - watchdog must catch everything
+                logger.error("Telegram bot thread crashed: %s", exc, exc_info=True)
+                failures.append(exc)
+                scheduler.request_stop()
+
+        threads.append(threading.Thread(target=_run_bot, name="telegram-bot"))
+
+    for t in threads:
+        t.start()
+
     try:
-        scheduler.run(config.check_interval)
+        for t in threads:
+            t.join()
     finally:
         pid_file.unlink(missing_ok=True)
         logger.info("Daemon stopped cleanly")
+
+    if failures:
+        logger.error("Exiting nonzero — %d daemon thread(s) crashed", len(failures))
+        sys.exit(1)
 
 
 def stop(data_dir: DataDirectory, timeout: float = 10.0) -> int:
