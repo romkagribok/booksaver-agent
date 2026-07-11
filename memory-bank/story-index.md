@@ -84,7 +84,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `001-telegram-bot-gateway` | 3 stories | Complete (bolt 008) |
 | `002-user-access-and-keys` | 4 stories | Complete (bolt 009) |
 | `003-conversational-booking-ops` | 3 stories | Complete (bolt 010) |
-| `004-telegram-rebook-gate` | 2 stories | Planned (bolt 011) |
+| `004-telegram-rebook-gate` | 2 stories | Complete (bolt 011) |
 | `005-vps-deployment` | 2 stories | In construction (bolt 012; US-034 complete, cookie import pending) |
 
 ### 001-telegram-bot-gateway: Telegram Bot Gateway
@@ -116,8 +116,8 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-032` | Confirm rebook steps in Telegram | Phase 3 | Ready | `004-telegram-rebook-gate/stories/001-confirm-rebook-in-telegram.md` |
-| `US-033` | Device handoff for the final booking click | Phase 3 | Ready | `004-telegram-rebook-gate/stories/002-device-handoff-final-click.md` |
+| `US-032` | Confirm rebook steps in Telegram | Phase 3 | Complete | `004-telegram-rebook-gate/stories/001-confirm-rebook-in-telegram.md` |
+| `US-033` | Device handoff for the final booking click | Phase 3 | Complete | `004-telegram-rebook-gate/stories/002-device-handoff-final-click.md` |
 
 ### 005-vps-deployment: VPS Deployment
 

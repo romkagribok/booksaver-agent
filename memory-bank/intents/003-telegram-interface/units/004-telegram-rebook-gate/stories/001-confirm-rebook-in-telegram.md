@@ -1,14 +1,14 @@
 ---
 id: US-032
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-032 Confirm rebook steps in Telegram
 
 **Intent:** `003-telegram-interface`
 **Unit:** `004-telegram-rebook-gate`
-**Status:** Ready
+**Status:** Complete (bolt 011)
 **Tag:** Phase 3
 
 ## Story

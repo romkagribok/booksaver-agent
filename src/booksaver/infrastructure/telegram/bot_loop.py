@@ -7,7 +7,7 @@ from typing import Any
 
 from .client import TelegramApiError, TelegramBotClient
 from .offset_store import TelegramOffsetStore
-from .router import CommandRouter, IncomingCommand
+from .router import CommandRouter, IncomingCallback, IncomingCommand
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,11 @@ class BotLoop:
         access_guard: Callable[[IncomingCommand], bool],
         on_refused: Callable[[IncomingCommand], None],
         dialog_handler: Callable[[IncomingCommand], bool] | None = None,
+        # bolt 011 (US-032): inline-keyboard rebook confirmations arrive as
+        # `callback_query` updates, not `message`s. Optional + additive — a
+        # daemon with no rebook-gate feature wired up (or a test) simply
+        # never receives callback_query updates through this hook.
+        callback_handler: Callable[[IncomingCallback], None] | None = None,
     ) -> None:
         self._client = client
         self._router = router
@@ -46,6 +51,7 @@ class BotLoop:
         self._access_guard = access_guard
         self._on_refused = on_refused
         self._dialog_handler = dialog_handler
+        self._callback_handler = callback_handler
 
     def run(self, stop_event: threading.Event) -> None:
         offset = self._offset_store.load()
@@ -78,9 +84,14 @@ class BotLoop:
         logger.info("Telegram bot loop stopped")
 
     def _dispatch(self, update: dict[str, Any]) -> None:
+        callback_query = update.get("callback_query")
+        if callback_query is not None:
+            self._dispatch_callback(callback_query)
+            return
+
         message = update.get("message")
         if message is None:
-            return  # not a plain text message (callback queries handled by later bolts)
+            return  # neither a plain text message nor a callback query
 
         chat = message.get("chat") or {}
         sender = message.get("from") or {}
@@ -114,3 +125,28 @@ class BotLoop:
 
         if self._dialog_handler is not None and self._dialog_handler(incoming):
             return
+
+    def _dispatch_callback(self, callback_query: dict[str, Any]) -> None:
+        if self._callback_handler is None:
+            return  # no feature registered to consume callback queries
+
+        message = callback_query.get("message") or {}
+        chat = message.get("chat") or {}
+        sender = callback_query.get("from") or {}
+        chat_id = chat.get("id")
+        user_id = sender.get("id")
+        callback_query_id = callback_query.get("id")
+        message_id = message.get("message_id", 0)
+        data = callback_query.get("data")
+        if chat_id is None or user_id is None or callback_query_id is None or data is None:
+            return
+
+        self._callback_handler(
+            IncomingCallback(
+                user_id=user_id,
+                chat_id=chat_id,
+                callback_query_id=callback_query_id,
+                message_id=message_id,
+                data=data,
+            )
+        )

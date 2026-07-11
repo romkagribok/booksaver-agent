@@ -7,7 +7,11 @@ from booksaver.domain.value_objects import DataDirectory
 from booksaver.infrastructure.telegram.bot_loop import BotLoop
 from booksaver.infrastructure.telegram.client import TelegramApiError
 from booksaver.infrastructure.telegram.offset_store import TelegramOffsetStore
-from booksaver.infrastructure.telegram.router import CommandRouter, IncomingCommand
+from booksaver.infrastructure.telegram.router import (
+    CommandRouter,
+    IncomingCallback,
+    IncomingCommand,
+)
 
 
 def _message_update(update_id: int, chat_id: int, user_id: int, text: str) -> dict:
@@ -17,6 +21,18 @@ def _message_update(update_id: int, chat_id: int, user_id: int, text: str) -> di
             "chat": {"id": chat_id},
             "from": {"id": user_id},
             "text": text,
+        },
+    }
+
+
+def _callback_update(update_id: int, chat_id: int, user_id: int, data: str) -> dict:
+    return {
+        "update_id": update_id,
+        "callback_query": {
+            "id": f"cbq-{update_id}",
+            "from": {"id": user_id},
+            "message": {"chat": {"id": chat_id}, "message_id": 42},
+            "data": data,
         },
     }
 
@@ -210,3 +226,40 @@ def test_handler_exception_does_not_crash_loop(tmp_path: Path) -> None:
     loop.run(stop_event)  # must not raise
 
     assert seen == ["help"]
+
+
+def test_callback_query_routed_to_callback_handler(tmp_path: Path) -> None:
+    stop_event = threading.Event()
+    update = _callback_update(1, chat_id=10, user_id=20, data="rebook:abc123:yes")
+    client = FakeClient([[update]], stop_event)
+    router = CommandRouter()
+    offset_store = TelegramOffsetStore(_data_dir(tmp_path))
+    seen: list[IncomingCallback] = []
+    loop = BotLoop(
+        client=client,  # type: ignore[arg-type]
+        router=router,
+        offset_store=offset_store,
+        poll_timeout_seconds=30,
+        access_guard=lambda cmd: True,
+        on_refused=lambda cmd: None,
+        callback_handler=seen.append,
+    )
+
+    loop.run(stop_event)
+
+    assert len(seen) == 1
+    assert seen[0].chat_id == 10
+    assert seen[0].user_id == 20
+    assert seen[0].message_id == 42
+    assert seen[0].data == "rebook:abc123:yes"
+
+
+def test_callback_query_without_handler_is_ignored_not_crashed(tmp_path: Path) -> None:
+    stop_event = threading.Event()
+    update = _callback_update(1, chat_id=10, user_id=20, data="rebook:abc123:yes")
+    client = FakeClient([[update]], stop_event)
+    loop, _router, _ = _make_loop(client, tmp_path)
+
+    loop.run(stop_event)  # must not raise despite no callback_handler configured
+
+    assert client.sent == []

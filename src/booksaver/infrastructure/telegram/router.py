@@ -22,6 +22,23 @@ class IncomingCommand:
 CommandHandler = Callable[[IncomingCommand], None]
 
 
+@dataclass(frozen=True)
+class IncomingCallback:
+    """A parsed Telegram ``callback_query`` update (bolt 011, US-032) — the
+    inline-keyboard equivalent of ``IncomingCommand``. Routed straight to a
+    single injected handler (``BotLoop(callback_handler=...)``) rather than
+    through ``CommandRouter``, since only one feature (rebook confirmations)
+    consumes callback queries today; a second consumer can register its own
+    ``data`` prefix inside that handler without changing this shape.
+    """
+
+    user_id: int
+    chat_id: int
+    callback_query_id: str
+    message_id: int
+    data: str
+
+
 class CommandRouter:
     """Registry API so later bolts can register their own commands/dialogs
     (units 2-4 plug into this router without gateway changes)."""

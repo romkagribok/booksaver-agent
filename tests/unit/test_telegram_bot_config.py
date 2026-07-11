@@ -98,6 +98,38 @@ class TestTelegramBotConfig:
                 )
             )
 
+    def test_rebook_confirm_timeout_seconds_defaults_to_600(self):
+        cfg = load_config(DictSource(_base()))
+        assert cfg.telegram_bot_settings.rebook_confirm_timeout_seconds == 600
+
+    def test_rebook_confirm_timeout_seconds_parses_custom_value(self):
+        cfg = load_config(
+            DictSource(
+                _base(
+                    {
+                        "enabled": True,
+                        "owner_chat_id": 1,
+                        "rebook_confirm_timeout_seconds": 120,
+                    }
+                )
+            )
+        )
+        assert cfg.telegram_bot_settings.rebook_confirm_timeout_seconds == 120
+
+    def test_rebook_confirm_timeout_seconds_too_low_rejected(self):
+        with pytest.raises(ConfigValidationError, match="rebook_confirm_timeout_seconds"):
+            load_config(
+                DictSource(
+                    _base(
+                        {
+                            "enabled": True,
+                            "owner_chat_id": 1,
+                            "rebook_confirm_timeout_seconds": 5,
+                        }
+                    )
+                )
+            )
+
 
 class TestTelegramBotSettingsValueObject:
     def test_enabled_requires_owner_chat_id(self):
@@ -107,6 +139,13 @@ class TestTelegramBotSettingsValueObject:
     def test_poll_timeout_out_of_range_rejected_by_direct_construction(self):
         with pytest.raises(ValueError, match="poll_timeout_seconds"):
             TelegramBotSettings(poll_timeout_seconds=10)
+
+    def test_rebook_confirm_timeout_seconds_default_is_600(self):
+        assert TelegramBotSettings().rebook_confirm_timeout_seconds == 600
+
+    def test_rebook_confirm_timeout_seconds_rejected_below_minimum(self):
+        with pytest.raises(ValueError, match="rebook_confirm_timeout_seconds"):
+            TelegramBotSettings(rebook_confirm_timeout_seconds=10)
 
     def test_defaults_are_valid(self):
         settings = TelegramBotSettings()

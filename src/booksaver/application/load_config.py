@@ -65,6 +65,13 @@ def load_config(source: ConfigSource) -> Config:
         poll_timeout_raw = int(telegram_raw.get("poll_timeout_seconds", 30))
         poll_timeout_seconds = min(max(poll_timeout_raw, 25), 50)  # clamp per US-023
         access_mode = str(telegram_raw.get("access_mode", "owner"))
+        rebook_timeout_defaults = TelegramBotSettings()
+        rebook_confirm_timeout_seconds = int(
+            telegram_raw.get(
+                "rebook_confirm_timeout_seconds",
+                rebook_timeout_defaults.rebook_confirm_timeout_seconds,
+            )
+        )
         if tg_enabled and owner_chat_id is None:
             raise ValueError("owner_chat_id is required when telegram_bot.enabled is true")
         telegram_bot_settings = TelegramBotSettings(
@@ -72,6 +79,7 @@ def load_config(source: ConfigSource) -> Config:
             owner_chat_id=owner_chat_id,
             poll_timeout_seconds=poll_timeout_seconds,
             access_mode=access_mode,
+            rebook_confirm_timeout_seconds=rebook_confirm_timeout_seconds,
         )
     except (ValueError, TypeError) as e:
         errors.append(f"telegram_bot: {e}")

@@ -26,6 +26,7 @@ HELP_TEXT = (
     "/bookings - list monitored bookings\n"
     "/savings - list detected savings opportunities\n"
     "/checks <booking_id> - recent check history for a booking\n"
+    "/rebook [opportunity_id] - guided rebook with inline confirmations\n"
     "/cancelflow - cancel an in-progress dialog"
 )
 

@@ -18,6 +18,7 @@ from .dialogs import DialogManager
 from .key_dialogs import KeyIntakeFlow, handle_deletekey
 from .key_validator import AnthropicKeyValidator
 from .offset_store import TelegramOffsetStore
+from .rebook_gate import register_rebook_command  # US-032/US-033 (bolt 011)
 from .register_dialog import register_booking_dialog  # US-025 (bolt 010)
 from .router import CommandRouter, IncomingCommand
 
@@ -138,6 +139,20 @@ def build_bot_runner(
 
     router.register("/cancelflow", _cancelflow)
 
+    # US-032/US-033 (bolt 011): /rebook + inline-keyboard confirmation gate +
+    # device-handoff deep link. Kept in its own module (rebook_gate.py); this
+    # block only wires it into the shared router/client/reply and returns the
+    # callback_query handler BotLoop needs.
+    rebook_callback_handler = register_rebook_command(
+        router=router,
+        reply=_reply,
+        client=client,
+        db_path=db_path,
+        stop_event=scheduler.stop_event,
+        confirm_timeout_seconds=settings.rebook_confirm_timeout_seconds,
+    )
+    # ── end US-032/US-033 wiring ─────────────────────────────────────────────
+
     def _dialog_handler(cmd: IncomingCommand) -> bool:
         if key_flow.is_pending(cmd.chat_id):
             _reply(cmd.chat_id, key_flow.handle(cmd))
@@ -164,6 +179,7 @@ def build_bot_runner(
         access_guard=_access_guard,
         on_refused=_on_refused,
         dialog_handler=_dialog_handler,
+        callback_handler=rebook_callback_handler,
     )
 
     return loop.run
