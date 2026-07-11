@@ -91,9 +91,9 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-023` | Run Telegram update loop inside the daemon | Phase 3 | Ready | `001-telegram-bot-gateway/stories/001-run-telegram-update-loop.md` |
-| `US-024` | Route commands and multi-step dialogs | Phase 3 | Ready | `001-telegram-bot-gateway/stories/002-route-commands-and-dialogs.md` |
-| `US-036` | Inspect daemon health and history from chat | Phase 3 | Ready | `001-telegram-bot-gateway/stories/003-inspect-daemon-from-chat.md` |
+| `US-023` | Run Telegram update loop inside the daemon | Phase 3 | Complete | `001-telegram-bot-gateway/stories/001-run-telegram-update-loop.md` |
+| `US-024` | Route commands and multi-step dialogs | Phase 3 | Complete | `001-telegram-bot-gateway/stories/002-route-commands-and-dialogs.md` |
+| `US-036` | Inspect daemon health and history from chat | Phase 3 | Complete | `001-telegram-bot-gateway/stories/003-inspect-daemon-from-chat.md` |
 
 ### 002-user-access-and-keys: User Access & Keys
 

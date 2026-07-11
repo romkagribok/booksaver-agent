@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -160,6 +161,80 @@ def test_stop_removes_stale_pid_file_and_returns_1(tmp_path: Path) -> None:
     result = lifecycle.stop(data_dir, timeout=1.0)
     assert result == 1
     assert not pid_file.exists()
+
+
+# ── start: bot thread + watchdog (US-023) ─────────────────────────────────────
+
+def test_start_runs_bot_runner_alongside_scheduler(tmp_path: Path) -> None:
+    data_dir = _make_data_dir(tmp_path)
+    sched = _make_scheduler_that_stops_immediately()
+    bot_calls: list[threading.Event] = []
+
+    def _bot_runner(stop_event: threading.Event) -> None:
+        bot_calls.append(stop_event)
+        stop_event.wait(timeout=5)  # scheduler's job requests stop almost immediately
+
+    with patch("signal.signal"):
+        lifecycle.start(_make_config(data_dir), sched, bot_runner=_bot_runner)
+
+    assert len(bot_calls) == 1
+    assert bot_calls[0] is sched.stop_event
+
+
+def test_start_without_bot_runner_does_not_start_a_bot_thread(tmp_path: Path) -> None:
+    data_dir = _make_data_dir(tmp_path)
+    sched = _make_scheduler_that_stops_immediately()
+    thread_names_before = {t.name for t in threading.enumerate()}
+
+    with patch("signal.signal"):
+        lifecycle.start(_make_config(data_dir), sched)
+
+    thread_names_after = {t.name for t in threading.enumerate()}
+    assert "telegram-bot" not in (thread_names_after - thread_names_before)
+
+
+def test_start_exits_nonzero_when_bot_runner_crashes(tmp_path: Path) -> None:
+    data_dir = _make_data_dir(tmp_path)
+    sched = Scheduler()
+    # A scheduler job that waits for the bot thread's crash to request stop.
+    sched.register("noop", lambda: None)
+
+    def _crashing_bot_runner(stop_event: threading.Event) -> None:
+        raise RuntimeError("bot thread blew up")
+
+    with patch("signal.signal"), pytest.raises(SystemExit) as exc_info:
+        lifecycle.start(_make_config(data_dir), sched, bot_runner=_crashing_bot_runner)
+
+    assert exc_info.value.code == 1
+
+
+def test_start_exits_nonzero_when_scheduler_crashes(tmp_path: Path) -> None:
+    data_dir = _make_data_dir(tmp_path)
+    sched = Scheduler()
+
+    # Scheduler.run() itself raising (not a job) is what the watchdog guards
+    # against — jobs already have their own per-job try/except (see scheduler.py).
+    def _crashing_run(interval):  # noqa: ANN001
+        raise RuntimeError("scheduler run() blew up")
+
+    sched.register("job", lambda: None)
+    sched.run = _crashing_run  # type: ignore[method-assign]
+
+    with patch("signal.signal"), pytest.raises(SystemExit) as exc_info:
+        lifecycle.start(_make_config(data_dir), sched)
+
+    assert exc_info.value.code == 1
+
+
+def test_start_succeeds_when_bot_runner_completes_cleanly(tmp_path: Path) -> None:
+    data_dir = _make_data_dir(tmp_path)
+    sched = _make_scheduler_that_stops_immediately()
+
+    def _bot_runner(stop_event: threading.Event) -> None:
+        stop_event.wait(timeout=5)
+
+    with patch("signal.signal"):
+        lifecycle.start(_make_config(data_dir), sched, bot_runner=_bot_runner)  # must not raise
 
 
 def test_stop_sends_sigterm_and_returns_0_when_pid_file_disappears(tmp_path: Path) -> None:

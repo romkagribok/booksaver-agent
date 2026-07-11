@@ -6,7 +6,12 @@ from typing import Any
 from booksaver.domain.agent import AgentSettings
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.models import Config
-from booksaver.domain.value_objects import CheckInterval, DataDirectory, NotificationSettings
+from booksaver.domain.value_objects import (
+    CheckInterval,
+    DataDirectory,
+    NotificationSettings,
+    TelegramBotSettings,
+)
 
 from .ports import ConfigSource
 
@@ -50,12 +55,31 @@ def load_config(source: ConfigSource) -> Config:
     except (ValueError, TypeError) as e:
         errors.append(f"agent: {e}")
 
+    telegram_bot_settings: TelegramBotSettings | None = None
+    telegram_raw = raw.get("telegram_bot", {})
+    try:
+        tg_enabled = bool(telegram_raw.get("enabled", False))
+        owner_chat_id_raw = telegram_raw.get("owner_chat_id")
+        owner_chat_id = int(owner_chat_id_raw) if owner_chat_id_raw is not None else None
+        poll_timeout_raw = int(telegram_raw.get("poll_timeout_seconds", 30))
+        poll_timeout_seconds = min(max(poll_timeout_raw, 25), 50)  # clamp per US-023
+        if tg_enabled and owner_chat_id is None:
+            raise ValueError("owner_chat_id is required when telegram_bot.enabled is true")
+        telegram_bot_settings = TelegramBotSettings(
+            enabled=tg_enabled,
+            owner_chat_id=owner_chat_id,
+            poll_timeout_seconds=poll_timeout_seconds,
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"telegram_bot: {e}")
+
     if errors:
         raise ConfigValidationError(errors)
 
     assert check_interval is not None
     assert data_directory is not None
     assert agent_settings is not None
+    assert telegram_bot_settings is not None
 
     notifications_raw = raw.get("notifications", {})
     notification_settings = NotificationSettings(
@@ -81,4 +105,5 @@ def load_config(source: ConfigSource) -> Config:
         loaded_at=datetime.now(UTC),
         extraction_settings=extraction_settings,
         agent_settings=agent_settings,
+        telegram_bot_settings=telegram_bot_settings,
     )

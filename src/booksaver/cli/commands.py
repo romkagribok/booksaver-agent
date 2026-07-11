@@ -64,6 +64,12 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # max_steps = 15              # LLM browser-agent turns (screenshot turns count double)
 # max_llm_calls = 20          # all LLM calls in one check (agent + extraction)
 # check_timeout_seconds = 180 # wall-clock limit per booking check
+
+[telegram_bot]
+# Owner-only Telegram bot gateway (US-023). Token: export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
+# enabled = false
+# owner_chat_id = 123456789   # required when enabled; only this chat may use the bot
+# poll_timeout_seconds = 30   # long-poll timeout, clamped to 25-50
 """
 
 
@@ -148,10 +154,14 @@ def cmd_config_show(args: argparse.Namespace) -> int:
         return 2
 
     ns = cfg.notification_settings
+    tb = cfg.telegram_bot_settings
     print(f"check_interval               : {cfg.check_interval}")
     print(f"data_directory               : {cfg.data_directory.path}")
     print(f"notifications.email          : {ns.email or '(not set)'}")
     print(f"notifications.telegram_chat_id: {ns.telegram_chat_id or '(not set)'}")
+    print(f"telegram_bot.enabled         : {tb.enabled}")
+    print(f"telegram_bot.owner_chat_id   : {tb.owner_chat_id or '(not set)'}")
+    print(f"telegram_bot.poll_timeout_s  : {tb.poll_timeout_seconds}")
     smtp = "(set)" if os.environ.get("BOOKSAVER_SMTP_PASSWORD") else "(not set)"
     tg = "(set)" if os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN") else "(not set)"
     llm = "(set)" if os.environ.get("BOOKSAVER_LLM_API_KEY") else "(not set)"
@@ -311,9 +321,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     sched = scheduler_mod.Scheduler()
     sched.register("booking_com_check", _make_check_job(cfg))
 
+    bot_runner = None
+    if cfg.telegram_bot_settings.enabled:
+        from booksaver.infrastructure.telegram.gateway import build_bot_runner
+
+        db_path = cfg.data_directory.path / "booksaver.db"
+        bot_runner = build_bot_runner(cfg, db_path, sched)
+        print("Telegram bot gateway: " + ("enabled" if bot_runner else "disabled (see logs)"))
+
     print(f"BookSaver daemon starting (interval={cfg.check_interval}, data={cfg.data_directory.path})")  # noqa: E501
     print("Press Ctrl-C or send SIGTERM to stop cleanly.")
-    lifecycle.start(cfg, sched)
+    lifecycle.start(cfg, sched, bot_runner=bot_runner)
     return 0
 
 
