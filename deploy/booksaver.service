@@ -1,0 +1,61 @@
+# systemd alternative to the Docker deployment (US-034), for a plain Linux VPS
+# without Docker. Install:
+#
+#   sudo cp deploy/booksaver.service /etc/systemd/system/booksaver.service
+#   sudo useradd --system --create-home --home-dir /opt/booksaver booksaver
+#   sudo -u booksaver -H bash -c 'cd /opt/booksaver && python3.11 -m venv .venv \
+#       && .venv/bin/pip install -e ".[dev]" && .venv/bin/playwright install --with-deps chromium'
+#   sudo mkdir -p /etc/booksaver && sudo cp config.toml.example /etc/booksaver/config.toml
+#   sudo $EDITOR /etc/booksaver/booksaver.env   # BOOKSAVER_* secrets, see runbook
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now booksaver
+#
+# See memory-bank/operations/vps-deployment-runbook.md for the full walkthrough
+# (provisioning, secrets, upgrade, backup, and the logged-out-checks smoke test).
+
+[Unit]
+Description=BookSaver Agent daemon + Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=booksaver
+Group=booksaver
+WorkingDirectory=/opt/booksaver
+
+# Secrets (BOOKSAVER_TELEGRAM_BOT_TOKEN, BOOKSAVER_LLM_API_KEY,
+# BOOKSAVER_SECRET_KEY, optional BOOKSAVER_SMTP_PASSWORD) live only in this
+# env file, which must never be committed to git and should be root-owned
+# with mode 600 (systemd reads it before dropping to User=booksaver).
+EnvironmentFile=/etc/booksaver/booksaver.env
+Environment=BOOKSAVER_CONFIG=/etc/booksaver/config.toml
+
+ExecStart=/opt/booksaver/.venv/bin/booksaver run
+
+# `booksaver run` is foreground-only by design (ADR-005) — no internal
+# daemonization — so Type=simple plus systemd's own restart supervision is
+# the correct pairing (no PIDFile/fork handling needed).
+Restart=on-failure
+RestartSec=10s
+
+# Chromium is the resource-hungry part of a check; give the unit headroom on
+# a 2GB VPS (see the runbook's provisioning section) without letting a stuck
+# browser process take the whole box down.
+MemoryMax=1200M
+
+# Light sandboxing. NoNewPrivileges/PrivateTmp are safe with headless
+# Chromium; ProtectSystem=strict plus an explicit ReadWritePaths keeps the
+# data directory (SQLite, session file, traces, snapshots) writable while
+# everything else stays read-only.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/booksaver/data
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=booksaver
+
+[Install]
+WantedBy=multi-user.target

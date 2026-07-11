@@ -24,6 +24,7 @@ from booksaver.domain.check_result import (
 )
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate, select_offer
+from booksaver.domain.session import SessionMode
 from booksaver.monitor import room_table
 from booksaver.monitor.browser_agent import BrowserAgent
 from booksaver.monitor.failure_tracker import FailureTracker
@@ -77,50 +78,56 @@ class BookingComSearchMonitor:
 
         session = self._sessions.ensure_active()
         if session is None:
-            now = datetime.now(UTC)
-            reason = FailureReason(
-                code=FailureCode.AUTH_REQUIRED,
-                detail="No active Booking.com session. Run 'booksaver auth'.",
+            # No usable session on this deployment (typical on a display-less
+            # VPS, where headed `booksaver auth` cannot run): fall back to
+            # logged-out mode rather than failing every booking (US-035,
+            # FR-8). The search journey works unauthenticated and returns
+            # real public bookable totals.
+            mode = SessionMode.LOGGED_OUT
+            logger.info(
+                "No active Booking.com session — running %d booking(s) logged out "
+                "(public prices).",
+                len(bookings),
             )
-            for booking in bookings:
-                result = CheckResult.failure(booking.booking_id, now, reason)
-                self._record(result)
-                results.append(result)
-            return results
-
-        try:
-            self._browser.restore_cookies(session.cookies)
-        except Exception as exc:
-            logger.error("Failed to restore session cookies: %s", exc)
-            self._sessions.mark_reauth_required(session)
-            return results
+        else:
+            mode = SessionMode.AUTHENTICATED
+            try:
+                self._browser.restore_cookies(session.cookies)
+            except Exception as exc:
+                logger.error("Failed to restore session cookies: %s", exc)
+                self._sessions.mark_reauth_required(session)
+                return results
 
         reauth_flagged = False
         for booking in bookings:
-            result = self.run_check(booking)
+            result = self.run_check(booking, session_mode=mode)
             self._record(result)
             results.append(result)
             if (
-                not reauth_flagged
+                session is not None
+                and not reauth_flagged
                 and result.failure_reason is not None
                 and result.failure_reason.code is FailureCode.AUTH_REQUIRED
             ):
                 self._sessions.mark_reauth_required(session)
                 reauth_flagged = True
 
-        try:
-            self._sessions.save_refreshed(session, self._browser.get_cookies())
-        except Exception as exc:
-            logger.warning("Could not save refreshed cookies: %s", exc)
+        if session is not None:
+            try:
+                self._sessions.save_refreshed(session, self._browser.get_cookies())
+            except Exception as exc:
+                logger.warning("Could not save refreshed cookies: %s", exc)
 
         return results
 
-    def run_check(self, booking: Booking) -> CheckResult:
+    def run_check(
+        self, booking: Booking, session_mode: SessionMode = SessionMode.AUTHENTICATED
+    ) -> CheckResult:
         """Check one booking via the search journey. Always returns; never raises."""
         recorder = TraceRecorder(booking.booking_id)
         escalator: BrowserAgent | None = None
         try:
-            result = self._run_check_inner(booking, recorder)
+            result = self._run_check_inner(booking, recorder, session_mode)
         except Exception as exc:  # belt and braces: the never-raise contract
             logger.exception("Unexpected error checking booking %s", booking.booking_id)
             result = CheckResult.failure(
@@ -133,7 +140,9 @@ class BookingComSearchMonitor:
         self._persist_trace(recorder, result, escalator)
         return result
 
-    def _run_check_inner(self, booking: Booking, recorder: TraceRecorder) -> CheckResult:
+    def _run_check_inner(
+        self, booking: Booking, recorder: TraceRecorder, session_mode: SessionMode
+    ) -> CheckResult:
         now = datetime.now(UTC)
         self._last_escalator = None
 
@@ -161,6 +170,7 @@ class BookingComSearchMonitor:
             escalator=escalator,
             recorder=recorder,
             checkpoint=budget.check_time,
+            session_mode=session_mode,
         ).run(booking)
 
         if not journey.ok:
@@ -226,6 +236,14 @@ class BookingComSearchMonitor:
                 ),
             )
 
+        if session_mode is SessionMode.LOGGED_OUT:
+            # US-035: no natural CheckResult field for this (schema owned
+            # elsewhere) — annotate via logging so operators can see that a
+            # price is a public rate and may miss member/Genius discounts.
+            logger.info(
+                "Check for booking %s used a public (logged-out) rate.",
+                booking.booking_id,
+            )
         return self._to_success(booking, selection.chosen, method, now)
 
     def _persist_trace(

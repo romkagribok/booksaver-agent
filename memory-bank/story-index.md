@@ -123,7 +123,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-034` | Deploy daemon and bot on a VPS | Phase 3 | Ready | `005-vps-deployment/stories/001-deploy-on-vps.md` |
+| `US-034` | Deploy daemon and bot on a VPS | Phase 3 | Complete | `005-vps-deployment/stories/001-deploy-on-vps.md` |
 | `US-035` | Logged-out checks with optional cookie import | Phase 3 | Ready | `005-vps-deployment/stories/002-logged-out-checks-and-cookie-import.md` |
 
 ## Summary
@@ -132,6 +132,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 |--------|-------|---------|--------|
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
-| `003-telegram-interface` | 5 | 14 | Inception draft — pending validation (bolts 008–012 planned) |
+| `003-telegram-interface` | 5 | 14 | Validated, in construction (bolts 008–012); US-034 complete |
 
 All 36 stories (16 original + 6 Phase 2 + 14 Phase 3) are assigned exactly once.

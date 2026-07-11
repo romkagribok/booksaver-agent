@@ -14,6 +14,20 @@ class SessionStatus(Enum):
     REQUIRES_REAUTH = "requires_reauth"
 
 
+class SessionMode(Enum):
+    """Whether a check runs with a restored Booking.com session or logged out.
+
+    A display-less VPS can never run headed `booksaver auth`, so the absence of
+    a usable session is an expected, first-class mode (US-035/FR-8) rather than
+    an error: the search journey still works unauthenticated and returns real
+    public bookable totals. ``AUTHENTICATED`` means cookies were restored from a
+    saved session; ``LOGGED_OUT`` means the journey runs with no session at all.
+    """
+
+    LOGGED_OUT = "logged_out"
+    AUTHENTICATED = "authenticated"
+
+
 @dataclass(frozen=True)
 class SessionState:
     session_id: str

@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from booksaver.application.ports import SessionRepository
-from booksaver.domain.session import SessionState, SessionStatus
+from booksaver.domain.session import SessionMode, SessionState, SessionStatus
 from booksaver.domain.value_objects import Platform
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,24 @@ class SessionManager:
             return None
 
         return session
+
+    def current_mode(self) -> SessionMode:
+        """Report whether the next check will run authenticated or logged out.
+
+        Cheap, side-effect-free accessor for CLI/status surfaces (e.g. a future
+        `/status` command): unlike ``ensure_active``, it never mutates stored
+        session state. Any non-usable session (missing, expired, or flagged for
+        re-auth) is reported as ``LOGGED_OUT`` — on a display-less VPS that is
+        the expected default, not an error condition.
+        """
+        session = self._repo.load(self._platform)
+        if session is None:
+            return SessionMode.LOGGED_OUT
+        if session.status is SessionStatus.REQUIRES_REAUTH:
+            return SessionMode.LOGGED_OUT
+        if session.is_expired(datetime.now(UTC)):
+            return SessionMode.LOGGED_OUT
+        return SessionMode.AUTHENTICATED
 
     def mark_reauth_required(self, session: SessionState) -> None:
         self._repo.save(session.with_status(SessionStatus.REQUIRES_REAUTH))
