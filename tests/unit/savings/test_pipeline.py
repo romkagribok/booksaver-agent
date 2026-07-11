@@ -16,6 +16,7 @@ from booksaver.domain.check_result import (
     RefundIndicators,
 )
 from booksaver.domain.savings import SavingsOpportunity
+from booksaver.domain.session import SessionMode
 from booksaver.domain.value_objects import Money
 
 from ..monitor.fakes import FakeBookingRepository, make_booking
@@ -61,13 +62,18 @@ class FakeSavingsRepository:
         self.notified.append(opportunity_id)
 
 
-def _success_check(booking_id: str = "b-1", amount: str = "350.00") -> CheckResult:
+def _success_check(
+    booking_id: str = "b-1",
+    amount: str = "350.00",
+    session_mode: SessionMode | None = None,
+) -> CheckResult:
     return CheckResult.success(
         booking_id=booking_id,
         checked_at=datetime.now(UTC),
         live_price=Money(amount=Decimal(amount), currency="EUR"),
         extraction_method=ExtractionMethod.DOM,
         refund_indicators=RefundIndicators(is_refundable=True),
+        session_mode=session_mode,
     )
 
 
@@ -157,6 +163,67 @@ def test_render_alert_mentions_confirmation_gate() -> None:
     )
     _, body = render_alert(opportunity, booking)
     assert "explicit confirmation" in body  # no autonomous cancel/purchase promise
+
+
+def test_render_alert_labels_logged_out_price_as_public_rate() -> None:
+    booking = make_booking()
+    opportunity = SavingsOpportunity(
+        opportunity_id="opp-1",
+        booking_id=booking.booking_id,
+        check_id="chk-1",
+        baseline_price=Money(amount=Decimal("400"), currency="EUR"),
+        live_price=Money(amount=Decimal("300"), currency="EUR"),
+        amount_saved=Money(amount=Decimal("100"), currency="EUR"),
+        percent_saved=Decimal("25.00"),
+        validated_at=datetime.now(UTC),
+    )
+    _, body = render_alert(opportunity, booking, session_mode=SessionMode.LOGGED_OUT)
+    assert "public rate" in body
+    assert "member deals may be cheaper" in body
+
+
+def test_render_alert_omits_public_rate_label_when_authenticated() -> None:
+    booking = make_booking()
+    opportunity = SavingsOpportunity(
+        opportunity_id="opp-1",
+        booking_id=booking.booking_id,
+        check_id="chk-1",
+        baseline_price=Money(amount=Decimal("400"), currency="EUR"),
+        live_price=Money(amount=Decimal("300"), currency="EUR"),
+        amount_saved=Money(amount=Decimal("100"), currency="EUR"),
+        percent_saved=Decimal("25.00"),
+        validated_at=datetime.now(UTC),
+    )
+    _, body = render_alert(opportunity, booking, session_mode=SessionMode.AUTHENTICATED)
+    assert "public rate" not in body
+
+
+def test_render_alert_omits_public_rate_label_when_session_mode_unknown() -> None:
+    """Every pre-US-035 caller (session_mode defaulted/omitted) keeps the
+    exact prior body — no regression for existing callers."""
+    booking = make_booking()
+    opportunity = SavingsOpportunity(
+        opportunity_id="opp-1",
+        booking_id=booking.booking_id,
+        check_id="chk-1",
+        baseline_price=Money(amount=Decimal("400"), currency="EUR"),
+        live_price=Money(amount=Decimal("300"), currency="EUR"),
+        amount_saved=Money(amount=Decimal("100"), currency="EUR"),
+        percent_saved=Decimal("25.00"),
+        validated_at=datetime.now(UTC),
+    )
+    _, body = render_alert(opportunity, booking)
+    assert "public rate" not in body
+
+
+def test_pipeline_dispatches_public_rate_label_through_end_to_end() -> None:
+    email = FakeNotifier("email")
+    pipeline, _ = _make_pipeline([email])
+
+    pipeline.process([_success_check(session_mode=SessionMode.LOGGED_OUT)])
+
+    _, body = email.sent[0]
+    assert "public rate" in body
 
 
 # ── pipeline flow ─────────────────────────────────────────────────────────────

@@ -3,21 +3,84 @@ unit: 005-vps-deployment
 bolt: 012-vps-deployment
 stage: test
 status: complete
-updated: 2026-07-11T18:10:00Z
+updated: 2026-07-11T20:10:00Z
 ---
 
-# Test Report — VPS Deployment (slice 1: US-034 + logged-out core of US-035)
+# Test Report — VPS Deployment (slice 1: US-034 + logged-out core; slice 2: cookie import)
 
-## Summary
+## Summary (current, after slice 2)
 
 | Metric | Value |
 |--------|-------|
-| Total tests | **367 passed, 0 failed** |
-| New in this bolt | 7 (net: 1 existing test rewritten to match the new logged-out behavior, 6 added) |
-| Pre-existing (regression surface) | 360 — all green |
-| Lint (`ruff check src/`) | clean |
-| Types (`mypy src/`) | clean (51 source files) |
+| Total tests | **609 passed, 0 failed** |
+| New in slice 2 | 36 |
+| New in slice 1 (net) | 7 |
+| Pre-bolt baseline | 360 — all still green |
+| Lint (`ruff check src/ tests/`) | clean |
+| Types (`mypy src/`) | clean (71 source files) |
 | Test command | `PYTHONPATH=src python3 -m pytest` |
+
+## Slice 2 New Test Coverage (US-035 remainder — cookie import)
+
+- `tests/unit/test_cookie_import.py` (22): `test_import_playwright_native_shape`,
+  `test_import_browser_extension_export_shape` (verifies only the booking.com cookie survives
+  filtering, `sameSite` normalized from `"no_restriction"`), `test_wrapped_in_cookies_key_is_unwrapped`,
+  `test_session_cookie_without_expiry_is_accepted_and_not_flagged_expired`, 9 parametrized
+  `test_same_site_normalization` cases, `test_expires_normalized_to_float_seconds`,
+  `test_rejects_malformed_json`, `test_rejects_non_array_non_wrapped_json`,
+  `test_rejects_no_booking_domain_cookies`, `test_rejects_all_expired_cookies`,
+  `test_partial_expiry_is_accepted_when_at_least_one_cookie_is_valid` (confirms session-level
+  `expires_at` is the *earliest* cookie's expiry), `test_rejects_empty_array`,
+  `test_rejects_cookies_missing_required_fields`, `test_error_messages_never_include_cookie_values`.
+- `tests/unit/test_cli_auth_import.py` (7): `test_auth_import_happy_path_stores_session` (stdout
+  content, 0600 file permission, cookie value absent from both stdout and the stored file),
+  `test_auth_import_flips_mode_to_authenticated` (via `SessionManager.current_mode()`),
+  `test_auth_import_rejects_garbage_file`/`_no_booking_domain`/`_all_expired` (exit code 2,
+  actionable stderr, no session file written on rejection), `test_auth_import_missing_file`,
+  `test_bare_auth_still_routes_to_headed_login` (the `import` subparser doesn't shadow the
+  default `cmd_auth` handler for bare `booksaver auth`).
+- `tests/unit/monitor/test_session_and_failures.py` (+2):
+  `test_mark_reauth_required_mentions_vps_compatible_cookie_import`,
+  `test_ensure_active_expired_session_log_mentions_cookie_import` — both `caplog`-based, confirm
+  `"booksaver auth import"` appears in the warning text.
+- `tests/unit/monitor/test_search_check_job.py` (+1):
+  `test_auth_required_detail_points_at_cookie_import` — a session existed (`AUTHENTICATED`) but
+  the journey still landed on a signed-out page; `failure_reason.detail` must contain
+  `"booksaver auth import"`.
+- `tests/unit/savings/test_pipeline.py` (+4): `test_render_alert_labels_logged_out_price_as_public_rate`,
+  `test_render_alert_omits_public_rate_label_when_authenticated`,
+  `test_render_alert_omits_public_rate_label_when_session_mode_unknown` (regression guard: every
+  pre-slice-2 caller keeps an identical alert body), `test_pipeline_dispatches_public_rate_label_through_end_to_end`.
+
+## Slice 2 Regression Statement
+
+`CheckResult.session_mode` is a new field with `default=None` and is not read by
+`SqliteCheckHistoryRepository.add()` (which picks named attributes explicitly) — no persistence
+behavior changed. `render_alert()`'s new `session_mode` parameter defaults to `None`, which renders
+byte-for-byte identical to the pre-slice-2 alert body (asserted directly). `CheckResult.success()`'s
+new `session_mode` parameter is likewise optional and defaults to `None`, so every pre-slice-2 call
+site is unaffected. `SessionManager`'s log-message wording changed but not its control flow
+(`ensure_active`/`mark_reauth_required`'s existing 5 tests plus the 2 new `caplog` tests all pass).
+`_run_check_inner`'s `AUTH_REQUIRED` detail text is now longer but still starts with the same
+`step=...: ...` prefix every pre-slice-2 test asserted on
+(`test_failed_step_lands_in_failure_detail` uses `PROPERTY_NOT_FOUND`, untouched by the
+`AUTH_REQUIRED`-only branch). All 360 pre-bolt tests and all 7 slice-1 tests remain green.
+
+## Slice 2 Not Covered (accepted, and why)
+
+- **A Telegram file-upload path for cookie import** (bot-side, with immediate message deletion) —
+  not implemented; the CLI path (`booksaver auth import`) fully satisfies US-035's acceptance
+  criteria on its own, and this bolt's coordination boundary keeps
+  `infrastructure/telegram/` owned by the parallel bolt-011 worker. Documented as a possible
+  future enhancement, not a gap, in the runbook and construction log.
+- **Live cookie-export-and-import against a real Booking.com account** — inherently a manual,
+  on-target-hardware/browser activity; the runbook's §11 documents the exact extension flows
+  (Cookie-Editor, EditThisCookie) for an operator to follow. Unit tests instead construct synthetic
+  cookie exports in both accepted shapes.
+
+---
+
+# Slice 1 Report (as originally filed)
 
 ## New/Changed Test Coverage by Story
 
@@ -82,10 +145,10 @@ defaulting to `AUTHENTICATED`, so bolt 006/007 journey/escalation behavior is un
   activity; cannot be exercised in this development environment. The runbook documents the exact
   steps and how to interpret each outcome.
 - **Docker build/run** — no daemon available here (see above); reviewed by hand instead.
-- **Cookie import (US-035 remainder)** — out of scope for this slice by design; no code exists
-  yet to test. The next slice should add: cookie-file parsing/validation, storage alongside
-  `session_booking_com.json` with the same permission care, expiry → re-import prompt (not silent
-  degradation), and a CLI import command (`ddd-01`/`ddd-02` for that slice will define the exact
-  shape).
-- **`/status` surface** — depends on Unit 001 (`telegram-bot-gateway`), owned by a parallel
-  worker; `SessionManager.current_mode()` is the accessor it should call once that lands.
+- ~~**Cookie import (US-035 remainder)**~~ — RESOLVED in slice 2 (see the top of this report):
+  `booksaver auth import <file>`, `cookie_import.py`, expiry → re-import prompt, and public-rate
+  alert labeling are all implemented and tested.
+- **`/status` surface** — Unit 001 (`telegram-bot-gateway`) shipped `/status`
+  (`infrastructure/telegram/commands_readonly.py`), but it doesn't render session mode explicitly
+  yet; `SessionManager.current_mode()` remains available for that module's owner to call. Left
+  untouched here per this bolt's coordination boundary (no `infrastructure/telegram/` changes).

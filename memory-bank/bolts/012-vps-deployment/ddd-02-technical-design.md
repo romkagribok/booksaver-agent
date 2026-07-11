@@ -3,7 +3,7 @@ unit: 005-vps-deployment
 bolt: 012-vps-deployment
 stage: design
 status: complete
-updated: 2026-07-11T17:50:00Z
+updated: 2026-07-11T20:05:00Z
 ---
 
 # Technical Design — VPS Deployment (slice 1)
@@ -110,3 +110,110 @@ items" section, addressed to that file's owner post-merge.
   this execution environment (`docker info` fails to reach the daemon). Flagged in
   `ddd-03-test-report.md` and the bolt's success criteria for the orchestrator to build/run once
   merged, ideally directly on a target VPS as the runbook's §5/§10 describe.
+
+## Slice 2 — Cookie Import (US-035 remainder)
+
+### Module Map — code (new/changed)
+
+| Module | Role | New/Changed |
+|--------|------|-------------|
+| `infrastructure/persistence/cookie_import.py` | `import_cookies(raw_text, now) -> tuple[SessionState, ImportSummary]` — parse, validate, normalize, build a storable `SessionState`. `CookieImportError` for anything unusable. | new |
+| `cli/commands.py` | `cmd_auth_import` + `auth` gains an `import` subparser (`booksaver auth import <file>`); bare `booksaver auth` unchanged (headed login, `p_auth`'s own `set_defaults`) | changed (scoped strictly to the `auth` parser/handler, per the bolt-011 coordination boundary) |
+| `monitor/session_manager.py` | Warning/log text in `ensure_active()` and `mark_reauth_required()` now mentions `booksaver auth import <file>` alongside headed `booksaver auth` | changed |
+| `monitor/search_check_job.py` | `_run_check_inner`'s `AUTH_REQUIRED` failure detail appends a `booksaver auth import` hint; `_to_success` now threads `session_mode` into `CheckResult.success()` | changed |
+| `domain/check_result.py` | `CheckResult.session_mode: SessionMode \| None = None` — deliberately unpersisted (see its docstring); `CheckResult.success()` gains the same optional parameter | changed |
+| `application/savings_pipeline.py` | `render_alert(opportunity, booking, session_mode=None)` appends "(public rate — member deals may be cheaper)" to the live-price line when `session_mode is LOGGED_OUT`; `NotificationDispatcher.dispatch()` and `SavingsPipeline.process()` thread `result.session_mode` through | changed |
+| `memory-bank/operations/vps-deployment-runbook.md` | New §11 "Cookie import for member/Genius rates"; §10 updated to reference `/status`/`/register`/rebook now that Units 001–004 shipped | changed |
+| `README.md` | New "Telegram bot" section; Deployment section mentions cookie import | changed |
+
+### Cookie shape normalization (`cookie_import.py`)
+
+Two input shapes accepted, both normalized to Playwright's `context.add_cookies()` shape:
+
+1. **Playwright native** (what `booksaver auth`'s `interactive_login()` itself produces): `expires`
+   as a float epoch-seconds (or `-1` for a session cookie), `sameSite` already one of
+   `"Strict"`/`"Lax"`/`"None"`.
+2. **Browser-extension export** (Cookie-Editor, EditThisCookie, and similar): `expirationDate`
+   instead of `expires`, `sameSite` as a Chrome-flavored string (`"no_restriction"`, `"lax"`,
+   `"strict"`, `"unspecified"`).
+
+Normalization rules:
+
+- `sameSite`: exact `"Strict"`/`"Lax"`/`"None"` passed through; `"no_restriction"` → `"None"`,
+  `"unspecified"`/missing/unrecognized → `"Lax"` (Playwright's own default for an omitted
+  `sameSite`).
+- `expires`: prefers `expirationDate` then `expires`; anything not a positive number → `-1.0`
+  (Playwright's "no explicit expiry" sentinel, used for session cookies).
+- `domain`/`path`/`httpOnly`/`secure`: passed through with safe defaults (`path="/"`,
+  `httpOnly=False`, `secure=True` — booking.com is HTTPS-only).
+
+### Validation order (fail before any write)
+
+```
+parse JSON (CookieImportError: "not valid JSON")
+  -> normalize each entry, drop ones missing name/value/domain
+  -> CookieImportError("no usable cookie objects found") if none normalize
+  -> filter to booking.com-domain cookies (domain.lstrip(".").endswith("booking.com"))
+  -> CookieImportError("no cookies for a booking.com domain") if none
+  -> CookieImportError("already expired") if every booking.com cookie's expiry has passed
+  -> build SessionState (only now is anything constructed for storage)
+```
+
+`import_cookies()` never partially stores a rejected file — the caller (`cmd_auth_import`) only
+calls `LocalSessionRepository.save()` after `import_cookies()` returns successfully.
+
+### Session-level expiry choice
+
+`SessionState.expires_at` is set to the **earliest** explicit expiry among the imported
+booking.com cookies (cookies with no explicit expiry don't contribute). This is a deliberate
+simplification: it means `SessionManager.ensure_active()`/`current_mode()` — unchanged from
+slice 1 — will report the whole session as `EXPIRED`/`LOGGED_OUT` as soon as any one imported
+cookie goes stale, even if others remain valid longer. Conservative in the safe direction (never
+serves a stale-cookie-backed price as if it were still authenticated) at the cost of possibly
+re-importing somewhat earlier than strictly necessary. No new code was needed in
+`SessionManager` for expiry-driven fallback — slice 1's existing `is_expired()`/`ensure_active()`
+logic (already tested) does the work; only the log-message wording changed.
+
+### `CheckResult.session_mode`: in-memory-only, no schema change
+
+The bolt's coordination boundary keeps `check_history`/`check_traces` schema ownership with other
+workers. Rather than add a persisted column, `CheckResult` gained an **unpersisted** optional
+`session_mode` field: `BookingComSearchMonitor.run_all_active()` produces a `list[CheckResult]`
+that `SavingsPipeline.process()` consumes immediately afterwards, in the same scheduler tick
+(`cli/commands.py`'s `_make_check_job`). The field only needs to survive that one in-process hop —
+`SqliteCheckHistoryRepository.add()` picks named attributes off `CheckResult` explicitly and
+ignores unknown ones, so the extra field is silently harmless to persistence, requiring zero
+schema/migration work. Every pre-slice-2 call site (`CheckResult.success(...)` without
+`session_mode`, `render_alert(...)` without `session_mode`) defaults to `None`, which renders
+identically to the pre-slice-2 alert body — verified by
+`test_render_alert_omits_public_rate_label_when_session_mode_unknown`.
+
+### `auth import` CLI shape
+
+Chosen over `--import-file <path>`: mirrors the existing `bookings`/`checks` subcommand pattern
+(`bk_sub = p_bk.add_subparsers(...)`) already used elsewhere in `create_parser()`, reads more
+naturally (`booksaver auth import cookies.json` vs. a flag on a command whose bare form does
+something entirely different), and keeps `booksaver auth --help` showing "import" as a discoverable
+subcommand rather than a buried flag. `p_auth.set_defaults(func=cmd_auth)` is set before
+`p_auth.add_subparsers(...)`, so bare `booksaver auth` (no subcommand) keeps invoking headed login
+unchanged — verified by `test_bare_auth_still_routes_to_headed_login`.
+
+### Testing Strategy (slice 2)
+
+- `tests/unit/test_cookie_import.py` (22 tests): both accepted shapes, `{"cookies": [...]}`
+  unwrapping, session-cookie-without-expiry handling, sameSite/expires normalization
+  (parametrized), all four rejection cases (malformed JSON, non-array, no booking.com cookie, all
+  expired), partial-expiry acceptance, empty-array/missing-fields rejection, and a check that
+  error messages never echo a cookie value.
+- `tests/unit/test_cli_auth_import.py` (7 tests): happy path (stdout content, 0600 permission,
+  cookie value absent from the stored file), mode flip to `AUTHENTICATED` via
+  `SessionManager.current_mode()`, all four rejection paths surfacing as exit code 2 with actionable
+  stderr, missing-file handling, and that bare `auth` still resolves to `cmd_auth`.
+- `tests/unit/monitor/test_session_and_failures.py` (+2): `mark_reauth_required` and the
+  expired-session path in `ensure_active` both log text containing `booksaver auth import`
+  (`caplog`-based).
+- `tests/unit/monitor/test_search_check_job.py` (+1): an `AUTH_REQUIRED` failure (session existed,
+  journey still landed signed-out) has `booksaver auth import` in its `failure_reason.detail`.
+- `tests/unit/savings/test_pipeline.py` (+4): `render_alert` includes/omits the public-rate label
+  correctly for `LOGGED_OUT`/`AUTHENTICATED`/unset `session_mode`, plus one end-to-end
+  `SavingsPipeline.process()` test confirming the label reaches the dispatched alert body.

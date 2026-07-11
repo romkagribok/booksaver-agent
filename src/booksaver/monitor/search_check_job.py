@@ -203,13 +203,21 @@ class BookingComSearchMonitor:
         if not journey.ok:
             failed = journey.failed_step
             assert failed is not None and journey.failure_code is not None
+            detail = f"step={failed.step.value}: {failed.detail}"
+            if journey.failure_code is FailureCode.AUTH_REQUIRED:
+                # US-035: the saved session looked usable but Booking.com
+                # still treated the journey as signed out — never degrade
+                # silently to logged-out prices; point at the VPS-compatible
+                # fix explicitly.
+                detail += (
+                    " (fix: run `booksaver auth import <file>` with a fresh cookie "
+                    "export — see the runbook's cookie-import section; works on a "
+                    "display-less VPS, unlike `booksaver auth`)"
+                )
             return CheckResult.failure(
                 booking.booking_id,
                 now,
-                FailureReason(
-                    code=journey.failure_code,
-                    detail=f"step={failed.step.value}: {failed.detail}",
-                ),
+                FailureReason(code=journey.failure_code, detail=detail),
             )
 
         try:
@@ -264,14 +272,15 @@ class BookingComSearchMonitor:
             )
 
         if session_mode is SessionMode.LOGGED_OUT:
-            # US-035: no natural CheckResult field for this (schema owned
-            # elsewhere) — annotate via logging so operators can see that a
-            # price is a public rate and may miss member/Genius discounts.
+            # US-035: not persisted to check_history (schema owned elsewhere,
+            # see CheckResult.session_mode's docstring) — but it does survive
+            # in-memory to SavingsPipeline within this tick, so a savings
+            # alert built from it can label the price a public rate.
             logger.info(
                 "Check for booking %s used a public (logged-out) rate.",
                 booking.booking_id,
             )
-        return self._to_success(booking, selection.chosen, method, now)
+        return self._to_success(booking, selection.chosen, method, now, session_mode)
 
     def _persist_trace(
         self,
@@ -299,6 +308,7 @@ class BookingComSearchMonitor:
         chosen: OfferCandidate,
         method: ExtractionMethod,
         now: datetime,
+        session_mode: SessionMode = SessionMode.AUTHENTICATED,
     ) -> CheckResult:
         """Map the chosen candidate to the downstream CheckResult contract.
 
@@ -329,6 +339,7 @@ class BookingComSearchMonitor:
                 check_in=booking.stay_dates.check_in,
                 check_out=booking.stay_dates.check_out,
             ),
+            session_mode=session_mode,
         )
 
     def _try_llm_offers(

@@ -2,7 +2,59 @@
 
 **Intent:** `003-telegram-interface`
 **Unit:** `005-vps-deployment`
-**Status:** In progress (bolt 012, slice 1 of 2 complete)
+**Status:** Complete (bolt 012, both slices)
+
+## Bolt 012-vps-deployment (slice 2 — cookie import + docs finalization)
+
+- **Started:** 2026-07-11T19:40:00Z
+- **Completed:** 2026-07-11T20:10:00Z
+- **Stage reached:** test (complete)
+- **Stories:** US-035 (complete — cookie-import remainder)
+
+### What shipped
+
+- `src/booksaver/infrastructure/persistence/cookie_import.py`: `import_cookies()` parses,
+  validates, and normalizes a cookie export (both Playwright's native `context.cookies()` shape
+  and the common browser-extension export shape — `expirationDate`/`sameSite` string variants) into
+  a storable `SessionState`, via the existing `LocalSessionRepository` (same file, same 0600 care).
+  Rejects malformed JSON, files with no booking.com-domain cookie, and files where every
+  booking.com cookie is already expired — all before anything is written to disk. Session-level
+  `expires_at` is set to the earliest imported cookie's expiry (conservative: the whole session is
+  treated as needing re-import as soon as any one cookie goes stale).
+- `booksaver auth import <file>` (`src/booksaver/cli/commands.py`, `cmd_auth_import` + an `auth`
+  subparser): the VPS-compatible alternative to headed `booksaver auth`. Prints count/domains/
+  earliest-expiry on success — never cookie values. Bare `booksaver auth` is unchanged (still
+  headed login).
+- `SessionManager` (`monitor/session_manager.py`) warning/log text and the search-journey
+  `AUTH_REQUIRED` failure detail (`monitor/search_check_job.py`) now mention
+  `booksaver auth import <file>` explicitly as the VPS-compatible fix, so an expired/dropped
+  session never degrades silently to logged-out prices without a clear next step.
+- `CheckResult.session_mode` (`domain/check_result.py`, new optional field, deliberately not
+  persisted — see its docstring) threads which session mode produced a live price from
+  `BookingComSearchMonitor` through to `SavingsPipeline` within the same scheduler tick;
+  `render_alert()` (`application/savings_pipeline.py`) appends "(public rate — member deals may be
+  cheaper)" to the live-price line when that mode was `LOGGED_OUT`.
+- Runbook §11 "Cookie import for member/Genius rates" (export how-to for Cookie-Editor/
+  EditThisCookie, the CLI import command, expiry behavior, and the "treat like a password" security
+  caution) + §10 updated to reference `/status`/`/register`/the Telegram rebook flow, now that
+  Units 001–004 have shipped. README: new "Telegram bot" section + a cookie-import mention in
+  "Deployment".
+
+### What's deferred (acceptable, not blocking)
+
+- A Telegram file-upload path for cookie import (bot-side, with immediate message deletion) —
+  the CLI path (`booksaver auth import`) fully satisfies US-035's acceptance criteria on its own;
+  a bot-upload path is a possible future UX enhancement, not a gap.
+- Session-level expiry uses the *earliest* imported cookie's expiry rather than tracking each
+  cookie's own lifetime individually — a deliberate simplification (documented in
+  `cookie_import.py` and the runbook) that may prompt a re-import somewhat earlier than strictly
+  necessary; never later.
+
+### Test status at close of this slice
+
+609 tests passing (573 from Waves 1–2 + 36 new/changed: cookie-import parsing/validation/
+normalization, CLI happy-path/rejection/mode-flip, session-manager/failure-detail wording, and
+public-rate alert labeling), `ruff check src/ tests/` clean, `mypy src/` clean.
 
 ## Bolt 012-vps-deployment (slice 1)
 

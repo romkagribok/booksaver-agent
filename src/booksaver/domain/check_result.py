@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 
+from .session import SessionMode
 from .value_objects import Money
 
 
@@ -77,6 +78,13 @@ class CheckResult:
     refund_indicators: RefundIndicators | None = None
     extracted_fields: ExtractedBookingFields | None = None
     failure_reason: FailureReason | None = None
+    # US-035: which session mode produced this result. Deliberately NOT
+    # persisted (no check_history column — that schema is owned elsewhere;
+    # see search_check_job.py's note) — it only needs to survive the short
+    # in-process hop from `run_all_active()` to `SavingsPipeline.process()`
+    # within the same scheduler tick, so a savings alert can label a
+    # logged-out live price as a public rate.
+    session_mode: SessionMode | None = None
 
     def __post_init__(self) -> None:
         if self.outcome is CheckOutcome.SUCCESS and self.live_price is None:
@@ -93,6 +101,7 @@ class CheckResult:
         extraction_method: ExtractionMethod,
         refund_indicators: RefundIndicators | None = None,
         extracted_fields: ExtractedBookingFields | None = None,
+        session_mode: SessionMode | None = None,
     ) -> CheckResult:
         return cls(
             check_id=str(uuid.uuid4()),
@@ -103,6 +112,7 @@ class CheckResult:
             live_price=live_price,
             refund_indicators=refund_indicators,
             extracted_fields=extracted_fields,
+            session_mode=session_mode,
         )
 
     @classmethod

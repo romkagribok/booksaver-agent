@@ -155,6 +155,20 @@ class TestJourneyFailureMapping:
         assert result.failure_reason.code is FailureCode.PROPERTY_NOT_FOUND
         assert "step=locate_property" in result.failure_reason.detail
 
+    def test_auth_required_detail_points_at_cookie_import(self):
+        # US-035: a session existed (AUTHENTICATED) but the journey still
+        # landed on a signed-out page — the failure detail must point at the
+        # VPS-compatible fix, not just silently degrade.
+        browser = FakeInteractiveBrowser(
+            titles=["Hotel Test"],
+            page_text="Log in to your account to continue",
+            fail_selectors={"property-card"},
+        )
+        monitor, _ = _monitor(browser, session=FakeSessionRepository(make_session()))
+        result = monitor.run_check(make_booking())
+        assert result.failure_reason.code is FailureCode.AUTH_REQUIRED
+        assert "booksaver auth import" in result.failure_reason.detail
+
 
 class TestRunAllActive:
     def test_no_session_runs_logged_out_instead_of_failing(self):

@@ -85,7 +85,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `002-user-access-and-keys` | 4 stories | Complete (bolt 009) |
 | `003-conversational-booking-ops` | 3 stories | Complete (bolt 010) |
 | `004-telegram-rebook-gate` | 2 stories | Planned (bolt 011) |
-| `005-vps-deployment` | 2 stories | In construction (bolt 012; US-034 complete, cookie import pending) |
+| `005-vps-deployment` | 2 stories | Complete (bolt 012) |
 
 ### 001-telegram-bot-gateway: Telegram Bot Gateway
 
@@ -124,7 +124,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-034` | Deploy daemon and bot on a VPS | Phase 3 | Complete | `005-vps-deployment/stories/001-deploy-on-vps.md` |
-| `US-035` | Logged-out checks with optional cookie import | Phase 3 | Ready | `005-vps-deployment/stories/002-logged-out-checks-and-cookie-import.md` |
+| `US-035` | Logged-out checks with optional cookie import | Phase 3 | Complete | `005-vps-deployment/stories/002-logged-out-checks-and-cookie-import.md` |
 
 ## Summary
 
