@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-06T00:30:00Z
-total_decisions: 17
+last_updated: 2026-07-11T17:39:20Z
+total_decisions: 18
 ---
 
 # Decision Index
@@ -17,6 +17,14 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-018: Self-hosted deployment amends "local-only" — owner-operated laptop or VPS
+- **Status**: accepted
+- **Date**: 2026-07-11
+- **Bolt**: 008-telegram-bot-gateway (telegram-bot-gateway)
+- **Path**: `bolts/008-telegram-bot-gateway/adr-018-self-hosted-deployment.md`
+- **Summary**: The MVP "local-only" constraint (US-013) is amended to "self-hosted, owner-operated": the daemon may run on the user's laptop OR an owner-operated VPS. Still no BookSaver-hosted cloud backend, no third-party data sharing; laptop single-user mode remains fully supported. Telegram access stays owner/invite only — no public bot mode.
+- **Read when**: Working on deployment artifacts, the Telegram gateway, multi-user features, or anything that reads the "local-only" product constraint.
 
 ### ADR-017: Hard per-check cost caps now; adaptive budgeting is named future work
 - **Status**: accepted

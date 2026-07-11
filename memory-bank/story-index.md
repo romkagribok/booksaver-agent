@@ -81,11 +81,11 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Unit | Stories | Status |
 |------|---------|--------|
-| `001-telegram-bot-gateway` | 3 stories | Planned (bolt 008) |
-| `002-user-access-and-keys` | 4 stories | Planned (bolt 009) |
+| `001-telegram-bot-gateway` | 3 stories | Complete (bolt 008) |
+| `002-user-access-and-keys` | 4 stories | In construction (bolt 009; US-029 complete) |
 | `003-conversational-booking-ops` | 3 stories | Planned (bolt 010) |
 | `004-telegram-rebook-gate` | 2 stories | Planned (bolt 011) |
-| `005-vps-deployment` | 2 stories | Planned (bolt 012) |
+| `005-vps-deployment` | 2 stories | In construction (bolt 012; US-034 complete, cookie import pending) |
 
 ### 001-telegram-bot-gateway: Telegram Bot Gateway
 
@@ -132,6 +132,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 |--------|-------|---------|--------|
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
-| `003-telegram-interface` | 5 | 14 | Validated, in construction (bolts 008–012); US-034 complete |
+| `003-telegram-interface` | 5 | 14 | Validated, in construction (bolts 008–012); Wave 1 complete: US-023/024/036 (bolt 008), US-029, US-034 |
 
 All 36 stories (16 original + 6 Phase 2 + 14 Phase 3) are assigned exactly once.

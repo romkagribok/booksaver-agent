@@ -15,6 +15,8 @@ from booksaver.domain.value_objects import DataDirectory
 logger = logging.getLogger(__name__)
 
 _PID_FILENAME = "booksaver.pid"
+_HEARTBEAT_FILENAME = "heartbeat"
+_HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 
 def _pid_path(data_dir: DataDirectory) -> Path:
@@ -110,11 +112,24 @@ def start(
     for t in threads:
         t.start()
 
+    # Liveness heartbeat: while every daemon thread is alive and healthy, the
+    # main thread refreshes {data_dir}/heartbeat so an external freshness probe
+    # (docker-compose healthcheck / systemd watchdog script) can distinguish a
+    # making-progress daemon from a hung one. A crashed or wedged thread stops
+    # the refresh, the probe goes stale, and the supervisor restarts us.
+    heartbeat_file = config.data_directory.path / _HEARTBEAT_FILENAME
     try:
-        for t in threads:
-            t.join()
+        while any(t.is_alive() for t in threads):
+            if not failures and all(t.is_alive() for t in threads):
+                try:
+                    heartbeat_file.touch()
+                except OSError as exc:
+                    logger.warning("Could not refresh heartbeat file: %s", exc)
+            for t in threads:
+                t.join(timeout=_HEARTBEAT_INTERVAL_SECONDS / len(threads))
     finally:
         pid_file.unlink(missing_ok=True)
+        heartbeat_file.unlink(missing_ok=True)
         logger.info("Daemon stopped cleanly")
 
     if failures:

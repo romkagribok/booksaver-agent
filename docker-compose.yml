@@ -25,15 +25,12 @@ services:
     mem_limit: 1g
     memswap_limit: 2g
     healthcheck:
-      # TODO(post-merge, owner of daemon/lifecycle.py + cli/commands.py):
-      # this is a process-liveness check only — it confirms the `booksaver`
-      # process didn't die, not that the scheduler loop or Telegram poller
-      # are actually making progress. A real liveness probe needs a small
-      # heartbeat file written by the scheduler each loop iteration (or a
-      # tiny local HTTP/unix-socket endpoint) and this healthcheck command
-      # swapped for `test -f /data/.heartbeat -a $(...) -lt 300` (or similar,
-      # freshness-based). See the runbook's "Healthcheck TODO" note.
-      test: ["CMD-SHELL", "pgrep -f 'booksaver run' || exit 1"]
+      # Freshness probe against /data/heartbeat, which the daemon's main
+      # thread refreshes every ~15s while all its threads (scheduler +
+      # Telegram poller) are alive and healthy (daemon/lifecycle.py). A hung
+      # or crashed thread stops the refresh; three stale probes in a row mark
+      # the container unhealthy so the restart policy can recover it.
+      test: ["CMD-SHELL", "test -f /data/heartbeat && test $$(($$(date +%s) - $$(stat -c %Y /data/heartbeat))) -lt 120"]
       interval: 60s
       timeout: 10s
       retries: 3

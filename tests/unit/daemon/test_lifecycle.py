@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -87,6 +88,30 @@ def test_process_alive_returns_true_for_current_process() -> None:
 def test_process_alive_returns_false_for_nonexistent_pid() -> None:
     # PID 2147483647 is the max on Linux/macOS and virtually never running
     assert lifecycle._process_alive(2147483647) is False  # noqa: SLF001
+
+
+# ── heartbeat file ────────────────────────────────────────────────────────────
+
+def test_start_refreshes_heartbeat_while_running_and_removes_it_on_exit(tmp_path: Path) -> None:
+    data_dir = _make_data_dir(tmp_path)
+    heartbeat = data_dir.path / "heartbeat"
+    seen_while_running: list[bool] = []
+    sched = Scheduler()
+
+    def _job() -> None:
+        deadline = time.monotonic() + 5.0
+        while not heartbeat.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        seen_while_running.append(heartbeat.exists())
+        sched.request_stop()
+
+    sched.register("wait_for_heartbeat", _job)
+
+    with patch("signal.signal"):
+        lifecycle.start(_make_config(data_dir), sched)
+
+    assert seen_while_running == [True]
+    assert not heartbeat.exists()
 
 
 # ── start: PID file lifecycle ─────────────────────────────────────────────────

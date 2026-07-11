@@ -250,15 +250,15 @@ project's, to accept.
 
 ## Open items / TODOs for whoever picks this up next
 
-- **Healthcheck TODO** (noted in `docker-compose.yml`): the current healthcheck is a bare
-  `pgrep -f 'booksaver run'` process-liveness check. It cannot tell you the scheduler loop or
-  Telegram poller are actually making progress, only that the process didn't die. A real
-  liveness probe needs a heartbeat file the scheduler touches each loop iteration (or a small
-  local socket/HTTP endpoint) — this belongs to whoever owns `daemon/lifecycle.py` next, since
-  this unit's scope explicitly excluded touching that file.
-- **`/status` command** (US-036, ships with Unit 001 `telegram-bot-gateway`) will surface daemon
-  uptime, last check per booking, and next scheduled run over Telegram — once merged, add a
-  step to §10 that checks `/status` instead of (or alongside) `checks list`.
+- ~~**Healthcheck TODO**~~ — RESOLVED at Wave 1 merge (2026-07-11): the daemon's main thread now
+  refreshes `{data_dir}/heartbeat` every ~15 s while all daemon threads (scheduler + Telegram
+  poller) are alive (`daemon/lifecycle.py`), and the compose healthcheck is a freshness probe
+  against that file (stale > 120 s ⇒ unhealthy ⇒ restart). For the systemd deployment, the same
+  file can back an external watchdog (e.g. a cron/timer that `systemctl restart`s on staleness)
+  if desired; `Restart=on-failure` already covers crash-exit (the daemon exits nonzero when a
+  thread dies).
+- **`/status` over Telegram** (US-036) shipped in the same merge — §10's smoke test can use
+  `/status` from the owner chat alongside `checks list`.
 - **Cookie import** (rest of US-035) is a later slice of this bolt: a CLI file-import command
   (and optionally a Telegram file-upload path with immediate message deletion) for
   member/Genius-rate cookies exported from the user's own browser, with expiry producing a clear
