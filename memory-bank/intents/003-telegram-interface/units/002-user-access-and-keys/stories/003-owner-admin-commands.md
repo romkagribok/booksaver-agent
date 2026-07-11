@@ -22,7 +22,7 @@ implemented: false
 - `/admin users` lists users (ID, access state, key present yes/no, bookings count) — owner only
 - `/admin revoke <user>` disables a user: their checks stop, their data is retained (or purged with `/admin purge <user>` after confirmation)
 - `/admin invite` issues a single-use invite code (invite mode)
-- `/admin mode <owner|invite|open>` switches access mode at runtime with confirmation
+- `/admin mode <owner|invite>` switches access mode at runtime with confirmation
 - Admin commands are refused for non-owner users regardless of mode, with an audit log entry
 
 ---

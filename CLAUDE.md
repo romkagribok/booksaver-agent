@@ -11,7 +11,9 @@ confirmation**. It is explicitly *not* a web app, hosted service, or multi-tenan
 Booking.com API, and keeps all credentials, sessions, and data on the user's machine.
 
 **Current state: MVP (intent 001, bolts 001–005) + Phase 2 agentic search monitor
-(intent 002, bolts 006–007) complete — 20/22 stories, 345 tests.**
+(intent 002, bolts 006–007) complete — 20/22 stories, 360 tests. Intent 003
+(Telegram as main interface, units 001–005, US-023–036) is validated and in
+construction on branch `phase-3-telegram-interface` (bolts 008–012).**
 Daemon + scheduler, savings detection with email/Telegram alerts, and the guided-rebook
 confirmation state machine are implemented. **Phase 2 replaced the manage-page price
 check**: live prices now come from a scripted full search journey (search → results →
@@ -134,13 +136,30 @@ designing or coding:
    (ADR-016), hard `[agent]` config caps (ADR-017), `check_traces` (schema v6), rotated
    redacted failure snapshots, `checks list|trace` CLI
 
+### `003-telegram-interface` — validated, in construction (bolts 008–012)
+
+Telegram bot as the primary UI on an owner-operated VPS. Checkpoint 1 decisions (2026-07-11):
+access modes `owner`/`invite` only (no public mode); hybrid LLM billing (owner key + per-user
+daily caps by default, optional encrypted personal key via `/setkey`, Fernet/`cryptography`
+approved); VPS-first deployment with an early Booking.com-journey smoke test from the VPS IP;
+logged-out checks by default (headed auth impossible on a VPS); rebook confirmations via inline
+keyboards with the final booking click handed off to the user's device via deep link.
+
+1. `001-telegram-bot-gateway` — long-poll update loop thread + router + dialogs, read-only commands (bolt 008)
+2. `002-user-access-and-keys` — schema v7 users table + scoping, access modes, key store (bolt 009)
+3. `003-conversational-booking-ops` — `/register` dialog, per-user alert routing + limits (bolt 010)
+4. `004-telegram-rebook-gate` — Telegram `ConfirmationGate` + device-handoff deep link (bolt 011)
+5. `005-vps-deployment` — Dockerfile/systemd, ops runbook, logged-out sessions + cookie import (bolt 012)
+
 ## Product constraints to preserve in every design and code change
 
 - **Booking.com hotels only** in MVP; reject other booking types with a clear message.
 - **Refundable bookings only**; a cheaper offer must itself still be refundable to count as savings.
 - **Equivalence = same property, same check-in/out dates, same room type**, still refundable.
 - **No autonomous cancel or purchase** — guided rebook always requires an explicit local confirmation step.
-- **Local-only** — no outbound calls to any BookSaver-hosted backend; secrets never committed to git.
+- **Self-hosted only** (ADR-018 amends the MVP "local-only" wording): runs on the user's laptop or an
+  owner-operated VPS; no outbound calls to any BookSaver-hosted backend; secrets never committed to git.
+- **No public bot mode** — Telegram access is `owner`/`invite` only; strangers self-host the repo.
 
 # Orchestration rules
 

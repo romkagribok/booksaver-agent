@@ -17,7 +17,7 @@ cannot starve others.
 
 | Unit | What this unit needs |
 |------|----------------------|
-| `002-user-access-and-keys` | User identity + key gating (registration refused until key present in `open` mode) |
+| `002-user-access-and-keys` | User identity + access enforcement (only owner/invited users may register); per-user LLM client factory |
 | intent-001 `001-core-local-data` | `register_booking` application service (shared CLI/bot path), occupancy validation |
 | intent-001 `003-savings-detection-notifications` | Notifier wiring — replace single-chat alert with per-user routing |
 | intent-002 | Scheduler iteration + ADR-017 caps to extend with per-user ceilings |
@@ -43,8 +43,8 @@ cannot starve others.
 
 ## Completion criteria (unit-level)
 
-- A brand-new user in `open` mode goes `/start` → `/setkey` → `/register` → first scheduled check
-  entirely in chat.
+- A brand-new invited user goes `/start` → invite code → `/register` → first scheduled check
+  entirely in chat (owner-billed; `/setkey` optional at any point).
 - Refundable-only / hotels-only rejections mid-dialog use the same messages as the CLI.
 - A savings alert reaches only the owning user's chat.
 - Limit breaches are polite and visible; other users' schedules unaffected.

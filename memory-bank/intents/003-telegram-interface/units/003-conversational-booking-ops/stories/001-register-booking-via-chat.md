@@ -23,7 +23,7 @@ implemented: false
 - Each answer is validated immediately with the same domain rules as CLI registration (hotels only, refundable only, future dates, valid occupancy); rejections re-prompt with the reason
 - Before saving, the bot replays a full summary and requires an explicit yes; no is a safe abort
 - A completed dialog calls the existing `register_booking` application service — one shared code path with the CLI — and the booking is owned by my user
-- In `open` mode, `/register` is refused until my API key is stored (US-027)
+- `/register` is available only to the owner and invited users (US-026); a per-user booking cap (default 3, config-overridable) is enforced with a polite message
 - The booking appears in my `/bookings` and enters the check schedule
 
 ---

@@ -100,7 +100,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-026` | Enforce access modes for a discoverable bot | Phase 3 | Ready | `002-user-access-and-keys/stories/001-enforce-access-modes.md` |
-| `US-027` | Bring your own Anthropic API key | Phase 3 | Ready | `002-user-access-and-keys/stories/002-bring-your-own-anthropic-key.md` |
+| `US-027` | Optional personal Anthropic API key (hybrid billing) | Phase 3 | Ready | `002-user-access-and-keys/stories/002-bring-your-own-anthropic-key.md` |
 | `US-028` | Owner admin commands | Phase 3 | Ready | `002-user-access-and-keys/stories/003-owner-admin-commands.md` |
 | `US-029` | User-scoped persistence (schema v7) | Phase 3 | Ready | `002-user-access-and-keys/stories/004-user-scoped-persistence.md` |
 

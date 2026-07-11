@@ -9,10 +9,11 @@
 
 Turn the single-user daemon into a small self-hosted multi-user service. Adds a `users` table and
 user-scoped repositories (schema v7; existing rows migrate to the owner), configurable access modes
-(`owner` / `invite` / `open`), bring-your-own Anthropic API key intake with validation and encryption
-at rest, a per-user LLM client factory used by checks, and owner admin commands. This is the unit that
-makes a **discoverable** bot safe: strangers can never spend the owner's LLM budget or see others'
-data.
+(`owner` / `invite` — no public mode, per Checkpoint 1), hybrid LLM billing (owner key + per-user
+caps by default; optional personal Anthropic key intake with validation and encryption at rest), a
+per-user LLM client factory used by checks, and owner admin commands. This is the unit that makes a
+**discoverable** bot safe: strangers get past nothing, and invited users can never see others' data
+or exceed their capped share of the owner's LLM budget.
 
 ## Dependencies on other units
 
@@ -44,14 +45,16 @@ data.
 
 1. US-029 — users table, v7 migration, repository scoping
 2. US-026 — access modes + router guard + rate limiting of strangers
-3. US-027 — key intake dialog, validation call, encrypted store, redaction, rotation/deletion
+3. US-027 — hybrid billing: owner-key default + optional key intake dialog, validation call, encrypted store, redaction, rotation/deletion
 4. US-028 — owner admin commands (list/revoke users, switch mode, issue invite codes)
 
 ## Completion criteria (unit-level)
 
 - v7 migration assigns existing data to owner; laptop mode behaves identically.
-- In `open` mode a stranger can `/start` and `/setkey`, and nothing LLM-consuming runs before a valid
-  key is stored; their checks bill their key.
+- A stranger (not allowlisted, no valid invite code) gets one polite refusal, is rate-limited, and
+  can trigger no stateful action or LLM call in either mode.
+- An invited user's checks run on the owner key under per-user caps until they `/setkey`; after
+  `/setkey`, their checks bill their own key; `/deletekey` reverts to owner-billed.
 - Keys never appear in logs, traces, snapshots, or replies; user can rotate and delete.
 - Repository layer makes cross-user reads impossible; integration tests prove isolation.
 

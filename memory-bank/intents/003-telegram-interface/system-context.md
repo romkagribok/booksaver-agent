@@ -10,13 +10,16 @@ Anthropic API key, and confirm rebook steps entirely in Telegram chat.
 
 - **Owner:** Operates the VPS and the bot; allowlisted; may use the owner's own LLM key; has admin
   commands (list/revoke users, set access mode).
-- **Guest user:** Anyone who discovers the bot (in `open` mode). Must provide their own Anthropic API
-  key before any LLM-consuming feature unlocks. Owns only their bookings and alerts.
+- **Invited user:** Admitted via owner allowlist or single-use invite code (there is no public
+  `open` mode — Checkpoint 1 decision). Owner-billed for LLM work by default under per-user daily
+  caps; may optionally store a personal Anthropic key via `/setkey`. Owns only their bookings and
+  alerts.
 - **Telegram Bot API:** Inbound commands via long polling (`getUpdates`), outbound messages/inline
   keyboards (`sendMessage`, `editMessageText`, `deleteMessage`). stdlib urllib, certifi CA bundle.
 - **Booking.com:** Unchanged — reached via Playwright search journey, now headless on the VPS,
   logged-out by default.
-- **Anthropic API:** Per-user keys for guests; owner key (env var) for owner bookings.
+- **Anthropic API:** Owner key (env var) by default for all bookings under per-user caps; optional
+  per-user keys (encrypted at rest) override for that user's bookings.
 
 ## System Boundary
 
@@ -31,7 +34,7 @@ single-user mode remains fully supported (bot disabled or owner-only).
 flowchart TB
     TG["Telegram Bot API"] <--> BotLoop["TelegramGateway (long-poll thread)"]
     BotLoop --> Router["CommandRouter + ConversationStateMachine"]
-    Router --> Access["AccessControl (mode: owner/invite/open)"]
+    Router --> Access["AccessControl (mode: owner/invite)"]
     Router --> Keys["UserKeyStore (encrypted at rest)"]
     Router --> AppServices["Application services (register, list, savings, rebook)"]
     Config["LocalConfig (+ [telegram_bot], per-user limits)"] --> Daemon["BookSaverDaemon"]
@@ -53,8 +56,9 @@ flowchart TB
   **no autonomous cancel/purchase**.
 - Rebook's final booking click happens on the **user's device** via deep link — never in the VPS
   browser.
-- Guests' LLM costs are billed to their own key; VPS/browser compute is protected by per-user daily
-  caps and rate limits on top of ADR-017 per-check caps.
+- Invited users' LLM costs default to the owner's key under per-user daily caps (optional personal
+  key overrides); VPS/browser compute is protected by per-user caps and rate limits on top of
+  ADR-017 per-check caps.
 - User API keys: encrypted at rest, redacted everywhere, deletable by the user.
 - Repository-level user scoping — cross-user data access impossible by construction.
 - Bot layer is an inbound adapter only; all business rules stay in existing application/domain layers
