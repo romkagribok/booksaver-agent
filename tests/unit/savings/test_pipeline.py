@@ -54,6 +54,9 @@ class FakeSavingsRepository:
     def list_all(self) -> list[SavingsOpportunity]:
         return list(self.added)
 
+    def list_all_for_user(self, user_id: int) -> list[SavingsOpportunity]:
+        return list(self.added)
+
     def mark_notified(self, opportunity_id: str, at: datetime) -> None:
         self.notified.append(opportunity_id)
 

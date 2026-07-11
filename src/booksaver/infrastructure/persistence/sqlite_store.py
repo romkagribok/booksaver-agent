@@ -29,6 +29,7 @@ from booksaver.domain.rebook import (
     SessionState as RebookSessionState,
 )
 from booksaver.domain.savings import SavingsOpportunity
+from booksaver.domain.user import User, UserAccessState, UserRole
 from booksaver.domain.value_objects import (
     ConfirmationId,
     Money,
@@ -41,7 +42,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 # Columns shared by the v2/v4 and v5 check_history definitions (v5 only relaxes
@@ -126,12 +127,123 @@ def _migrate_v5(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE check_history_v5 RENAME TO check_history")
 
 
+# Columns of the pre-v7 bookings table (no user_id yet); used to copy data
+# across the v7 table rebuild.
+_BOOKINGS_COLUMNS = (
+    "booking_id, platform, product_type, confirmation_id, property_name, "
+    "property_ref, check_in, check_out, room_type, baseline_amount, "
+    "baseline_currency, refundable, refund_note, refund_deadline, "
+    "registered_at, status, occ_adults, occ_children, occ_rooms"
+)
+
+
+def _ensure_owner_user(conn: sqlite3.Connection) -> int:
+    """Idempotently ensure exactly one 'owner' row exists in `users`; return
+    its user_id. Safe to call on both a freshly-created `users` table (fresh
+    init) and an already-migrated one (re-open) — a partial unique index on
+    `users(role) WHERE role = 'owner'` backs the "exactly one owner" invariant
+    at the DB level too.
+    """
+    row = conn.execute("SELECT user_id FROM users WHERE role = 'owner'").fetchone()
+    if row is not None:
+        return int(row[0])
+    cursor = conn.execute(
+        "INSERT INTO users (telegram_user_id, role, access_state, encrypted_key, created_at) "
+        "VALUES (NULL, 'owner', 'active', NULL, ?)",
+        (datetime.now(UTC).isoformat(),),
+    )
+    assert cursor.lastrowid is not None
+    return int(cursor.lastrowid)
+
+
+def _migrate_v7(conn: sqlite3.Connection) -> None:
+    # users table + owner row (ADR-018 scope amendment, US-029). Guarded per
+    # table/column the same way _migrate_v5 is: a very old database may not
+    # have `bookings` yet (schema.sql creates it fresh, already in v7 shape).
+    #
+    # check_history/rebook_sessions REFERENCES bookings(booking_id); PRAGMA
+    # foreign_keys only takes effect with no pending transaction, so commit
+    # first, then disable it for the duration of the bookings table rebuild
+    # below (DROP TABLE bookings would otherwise raise FOREIGN KEY constraint
+    # failed even though no row is actually orphaned).
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=OFF")
+
+    tables = {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+
+    if "users" not in tables:
+        conn.execute(
+            """
+            CREATE TABLE users (
+                user_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id INTEGER UNIQUE,
+                role             TEXT    NOT NULL CHECK(role IN ('owner', 'user')),
+                access_state     TEXT    NOT NULL DEFAULT 'active'
+                    CHECK(access_state IN ('active', 'revoked')),
+                encrypted_key    BLOB,
+                created_at       TEXT    NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_users_single_owner ON users(role) WHERE role = 'owner'"
+        )
+
+    owner_id = _ensure_owner_user(conn)
+
+    if "bookings" in tables:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(bookings)")}
+        if "user_id" not in columns:
+            conn.execute(
+                """
+                CREATE TABLE bookings_v7 (
+                    booking_id       TEXT    PRIMARY KEY,
+                    platform         TEXT    NOT NULL CHECK(platform = 'booking_com'),
+                    product_type     TEXT    NOT NULL CHECK(product_type = 'hotel'),
+                    confirmation_id  TEXT    NOT NULL UNIQUE,
+                    property_name    TEXT    NOT NULL,
+                    property_ref     TEXT    NOT NULL,
+                    check_in         TEXT    NOT NULL,
+                    check_out        TEXT    NOT NULL CHECK(check_out > check_in),
+                    room_type        TEXT    NOT NULL,
+                    baseline_amount  TEXT    NOT NULL,
+                    baseline_currency TEXT   NOT NULL,
+                    refundable       INTEGER NOT NULL CHECK(refundable = 1),
+                    refund_note      TEXT    NOT NULL DEFAULT '',
+                    refund_deadline  TEXT,
+                    registered_at    TEXT    NOT NULL,
+                    status           TEXT    NOT NULL DEFAULT 'active',
+                    occ_adults       INTEGER CHECK(occ_adults IS NULL OR occ_adults >= 1),
+                    occ_children     INTEGER CHECK(occ_children IS NULL OR occ_children >= 0),
+                    occ_rooms        INTEGER CHECK(occ_rooms IS NULL OR occ_rooms >= 1),
+                    user_id          INTEGER NOT NULL REFERENCES users(user_id)
+                )
+                """
+            )
+            conn.execute(
+                f"INSERT INTO bookings_v7 ({_BOOKINGS_COLUMNS}, user_id) "
+                f"SELECT {_BOOKINGS_COLUMNS}, ? FROM bookings",
+                (owner_id,),
+            )
+            conn.execute("DROP TABLE bookings")
+            conn.execute("ALTER TABLE bookings_v7 RENAME TO bookings")
+            conn.execute("CREATE INDEX idx_bookings_user ON bookings(user_id)")
+
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=ON")
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
+# v6 -> v7: users table + bookings.user_id (US-029).
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
+    7: _migrate_v7,
 }
 
 
@@ -189,6 +301,11 @@ class SqliteStore:
 
         self.conn.executescript(_SCHEMA_SQL.read_text())
 
+        # Fresh init skips the migration loop entirely (schema.sql already
+        # creates the v7 shape), so the owner row must still be created here;
+        # a migrated database already has one and this is then a no-op.
+        _ensure_owner_user(self.conn)
+
         if current is None:
             self.conn.execute(
                 "INSERT INTO schema_meta (version, applied_at) VALUES (?, ?)",
@@ -201,7 +318,13 @@ class SqliteBookingRepository:
     def __init__(self, store: SqliteStore) -> None:
         self._store = store
 
-    def add(self, booking: Booking) -> None:
+    def add(self, booking: Booking, user_id: int | None = None) -> None:
+        """Persist a booking under `user_id` (US-029). When omitted, the
+        booking is assigned to the owner user — preserving the pre-multi-user
+        default for every existing single-owner caller.
+        """
+        if user_id is None:
+            user_id = _ensure_owner_user(self._store.conn)
         self._store.conn.execute(
             """
             INSERT INTO bookings (
@@ -209,8 +332,9 @@ class SqliteBookingRepository:
                 property_name, property_ref, check_in, check_out,
                 room_type, baseline_amount, baseline_currency,
                 refundable, refund_note, refund_deadline,
-                registered_at, status, occ_adults, occ_children, occ_rooms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                registered_at, status, occ_adults, occ_children, occ_rooms,
+                user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 booking.booking_id,
@@ -234,6 +358,7 @@ class SqliteBookingRepository:
                 booking.occupancy.adults if booking.occupancy else None,
                 booking.occupancy.children if booking.occupancy else None,
                 booking.occupancy.rooms if booking.occupancy else None,
+                user_id,
             ),
         )
         self._store.conn.commit()
@@ -269,6 +394,24 @@ class SqliteBookingRepository:
     def list_all(self) -> list[Booking]:
         rows = self._store.conn.execute(
             "SELECT * FROM bookings ORDER BY registered_at DESC"
+        ).fetchall()
+        return [self._row_to_booking(r) for r in rows]
+
+    def list_active_for_user(self, user_id: int) -> list[Booking]:
+        """US-029 scoping: only this user's active bookings — used by CLI/bot
+        read paths so no query path can surface another user's data.
+        """
+        rows = self._store.conn.execute(
+            "SELECT * FROM bookings WHERE status = 'active' AND user_id = ? "
+            "ORDER BY registered_at DESC",
+            (user_id,),
+        ).fetchall()
+        return [self._row_to_booking(r) for r in rows]
+
+    def list_all_for_user(self, user_id: int) -> list[Booking]:
+        rows = self._store.conn.execute(
+            "SELECT * FROM bookings WHERE user_id = ? ORDER BY registered_at DESC",
+            (user_id,),
         ).fetchall()
         return [self._row_to_booking(r) for r in rows]
 
@@ -484,6 +627,20 @@ class SqliteSavingsRepository:
         ).fetchall()
         return [self._row_to_opportunity(r) for r in rows]
 
+    def list_all_for_user(self, user_id: int) -> list[SavingsOpportunity]:
+        """US-029 scoping: savings inherit scope through their booking's
+        owner — joined here so a stranger's/another user's opportunities can
+        never surface in this user's listing.
+        """
+        rows = self._store.conn.execute(
+            "SELECT s.* FROM savings_opportunities s "
+            "JOIN bookings b ON b.booking_id = s.booking_id "
+            "WHERE b.user_id = ? "
+            "ORDER BY s.validated_at DESC",
+            (user_id,),
+        ).fetchall()
+        return [self._row_to_opportunity(r) for r in rows]
+
     def mark_notified(self, opportunity_id: str, at: datetime) -> None:
         self._store.conn.execute(
             "UPDATE savings_opportunities SET notified_at = ? WHERE opportunity_id = ?",
@@ -646,4 +803,83 @@ class SqliteCheckTraceRepository:
             booking_id=row["booking_id"],
             created_at=datetime.fromisoformat(row["created_at"]),
             events=events,
+        )
+
+
+class SqliteUserRepository:
+    """Schema v7 (US-029). Exactly one 'owner' row is guaranteed to exist by
+    `_ensure_owner_user` (called on every connect) and the DB-level partial
+    unique index on `users(role) WHERE role = 'owner'`.
+    """
+
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def get_owner(self) -> User:
+        row = self._store.conn.execute("SELECT * FROM users WHERE role = 'owner'").fetchone()
+        if row is None:
+            # Belt and braces: connect() always ensures an owner row exists.
+            owner_id = _ensure_owner_user(self._store.conn)
+            self._store.conn.commit()
+            return self.get_by_id(owner_id)  # type: ignore[return-value]
+        return self._row_to_user(row)
+
+    def get_by_id(self, user_id: int) -> User | None:
+        row = self._store.conn.execute(
+            "SELECT * FROM users WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return self._row_to_user(row) if row else None
+
+    def get_by_telegram_id(self, telegram_user_id: int) -> User | None:
+        row = self._store.conn.execute(
+            "SELECT * FROM users WHERE telegram_user_id = ?", (telegram_user_id,)
+        ).fetchone()
+        return self._row_to_user(row) if row else None
+
+    def get_or_create_by_telegram_id(
+        self, telegram_user_id: int, role: UserRole = UserRole.USER
+    ) -> User:
+        existing = self.get_by_telegram_id(telegram_user_id)
+        if existing is not None:
+            return existing
+        cursor = self._store.conn.execute(
+            "INSERT INTO users (telegram_user_id, role, access_state, encrypted_key, created_at) "
+            "VALUES (?, ?, 'active', NULL, ?)",
+            (telegram_user_id, role.value, datetime.now(UTC).isoformat()),
+        )
+        self._store.conn.commit()
+        assert cursor.lastrowid is not None
+        created = self.get_by_id(int(cursor.lastrowid))
+        assert created is not None
+        return created
+
+    def list_all(self) -> list[User]:
+        rows = self._store.conn.execute(
+            "SELECT * FROM users ORDER BY created_at"
+        ).fetchall()
+        return [self._row_to_user(r) for r in rows]
+
+    def list_active(self) -> list[User]:
+        rows = self._store.conn.execute(
+            "SELECT * FROM users WHERE access_state = 'active' ORDER BY created_at"
+        ).fetchall()
+        return [self._row_to_user(r) for r in rows]
+
+    def set_access_state(self, user_id: int, access_state: UserAccessState) -> None:
+        cursor = self._store.conn.execute(
+            "UPDATE users SET access_state = ? WHERE user_id = ?",
+            (access_state.value, user_id),
+        )
+        self._store.conn.commit()
+        if cursor.rowcount == 0:
+            raise KeyError(f"No user with id '{user_id}'")
+
+    def _row_to_user(self, row: sqlite3.Row) -> User:
+        return User(
+            user_id=row["user_id"],
+            telegram_user_id=row["telegram_user_id"],
+            role=UserRole(row["role"]),
+            access_state=UserAccessState(row["access_state"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            encrypted_key=row["encrypted_key"],
         )

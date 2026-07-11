@@ -52,7 +52,7 @@ class FakeBookingRepository:
     def __init__(self, bookings: list[Booking] | None = None) -> None:
         self.bookings = bookings or []
 
-    def add(self, booking: Booking) -> None:
+    def add(self, booking: Booking, user_id: int | None = None) -> None:
         self.bookings.append(booking)
 
     def get_by_id(self, booking_id: str) -> Booking | None:
@@ -65,6 +65,12 @@ class FakeBookingRepository:
 
     def list_active(self) -> list[Booking]:
         return [b for b in self.bookings if b.status.value == "active"]
+
+    def list_active_for_user(self, user_id: int) -> list[Booking]:
+        return [b for b in self.bookings if b.status.value == "active"]
+
+    def list_all_for_user(self, user_id: int) -> list[Booking]:
+        return list(self.bookings)
 
     def exists(self, confirmation_id: ConfirmationId) -> bool:
         return self.get_by_confirmation(confirmation_id) is not None

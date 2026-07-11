@@ -29,7 +29,12 @@ def register_booking(
     baseline_price: Money,
     refundability: RefundabilityPolicy,
     occupancy: Occupancy,
+    user_id: int | None = None,
 ) -> tuple[Booking, BookingRegistered]:
+    """Register a booking. ``user_id`` scopes ownership (US-029); when omitted
+    the repository resolves the owner user, preserving pre-multi-user
+    behavior for existing single-owner callers.
+    """
     service = BookingRegistrationService()
     booking, event = service.register(
         platform=platform,
@@ -43,5 +48,5 @@ def register_booking(
         occupancy=occupancy,
         exists_fn=repo.exists,
     )
-    repo.add(booking)
+    repo.add(booking, user_id=user_id)
     return booking, event

@@ -35,6 +35,7 @@ from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteStore,
+    SqliteUserRepository,
 )
 
 _SAMPLE_CONFIG = """\
@@ -186,6 +187,7 @@ def cmd_register(args: argparse.Namespace) -> int:
     ensure_data_dir(cfg.data_directory)
     with SqliteStore(db_path) as store:
         repo = SqliteBookingRepository(store)
+        owner = SqliteUserRepository(store).get_owner()
         try:
             booking, _ = register_booking(
                 repo=repo,
@@ -198,6 +200,7 @@ def cmd_register(args: argparse.Namespace) -> int:
                 baseline_price=baseline_price,
                 refundability=refundability,
                 occupancy=occupancy,
+                user_id=owner.user_id,
             )
         except BookingRejectedError as e:
             print(f"Registration rejected: {e}", file=sys.stderr)
@@ -251,7 +254,12 @@ def cmd_bookings_list(args: argparse.Namespace) -> int:
 
     with SqliteStore(db_path) as store:
         repo = SqliteBookingRepository(store)
-        bookings = repo.list_all() if getattr(args, "all", False) else repo.list_active()
+        owner = SqliteUserRepository(store).get_owner()
+        bookings = (
+            repo.list_all_for_user(owner.user_id)
+            if getattr(args, "all", False)
+            else repo.list_active_for_user(owner.user_id)
+        )
 
     if not bookings:
         label = "bookings" if getattr(args, "all", False) else "active bookings"
@@ -405,49 +413,31 @@ def _make_notifiers(cfg: Config) -> list[Any]:
     return notifiers
 
 
-def _make_llm_extractor(cfg: Config) -> Any:
-    import logging
+def _make_llm_client_factory(cfg: Config) -> Any:
+    """The LLMClientFactory seam (US-029). Wraps env-var key resolution today;
+    a later slice swaps this for per-user (owner-or-personal-key) resolution
+    without touching `_make_llm_extractor`/`_make_agent_brain` call sites.
+    """
+    from booksaver.infrastructure.llm.client_factory import AnthropicLLMClientFactory
 
-    api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
-    if not api_key:
-        logging.getLogger(__name__).warning(
-            "BOOKSAVER_LLM_API_KEY not set — LLM extraction disabled (DOM-only mode)"
-        )
-        return None
-    try:
-        from booksaver.infrastructure.llm.anthropic_adapter import (
-            DEFAULT_MODEL,
-            AnthropicExtractor,
-        )
-        model = cfg.extraction_settings.get("model", DEFAULT_MODEL)
-        return AnthropicExtractor(api_key=api_key, model=model)
-    except ImportError:
-        logging.getLogger(__name__).warning(
-            "anthropic package not installed — LLM extraction disabled (DOM-only mode)"
-        )
-        return None
+    return AnthropicLLMClientFactory(cfg)
+
+
+def _make_llm_extractor(cfg: Config) -> Any:
+    """Behavior unchanged from pre-v7: resolves the owner env-var key, or
+    None (DOM-only mode) if unset/anthropic isn't installed. Goes through the
+    LLMClientFactory seam so a later slice can resolve per-user keys.
+    """
+    return _make_llm_client_factory(cfg).for_booking(None)
 
 
 def _make_agent_brain(cfg: Config) -> Any:
-    import logging
-
-    api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
-    if not api_key:
-        logging.getLogger(__name__).warning(
-            "BOOKSAVER_LLM_API_KEY not set — agent escalation disabled (scripted-only)"
-        )
-        return None
-    try:
-        from booksaver.infrastructure.llm.anthropic_adapter import (
-            AnthropicAgentBrain,
-        )
-        model = cfg.agent_settings.model
-        return AnthropicAgentBrain(api_key=api_key, model=model)
-    except ImportError:
-        logging.getLogger(__name__).warning(
-            "anthropic package not installed — agent escalation disabled (scripted-only)"
-        )
-        return None
+    """Behavior unchanged from pre-v7: resolves the owner env-var key, or
+    None (scripted-only mode) if unset/anthropic isn't installed. Goes
+    through the LLMClientFactory seam so a later slice can resolve per-user
+    keys.
+    """
+    return _make_llm_client_factory(cfg).agent_brain_for_booking(None)
 
 
 # ── auth ──────────────────────────────────────────────────────────────────────
@@ -522,7 +512,8 @@ def cmd_savings_list(args: argparse.Namespace) -> int:
         return 0
 
     with SqliteStore(db_path) as store:
-        opportunities = SqliteSavingsRepository(store).list_all()
+        owner = SqliteUserRepository(store).get_owner()
+        opportunities = SqliteSavingsRepository(store).list_all_for_user(owner.user_id)
 
     if not opportunities:
         print("No savings opportunities detected yet.")
