@@ -37,3 +37,19 @@ check with `BUDGET_EXCEEDED` and the daemon moves on.
 - No autonomous cancel or purchase — guided rebook always stops for explicit local confirmation, and the browser agent is guarded away from reservation-mutating pages.
 - Local-only: config, SQLite data, session cookies, traces, and failure snapshots stay on your machine; LLM API calls carry page content only, never cookies or credentials.
 - Secrets come exclusively from environment variables (`BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN`).
+
+## Deployment
+
+BookSaver can run on your laptop or on a VPS you operate (Docker or systemd) — see the
+[VPS deployment runbook](memory-bank/operations/vps-deployment-runbook.md), the [`Dockerfile`](Dockerfile) /
+[`docker-compose.yml`](docker-compose.yml), and [`deploy/booksaver.service`](deploy/booksaver.service).
+On a display-less VPS, headed `booksaver auth` isn't possible, so scheduled checks default to
+**logged-out mode** (public Booking.com prices, no saved session) — see the runbook's "Logged-out
+checks" section for the VPS-IP validation smoke test and fallback options.
+
+## Disclaimer
+
+This is an open-source, personal-use tool, **not affiliated with Booking.com**. Automated access to
+Booking.com may violate its Terms of Service; running this tool (and how you run it) is entirely
+your own responsibility. There is no public/multi-tenant bot mode by design. See
+[`docs/DISCLAIMER.md`](docs/DISCLAIMER.md) for the full statement.

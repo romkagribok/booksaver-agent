@@ -12,6 +12,7 @@ from booksaver.domain.agent import BudgetExceeded
 from booksaver.domain.check_result import FailureCode
 from booksaver.domain.journey import JourneyResult, JourneyStep, StepOutcome
 from booksaver.domain.models import Booking
+from booksaver.domain.session import SessionMode
 
 if TYPE_CHECKING:
     from .browser_agent import BrowserAgent
@@ -222,11 +223,13 @@ class SearchJourney:
         escalator: BrowserAgent | None = None,
         recorder: TraceRecorder | None = None,
         checkpoint: Callable[[], None] | None = None,
+        session_mode: SessionMode = SessionMode.AUTHENTICATED,
     ) -> None:
         self._browser = browser
         self._escalator = escalator
         self._recorder = recorder
         self._checkpoint = checkpoint  # budget wall-clock check between steps
+        self._session_mode = session_mode
 
     def run(self, booking: Booking) -> JourneyResult:
         steps: list[tuple[JourneyStep, Callable[[Booking], str]]] = [
@@ -414,7 +417,14 @@ class SearchJourney:
         page_text = self._safe_text()
         if _CAPTCHA_MARKERS.search(page_text):
             return FailureCode.BOT_WALL
-        if _SIGN_IN_MARKERS.search(page_text):
+        # AUTH_REQUIRED means "your saved session dropped" — it presupposes a
+        # session existed. In logged-out mode there is nothing to drop (US-035,
+        # FR-8): a "sign in" banner just reflects the anonymous journey and must
+        # not be misreported as an auth failure, so fall through to the
+        # step-specific code instead.
+        if self._session_mode is SessionMode.AUTHENTICATED and _SIGN_IN_MARKERS.search(
+            page_text
+        ):
             return FailureCode.AUTH_REQUIRED
         return _STEP_FAILURE_CODES.get(step, FailureCode.STEP_FAILED)
 

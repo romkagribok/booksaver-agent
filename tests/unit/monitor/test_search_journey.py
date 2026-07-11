@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from booksaver.domain.check_result import FailureCode
 from booksaver.domain.journey import JourneyStep
+from booksaver.domain.session import SessionMode
 from booksaver.monitor.search_journey import SearchJourney
 
 from .fakes import FakeInteractiveBrowser, make_booking
@@ -113,6 +114,25 @@ class TestWallDetection:
         browser = _happy_browser(fail_selectors={"property-card"})
         browser.page_text = "unusual traffic detected - hcaptcha"
         result = SearchJourney(browser).run(make_booking())
+        assert result.failure_code is FailureCode.BOT_WALL
+
+    def test_signed_out_page_never_classified_as_auth_required_when_logged_out(self):
+        # US-035/FR-8: AUTH_REQUIRED presupposes a session that dropped. With no
+        # session at all, a "sign in" banner is just the anonymous journey and
+        # must fall through to the step-specific failure code instead.
+        browser = _happy_browser(fail_selectors={"property-card"})
+        browser.page_text = "Log in to your account to continue"
+        result = SearchJourney(browser, session_mode=SessionMode.LOGGED_OUT).run(
+            make_booking()
+        )
+        assert result.failure_code is not FailureCode.AUTH_REQUIRED
+
+    def test_captcha_still_wins_over_step_code_when_logged_out(self):
+        browser = _happy_browser(fail_selectors={"property-card"})
+        browser.page_text = "unusual traffic detected - hcaptcha"
+        result = SearchJourney(browser, session_mode=SessionMode.LOGGED_OUT).run(
+            make_booking()
+        )
         assert result.failure_code is FailureCode.BOT_WALL
 
 

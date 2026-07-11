@@ -1,0 +1,43 @@
+services:
+  booksaver:
+    build: .
+    image: booksaver-agent:latest
+    container_name: booksaver
+    restart: unless-stopped
+    init: true # reap zombie chromium processes cleanly on restart
+    environment:
+      # Secrets: set these in a local .env file (never commit it) or export
+      # them in the host shell before `docker compose up`. See
+      # memory-bank/operations/vps-deployment-runbook.md for the full list
+      # and how to generate BOOKSAVER_SECRET_KEY.
+      - BOOKSAVER_TELEGRAM_BOT_TOKEN=${BOOKSAVER_TELEGRAM_BOT_TOKEN:?set in .env}
+      - BOOKSAVER_LLM_API_KEY=${BOOKSAVER_LLM_API_KEY:?set in .env}
+      - BOOKSAVER_SECRET_KEY=${BOOKSAVER_SECRET_KEY:?set in .env}
+      # Optional: email notifications alongside/instead of Telegram.
+      - BOOKSAVER_SMTP_PASSWORD=${BOOKSAVER_SMTP_PASSWORD:-}
+    volumes:
+      - booksaver-data:/data
+    # Chromium is the memory-hungry part of this container: a single headless
+    # tab routinely spikes to 300-500MB RSS during a check, on top of the
+    # ~100-150MB Python/Playwright baseline. 1GB is a floor for one booking
+    # checked at a time; size up if you register many bookings or see OOM
+    # kills in `docker inspect booksaver` (look for OOMKilled: true).
+    mem_limit: 1g
+    memswap_limit: 2g
+    healthcheck:
+      # TODO(post-merge, owner of daemon/lifecycle.py + cli/commands.py):
+      # this is a process-liveness check only — it confirms the `booksaver`
+      # process didn't die, not that the scheduler loop or Telegram poller
+      # are actually making progress. A real liveness probe needs a small
+      # heartbeat file written by the scheduler each loop iteration (or a
+      # tiny local HTTP/unix-socket endpoint) and this healthcheck command
+      # swapped for `test -f /data/.heartbeat -a $(...) -lt 300` (or similar,
+      # freshness-based). See the runbook's "Healthcheck TODO" note.
+      test: ["CMD-SHELL", "pgrep -f 'booksaver run' || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  booksaver-data:

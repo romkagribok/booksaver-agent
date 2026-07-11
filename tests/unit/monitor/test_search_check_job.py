@@ -157,17 +157,18 @@ class TestJourneyFailureMapping:
 
 
 class TestRunAllActive:
-    def test_no_session_records_auth_failure_per_booking(self):
+    def test_no_session_runs_logged_out_instead_of_failing(self):
         bookings = [make_booking("b-1"), make_booking("b-2")]
+        browser = _happy_browser()
         monitor, history = _monitor(
-            _happy_browser(), bookings=bookings, session=FakeSessionRepository(None)
+            browser, bookings=bookings, session=FakeSessionRepository(None)
         )
         results = monitor.run_all_active()
         assert len(results) == 2
-        assert all(
-            r.failure_reason.code is FailureCode.AUTH_REQUIRED for r in results
-        )
+        assert all(r.outcome is CheckOutcome.SUCCESS for r in results)
         assert len(history.results) == 2
+        # No session existed, so nothing was restored and nothing was saved.
+        assert browser.restored_cookies == []
 
     def test_checks_recorded_and_cookies_refreshed(self):
         session_repo = FakeSessionRepository(make_session())

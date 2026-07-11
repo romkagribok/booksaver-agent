@@ -1,14 +1,14 @@
 ---
 id: US-034
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-034 Deploy daemon and bot on a VPS
 
 **Intent:** `003-telegram-interface`
 **Unit:** `005-vps-deployment`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story
