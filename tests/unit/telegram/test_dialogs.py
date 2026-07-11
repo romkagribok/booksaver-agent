@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from booksaver.infrastructure.telegram.dialogs import DialogDefinition, DialogManager, DialogStep
+from booksaver.infrastructure.telegram.dialogs import (
+    DialogAborted,
+    DialogDefinition,
+    DialogManager,
+    DialogStep,
+)
 
 
-def _no_validation(_: str) -> str | None:
+def _no_validation(_text: str, _answers: dict[str, str]) -> str | None:
     return None
 
 
-def _digits_only(text: str) -> str | None:
+def _digits_only(text: str, _answers: dict[str, str]) -> str | None:
     return None if text.isdigit() else "Please send a number."
 
 
@@ -114,3 +119,100 @@ def test_empty_steps_dialog_definition_rejected() -> None:
 
     with pytest.raises(ValueError, match="at least one step"):
         DialogDefinition(name="empty", steps=(), on_complete=lambda u, c, a: "done")
+
+
+# ── bolt 010 extensions: cross-field validation, dynamic prompts, abort ────────
+
+
+def _cross_field_dialog() -> DialogDefinition:
+    def _validate_b(text: str, answers: dict[str, str]) -> str | None:
+        if text == answers.get("a"):
+            return "b must differ from a."
+        return None
+
+    def _on_complete(user_id: int, chat_id: int, answers: dict[str, str]) -> str:
+        return f"Done: {answers}"
+
+    return DialogDefinition(
+        name="cross-field",
+        steps=(
+            DialogStep(key="a", prompt="Give a value for a.", validate=_no_validation),
+            DialogStep(key="b", prompt="Give a value for b.", validate=_validate_b),
+        ),
+        on_complete=_on_complete,
+    )
+
+
+def test_validate_sees_answers_collected_so_far() -> None:
+    manager = DialogManager()
+    manager.start(1, _cross_field_dialog())
+    manager.handle_message(1, user_id=42, text="same")
+    reply = manager.handle_message(1, user_id=42, text="same")
+    assert "must differ from a" in reply
+    assert manager.has_active(1) is True
+
+    reply = manager.handle_message(1, user_id=42, text="different")
+    assert "Done:" in reply
+    assert manager.has_active(1) is False
+
+
+def _dynamic_prompt_dialog() -> DialogDefinition:
+    def _summary(answers: dict[str, str]) -> str:
+        return f"Confirm: a={answers['a']}. Reply yes/no."
+
+    def _validate_confirm(text: str, _answers: dict[str, str]) -> str | None:
+        normalized = text.strip().lower()
+        if normalized == "no":
+            raise DialogAborted("Cancelled. Nothing saved.")
+        if normalized != "yes":
+            return "Reply yes or no."
+        return None
+
+    def _on_complete(user_id: int, chat_id: int, answers: dict[str, str]) -> str:
+        return f"Saved: {answers['a']}"
+
+    return DialogDefinition(
+        name="dynamic-prompt",
+        steps=(
+            DialogStep(key="a", prompt="Give a value for a.", validate=_no_validation),
+            DialogStep(key="confirm", prompt=_summary, validate=_validate_confirm),
+        ),
+        on_complete=_on_complete,
+    )
+
+
+def test_prompt_can_be_a_callable_rendered_from_prior_answers() -> None:
+    manager = DialogManager()
+    manager.start(1, _dynamic_prompt_dialog())
+    reply = manager.handle_message(1, user_id=42, text="hello")
+    assert reply == "Confirm: a=hello. Reply yes/no."
+
+
+def test_dialog_aborted_ends_dialog_with_message_and_no_save() -> None:
+    manager = DialogManager()
+    manager.start(1, _dynamic_prompt_dialog())
+    manager.handle_message(1, user_id=42, text="hello")
+    reply = manager.handle_message(1, user_id=42, text="no")
+    assert reply == "Cancelled. Nothing saved."
+    assert manager.has_active(1) is False
+
+
+def test_dialog_aborted_from_first_step_also_works() -> None:
+    def _validate_a(text: str, _answers: dict[str, str]) -> str | None:
+        if text == "abort-me":
+            raise DialogAborted("Aborted on step one.")
+        return None
+
+    definition = DialogDefinition(
+        name="abort-first",
+        steps=(
+            DialogStep(key="a", prompt="a?", validate=_validate_a),
+            DialogStep(key="b", prompt="b?", validate=_no_validation),
+        ),
+        on_complete=lambda u, c, a: "done",
+    )
+    manager = DialogManager()
+    manager.start(1, definition)
+    reply = manager.handle_message(1, user_id=42, text="abort-me")
+    assert reply == "Aborted on step one."
+    assert manager.has_active(1) is False

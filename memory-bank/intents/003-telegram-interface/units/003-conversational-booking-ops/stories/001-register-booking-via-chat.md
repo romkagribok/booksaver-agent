@@ -1,14 +1,14 @@
 ---
 id: US-025
-status: ready
-implemented: false
+status: complete
+implemented: true
 ---
 
 # US-025 Register a booking via chat dialog
 
 **Intent:** `003-telegram-interface`
 **Unit:** `003-conversational-booking-ops`
-**Status:** Ready
+**Status:** Complete
 **Tag:** Phase 3
 
 ## Story

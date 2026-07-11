@@ -41,6 +41,8 @@ class FailureCode(Enum):
     # key could not be used (missing encryption key, corrupt ciphertext, or the
     # decrypted key itself was rejected).
     USER_KEY_INVALID = "user_key_invalid"
+    # Per-user fair-scheduling code (bolt 010, US-031)
+    USER_CHECK_LIMIT_REACHED = "user_check_limit_reached"
 
 
 @dataclass(frozen=True)

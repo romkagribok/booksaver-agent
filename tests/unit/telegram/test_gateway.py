@@ -10,9 +10,11 @@ from booksaver.domain.models import Config
 from booksaver.domain.value_objects import (
     CheckInterval,
     DataDirectory,
+    LimitsSettings,
     NotificationSettings,
     TelegramBotSettings,
 )
+from booksaver.infrastructure.persistence.sqlite_store import SqliteStore, SqliteUserRepository
 from booksaver.infrastructure.telegram.client import TelegramBotClient
 from booksaver.infrastructure.telegram.gateway import build_bot_runner
 
@@ -28,6 +30,7 @@ def _config(
     enabled: bool,
     owner_chat_id: int | None = 555,
     access_mode: str = "owner",
+    limits_settings: LimitsSettings | None = None,
 ) -> Config:
     return Config(
         check_interval=CheckInterval.parse("1h"),
@@ -39,6 +42,7 @@ def _config(
             owner_chat_id=owner_chat_id if enabled else None,
             access_mode=access_mode,
         ),
+        limits_settings=limits_settings or LimitsSettings(),
     )
 
 
@@ -263,3 +267,127 @@ def test_invite_mode_admits_a_stranger_with_a_valid_code(tmp_path: Path) -> None
         admitted = SqliteUserRepository(store).get_by_telegram_id(stranger_chat_id)
     assert admitted is not None
     assert admitted.access_state.value == "active"
+
+
+def _scripted_conversation_transport(
+    chat_id: int, texts: list[str], sent: list[tuple[int, str]], stop_event: threading.Event
+):
+    """Replays `texts` one message per getUpdates poll, then an empty batch
+    that sets `stop_event`."""
+
+    class _Transport:
+        def __init__(self) -> None:
+            self._sent_count = 0
+
+        def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
+            body = json.loads(data.decode("utf-8"))
+            if url.endswith("/sendMessage"):
+                sent.append((body["chat_id"], body["text"]))
+                return json.dumps({"ok": True, "result": {}}).encode("utf-8")
+            if self._sent_count < len(texts):
+                text = texts[self._sent_count]
+                self._sent_count += 1
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "result": [
+                            {
+                                "update_id": self._sent_count,
+                                "message": {
+                                    "chat": {"id": chat_id},
+                                    "from": {"id": chat_id},
+                                    "text": text,
+                                },
+                            }
+                        ],
+                    }
+                ).encode("utf-8")
+            stop_event.set()
+            return json.dumps({"ok": True, "result": []}).encode("utf-8")
+
+    return _Transport()
+
+
+def test_register_dialog_end_to_end_through_the_bot_loop(tmp_path: Path) -> None:
+    owner_chat_id = 555
+    db_path = tmp_path / "booksaver.db"
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
+    # Link the chat to a local user the way bolt 009's admission will.
+    with SqliteStore(db_path) as store:
+        SqliteUserRepository(store).get_or_create_by_telegram_id(owner_chat_id)
+
+    stop_event = threading.Event()
+    sent: list[tuple[int, str]] = []
+    texts = [
+        "/register",
+        "Ibis Berlin Mitte",
+        "-",
+        "2026-09-01",
+        "2026-09-05",
+        "Standard Double",
+        "250.00 EUR",
+        "yes",
+        "-",
+        "-",
+        "2",
+        "-",
+        "-",
+        "CONF123",
+        "yes",
+    ]
+    client = TelegramBotClient(
+        "fake-token",
+        transport=_scripted_conversation_transport(owner_chat_id, texts, sent, stop_event),
+    )
+    runner = build_bot_runner(cfg, db_path, Scheduler(), client=client)
+    assert runner is not None
+
+    runner(stop_event)
+
+    assert any("Registered:" in text for _chat_id, text in sent)
+    assert any("Please confirm this booking" in text for _chat_id, text in sent)
+
+
+def test_cancelflow_aborts_a_register_dialog_mid_flow(tmp_path: Path) -> None:
+    owner_chat_id = 555
+    db_path = tmp_path / "booksaver.db"
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
+    with SqliteStore(db_path) as store:
+        SqliteUserRepository(store).get_or_create_by_telegram_id(owner_chat_id)
+
+    stop_event = threading.Event()
+    sent: list[tuple[int, str]] = []
+    texts = ["/register", "Ibis Berlin Mitte", "/cancelflow"]
+    client = TelegramBotClient(
+        "fake-token",
+        transport=_scripted_conversation_transport(owner_chat_id, texts, sent, stop_event),
+    )
+    runner = build_bot_runner(cfg, db_path, Scheduler(), client=client)
+    assert runner is not None
+
+    runner(stop_event)
+
+    assert sent[-1] == (owner_chat_id, "Cancelled the current dialog.")
+
+
+def test_message_rate_limit_drops_excess_replies_within_the_window(tmp_path: Path) -> None:
+    owner_chat_id = 555
+    cfg = _config(
+        tmp_path,
+        enabled=True,
+        owner_chat_id=owner_chat_id,
+        limits_settings=LimitsSettings(messages_per_minute_per_chat=1),
+    )
+    stop_event = threading.Event()
+    sent: list[tuple[int, str]] = []
+    texts = ["/status", "/status"]
+    client = TelegramBotClient(
+        "fake-token",
+        transport=_scripted_conversation_transport(owner_chat_id, texts, sent, stop_event),
+    )
+    runner = build_bot_runner(cfg, tmp_path / "booksaver.db", Scheduler(), client=client)
+    assert runner is not None
+
+    runner(stop_event)
+
+    assert len(sent) == 1  # the second /status reply was dropped, not queued

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -11,6 +12,10 @@ from booksaver.domain.savings import RejectionReason, SavingsOpportunity, detect
 from .ports import BookingRepository, Notifier, SavingsRepository
 
 logger = logging.getLogger(__name__)
+
+# US-030: given a booking, resolve which notifier(s) should receive its alert
+# (e.g. the booking's owning user's Telegram chat, not a single fixed list).
+NotifierResolver = Callable[[Booking], "list[Notifier]"]
 
 
 @dataclass(frozen=True)
@@ -51,22 +56,35 @@ def render_alert(opportunity: SavingsOpportunity, booking: Booking) -> tuple[str
 
 
 class NotificationDispatcher:
-    """Attempts every configured channel independently; never raises (US-009)."""
+    """Attempts every configured channel independently; never raises (US-009).
 
-    def __init__(self, notifiers: list[Notifier]) -> None:
-        self._notifiers = notifiers
+    `notifiers` is a fixed static list, used as-is for every booking — the
+    pre-US-030 behavior (still the default, and what most tests construct).
+    `resolver` (US-030) instead picks the channel(s) per-booking, e.g. routing
+    a savings alert to the booking's owning user's own Telegram chat. When
+    both are given, `resolver` wins.
+    """
+
+    def __init__(
+        self,
+        notifiers: list[Notifier] | None = None,
+        resolver: NotifierResolver | None = None,
+    ) -> None:
+        self._notifiers = notifiers or []
+        self._resolver = resolver
 
     def dispatch(self, opportunity: SavingsOpportunity, booking: Booking) -> list[ChannelOutcome]:
-        if not self._notifiers:
+        notifiers = self._resolver(booking) if self._resolver is not None else self._notifiers
+        if not notifiers:
             logger.warning(
-                "Savings found for %s but no notification channels are configured",
+                "Savings found for %s but no notification channels are configured/resolved",
                 booking.booking_id,
             )
             return []
 
         subject, body = render_alert(opportunity, booking)
         outcomes: list[ChannelOutcome] = []
-        for notifier in self._notifiers:
+        for notifier in notifiers:
             try:
                 notifier.send(subject, body)
                 logger.info("Notification sent via %s", notifier.channel_name)

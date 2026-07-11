@@ -78,10 +78,16 @@ class BookingComSearchMonitor:
         self._clock = clock
         self._last_escalator: BrowserAgent | None = None
 
-    def run_all_active(self) -> list[CheckResult]:
-        """Scheduler job entry point: check every active booking, never raise."""
+    def run_all_active(self, bookings: list[Booking] | None = None) -> list[CheckResult]:
+        """Scheduler job entry point: check every active booking, never raise.
+
+        `bookings` defaults to every active booking (`self._bookings.list_active()`,
+        pre-US-031 behavior). A caller doing per-user fair scheduling / daily
+        check caps (US-031) instead computes its own ordered subset (e.g. via
+        `monitor.user_limits.build_check_plan`) and passes it here.
+        """
         results: list[CheckResult] = []
-        bookings = self._bookings.list_active()
+        bookings = self._bookings.list_active() if bookings is None else bookings
         if not bookings:
             logger.info("No active bookings to check")
             return results

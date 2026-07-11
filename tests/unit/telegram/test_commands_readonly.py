@@ -21,9 +21,18 @@ from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteStore,
+    SqliteUserRepository,
 )
 from booksaver.infrastructure.telegram.commands_readonly import register_readonly_commands
 from booksaver.infrastructure.telegram.router import CommandRouter, IncomingCommand
+
+
+def _register_caller(db_path: Path, telegram_id: int) -> int:
+    """Link `telegram_id` to a local user (US-025/US-029 scoping), returning
+    its user_id — mirrors what bolt 009's access control does on admission."""
+    with SqliteStore(db_path) as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(telegram_id)
+        return user.user_id
 
 
 def _booking(booking_id: str = "b-1") -> Booking:
@@ -105,10 +114,11 @@ def test_status_reports_bookings_and_recent_check(tmp_path: Path) -> None:
 
 def test_bookings_lists_active_bookings(tmp_path: Path) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
     with SqliteStore(db_path) as store:
-        SqliteBookingRepository(store).add(_booking())
+        SqliteBookingRepository(store).add(_booking(), user_id=user_id)
 
-    router.dispatch(_cmd("/bookings"))
+    router.dispatch(_cmd("/bookings", chat_id=1))
     text = sent[0][1]
     assert "Hotel Test" in text
 
@@ -119,10 +129,48 @@ def test_bookings_with_no_database_reports_none_registered(tmp_path: Path) -> No
     assert sent[0][1] == "No bookings registered yet."
 
 
+def test_bookings_unrecognized_sender_gets_polite_refusal(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(), user_id=user_id)
+
+    router.dispatch(_cmd("/bookings", chat_id=999))  # never linked to a user
+    assert sent[0][1] == "You're not recognized by this bot."
+
+
+def test_bookings_only_shows_the_calling_users_own_bookings(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_a = _register_caller(db_path, telegram_id=1)
+    user_b = _register_caller(db_path, telegram_id=2)
+    with SqliteStore(db_path) as store:
+        repo = SqliteBookingRepository(store)
+        repo.add(_booking("b-1"), user_id=user_a)
+        repo.add(_booking("b-2"), user_id=user_b)
+
+    router.dispatch(_cmd("/bookings", chat_id=1))
+    text_a = sent[-1][1]
+    assert "b-1" in text_a or "b-1"[:8] in text_a
+    assert "b-2"[:8] not in text_a
+
+    router.dispatch(_cmd("/bookings", chat_id=2))
+    text_b = sent[-1][1]
+    assert "b-2"[:8] in text_b
+    assert "b-1"[:8] not in text_b
+
+
 def test_savings_with_no_database_reports_none_detected(tmp_path: Path) -> None:
     _db, router, sent, _sched = _setup(tmp_path)
     router.dispatch(_cmd("/savings"))
     assert sent[0][1] == "No savings opportunities detected yet."
+
+
+def test_savings_unrecognized_sender_gets_polite_refusal(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    _register_caller(db_path, telegram_id=1)
+
+    router.dispatch(_cmd("/savings", chat_id=999))
+    assert sent[0][1] == "You're not recognized by this bot."
 
 
 def test_checks_requires_a_booking_id_argument(tmp_path: Path) -> None:
@@ -133,8 +181,9 @@ def test_checks_requires_a_booking_id_argument(tmp_path: Path) -> None:
 
 def test_checks_reports_recent_history_including_failures(tmp_path: Path) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
     with SqliteStore(db_path) as store:
-        SqliteBookingRepository(store).add(_booking())
+        SqliteBookingRepository(store).add(_booking(), user_id=user_id)
         history = SqliteCheckHistoryRepository(store)
         history.add(
             CheckResult.failure(
@@ -144,15 +193,37 @@ def test_checks_reports_recent_history_including_failures(tmp_path: Path) -> Non
             )
         )
 
-    router.dispatch(_cmd("/checks", args="b-1"))
+    router.dispatch(_cmd("/checks", args="b-1", chat_id=1))
     text = sent[0][1]
     assert "timeout" in text
 
 
 def test_checks_unknown_booking_reports_none_found(tmp_path: Path) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
     with SqliteStore(db_path) as store:
-        SqliteBookingRepository(store).add(_booking())
+        SqliteBookingRepository(store).add(_booking(), user_id=user_id)
 
-    router.dispatch(_cmd("/checks", args="unknown-id"))
+    router.dispatch(_cmd("/checks", args="unknown-id", chat_id=1))
     assert "No checks recorded for booking" in sent[0][1]
+
+
+def test_checks_another_users_booking_reports_none_found(tmp_path: Path) -> None:
+    """Same not-found message for someone else's booking id — no oracle."""
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_a = _register_caller(db_path, telegram_id=1)
+    user_b = _register_caller(db_path, telegram_id=2)
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking("b-1"), user_id=user_a)
+        history = SqliteCheckHistoryRepository(store)
+        history.add(
+            CheckResult.failure(
+                "b-1",
+                datetime.now(UTC),
+                FailureReason(code=FailureCode.TIMEOUT, detail="page load timed out"),
+            )
+        )
+    del user_b
+
+    router.dispatch(_cmd("/checks", args="b-1", chat_id=2))
+    assert sent[0][1] == "No checks recorded for booking 'b-1'."

@@ -5,11 +5,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from booksaver.daemon.scheduler import Scheduler
+from booksaver.domain.user import User
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteSavingsRepository,
     SqliteStore,
+    SqliteUserRepository,
 )
 
 from .router import CommandRouter, IncomingCommand
@@ -42,6 +44,9 @@ def _format_timedelta(delta: timedelta) -> str:
     return " ".join(parts)
 
 
+_NOT_RECOGNIZED = "You're not recognized by this bot."
+
+
 def register_readonly_commands(
     router: CommandRouter,
     reply: Reply,
@@ -53,7 +58,19 @@ def register_readonly_commands(
     Every handler here is a read-only inbound-adapter concern: it only reads
     through the existing SQLite repositories (the same ones the CLI uses) and
     formats a chat-sized reply — no domain logic lives in this module.
+
+    `/bookings`, `/savings`, and `/checks` are sender-scoped (US-025/US-029):
+    the sender is resolved via `UserRepository.get_by_telegram_id` and only
+    that user's rows are shown — no query path here can surface another
+    user's data. An unresolved or revoked sender gets a polite refusal;
+    admission (who is even allowed to reach a command handler) is the
+    parallel bolt-009 worker's access-control layer, not this module.
+    `/status` stays daemon-wide (aggregate health, not per-user data).
     """
+
+    def _resolve_active_user(store: SqliteStore, telegram_user_id: int) -> User | None:
+        user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
+        return user if user is not None and user.is_active else None
 
     def _start(cmd: IncomingCommand) -> None:
         reply(cmd.chat_id, "Welcome to BookSaver. Send /help to see what I can do.")
@@ -104,7 +121,11 @@ def register_readonly_commands(
             reply(cmd.chat_id, "No bookings registered yet.")
             return
         with SqliteStore(db_path) as store:
-            bookings = SqliteBookingRepository(store).list_active()
+            user = _resolve_active_user(store, cmd.user_id)
+            if user is None:
+                reply(cmd.chat_id, _NOT_RECOGNIZED)
+                return
+            bookings = SqliteBookingRepository(store).list_active_for_user(user.user_id)
         if not bookings:
             reply(cmd.chat_id, "No active bookings.")
             return
@@ -122,7 +143,11 @@ def register_readonly_commands(
             reply(cmd.chat_id, "No savings opportunities detected yet.")
             return
         with SqliteStore(db_path) as store:
-            opportunities = SqliteSavingsRepository(store).list_all()
+            user = _resolve_active_user(store, cmd.user_id)
+            if user is None:
+                reply(cmd.chat_id, _NOT_RECOGNIZED)
+                return
+            opportunities = SqliteSavingsRepository(store).list_all_for_user(user.user_id)
         if not opportunities:
             reply(cmd.chat_id, "No savings opportunities detected yet.")
             return
@@ -144,6 +169,16 @@ def register_readonly_commands(
             reply(cmd.chat_id, "No checks recorded yet.")
             return
         with SqliteStore(db_path) as store:
+            user = _resolve_active_user(store, cmd.user_id)
+            if user is None:
+                reply(cmd.chat_id, _NOT_RECOGNIZED)
+                return
+            owner_user_id = SqliteBookingRepository(store).get_owner_user_id(booking_id)
+            if owner_user_id != user.user_id:
+                # Same message for "doesn't exist" and "not yours" — don't
+                # leak which booking ids exist to a different user.
+                reply(cmd.chat_id, f"No checks recorded for booking '{booking_id}'.")
+                return
             results = SqliteCheckHistoryRepository(store).get_recent(booking_id, limit=5)
         if not results:
             reply(cmd.chat_id, f"No checks recorded for booking '{booking_id}'.")

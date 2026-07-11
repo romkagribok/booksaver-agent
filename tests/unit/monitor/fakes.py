@@ -51,9 +51,11 @@ def make_booking(
 class FakeBookingRepository:
     def __init__(self, bookings: list[Booking] | None = None) -> None:
         self.bookings = bookings or []
+        self.owners: dict[str, int] = {}
 
     def add(self, booking: Booking, user_id: int | None = None) -> None:
         self.bookings.append(booking)
+        self.owners[booking.booking_id] = user_id if user_id is not None else 1
 
     def get_by_id(self, booking_id: str) -> Booking | None:
         return next((b for b in self.bookings if b.booking_id == booking_id), None)
@@ -67,10 +69,17 @@ class FakeBookingRepository:
         return [b for b in self.bookings if b.status.value == "active"]
 
     def list_active_for_user(self, user_id: int) -> list[Booking]:
-        return [b for b in self.bookings if b.status.value == "active"]
+        return [
+            b
+            for b in self.bookings
+            if b.status.value == "active" and self.owners.get(b.booking_id, 1) == user_id
+        ]
 
     def list_all_for_user(self, user_id: int) -> list[Booking]:
-        return list(self.bookings)
+        return [b for b in self.bookings if self.owners.get(b.booking_id, 1) == user_id]
+
+    def get_owner_user_id(self, booking_id: str) -> int | None:
+        return self.owners.get(booking_id)
 
     def exists(self, confirmation_id: ConfirmationId) -> bool:
         return self.get_by_confirmation(confirmation_id) is not None

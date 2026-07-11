@@ -9,6 +9,7 @@ from booksaver.domain.models import Config
 from booksaver.domain.value_objects import (
     CheckInterval,
     DataDirectory,
+    LimitsSettings,
     NotificationSettings,
     TelegramBotSettings,
 )
@@ -75,6 +76,36 @@ def load_config(source: ConfigSource) -> Config:
     except (ValueError, TypeError) as e:
         errors.append(f"telegram_bot: {e}")
 
+    # ── [limits] (US-031, bolt 010) — additive section, new-worker-owned ──────
+    limits_settings: LimitsSettings | None = None
+    limits_raw = raw.get("limits", {})
+    try:
+        limits_defaults = LimitsSettings()
+        limits_settings = LimitsSettings(
+            max_bookings_per_user=int(
+                limits_raw.get("max_bookings_per_user", limits_defaults.max_bookings_per_user)
+            ),
+            max_checks_per_user_per_day=int(
+                limits_raw.get(
+                    "max_checks_per_user_per_day", limits_defaults.max_checks_per_user_per_day
+                )
+            ),
+            max_llm_calls_per_user_per_day=int(
+                limits_raw.get(
+                    "max_llm_calls_per_user_per_day",
+                    limits_defaults.max_llm_calls_per_user_per_day,
+                )
+            ),
+            messages_per_minute_per_chat=int(
+                limits_raw.get(
+                    "messages_per_minute_per_chat", limits_defaults.messages_per_minute_per_chat
+                )
+            ),
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"limits: {e}")
+    # ── end [limits] ────────────────────────────────────────────────────────
+
     if errors:
         raise ConfigValidationError(errors)
 
@@ -82,6 +113,7 @@ def load_config(source: ConfigSource) -> Config:
     assert data_directory is not None
     assert agent_settings is not None
     assert telegram_bot_settings is not None
+    assert limits_settings is not None
 
     notifications_raw = raw.get("notifications", {})
     notification_settings = NotificationSettings(
@@ -108,4 +140,5 @@ def load_config(source: ConfigSource) -> Config:
         extraction_settings=extraction_settings,
         agent_settings=agent_settings,
         telegram_bot_settings=telegram_bot_settings,
+        limits_settings=limits_settings,
     )

@@ -70,6 +70,14 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # enabled = false
 # owner_chat_id = 123456789   # required when enabled; only this chat may use the bot
 # poll_timeout_seconds = 30   # long-poll timeout, clamped to 25-50
+
+[limits]
+# Per-user abuse/fairness limits for multi-user Telegram deployments (US-031).
+# The owner is exempt from max_bookings_per_user.
+# max_bookings_per_user = 3          # active bookings a single bot user may register
+# max_checks_per_user_per_day = 48   # price checks per user per day before skipping
+# max_llm_calls_per_user_per_day = 200  # tracked; see docs for enforcement status
+# messages_per_minute_per_chat = 20  # outbound bot replies per chat per minute
 """
 
 
@@ -155,6 +163,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
 
     ns = cfg.notification_settings
     tb = cfg.telegram_bot_settings
+    lim = cfg.limits_settings
     print(f"check_interval               : {cfg.check_interval}")
     print(f"data_directory               : {cfg.data_directory.path}")
     print(f"notifications.email          : {ns.email or '(not set)'}")
@@ -162,6 +171,10 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"telegram_bot.enabled         : {tb.enabled}")
     print(f"telegram_bot.owner_chat_id   : {tb.owner_chat_id or '(not set)'}")
     print(f"telegram_bot.poll_timeout_s  : {tb.poll_timeout_seconds}")
+    print(f"limits.max_bookings_per_user : {lim.max_bookings_per_user}")
+    print(f"limits.max_checks_per_user/day: {lim.max_checks_per_user_per_day}")
+    print(f"limits.max_llm_calls_per_user/day: {lim.max_llm_calls_per_user_per_day}")
+    print(f"limits.messages_per_min/chat : {lim.messages_per_minute_per_chat}")
     smtp = "(set)" if os.environ.get("BOOKSAVER_SMTP_PASSWORD") else "(not set)"
     tg = "(set)" if os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN") else "(not set)"
     llm = "(set)" if os.environ.get("BOOKSAVER_LLM_API_KEY") else "(not set)"
@@ -341,17 +354,39 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
     All heavyweight resources (browser, DB connection) are created per tick and
     released afterwards, so a crashed tick never poisons the next one and the
     daemon holds no browser between intervals.
+
+    US-031 fair scheduling: `checks_today` and `capped_notice_sent_today` are
+    created ONCE here (not per tick) so they persist for the life of the
+    daemon process — see `monitor.user_limits.DailyCounter` for the in-memory,
+    UTC-midnight-rollover, restart-loses-today's-counts trade-off.
     """
     from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
     from booksaver.monitor.failure_tracker import FailureTracker
     from booksaver.monitor.search_check_job import BookingComSearchMonitor
     from booksaver.monitor.session_manager import SessionManager
+    from booksaver.monitor.user_limits import (
+        DailyCounter,
+        build_check_plan,
+        users_needing_capped_notice,
+    )
+
+    checks_today = DailyCounter()
+    capped_notice_sent_today = DailyCounter()
 
     def _job() -> None:
+        import logging
+        from datetime import UTC, datetime
+
         from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
+        from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
         from booksaver.infrastructure.browser.playwright_adapter import (
             PlaywrightInteractiveBrowser,
         )
+        from booksaver.infrastructure.notifications.routing import (
+            OwnerBookingNotifierResolver,
+            resolve_telegram_chat_id,
+        )
+        from booksaver.infrastructure.notifications.telegram_notifier import TelegramNotifier
         from booksaver.infrastructure.persistence.sqlite_store import (
             SqliteCheckTraceRepository,
             SqliteSavingsRepository,
@@ -359,7 +394,10 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
         )
         from booksaver.monitor.trace import SnapshotWriter
 
+        logger = logging.getLogger(__name__)
+
         db_path = cfg.data_directory.path / "booksaver.db"
+        telegram_bot_token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
         with (
             SqliteStore(db_path) as store,
             PlaywrightInteractiveBrowser(headless=True) as browser,
@@ -370,6 +408,61 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
             # key per booking, so the monitor gets no fixed llm/brain here —
             # see BookingComSearchMonitor's llm_factory parameter.
             llm_factory = _make_llm_client_factory(cfg, store=store)
+            user_repo = SqliteUserRepository(store)
+
+            # ── US-031: fair per-user scheduling + daily check ceiling ────
+            users = user_repo.list_active()
+            bookings_by_user = {
+                u.user_id: booking_repo.list_active_for_user(u.user_id) for u in users
+            }
+            plan = build_check_plan(
+                users=users,
+                bookings_by_user=bookings_by_user,
+                checks_today=checks_today.snapshot(),
+                max_checks_per_user_per_day=cfg.limits_settings.max_checks_per_user_per_day,
+            )
+
+            for capped_user_id in plan.capped_user_ids:
+                for skipped_booking in bookings_by_user.get(capped_user_id, []):
+                    history.add(
+                        CheckResult.failure(
+                            skipped_booking.booking_id,
+                            datetime.now(UTC),
+                            FailureReason(
+                                code=FailureCode.USER_CHECK_LIMIT_REACHED,
+                                detail=(
+                                    "Daily per-user check limit reached; this booking's "
+                                    "check was skipped this tick."
+                                ),
+                            ),
+                        )
+                    )
+            for capped_user_id in users_needing_capped_notice(
+                plan.capped_user_ids, capped_notice_sent_today
+            ):
+                capped_user = user_repo.get_by_id(capped_user_id)
+                if capped_user is None:
+                    continue
+                chat_id = resolve_telegram_chat_id(capped_user, cfg.telegram_bot_settings)
+                if chat_id is None or not telegram_bot_token:
+                    logger.warning(
+                        "User %s hit the daily check limit but has no reachable "
+                        "Telegram chat; notice skipped",
+                        capped_user_id,
+                    )
+                    continue
+                try:
+                    TelegramNotifier(bot_token=telegram_bot_token, chat_id=str(chat_id)).send(
+                        "BookSaver: daily check limit reached",
+                        "You've reached today's limit of "
+                        f"{cfg.limits_settings.max_checks_per_user_per_day} price "
+                        "checks. Checks will resume tomorrow.",
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to send daily-limit notice to user %s: %s", capped_user_id, exc
+                    )
+
             monitor = BookingComSearchMonitor(
                 browser=browser,
                 session_manager=SessionManager(LocalSessionRepository(cfg.data_directory)),
@@ -381,12 +474,23 @@ def _make_check_job(cfg: Config) -> Callable[[], None]:
                 trace_repo=SqliteCheckTraceRepository(store),
                 snapshot_writer=SnapshotWriter(cfg.data_directory.path / "snapshots"),
             )
-            results = monitor.run_all_active()
+            ordered_bookings = [booking for _uid, booking in plan.ordered]
+            results = monitor.run_all_active(bookings=ordered_bookings)
+            for user_id, _booking in plan.ordered:
+                checks_today.increment(user_id)
 
+            # ── US-030: route savings alerts to each booking's owning user ─
+            resolver = OwnerBookingNotifierResolver(
+                booking_repo=booking_repo,
+                user_repo=user_repo,
+                owner_notifiers=_make_notifiers(cfg),
+                telegram_bot_settings=cfg.telegram_bot_settings,
+                telegram_bot_token=telegram_bot_token,
+            )
             pipeline = SavingsPipeline(
                 booking_repo=booking_repo,
                 savings_repo=SqliteSavingsRepository(store),
-                dispatcher=NotificationDispatcher(_make_notifiers(cfg)),
+                dispatcher=NotificationDispatcher(resolver=resolver),
             )
             pipeline.process(results)
 
