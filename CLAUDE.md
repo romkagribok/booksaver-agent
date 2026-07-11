@@ -141,3 +141,12 @@ designing or coding:
 - **Equivalence = same property, same check-in/out dates, same room type**, still refundable.
 - **No autonomous cancel or purchase** — guided rebook always requires an explicit local confirmation step.
 - **Local-only** — no outbound calls to any BookSaver-hosted backend; secrets never committed to git.
+
+# Orchestration rules
+
+- When you decompose a task into subtasks:
+  - If a subtask has clear inputs and outputs and does not require global architectural changes, treat it as an **execution** task.
+  - Execution tasks must be handled by Sonnet-backed subagents (e.g. `sonnet-worker`), not additional Fable instances.
+- When you identify multiple independent execution tasks, spawn **multiple Sonnet subagents in parallel** rather than doing them sequentially.
+- Keep all reasoning, plan updates, and cross-subtask coordination in this main Fable session.
+- Do not spawn Fable subagents. Parallel work must use Sonnet workers.
