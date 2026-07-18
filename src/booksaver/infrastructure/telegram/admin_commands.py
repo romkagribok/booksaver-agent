@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from booksaver.domain.user import User, UserAccessState
 
 from .access import AccessControl
-from .router import CommandRouter, IncomingCommand
+from .client import TelegramBotClient
+from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCommand
 
 if TYPE_CHECKING:
     from booksaver.infrastructure.persistence.sqlite_store import SqliteUserRepository
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 Reply = Callable[[int, str], None]
+Send = Callable[[int, str, dict[str, Any] | None], None]
 
 USAGE = (
     "Usage:\n"
@@ -46,12 +48,31 @@ def register_admin_commands(
     reply: Reply,
     db_path: Path,
     access_control: AccessControl,
+    *,
+    callback_router: CallbackRouter | None = None,
+    client: TelegramBotClient | None = None,
+    send: Send | None = None,
 ) -> None:
     """`/admin ...` (US-028): owner-only. Every branch re-checks
     `access_control.is_owner` (never trusts having reached the handler alone)
     and logs an audit entry — refusals log user id + command only, never
     message bodies, matching US-026.
     """
+
+    def _menu_markup() -> dict[str, Any]:
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "Users", "callback_data": "admin:users"},
+                    {"text": "Create invite", "callback_data": "admin:invite"},
+                ],
+                [
+                    {"text": "Revoke user", "callback_data": "admin:revoke"},
+                    {"text": "Purge user", "callback_data": "admin:purge"},
+                ],
+                [{"text": "Access mode", "callback_data": "admin:mode"}],
+            ]
+        }
 
     def _admin(cmd: IncomingCommand) -> None:
         if not access_control.is_owner(cmd.chat_id):
@@ -63,7 +84,10 @@ def register_admin_commands(
 
         parts = cmd.args.split()
         if not parts:
-            reply(cmd.chat_id, USAGE)
+            if send is not None and callback_router is not None and client is not None:
+                send(cmd.chat_id, "Choose an admin action:", _menu_markup())
+            else:
+                reply(cmd.chat_id, USAGE)
             return
 
         sub, *rest = parts
@@ -83,6 +107,182 @@ def register_admin_commands(
             reply(cmd.chat_id, USAGE)
 
     router.register("/admin", _admin)
+
+    if callback_router is not None and client is not None:
+
+        def _ack(callback: IncomingCallback, text: str | None = None) -> None:
+            try:
+                client.answer_callback_query(callback.callback_query_id, text=text)
+            except Exception:
+                logger.warning("Could not answer admin callback %s", callback.callback_query_id)
+
+        def _edit(
+            callback: IncomingCallback,
+            text: str,
+            markup: dict[str, Any] | None = None,
+        ) -> None:
+            try:
+                client.edit_message_text(
+                    callback.chat_id, callback.message_id, text, reply_markup=markup
+                )
+            except Exception:
+                logger.warning("Could not edit admin menu message %s", callback.message_id)
+
+        def _reply_via_edit(callback: IncomingCallback) -> Reply:
+            return lambda _chat_id, text: _edit(
+                callback,
+                text,
+                {"inline_keyboard": [[{"text": "Back", "callback_data": "admin:menu"}]]},
+            )
+
+        def _synthetic(callback: IncomingCallback, args: str) -> IncomingCommand:
+            return IncomingCommand(
+                user_id=callback.user_id,
+                chat_id=callback.chat_id,
+                command="/admin",
+                args=args,
+                raw_text=f"/admin {args}",
+                message_id=callback.message_id,
+            )
+
+        def _target_keyboard(action: str) -> tuple[str, dict[str, Any]]:
+            from booksaver.infrastructure.persistence.sqlite_store import (
+                SqliteStore,
+                SqliteUserRepository,
+            )
+
+            with SqliteStore(db_path) as store:
+                users = [
+                    user
+                    for user in SqliteUserRepository(store).list_all()
+                    if not user.is_owner
+                ]
+            if not users:
+                return (
+                    "No non-owner users are available.",
+                    {
+                        "inline_keyboard": [
+                            [{"text": "Back", "callback_data": "admin:menu"}]
+                        ]
+                    },
+                )
+            rows = [
+                [
+                    {
+                        "text": (
+                            f"#{user.user_id} · tg {user.telegram_user_id} · "
+                            f"{user.access_state.value}"
+                        ),
+                        "callback_data": f"admin:{action}:{user.user_id}",
+                    }
+                ]
+                for user in users[:20]
+            ]
+            rows.append([{"text": "Back", "callback_data": "admin:menu"}])
+            return f"Choose a user to {action}:", {"inline_keyboard": rows}
+
+        def _confirmation(
+            action: str, value: str, label: str
+        ) -> tuple[str, dict[str, Any]]:
+            return (
+                f"Confirm {label}?",
+                {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "Confirm",
+                                "callback_data": f"admin:{action}:{value}:confirm",
+                            },
+                            {"text": "Cancel", "callback_data": "admin:menu"},
+                        ]
+                    ]
+                },
+            )
+
+        def _admin_callback(callback: IncomingCallback) -> None:
+            if not access_control.is_owner(callback.chat_id):
+                _ack(callback, "Admin commands are owner-only.")
+                return
+            _ack(callback)
+            parts = callback.data.split(":")
+            action = parts[1] if len(parts) > 1 else ""
+
+            if action == "menu":
+                _edit(callback, "Choose an admin action:", _menu_markup())
+                return
+            if action == "users":
+                _handle_users(
+                    _synthetic(callback, "users"), _reply_via_edit(callback), db_path
+                )
+                return
+            if action == "invite":
+                _handle_invite(
+                    _synthetic(callback, "invite"), _reply_via_edit(callback), db_path
+                )
+                return
+            if action in ("revoke", "purge"):
+                if len(parts) == 2:
+                    text, markup = _target_keyboard(action)
+                    _edit(callback, text, markup)
+                    return
+                user_token = parts[2]
+                if len(parts) == 3:
+                    text, markup = _confirmation(
+                        action, user_token, f"{action} user #{user_token}"
+                    )
+                    _edit(callback, text, markup)
+                    return
+                if len(parts) == 4 and parts[3] == "confirm":
+                    cmd = _synthetic(
+                        callback,
+                        f"{action} {user_token}"
+                        + (" confirm" if action == "purge" else ""),
+                    )
+                    if action == "revoke":
+                        _handle_revoke(cmd, _reply_via_edit(callback), db_path, [user_token])
+                    else:
+                        _handle_purge(
+                            cmd,
+                            _reply_via_edit(callback),
+                            db_path,
+                            [user_token, "confirm"],
+                        )
+                    return
+            if action == "mode":
+                if len(parts) == 2:
+                    _edit(
+                        callback,
+                        f"Current access mode: {access_control.mode}. Choose a mode:",
+                        {
+                            "inline_keyboard": [
+                                [
+                                    {"text": "Owner only", "callback_data": "admin:mode:owner"},
+                                    {"text": "Invite", "callback_data": "admin:mode:invite"},
+                                ],
+                                [{"text": "Back", "callback_data": "admin:menu"}],
+                            ]
+                        },
+                    )
+                    return
+                mode = parts[2]
+                if mode not in ("owner", "invite"):
+                    _edit(callback, "That admin choice has expired.", _menu_markup())
+                    return
+                if len(parts) == 3:
+                    text, markup = _confirmation("mode", mode, f"switch access mode to {mode}")
+                    _edit(callback, text, markup)
+                    return
+                if len(parts) == 4 and parts[3] == "confirm":
+                    _handle_mode(
+                        _synthetic(callback, f"mode {mode} confirm"),
+                        _reply_via_edit(callback),
+                        access_control,
+                        [mode, "confirm"],
+                    )
+                    return
+            _edit(callback, "That admin choice has expired.", _menu_markup())
+
+        callback_router.register("admin:", _admin_callback)
 
 
 def _handle_users(cmd: IncomingCommand, reply: Reply, db_path: Path) -> None:

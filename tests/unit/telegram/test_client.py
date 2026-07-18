@@ -95,6 +95,19 @@ def test_delete_message_calls_correct_method() -> None:
     assert body["message_id"] == 7
 
 
+def test_set_my_commands_posts_commands_and_scope() -> None:
+    transport = FakeTransport({"ok": True, "result": True})
+    client = TelegramBotClient("token", transport=transport)
+    commands = [{"command": "checks", "description": "Choose a booking"}]
+    scope = {"type": "chat", "chat_id": 123}
+
+    assert client.set_my_commands(commands, scope) is True
+
+    url, body = transport.calls[0]
+    assert url.endswith("/setMyCommands")
+    assert body == {"commands": commands, "scope": scope}
+
+
 def test_rejected_reply_raises_telegram_api_error() -> None:
     transport = FakeTransport({"ok": False, "description": "Unauthorized"})
     client = TelegramBotClient("token", transport=transport)

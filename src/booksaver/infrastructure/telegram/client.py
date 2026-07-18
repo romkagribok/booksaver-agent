@@ -115,3 +115,9 @@ class TelegramBotClient:
     def delete_message(self, chat_id: int | str, message_id: int) -> dict[str, Any]:
         result = self._call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
         return dict(result) if result else {}
+
+    def set_my_commands(
+        self, commands: list[dict[str, str]], scope: dict[str, Any]
+    ) -> bool:
+        result = self._call("setMyCommands", {"commands": commands, "scope": scope})
+        return bool(result)

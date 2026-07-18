@@ -282,8 +282,20 @@ def answer_callback(
     try:
         prefix, nonce, choice = callback.data.split(":", 2)
     except ValueError:
+        try:
+            client.answer_callback_query(
+                callback.callback_query_id, text="This action has expired."
+            )
+        except Exception:
+            logger.warning("Could not answer callback query %s", callback.callback_query_id)
         return
     if prefix != "rebook" or choice not in ("yes", "no"):
+        try:
+            client.answer_callback_query(
+                callback.callback_query_id, text="This action has expired."
+            )
+        except Exception:
+            logger.warning("Could not answer callback query %s", callback.callback_query_id)
         return
     resolved = registry.resolve(nonce, callback.chat_id, callback.user_id, choice == "yes")
     try:
@@ -454,6 +466,7 @@ def register_rebook_command(
     db_path: Path,
     stop_event: threading.Event,
     confirm_timeout_seconds: float,
+    send: Callable[[int, str, dict[str, Any] | None], None] | None = None,
 ) -> Callable[[IncomingCallback], None]:
     """Registers `/rebook` (US-032/US-033) and returns the callback_handler to
     wire into `BotLoop(callback_handler=...)`.
@@ -477,8 +490,31 @@ def register_rebook_command(
                 reply(cmd.chat_id, "You're not recognized by this bot.")
                 return
             opportunities = SqliteSavingsRepository(store).list_all_for_user(user.user_id)
+            booking_repo = SqliteBookingRepository(store)
+            choices = [
+                (opportunity, booking_repo.get_by_id(opportunity.booking_id))
+                for opportunity in opportunities[:10]
+            ]
         if not opportunities:
             reply(cmd.chat_id, "No savings opportunities to rebook right now.")
+            return
+        if send is not None:
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": (
+                                f"{booking.property.name[:28] if booking else 'Booking'} · "
+                                f"save {opportunity.amount_saved.amount} "
+                                f"{opportunity.amount_saved.currency}"
+                            ),
+                            "callback_data": f"rebook:select:{opportunity.opportunity_id}",
+                        }
+                    ]
+                    for opportunity, booking in choices
+                ]
+            }
+            send(cmd.chat_id, "Choose a savings opportunity to rebook:", keyboard)
             return
         lines = ["Your savings opportunities — start a guided rebook with /rebook <id>:"]
         for opp in opportunities[:10]:
@@ -569,12 +605,7 @@ def register_rebook_command(
         finally:
             session_guard.release(local_user_id)
 
-    def _rebook(cmd: IncomingCommand) -> None:
-        opportunity_id = cmd.args.strip()
-        if not opportunity_id:
-            _list_opportunities(cmd)
-            return
-
+    def _start_rebook(cmd: IncomingCommand, opportunity_id: str) -> None:
         if not db_path.exists():
             reply(cmd.chat_id, "No local database yet — nothing to rebook.")
             return
@@ -616,9 +647,39 @@ def register_rebook_command(
         )
         thread.start()
 
+    def _rebook(cmd: IncomingCommand) -> None:
+        opportunity_id = cmd.args.strip()
+        if not opportunity_id:
+            _list_opportunities(cmd)
+            return
+        _start_rebook(cmd, opportunity_id)
+
     router.register("/rebook", _rebook)
 
     def _callback_handler(callback: IncomingCallback) -> None:
+        if callback.data.startswith("rebook:select:"):
+            opportunity_id = callback.data.removeprefix("rebook:select:")
+            try:
+                client.answer_callback_query(callback.callback_query_id)
+                client.edit_message_text(
+                    callback.chat_id,
+                    callback.message_id,
+                    "Starting the selected guided rebook…",
+                )
+            except Exception:
+                logger.warning("Could not update rebook selection message")
+            _start_rebook(
+                IncomingCommand(
+                    user_id=callback.user_id,
+                    chat_id=callback.chat_id,
+                    command="/rebook",
+                    args=opportunity_id,
+                    raw_text=f"/rebook {opportunity_id}",
+                    message_id=callback.message_id,
+                ),
+                opportunity_id,
+            )
+            return
         answer_callback(registry, client, callback)
 
     return _callback_handler

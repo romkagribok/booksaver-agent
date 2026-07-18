@@ -143,6 +143,21 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-041` | Enter search from trusted query | Production Hardening | Complete | `001-production-reliability/stories/005-enter-search-from-trusted-query.md` |
 | `US-042` | Handle property availability page | Production Hardening | Complete | `001-production-reliability/stories/006-handle-property-availability-page.md` |
 
+## 005-telegram-command-navigation
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-interactive-command-navigation` | 4 stories | Complete (bolt 016) |
+
+### 001-interactive-command-navigation: Interactive Command Navigation
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-043` | Discover applicable commands natively | Command Navigation | Complete | `001-interactive-command-navigation/stories/001-discover-applicable-commands-natively.md` |
+| `US-044` | Route and authorize interactive callbacks | Command Navigation | Complete | `001-interactive-command-navigation/stories/002-route-and-authorize-interactive-callbacks.md` |
+| `US-045` | Select bookings and savings opportunities | Command Navigation | Complete | `001-interactive-command-navigation/stories/003-select-bookings-and-savings-opportunities.md` |
+| `US-046` | Navigate owner administration safely | Command Navigation | Complete | `001-interactive-command-navigation/stories/004-navigate-owner-administration-safely.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -151,5 +166,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
 | `003-telegram-interface` | 5 | 14 | Complete (bolts 008–012; all 14 stories US-023–036) |
 | `004-production-hardening` | 1 | 6 | Complete (bolts 013–015; 641 tests after property availability correction) |
+| `005-telegram-command-navigation` | 1 | 4 | Complete (bolt 016; 665 tests) |
 
-All 42 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening) are assigned exactly once.
+All 46 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 4 command-navigation) are assigned exactly once.

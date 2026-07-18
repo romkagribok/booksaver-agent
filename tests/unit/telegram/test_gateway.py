@@ -70,6 +70,172 @@ def test_returns_a_runner_when_enabled_with_injected_client(tmp_path: Path) -> N
     assert runner is not None
 
 
+def test_runner_publishes_default_and_owner_command_scopes(tmp_path: Path) -> None:
+    owner_chat_id = 555
+    stop_event = threading.Event()
+    published: list[dict] = []
+
+    class _Transport:
+        def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
+            body = json.loads(data.decode("utf-8"))
+            if url.endswith("/setMyCommands"):
+                published.append(body)
+                return json.dumps({"ok": True, "result": True}).encode("utf-8")
+            stop_event.set()
+            return json.dumps({"ok": True, "result": []}).encode("utf-8")
+
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
+    runner = build_bot_runner(
+        cfg,
+        tmp_path / "booksaver.db",
+        Scheduler(),
+        client=TelegramBotClient("fake-token", transport=_Transport()),
+    )
+    assert runner is not None
+
+    runner(stop_event)
+
+    assert [entry["scope"] for entry in published] == [
+        {"type": "all_private_chats"},
+        {"type": "chat", "chat_id": owner_chat_id},
+    ]
+    default_names = {entry["command"] for entry in published[0]["commands"]}
+    owner_names = {entry["command"] for entry in published[1]["commands"]}
+    assert "admin" not in default_names
+    assert owner_names == default_names | {"admin"}
+
+
+def test_command_publication_failure_does_not_prevent_bot_loop(tmp_path: Path) -> None:
+    stop_event = threading.Event()
+    get_updates_calls = 0
+
+    class _Transport:
+        def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
+            nonlocal get_updates_calls
+            if url.endswith("/setMyCommands"):
+                return json.dumps({"ok": False, "description": "temporary"}).encode()
+            get_updates_calls += 1
+            stop_event.set()
+            return json.dumps({"ok": True, "result": []}).encode()
+
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=555)
+    runner = build_bot_runner(
+        cfg,
+        tmp_path / "booksaver.db",
+        Scheduler(),
+        client=TelegramBotClient("fake-token", transport=_Transport()),
+    )
+    assert runner is not None
+
+    runner(stop_event)
+
+    assert get_updates_calls == 1
+
+
+def test_unknown_callback_is_acknowledged_as_expired(tmp_path: Path) -> None:
+    owner_chat_id = 555
+    stop_event = threading.Event()
+    batches = [
+        {
+            "ok": True,
+            "result": [
+                {
+                    "update_id": 1,
+                    "callback_query": {
+                        "id": "cb-stale",
+                        "from": {"id": owner_chat_id},
+                        "message": {"chat": {"id": owner_chat_id}, "message_id": 3},
+                        "data": "stale:anything",
+                    },
+                }
+            ],
+        },
+        {"ok": True, "result": []},
+    ]
+    answers: list[dict] = []
+
+    class _Transport:
+        def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
+            body = json.loads(data.decode())
+            if url.endswith("/setMyCommands"):
+                return json.dumps({"ok": True, "result": True}).encode()
+            if url.endswith("/answerCallbackQuery"):
+                answers.append(body)
+                return json.dumps({"ok": True, "result": True}).encode()
+            reply = batches.pop(0)
+            if not batches:
+                stop_event.set()
+            return json.dumps(reply).encode()
+
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
+    runner = build_bot_runner(
+        cfg,
+        tmp_path / "booksaver.db",
+        Scheduler(),
+        client=TelegramBotClient("fake-token", transport=_Transport()),
+    )
+    assert runner is not None
+
+    runner(stop_event)
+
+    assert answers == [
+        {"callback_query_id": "cb-stale", "text": "This action has expired."}
+    ]
+
+
+def test_unauthorized_callback_is_acknowledged_without_dispatch(tmp_path: Path) -> None:
+    owner_chat_id = 555
+    stranger = 777
+    stop_event = threading.Event()
+    updates_sent = False
+    answers: list[dict] = []
+
+    class _Transport:
+        def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
+            nonlocal updates_sent
+            body = json.loads(data.decode())
+            if url.endswith("/setMyCommands"):
+                return json.dumps({"ok": True, "result": True}).encode()
+            if url.endswith("/answerCallbackQuery"):
+                answers.append(body)
+                return json.dumps({"ok": True, "result": True}).encode()
+            if not updates_sent:
+                updates_sent = True
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "result": [
+                            {
+                                "update_id": 1,
+                                "callback_query": {
+                                    "id": "cb-forged",
+                                    "from": {"id": stranger},
+                                    "message": {"chat": {"id": stranger}, "message_id": 2},
+                                    "data": "admin:users",
+                                },
+                            }
+                        ],
+                    }
+                ).encode()
+            stop_event.set()
+            return json.dumps({"ok": True, "result": []}).encode()
+
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
+    runner = build_bot_runner(
+        cfg,
+        tmp_path / "booksaver.db",
+        Scheduler(),
+        client=TelegramBotClient("fake-token", transport=_Transport()),
+    )
+    assert runner is not None
+
+    runner(stop_event)
+
+    assert answers == [
+        {"callback_query_id": "cb-forged", "text": "This action is not available."}
+    ]
+
+
 def test_end_to_end_owner_status_command_and_stranger_refusal(tmp_path: Path) -> None:
     owner_chat_id = 555
     stranger_chat_id = 777
@@ -106,6 +272,8 @@ def test_end_to_end_owner_status_command_and_stranger_refusal(tmp_path: Path) ->
 
         def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
             body = json.loads(data.decode("utf-8"))
+            if url.endswith("/setMyCommands"):
+                return json.dumps({"ok": True, "result": True}).encode("utf-8")
             if url.endswith("/sendMessage"):
                 sent.append((body["chat_id"], body["text"]))
                 return json.dumps({"ok": True, "result": {}}).encode("utf-8")
@@ -139,6 +307,8 @@ def test_cancelflow_reports_no_active_dialog(tmp_path: Path) -> None:
     class _Transport:
         def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
             body = json.loads(data.decode("utf-8"))
+            if url.endswith("/setMyCommands"):
+                return json.dumps({"ok": True, "result": True}).encode("utf-8")
             if url.endswith("/sendMessage"):
                 sent.append((body["chat_id"], body["text"]))
                 return json.dumps({"ok": True, "result": {}}).encode("utf-8")
@@ -184,6 +354,8 @@ def _run_single_message(
     class _Transport:
         def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
             body = json.loads(data.decode("utf-8"))
+            if url.endswith("/setMyCommands"):
+                return json.dumps({"ok": True, "result": True}).encode("utf-8")
             if url.endswith("/sendMessage"):
                 sent.append((body["chat_id"], body["text"]))
                 return json.dumps({"ok": True, "result": {}}).encode("utf-8")
@@ -281,6 +453,8 @@ def _scripted_conversation_transport(
 
         def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
             body = json.loads(data.decode("utf-8"))
+            if url.endswith("/setMyCommands"):
+                return json.dumps({"ok": True, "result": True}).encode("utf-8")
             if url.endswith("/sendMessage"):
                 sent.append((body["chat_id"], body["text"]))
                 return json.dumps({"ok": True, "result": {}}).encode("utf-8")

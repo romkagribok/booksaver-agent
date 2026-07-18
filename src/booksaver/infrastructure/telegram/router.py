@@ -24,19 +24,16 @@ CommandHandler = Callable[[IncomingCommand], None]
 
 @dataclass(frozen=True)
 class IncomingCallback:
-    """A parsed Telegram ``callback_query`` update (bolt 011, US-032) — the
-    inline-keyboard equivalent of ``IncomingCommand``. Routed straight to a
-    single injected handler (``BotLoop(callback_handler=...)``) rather than
-    through ``CommandRouter``, since only one feature (rebook confirmations)
-    consumes callback queries today; a second consumer can register its own
-    ``data`` prefix inside that handler without changing this shape.
-    """
+    """Parsed Telegram ``callback_query`` update with sender/chat identity."""
 
     user_id: int
     chat_id: int
     callback_query_id: str
     message_id: int
     data: str
+
+
+CallbackHandler = Callable[[IncomingCallback], None]
 
 
 class CommandRouter:
@@ -58,4 +55,29 @@ class CommandRouter:
         return True
 
     def known_commands(self) -> list[str]:
+        return sorted(self._handlers)
+
+
+class CallbackRouter:
+    """Prefix router for independent inline-keyboard feature families."""
+
+    def __init__(self) -> None:
+        self._handlers: dict[str, CallbackHandler] = {}
+
+    def register(self, prefix: str, handler: CallbackHandler) -> None:
+        if not prefix:
+            raise ValueError("Callback prefix must not be empty")
+        if prefix in self._handlers:
+            raise ValueError(f"Callback prefix already registered: {prefix}")
+        self._handlers[prefix] = handler
+
+    def dispatch(self, callback: IncomingCallback) -> bool:
+        matches = [prefix for prefix in self._handlers if callback.data.startswith(prefix)]
+        if not matches:
+            return False
+        prefix = max(matches, key=len)
+        self._handlers[prefix](callback)
+        return True
+
+    def known_prefixes(self) -> list[str]:
         return sorted(self._handlers)

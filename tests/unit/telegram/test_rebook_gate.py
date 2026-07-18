@@ -214,8 +214,8 @@ def test_answer_callback_ignores_malformed_data() -> None:
 
     answer_callback(registry, client, callback)  # type: ignore[arg-type]
 
-    # Still acked nothing crashes; nothing to resolve either.
-    assert client.answered_callbacks == []
+    # Malformed/stale callbacks are still acknowledged so Telegram stops spinning.
+    assert client.answered_callbacks == ["cbq-1"]
 
 
 def test_answer_callback_from_wrong_chat_is_ignored_but_still_acked() -> None:
@@ -526,6 +526,108 @@ def test_rebook_no_args_lists_users_own_opportunities(tmp_path: Path) -> None:
 
     assert len(replies) == 1
     assert opportunity_id in replies[0][1]
+
+
+def test_rebook_no_args_offers_owned_opportunity_button(tmp_path: Path) -> None:
+    db_path, telegram_user_id, _booking_id, opportunity_id = _fixture_db(tmp_path)
+    client = FakeClient()
+    router = CommandRouter()
+    register_rebook_command(
+        router=router,
+        reply=lambda cid, text: None,
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+        send=lambda chat_id, text, markup: client.send_message(chat_id, text, markup),
+    )
+    from booksaver.infrastructure.telegram.router import IncomingCommand
+
+    router.dispatch(
+        IncomingCommand(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            command="/rebook",
+            args="",
+            raw_text="/rebook",
+        )
+    )
+
+    button = client.sent[0]["reply_markup"]["inline_keyboard"][0][0]
+    assert "Hotel Test" in button["text"]
+    assert button["callback_data"] == f"rebook:select:{opportunity_id}"
+    assert len(button["callback_data"].encode()) <= 64
+
+
+def test_rebook_selection_callback_rechecks_opportunity_ownership(tmp_path: Path) -> None:
+    db_path, _telegram_user_id, _booking_id, opportunity_id = _fixture_db(tmp_path)
+    stranger_telegram_id = 999
+    with SqliteStore(db_path) as store:
+        SqliteUserRepository(store).get_or_create_by_telegram_id(stranger_telegram_id)
+    client = FakeClient()
+    router = CommandRouter()
+    replies: list[str] = []
+    callback_handler = register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+
+    callback_handler(
+        IncomingCallback(
+            user_id=stranger_telegram_id,
+            chat_id=stranger_telegram_id,
+            callback_query_id="cb-select",
+            message_id=1,
+            data=f"rebook:select:{opportunity_id}",
+        )
+    )
+
+    assert client.answered_callbacks == ["cb-select"]
+    assert any("No savings opportunity found" in text for text in replies)
+    assert not any("confirm" in message["text"].lower() for message in client.sent)
+
+
+def test_rebook_selection_callback_starts_existing_guided_session(tmp_path: Path) -> None:
+    db_path, telegram_user_id, _booking_id, opportunity_id = _fixture_db(tmp_path)
+    client = FakeClient()
+    router = CommandRouter()
+    replies: list[str] = []
+    callback_handler = register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+
+    callback_handler(
+        IncomingCallback(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            callback_query_id="cb-select",
+            message_id=1,
+            data=f"rebook:select:{opportunity_id}",
+        )
+    )
+
+    _wait_until(lambda: len(client.sent) >= 1)
+    assert any("Starting a guided rebook" in text for text in replies)
+    nonce = _nonce_from_sent(client.sent[0], "no")
+    callback_handler(
+        IncomingCallback(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            callback_query_id="cb-decline",
+            message_id=client.sent[0]["message_id"],
+            data=f"rebook:{nonce}:no",
+        )
+    )
+    _wait_until(lambda: any("ended: declined" in text for text in replies))
 
 
 def test_rebook_refuses_opportunity_owned_by_another_user(tmp_path: Path) -> None:

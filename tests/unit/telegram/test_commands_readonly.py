@@ -24,7 +24,12 @@ from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteUserRepository,
 )
 from booksaver.infrastructure.telegram.commands_readonly import register_readonly_commands
-from booksaver.infrastructure.telegram.router import CommandRouter, IncomingCommand
+from booksaver.infrastructure.telegram.router import (
+    CallbackRouter,
+    CommandRouter,
+    IncomingCallback,
+    IncomingCommand,
+)
 
 
 def _register_caller(db_path: Path, telegram_id: int) -> int:
@@ -68,6 +73,42 @@ def _setup(tmp_path: Path) -> tuple[Path, CommandRouter, list[tuple[int, str]], 
         scheduler=scheduler,
     )
     return db_path, router, sent, scheduler
+
+
+class _PickerClient:
+    def __init__(self) -> None:
+        self.answered: list[str] = []
+        self.edits: list[tuple[int, int, str]] = []
+
+    def answer_callback_query(self, callback_query_id: str, text=None):
+        self.answered.append(callback_query_id)
+        return {}
+
+    def edit_message_text(self, chat_id: int, message_id: int, text: str, reply_markup=None):
+        self.edits.append((chat_id, message_id, text))
+        return {}
+
+
+def _interactive_setup(tmp_path: Path):
+    db_path = tmp_path / "booksaver.db"
+    router = CommandRouter()
+    callbacks = CallbackRouter()
+    client = _PickerClient()
+    sent: list[tuple[int, str]] = []
+    interactive: list[dict] = []
+    register_readonly_commands(
+        router=router,
+        reply=lambda chat_id, text: sent.append((chat_id, text)),
+        db_path=db_path,
+        scheduler=Scheduler(),
+        callback_router=callbacks,
+        client=client,  # type: ignore[arg-type]
+        send=lambda chat_id, text, markup: interactive.append(
+            {"chat_id": chat_id, "text": text, "reply_markup": markup}
+        ),
+        is_owner=lambda chat_id: chat_id == 1,
+    )
+    return db_path, router, callbacks, client, sent, interactive
 
 
 def test_start_sends_welcome_message(tmp_path: Path) -> None:
@@ -195,6 +236,79 @@ def test_checks_requires_a_booking_id_argument(tmp_path: Path) -> None:
     _db, router, sent, _sched = _setup(tmp_path)
     router.dispatch(_cmd("/checks", args=""))
     assert sent[0][1] == "Usage: /checks <booking_id>"
+
+
+def test_checks_without_id_offers_owned_booking_buttons(tmp_path: Path) -> None:
+    db_path, router, _callbacks, _client, _sent, interactive = _interactive_setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    booking_id = "f42b63a9-00d1-49f1-b0c4-544f5ab60fcf"
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(booking_id), user_id=user_id)
+
+    router.dispatch(_cmd("/checks", chat_id=1))
+
+    keyboard = interactive[0]["reply_markup"]["inline_keyboard"]
+    assert "Hotel Test" in keyboard[0][0]["text"]
+    assert keyboard[0][0]["callback_data"] == f"checks:{booking_id}"
+    assert len(keyboard[0][0]["callback_data"].encode()) <= 64
+
+
+def test_checks_picker_callback_renders_recent_history(tmp_path: Path) -> None:
+    db_path, _router, callbacks, client, _sent, _interactive = _interactive_setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    booking_id = "f42b63a9-00d1-49f1-b0c4-544f5ab60fcf"
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(booking_id), user_id=user_id)
+        SqliteCheckHistoryRepository(store).add(
+            CheckResult.failure(
+                booking_id,
+                datetime.now(UTC),
+                FailureReason(code=FailureCode.TIMEOUT, detail="page load timed out"),
+            )
+        )
+
+    callbacks.dispatch(
+        IncomingCallback(
+            user_id=1,
+            chat_id=1,
+            callback_query_id="cb-1",
+            message_id=99,
+            data=f"checks:{booking_id}",
+        )
+    )
+
+    assert client.answered == ["cb-1"]
+    assert "timeout" in client.edits[0][2]
+
+
+def test_checks_picker_callback_cannot_read_another_users_booking(tmp_path: Path) -> None:
+    db_path, _router, callbacks, client, _sent, _interactive = _interactive_setup(tmp_path)
+    owner_a = _register_caller(db_path, telegram_id=1)
+    _register_caller(db_path, telegram_id=2)
+    booking_id = "f42b63a9-00d1-49f1-b0c4-544f5ab60fcf"
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(booking_id), user_id=owner_a)
+
+    callbacks.dispatch(
+        IncomingCallback(
+            user_id=2,
+            chat_id=2,
+            callback_query_id="cb-x",
+            message_id=99,
+            data=f"checks:{booking_id}",
+        )
+    )
+
+    assert "No checks recorded" in client.edits[0][2]
+
+
+def test_help_hides_admin_for_non_owner_when_owner_check_is_wired(tmp_path: Path) -> None:
+    _db, router, _callbacks, _client, sent, _interactive = _interactive_setup(tmp_path)
+
+    router.dispatch(_cmd("/help", chat_id=2))
+
+    assert "/checks" in sent[0][1]
+    assert "/admin" not in sent[0][1]
 
 
 def test_checks_reports_recent_history_including_failures(tmp_path: Path) -> None:

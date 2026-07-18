@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from booksaver.daemon.scheduler import Scheduler
 from booksaver.domain.user import User
@@ -14,25 +15,12 @@ from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteUserRepository,
 )
 
-from .router import CommandRouter, IncomingCommand
+from .client import TelegramBotClient
+from .command_catalog import help_text
+from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCommand
 
 Reply = Callable[[int, str], None]
-
-HELP_TEXT = (
-    "BookSaver commands:\n"
-    "/start - welcome and command list\n"
-    "/help - this message\n"
-    "/status - daemon health, bookings, next scheduled run\n"
-    "/register - add a refundable Booking.com hotel\n"
-    "/bookings - list monitored bookings\n"
-    "/savings - list detected savings opportunities\n"
-    "/checks <booking_id> - recent check history for a booking\n"
-    "/rebook [opportunity_id] - guided rebook with inline confirmations\n"
-    "/setkey - use your own Anthropic API key\n"
-    "/deletekey - return to the owner's shared API key\n"
-    "/admin - owner-only user and invite management\n"
-    "/cancelflow - cancel an in-progress dialog"
-)
+Send = Callable[[int, str, dict[str, Any] | None], None]
 
 
 def _format_timedelta(delta: timedelta) -> str:
@@ -57,6 +45,11 @@ def register_readonly_commands(
     reply: Reply,
     db_path: Path,
     scheduler: Scheduler,
+    *,
+    callback_router: CallbackRouter | None = None,
+    client: TelegramBotClient | None = None,
+    send: Send | None = None,
+    is_owner: Callable[[int], bool] | None = None,
 ) -> None:
     """Registers /start, /help, /status, /bookings, /savings, /checks (US-036).
 
@@ -78,10 +71,15 @@ def register_readonly_commands(
         return user if user is not None and user.is_active else None
 
     def _start(cmd: IncomingCommand) -> None:
-        reply(cmd.chat_id, f"Welcome to BookSaver.\n\n{HELP_TEXT}")
+        include_admin = is_owner(cmd.chat_id) if is_owner is not None else True
+        reply(
+            cmd.chat_id,
+            f"Welcome to BookSaver.\n\n{help_text(include_owner_only=include_admin)}",
+        )
 
     def _help(cmd: IncomingCommand) -> None:
-        reply(cmd.chat_id, HELP_TEXT)
+        include_admin = is_owner(cmd.chat_id) if is_owner is not None else True
+        reply(cmd.chat_id, help_text(include_owner_only=include_admin))
 
     def _status(cmd: IncomingCommand) -> None:
         lines = ["BookSaver status"]
@@ -181,19 +179,13 @@ def register_readonly_commands(
             )
         reply(cmd.chat_id, "\n".join(lines))
 
-    def _checks(cmd: IncomingCommand) -> None:
-        booking_id = cmd.args.strip()
-        if not booking_id:
-            reply(cmd.chat_id, "Usage: /checks <booking_id>")
-            return
+    def _checks_text(telegram_user_id: int, booking_id: str) -> str:
         if not db_path.exists():
-            reply(cmd.chat_id, "No checks recorded yet.")
-            return
+            return "No checks recorded yet."
         with SqliteStore(db_path) as store:
-            user = _resolve_active_user(store, cmd.user_id)
+            user = _resolve_active_user(store, telegram_user_id)
             if user is None:
-                reply(cmd.chat_id, _NOT_RECOGNIZED)
-                return
+                return _NOT_RECOGNIZED
             # Telegram displays the first eight characters of booking UUIDs.
             # Resolve that prefix only within the caller's own booking scope;
             # ambiguous/short/cross-user prefixes use the same not-found reply.
@@ -214,14 +206,12 @@ def register_readonly_commands(
             if resolved_booking_id is None:
                 # Same message for "doesn't exist" and "not yours" — don't
                 # leak which booking ids exist to a different user.
-                reply(cmd.chat_id, f"No checks recorded for booking '{booking_id}'.")
-                return
+                return f"No checks recorded for booking '{booking_id}'."
             results = SqliteCheckHistoryRepository(store).get_recent(
                 resolved_booking_id, limit=5
             )
         if not results:
-            reply(cmd.chat_id, f"No checks recorded for booking '{booking_id}'.")
-            return
+            return f"No checks recorded for booking '{booking_id}'."
         lines = [f"Recent checks for {booking_id}:"]
         for result in results:
             if result.failure_reason is not None:
@@ -231,7 +221,59 @@ def register_readonly_commands(
             else:
                 detail = "ok"
             lines.append(f"{result.checked_at.isoformat()[:19]}  {result.outcome.value}  {detail}")
-        reply(cmd.chat_id, "\n".join(lines))
+        return "\n".join(lines)
+
+    def _checks(cmd: IncomingCommand) -> None:
+        booking_id = cmd.args.strip()
+        if not booking_id:
+            if callback_router is None or client is None or send is None:
+                reply(cmd.chat_id, "Usage: /checks <booking_id>")
+                return
+            if not db_path.exists():
+                reply(cmd.chat_id, "No bookings registered yet.")
+                return
+            with SqliteStore(db_path) as store:
+                user = _resolve_active_user(store, cmd.user_id)
+                if user is None:
+                    reply(cmd.chat_id, _NOT_RECOGNIZED)
+                    return
+                bookings = SqliteBookingRepository(store).list_all_for_user(user.user_id)
+            if not bookings:
+                reply(cmd.chat_id, "No bookings registered yet.")
+                return
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": (
+                                f"{booking.property.name[:35]} · "
+                                f"{booking.stay_dates.check_in:%b %d}–"
+                                f"{booking.stay_dates.check_out:%b %d}"
+                            ),
+                            "callback_data": f"checks:{booking.booking_id}",
+                        }
+                    ]
+                    for booking in bookings[:10]
+                ]
+            }
+            send(cmd.chat_id, "Choose a booking to view recent checks:", keyboard)
+            return
+        reply(cmd.chat_id, _checks_text(cmd.user_id, booking_id))
+
+    if callback_router is not None and client is not None:
+
+        def _checks_callback(callback: IncomingCallback) -> None:
+            booking_id = callback.data.removeprefix("checks:")
+            text = _checks_text(callback.user_id, booking_id)
+            try:
+                client.answer_callback_query(callback.callback_query_id)
+                client.edit_message_text(callback.chat_id, callback.message_id, text)
+            except Exception:
+                # The read is complete even if the original Telegram message
+                # was deleted before it could be edited.
+                pass
+
+        callback_router.register("checks:", _checks_callback)
 
     router.register("/start", _start)
     router.register("/help", _help)
