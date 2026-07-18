@@ -12,6 +12,7 @@ from booksaver.domain.models import Config
 
 from .access import AccessControl, RateLimiter
 from .admin_commands import register_admin_commands
+from .booking_management import register_booking_management_commands
 from .bot_loop import BotLoop
 from .client import TelegramBotClient
 from .command_catalog import api_commands
@@ -142,6 +143,16 @@ def build_bot_runner(
         reply=_reply,
         db_path=db_path,
         limits_settings=config.limits_settings,
+    )
+
+    register_booking_management_commands(
+        router=router,
+        callback_router=callback_router,
+        dialog_manager=dialog_manager,
+        reply=_reply,
+        send=_send,
+        client=client,
+        db_path=db_path,
     )
 
     def _cancelflow(cmd: IncomingCommand) -> None:

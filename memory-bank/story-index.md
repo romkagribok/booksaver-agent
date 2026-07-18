@@ -159,6 +159,21 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-046` | Navigate owner administration safely | Command Navigation | Complete | `001-interactive-command-navigation/stories/004-navigate-owner-administration-safely.md` |
 | `US-047` | Handle Boolean Telegram action results | Command Navigation | Complete | `001-interactive-command-navigation/stories/005-handle-boolean-telegram-action-results.md` |
 
+## 006-telegram-booking-management
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-conversational-booking-management` | 4 stories | Complete (bolt 017) |
+
+### 001-conversational-booking-management: Conversational Booking Management
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-048` | Discover booking management commands | Booking Management | Complete | `001-conversational-booking-management/stories/001-discover-booking-management-commands.md` |
+| `US-049` | Edit an owned booking selectively | Booking Management | Complete | `001-conversational-booking-management/stories/002-edit-owned-booking-selectively.md` |
+| `US-050` | Delete an owned booking after confirmation | Booking Management | Complete | `001-conversational-booking-management/stories/003-delete-owned-booking-after-confirmation.md` |
+| `US-051` | Preserve booking mutation integrity | Booking Management | Complete | `001-conversational-booking-management/stories/004-preserve-booking-mutation-integrity.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -168,5 +183,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `003-telegram-interface` | 5 | 14 | Complete (bolts 008–012; all 14 stories US-023–036) |
 | `004-production-hardening` | 1 | 6 | Complete (bolts 013–015; 641 tests after property availability correction) |
 | `005-telegram-command-navigation` | 1 | 5 | Complete (bolts 016 and 018; 668 tests) |
+| `006-telegram-booking-management` | 1 | 4 | Complete (bolt 017; 696 tests) |
 
-All 47 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation) are assigned exactly once.
+All 51 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management) are assigned exactly once.

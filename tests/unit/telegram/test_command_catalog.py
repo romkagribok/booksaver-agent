@@ -24,3 +24,12 @@ def test_help_uses_same_catalog_and_can_hide_admin() -> None:
         assert f"/{command['command']}" in ordinary_help
     assert "/admin" not in ordinary_help
     assert "/admin" in owner_help
+
+
+def test_booking_management_commands_are_published_and_documented() -> None:
+    ordinary = {entry["command"] for entry in api_commands(include_owner_only=False)}
+    help_output = help_text(include_owner_only=False)
+
+    assert {"editbooking", "deletebooking"} <= ordinary
+    assert "/editbooking" in help_output
+    assert "/deletebooking" in help_output

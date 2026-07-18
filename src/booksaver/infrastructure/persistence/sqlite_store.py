@@ -18,6 +18,7 @@ from booksaver.domain.check_result import (
     FailureReason,
     RefundIndicators,
 )
+from booksaver.domain.errors import BookingRejectedError
 from booksaver.domain.models import Booking, BookingStatus
 from booksaver.domain.rebook import (
     EventType as RebookEventType,
@@ -55,6 +56,34 @@ _CHECK_HISTORY_COLUMNS = (
     "refund_raw_text, extracted_property, extracted_room, "
     "extracted_check_in, extracted_check_out, failure_code, failure_detail"
 )
+
+
+def _delete_booking_rows(conn: sqlite3.Connection, booking_id: str) -> None:
+    """Delete rows owned through one booking; caller controls the transaction."""
+    conn.execute("DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,))
+    conn.execute(
+        "DELETE FROM rebook_events WHERE session_id IN "
+        "(SELECT session_id FROM rebook_sessions WHERE booking_id = ?)",
+        (booking_id,),
+    )
+    conn.execute("DELETE FROM rebook_sessions WHERE booking_id = ?", (booking_id,))
+    conn.execute("DELETE FROM check_traces WHERE booking_id = ?", (booking_id,))
+    conn.execute("DELETE FROM check_history WHERE booking_id = ?", (booking_id,))
+    conn.execute("DELETE FROM bookings WHERE booking_id = ?", (booking_id,))
+
+
+def _has_active_rebook_session(conn: sqlite3.Connection, booking_id: str) -> bool:
+    terminal_states = (
+        RebookSessionState.COMPLETED.value,
+        RebookSessionState.DECLINED.value,
+        RebookSessionState.ERROR.value,
+    )
+    row = conn.execute(
+        "SELECT 1 FROM rebook_sessions WHERE booking_id = ? "
+        "AND state NOT IN (?, ?, ?) LIMIT 1",
+        (booking_id, *terminal_states),
+    ).fetchone()
+    return row is not None
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
     # The v1 check_history table was a contract-only stub (id, booking_id,
@@ -376,6 +405,83 @@ class SqliteBookingRepository:
         self._store.conn.commit()
         if cursor.rowcount == 0:
             raise KeyError(f"No booking with id '{booking_id}'")
+
+    def update(self, booking: Booking) -> None:
+        """Update editable monitoring fields while preserving row identity/ownership.
+
+        The caller supplies an aggregate already validated by the domain value
+        objects. Platform, product type, registration timestamp, status, owner,
+        and booking id deliberately cannot be changed through this operation.
+        """
+        conn = self._store.conn
+        try:
+            with conn:
+                if _has_active_rebook_session(conn, booking.booking_id):
+                    raise BookingRejectedError(
+                        "Finish or decline the active guided rebook before editing this booking"
+                    )
+                cursor = conn.execute(
+                    """
+                    UPDATE bookings SET
+                        confirmation_id = ?, property_name = ?, property_ref = ?,
+                        check_in = ?, check_out = ?, room_type = ?,
+                        baseline_amount = ?, baseline_currency = ?,
+                        refundable = ?, refund_note = ?, refund_deadline = ?,
+                        occ_adults = ?, occ_children = ?, occ_rooms = ?
+                    WHERE booking_id = ?
+                    """,
+                    (
+                        booking.confirmation_id.value,
+                        booking.property.name,
+                        booking.property.booking_com_ref,
+                        booking.stay_dates.check_in.isoformat(),
+                        booking.stay_dates.check_out.isoformat(),
+                        booking.room_type.label,
+                        str(booking.baseline_price.amount),
+                        booking.baseline_price.currency,
+                        1 if booking.refundability.is_refundable else 0,
+                        booking.refundability.note,
+                        booking.refundability.deadline.isoformat()
+                        if booking.refundability.deadline
+                        else None,
+                        booking.occupancy.adults if booking.occupancy else None,
+                        booking.occupancy.children if booking.occupancy else None,
+                        booking.occupancy.rooms if booking.occupancy else None,
+                        booking.booking_id,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    raise KeyError(f"No booking with id '{booking.booking_id}'")
+                # Savings are facts about the previous dates/room/occupancy/baseline.
+                # The schema has no stale state, so retaining them would let /rebook
+                # act on an offer that is no longer equivalent to the edited booking.
+                conn.execute(
+                    "DELETE FROM savings_opportunities WHERE booking_id = ?",
+                    (booking.booking_id,),
+                )
+        except sqlite3.IntegrityError as exc:
+            if "confirmation_id" in str(exc):
+                raise BookingRejectedError(
+                    f"Booking confirmation '{booking.confirmation_id.value}' "
+                    "is already registered"
+                ) from exc
+            raise
+
+    def delete(self, booking_id: str) -> bool:
+        """Delete a booking and all local data scoped through it atomically."""
+        conn = self._store.conn
+        with conn:
+            exists = conn.execute(
+                "SELECT 1 FROM bookings WHERE booking_id = ?", (booking_id,)
+            ).fetchone()
+            if exists is None:
+                return False
+            if _has_active_rebook_session(conn, booking_id):
+                raise BookingRejectedError(
+                    "Finish or decline the active guided rebook before deleting this booking"
+                )
+            _delete_booking_rows(conn, booking_id)
+        return True
 
     def get_by_id(self, booking_id: str) -> Booking | None:
         row = self._store.conn.execute(
@@ -941,20 +1047,7 @@ class SqliteUserRepository:
             )
         ]
         for booking_id in booking_ids:
-            conn.execute(
-                "DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,)
-            )
-            conn.execute(
-                "DELETE FROM rebook_events WHERE session_id IN "
-                "(SELECT session_id FROM rebook_sessions WHERE booking_id = ?)",
-                (booking_id,),
-            )
-            conn.execute("DELETE FROM rebook_sessions WHERE booking_id = ?", (booking_id,))
-            conn.execute(
-                "DELETE FROM check_traces WHERE booking_id = ?", (booking_id,)
-            )
-            conn.execute("DELETE FROM check_history WHERE booking_id = ?", (booking_id,))
-            conn.execute("DELETE FROM bookings WHERE booking_id = ?", (booking_id,))
+            _delete_booking_rows(conn, booking_id)
         conn.execute("DELETE FROM invite_codes WHERE used_by = ?", (user_id,))
         conn.execute("UPDATE invite_codes SET issued_by = NULL WHERE issued_by = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))

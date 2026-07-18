@@ -20,6 +20,8 @@ COMMANDS = (
     CommandDefinition("help", "Show available commands"),
     CommandDefinition("status", "Show daemon and booking status"),
     CommandDefinition("register", "Add a refundable Booking.com hotel"),
+    CommandDefinition("editbooking", "Edit one of your monitored bookings"),
+    CommandDefinition("deletebooking", "Delete one of your monitored bookings"),
     CommandDefinition("bookings", "List monitored bookings"),
     CommandDefinition("savings", "List detected savings opportunities"),
     CommandDefinition("checks", "Choose a booking and view recent checks"),

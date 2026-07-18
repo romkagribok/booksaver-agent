@@ -1,8 +1,10 @@
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
 
+from booksaver.application.manage_booking import delete_booking, update_booking
 from booksaver.application.register_booking import register_booking
 from booksaver.domain.errors import BookingRejectedError
 from booksaver.domain.models import BookingStatus
@@ -114,3 +116,186 @@ class TestSqliteBookingRepository:
 
     def test_get_by_confirmation_returns_none_for_unknown(self, repo):
         assert repo.get_by_confirmation(ConfirmationId.of("BKG-UNKNOWN")) is None
+
+    def test_update_changes_monitoring_fields_and_preserves_identity_metadata(self, repo, store):
+        booking, _ = register_booking(repo=repo, **_make_booking("BKG-EDIT"))
+        owner_id = repo.get_owner_user_id(booking.booking_id)
+        replacement = replace(
+            booking,
+            confirmation_id=ConfirmationId.of("BKG-EDITED"),
+            property=Property(name="Revised Hotel", booking_com_ref="revised-ref"),
+            stay_dates=StayDates(date(2026, 11, 2), date(2026, 11, 7)),
+            room_type=RoomType("King Suite"),
+            baseline_price=Money.of("410.50", "USD"),
+            refundability=RefundabilityPolicy(
+                is_refundable=True,
+                note="Free until October",
+                deadline=date(2026, 10, 20),
+            ),
+            occupancy=Occupancy(adults=3, children=1, rooms=2),
+        )
+
+        update_booking(repo, replacement)
+
+        updated = repo.get_by_id(booking.booking_id)
+        assert updated is not None
+        assert updated.booking_id == booking.booking_id
+        assert updated.registered_at == booking.registered_at
+        assert updated.status == booking.status
+        assert repo.get_owner_user_id(booking.booking_id) == owner_id
+        assert updated.confirmation_id.value == "BKG-EDITED"
+        assert updated.property.name == "Revised Hotel"
+        assert updated.stay_dates == StayDates(date(2026, 11, 2), date(2026, 11, 7))
+        assert updated.room_type.label == "King Suite"
+        assert updated.baseline_price == Money.of("410.50", "USD")
+        assert updated.occupancy == Occupancy(adults=3, children=1, rooms=2)
+        assert [item.booking_id for item in repo.list_active()] == [booking.booking_id]
+
+    def test_update_invalidates_stale_savings_but_preserves_audit_history(self, repo, store):
+        booking, _ = register_booking(repo=repo, **_make_booking("BKG-STALE"))
+        booking_id = booking.booking_id
+        now = datetime.now(UTC).isoformat()
+        store.conn.execute(
+            "INSERT INTO check_history "
+            "(check_id, booking_id, checked_at, outcome, extraction_method) "
+            "VALUES (?, ?, ?, 'failure', 'none')",
+            ("check-stale", booking_id, now),
+        )
+        store.conn.execute(
+            "INSERT INTO savings_opportunities "
+            "(opportunity_id, booking_id, check_id, baseline_amount, live_amount, currency, "
+            "amount_saved, percent_saved, validated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("opp-stale", booking_id, "check-stale", "350", "300", "EUR", "50", "14", now),
+        )
+        store.conn.execute(
+            "INSERT INTO rebook_sessions "
+            "(session_id, opportunity_id, booking_id, state, started_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("session-stale", "opp-stale", booking_id, "completed", now),
+        )
+        store.conn.execute(
+            "INSERT INTO rebook_events "
+            "(event_id, session_id, event_type, detail, occurred_at) VALUES (?, ?, ?, ?, ?)",
+            ("event-stale", "session-stale", "intent_recorded", "", now),
+        )
+        store.conn.commit()
+
+        update_booking(
+            repo,
+            replace(
+                booking,
+                stay_dates=StayDates(date(2026, 12, 1), date(2026, 12, 5)),
+            ),
+        )
+
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM savings_opportunities WHERE booking_id = ?", (booking_id,)
+        ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM check_history WHERE booking_id = ?", (booking_id,)
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM rebook_sessions WHERE booking_id = ?", (booking_id,)
+        ).fetchone()[0] == 1
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM rebook_events WHERE session_id = 'session-stale'"
+        ).fetchone()[0] == 1
+
+    def test_update_rejects_confirmation_id_owned_by_another_booking(self, repo):
+        booking, _ = register_booking(repo=repo, **_make_booking("BKG-ONE"))
+        register_booking(repo=repo, **_make_booking("BKG-TWO"))
+
+        with pytest.raises(BookingRejectedError, match="already registered"):
+            update_booking(
+                repo, replace(booking, confirmation_id=ConfirmationId.of("BKG-TWO"))
+            )
+
+        assert repo.get_by_id(booking.booking_id).confirmation_id.value == "BKG-ONE"
+
+    def test_update_missing_booking_raises_key_error(self, repo):
+        booking, _ = register_booking(repo=repo, **_make_booking("BKG-GONE"))
+        assert delete_booking(repo, booking.booking_id) is True
+
+        with pytest.raises(KeyError, match="No booking"):
+            update_booking(repo, booking)
+
+    def test_delete_removes_all_booking_scoped_rows_and_scheduler_reads(self, repo, store):
+        booking, _ = register_booking(repo=repo, **_make_booking("BKG-DELETE"))
+        booking_id = booking.booking_id
+        now = datetime.now(UTC).isoformat()
+        store.conn.execute(
+            "INSERT INTO check_history "
+            "(check_id, booking_id, checked_at, outcome, extraction_method) "
+            "VALUES (?, ?, ?, 'failure', 'none')",
+            ("check-delete", booking_id, now),
+        )
+        store.conn.execute(
+            "INSERT INTO check_traces (check_id, booking_id, created_at, trace_json) "
+            "VALUES (?, ?, ?, ?)",
+            ("check-delete", booking_id, now, "{}"),
+        )
+        store.conn.execute(
+            "INSERT INTO savings_opportunities "
+            "(opportunity_id, booking_id, check_id, baseline_amount, live_amount, currency, "
+            "amount_saved, percent_saved, validated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("opp-delete", booking_id, "check-delete", "350", "300", "EUR", "50", "14", now),
+        )
+        store.conn.execute(
+            "INSERT INTO rebook_sessions "
+            "(session_id, opportunity_id, booking_id, state, started_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("session-delete", "opp-delete", booking_id, "completed", now),
+        )
+        store.conn.execute(
+            "INSERT INTO rebook_events "
+            "(event_id, session_id, event_type, detail, occurred_at) VALUES (?, ?, ?, ?, ?)",
+            ("event-delete", "session-delete", "intent_recorded", "", now),
+        )
+        store.conn.commit()
+
+        assert delete_booking(repo, booking_id) is True
+
+        assert repo.get_by_id(booking_id) is None
+        assert booking_id not in {item.booking_id for item in repo.list_active()}
+        for table in (
+            "check_history",
+            "check_traces",
+            "savings_opportunities",
+            "rebook_sessions",
+        ):
+            assert store.conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE booking_id = ?", (booking_id,)
+            ).fetchone()[0] == 0
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM rebook_events WHERE session_id = 'session-delete'"
+        ).fetchone()[0] == 0
+
+    def test_delete_missing_booking_is_safe_no_op(self, repo):
+        assert delete_booking(repo, "missing") is False
+
+    @pytest.mark.parametrize("operation", ["update", "delete"])
+    def test_mutation_refuses_an_active_guided_rebook(self, repo, store, operation):
+        booking, _ = register_booking(repo=repo, **_make_booking("BKG-IN-USE"))
+        now = datetime.now(UTC).isoformat()
+        store.conn.execute(
+            "INSERT INTO rebook_sessions "
+            "(session_id, opportunity_id, booking_id, state, started_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("active-session", "active-opportunity", booking.booking_id, "started", now),
+        )
+        store.conn.commit()
+
+        with pytest.raises(BookingRejectedError, match="active guided rebook"):
+            if operation == "update":
+                update_booking(
+                    repo,
+                    replace(booking, room_type=RoomType("Should Not Persist")),
+                )
+            else:
+                delete_booking(repo, booking.booking_id)
+
+        unchanged = repo.get_by_id(booking.booking_id)
+        assert unchanged is not None
+        assert unchanged.room_type.label == "Deluxe Double"
