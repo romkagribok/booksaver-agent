@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from booksaver.daemon.check_coordinator import CheckCoordinator
 from booksaver.daemon.scheduler import Scheduler
 from booksaver.domain.models import Config
 
@@ -14,6 +15,7 @@ from .access import AccessControl, RateLimiter
 from .admin_commands import register_admin_commands
 from .booking_management import register_booking_management_commands
 from .bot_loop import BotLoop
+from .check_now import register_check_now_command
 from .client import TelegramBotClient
 from .command_catalog import api_commands
 from .commands_readonly import register_readonly_commands
@@ -35,6 +37,8 @@ def build_bot_runner(
     db_path: Path,
     scheduler: Scheduler,
     client: TelegramBotClient | None = None,
+    *,
+    check_coordinator: CheckCoordinator | None = None,
 ) -> BotRunner | None:
     """Wires client + router + dialogs + access control into a runnable bot loop.
 
@@ -153,6 +157,16 @@ def build_bot_runner(
         send=_send,
         client=client,
         db_path=db_path,
+    )
+
+    register_check_now_command(
+        router=router,
+        callback_router=callback_router,
+        reply=_reply,
+        send=_send,
+        client=client,
+        db_path=db_path,
+        coordinator=check_coordinator,
     )
 
     def _cancelflow(cmd: IncomingCommand) -> None:

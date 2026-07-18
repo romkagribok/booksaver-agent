@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-18T19:19:28Z
-total_decisions: 20
+last_updated: 2026-07-18T23:57:35Z
+total_decisions: 21
 ---
 
 # Decision Index
@@ -17,6 +17,17 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-021: One coordinator serializes scheduled and on-demand checks
+- **Status**: accepted
+- **Date**: 2026-07-18
+- **Bolt**: 019-on-demand-check-orchestration (on-demand-check-orchestration)
+- **Path**: `bolts/019-on-demand-check-orchestration/adr-021-single-check-coordinator.md`
+- **Summary**: Scheduler ticks and Telegram `/checknow` requests share one non-blocking browser gate,
+  one monitoring/savings pipeline, and thread-safe daily check/actual-LLM counters. Busy work is
+  rejected rather than queued; daily LLM exhaustion degrades to scripted/DOM-only monitoring.
+- **Read when**: Adding a check trigger, changing browser concurrency, modifying daily user limits,
+  reporting LLM usage, or changing daemon shutdown behavior.
 
 ### ADR-020: Query-driven entry preserves the verified customer search
 - **Status**: accepted

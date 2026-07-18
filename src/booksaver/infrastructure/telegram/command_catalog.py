@@ -25,6 +25,7 @@ COMMANDS = (
     CommandDefinition("bookings", "List monitored bookings"),
     CommandDefinition("savings", "List detected savings opportunities"),
     CommandDefinition("checks", "Choose a booking and view recent checks"),
+    CommandDefinition("checknow", "Run a live price check now"),
     CommandDefinition("rebook", "Choose savings and start guided rebooking"),
     CommandDefinition("setkey", "Set a personal Anthropic API key"),
     CommandDefinition("deletekey", "Remove the personal Anthropic API key"),

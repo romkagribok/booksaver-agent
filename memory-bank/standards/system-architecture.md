@@ -6,8 +6,10 @@ Use a single-process, local-first daemon architecture. Keep components modular i
 
 ```mermaid
 flowchart TB
-    Config["LocalConfig (+ agent caps)"] --> Scheduler["Scheduler"]
-    Scheduler --> Monitor["BookingComSearchMonitor"]
+    Config["LocalConfig (+ agent caps)"] --> Coordinator["CheckCoordinator"]
+    Scheduler["Scheduler"] --> Coordinator
+    Telegram["Telegram /checknow"] --> Coordinator
+    Coordinator --> Monitor["BookingComSearchMonitor"]
     Monitor --> Journey["SearchJourney (trusted results query → verified property)"]
     Journey --> Browser["BrowserAutomation"]
     Journey -- "step failed" --> Agent["BrowserAgent (LLM, guarded)"]
@@ -32,6 +34,9 @@ flowchart TB
   guarded browser agent when a scripted journey step fails (ADR-015/016): bounded action
   vocabulary, adapter-level denylist against reserve/checkout/payment/cancel, hard
   per-check cost caps (ADR-017).
+- Scheduled and Telegram-triggered live checks enter one daemon-lifetime coordinator. It serializes
+  Playwright work, shares per-user daily check/actual-LLM counters, and reuses the complete monitor,
+  trace, savings, and notification pipeline (ADR-021); do not add a second scheduler or browser path.
 - Notification adapters send directly through the user's configured services.
 - Guided rebook must never execute cancel or purchase actions without explicit local confirmation.
 - All secrets, sessions, booking data, logs, and check history remain on the user's machine.

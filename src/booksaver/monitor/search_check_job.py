@@ -77,6 +77,18 @@ class BookingComSearchMonitor:
         self._snapshots = snapshot_writer
         self._clock = clock
         self._last_escalator: BrowserAgent | None = None
+        self._active_budget: AgentBudget | None = None
+        self._last_llm_calls_used = 0
+        self._llm_enabled = True
+
+    @property
+    def last_llm_calls_used(self) -> int:
+        """Actual LLM calls consumed by the most recent ``run_check``."""
+        return self._last_llm_calls_used
+
+    def set_llm_enabled(self, enabled: bool) -> None:
+        """Disable both extractor and agent resolution for a DOM-only check."""
+        self._llm_enabled = enabled
 
     def run_all_active(self, bookings: list[Booking] | None = None) -> list[CheckResult]:
         """Scheduler job entry point: check every active booking, never raise.
@@ -142,6 +154,8 @@ class BookingComSearchMonitor:
         """Check one booking via the search journey. Always returns; never raises."""
         recorder = TraceRecorder(booking.booking_id)
         escalator: BrowserAgent | None = None
+        self._active_budget = None
+        self._last_llm_calls_used = 0
         try:
             result = self._run_check_inner(booking, recorder, session_mode)
         except Exception as exc:  # belt and braces: the never-raise contract
@@ -153,6 +167,8 @@ class BookingComSearchMonitor:
             )
         else:
             escalator = self._last_escalator
+        if self._active_budget is not None:
+            self._last_llm_calls_used = self._active_budget.llm_calls_used
         self._persist_trace(recorder, result, escalator)
         return result
 
@@ -162,7 +178,7 @@ class BookingComSearchMonitor:
         now = datetime.now(UTC)
         self._last_escalator = None
 
-        if self._llm_factory is not None:
+        if self._llm_factory is not None and self._llm_enabled:
             try:
                 self._llm = self._llm_factory.for_booking(booking)
                 self._brain = self._llm_factory.agent_brain_for_booking(booking)
@@ -172,6 +188,9 @@ class BookingComSearchMonitor:
                     now,
                     FailureReason(code=FailureCode.USER_KEY_INVALID, detail=str(exc)),
                 )
+        elif not self._llm_enabled:
+            self._llm = None
+            self._brain = None
 
         if booking.occupancy is None:
             return CheckResult.failure(
@@ -187,6 +206,7 @@ class BookingComSearchMonitor:
             )
 
         budget = AgentBudget(self._agent_settings, clock=self._clock)
+        self._active_budget = budget
         escalator: BrowserAgent | None = None
         if self._brain is not None:
             escalator = BrowserAgent(self._browser, self._brain, budget, recorder)

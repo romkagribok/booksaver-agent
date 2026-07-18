@@ -195,7 +195,11 @@ By the time you run this smoke test, the Telegram bot gateway (Units 001–004) 
 `/status` from the owner chat instead of/alongside `docker compose exec booksaver booksaver
 checks list <booking-id>` for the same daemon-health + last-check view, `/register` to add a
 booking straight from chat instead of the `docker compose run --rm booksaver booksaver register
-...` one-off shown in §4, and a detected savings opportunity drives the guided-rebook flow
+...` one-off shown in §4, and `/checknow` to select one of your active bookings and run the normal
+live Booking.com check immediately. The bot stays responsive while that background check runs; if a
+scheduled or manual check already owns the single browser gate, retry after its concise busy reply.
+Manual checks consume the same per-user daily check and LLM-call limits as scheduled checks. A
+detected savings opportunity drives the guided-rebook flow
 end-to-end over Telegram (inline-keyboard confirmations, final booking click handed off to your
 own device via a deep link) — see `memory-bank/intents/003-telegram-interface/units/`
 `004-telegram-rebook-gate/` for that flow's details.

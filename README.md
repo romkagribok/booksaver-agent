@@ -40,7 +40,10 @@ self-host the repo instead of using yours. The owner registers bookings and gets
 `/register` lets invited users add their own bookings from chat, each getting their own alert
 routing and per-user daily check/LLM-call limits. LLM calls default to the owner's Anthropic key
 (hybrid billing with per-user daily caps); `/setkey` lets a user opt into their own key instead
-(encrypted at rest). A detected savings opportunity drives the same guided-rebook flow as the CLI,
+(encrypted at rest). `/checknow` offers the caller's active bookings as buttons and runs the selected
+booking through the same live monitor, trace, savings, and alert pipeline immediately; scheduled and
+manual checks share one browser gate and the same daily limits. A detected savings opportunity drives
+the same guided-rebook flow as the CLI,
 but over Telegram: inline-keyboard confirmations at every step, and the final Booking.com
 cancel/booking click is always handed off to your own device via a deep link — the bot itself never
 completes it. See `memory-bank/intents/003-telegram-interface/requirements.md` for the full

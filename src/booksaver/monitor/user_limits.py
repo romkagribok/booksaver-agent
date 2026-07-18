@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from threading import RLock
 
 from booksaver.domain.models import Booking
 from booksaver.domain.user import User
@@ -26,6 +27,7 @@ class DailyCounter:
         self._clock = clock
         self._day: date = self._clock().date()
         self._counts: dict[int, int] = {}
+        self._lock = RLock()
 
     def _maybe_roll(self) -> None:
         today = self._clock().date()
@@ -34,17 +36,34 @@ class DailyCounter:
             self._counts = {}
 
     def increment(self, key: int, by: int = 1) -> int:
-        self._maybe_roll()
-        self._counts[key] = self._counts.get(key, 0) + by
-        return self._counts[key]
+        if by < 0:
+            raise ValueError("DailyCounter increments must be non-negative")
+        with self._lock:
+            self._maybe_roll()
+            self._counts[key] = self._counts.get(key, 0) + by
+            return self._counts[key]
+
+    def try_increment(self, key: int, limit: int, by: int = 1) -> bool:
+        """Atomically reserve ``by`` events without exceeding ``limit``."""
+        if by < 0:
+            raise ValueError("DailyCounter increments must be non-negative")
+        with self._lock:
+            self._maybe_roll()
+            current = self._counts.get(key, 0)
+            if current + by > limit:
+                return False
+            self._counts[key] = current + by
+            return True
 
     def count(self, key: int) -> int:
-        self._maybe_roll()
-        return self._counts.get(key, 0)
+        with self._lock:
+            self._maybe_roll()
+            return self._counts.get(key, 0)
 
     def snapshot(self) -> dict[int, int]:
-        self._maybe_roll()
-        return dict(self._counts)
+        with self._lock:
+            self._maybe_roll()
+            return dict(self._counts)
 
 
 @dataclass(frozen=True)
@@ -60,6 +79,7 @@ class CheckPlan:
 
     ordered: list[tuple[int, Booking]]
     capped_user_ids: list[int]
+    skipped: list[tuple[int, Booking]]
 
 
 def build_check_plan(
@@ -71,6 +91,7 @@ def build_check_plan(
     eligible: list[int] = []
     capped: list[int] = []
     queues: dict[int, list[Booking]] = {}
+    skipped: list[tuple[int, Booking]] = []
 
     for user in users:
         bookings = list(bookings_by_user.get(user.user_id, ()))
@@ -78,9 +99,14 @@ def build_check_plan(
             continue
         if checks_today.get(user.user_id, 0) >= max_checks_per_user_per_day:
             capped.append(user.user_id)
+            skipped.extend((user.user_id, booking) for booking in bookings)
             continue
+        remaining = max_checks_per_user_per_day - checks_today.get(user.user_id, 0)
         eligible.append(user.user_id)
-        queues[user.user_id] = bookings
+        queues[user.user_id] = bookings[:remaining]
+        if len(bookings) > remaining:
+            capped.append(user.user_id)
+            skipped.extend((user.user_id, booking) for booking in bookings[remaining:])
 
     ordered: list[tuple[int, Booking]] = []
     while any(queues[uid] for uid in eligible):
@@ -89,7 +115,7 @@ def build_check_plan(
             if queue:
                 ordered.append((uid, queue.pop(0)))
 
-    return CheckPlan(ordered=ordered, capped_user_ids=capped)
+    return CheckPlan(ordered=ordered, capped_user_ids=capped, skipped=skipped)
 
 
 def users_needing_capped_notice(

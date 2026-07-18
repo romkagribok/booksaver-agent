@@ -60,6 +60,14 @@ def test_daily_counter_snapshot_reflects_current_day() -> None:
     assert counter.snapshot() == {1: 1, 2: 1}
 
 
+def test_daily_counter_reservation_never_exceeds_limit() -> None:
+    counter = DailyCounter(clock=lambda: datetime(2026, 7, 11, tzinfo=UTC))
+    assert counter.try_increment(1, limit=2) is True
+    assert counter.try_increment(1, limit=2) is True
+    assert counter.try_increment(1, limit=2) is False
+    assert counter.count(1) == 2
+
+
 # ── build_check_plan ─────────────────────────────────────────────────────────
 
 
@@ -91,6 +99,23 @@ def test_user_at_daily_cap_is_excluded_and_reported() -> None:
     )
 
     assert [uid for uid, _b in plan.ordered] == [2]
+    assert plan.capped_user_ids == [1]
+    assert [booking.booking_id for _uid, booking in plan.skipped] == ["a-1"]
+
+
+def test_plan_only_uses_remaining_quota_and_identifies_excess_bookings() -> None:
+    user = _user(1)
+    plan = build_check_plan(
+        users=[user],
+        bookings_by_user={
+            1: [make_booking("a-1"), make_booking("a-2"), make_booking("a-3")]
+        },
+        checks_today={1: 47},
+        max_checks_per_user_per_day=48,
+    )
+
+    assert [booking.booking_id for _uid, booking in plan.ordered] == ["a-1"]
+    assert [booking.booking_id for _uid, booking in plan.skipped] == ["a-2", "a-3"]
     assert plan.capped_user_ids == [1]
 
 

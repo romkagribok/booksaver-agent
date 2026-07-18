@@ -104,12 +104,12 @@ class AgentBudget:
             )
 
     def consume_llm_call(self) -> None:
-        self.llm_calls_used += 1
-        if self.llm_calls_used > self._settings.max_llm_calls:
+        if self.llm_calls_used >= self._settings.max_llm_calls:
             raise BudgetExceeded(
                 f"LLM call cap exceeded "
                 f"({self.llm_calls_used}/{self._settings.max_llm_calls})"
             )
+        self.llm_calls_used += 1
 
     def check_time(self) -> None:
         elapsed = self._clock() - self._started

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -25,15 +26,17 @@ class RateLimiter:
         self._window_seconds = window_seconds
         self._clock = clock
         self._hits: dict[int, list[float]] = {}
+        self._lock = threading.Lock()
 
     def allow(self, key: int) -> bool:
         """Record an event for `key` and report whether it was within the limit."""
-        now = self._clock()
-        recent = [t for t in self._hits.get(key, []) if now - t < self._window_seconds]
-        allowed = len(recent) < self._max_events
-        recent.append(now)
-        self._hits[key] = recent
-        return allowed
+        with self._lock:
+            now = self._clock()
+            recent = [t for t in self._hits.get(key, []) if now - t < self._window_seconds]
+            allowed = len(recent) < self._max_events
+            recent.append(now)
+            self._hits[key] = recent
+            return allowed
 
 
 class OwnerGuard:

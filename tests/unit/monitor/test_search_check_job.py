@@ -117,6 +117,7 @@ class TestLLMFallback:
         assert result.outcome is CheckOutcome.SUCCESS
         assert result.extraction_method is ExtractionMethod.LLM
         assert len(llm.offer_calls) == 1
+        assert monitor.last_llm_calls_used == 1
         # Drift-matched label must not contradict the booking downstream
         assert result.extracted_fields.room_label is None
         detection = detect_savings(booking, result)
@@ -144,6 +145,19 @@ class TestLLMFallback:
         result = monitor.run_check(make_booking())
         # DOM found a candidate; it just isn't equivalent
         assert result.failure_reason.code is FailureCode.NO_EQUIVALENT_OFFER
+
+    def test_dom_only_mode_never_resolves_or_calls_llm(self):
+        browser = _happy_browser()
+        browser.page_text = "Nothing that looks like a rate table"
+        llm = FakeLLMExtractor(offers=[])
+        monitor, _ = _monitor(browser, llm=llm)
+        monitor.set_llm_enabled(False)
+
+        result = monitor.run_check(make_booking())
+
+        assert result.failure_reason.code is FailureCode.EXTRACTION_FAILED
+        assert llm.offer_calls == []
+        assert monitor.last_llm_calls_used == 0
 
 
 class TestJourneyFailureMapping:

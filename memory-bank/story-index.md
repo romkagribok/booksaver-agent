@@ -174,6 +174,22 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-050` | Delete an owned booking after confirmation | Booking Management | Complete | `001-conversational-booking-management/stories/003-delete-owned-booking-after-confirmation.md` |
 | `US-051` | Preserve booking mutation integrity | Booking Management | Complete | `001-conversational-booking-management/stories/004-preserve-booking-mutation-integrity.md` |
 
+## 007-telegram-on-demand-checks
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-on-demand-check-orchestration` | 5 stories | Complete (bolt 019) |
+
+### 001-on-demand-check-orchestration: On-Demand Check Orchestration
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-052` | Discover and select an immediate check | On-Demand Check | Complete | `001-on-demand-check-orchestration/stories/001-discover-and-select-immediate-check.md` |
+| `US-053` | Run a responsive background check | On-Demand Check | Complete | `001-on-demand-check-orchestration/stories/002-run-responsive-background-check.md` |
+| `US-054` | Serialize all check work | On-Demand Check | Complete | `001-on-demand-check-orchestration/stories/003-serialize-all-check-work.md` |
+| `US-055` | Share daily check and LLM budgets | On-Demand Check | Complete | `001-on-demand-check-orchestration/stories/004-share-daily-check-and-llm-budgets.md` |
+| `US-056` | Reuse the normal monitoring pipeline | On-Demand Check | Complete | `001-on-demand-check-orchestration/stories/005-reuse-normal-monitoring-pipeline.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -184,5 +200,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `004-production-hardening` | 1 | 6 | Complete (bolts 013–015; 641 tests after property availability correction) |
 | `005-telegram-command-navigation` | 1 | 5 | Complete (bolts 016 and 018; 668 tests) |
 | `006-telegram-booking-management` | 1 | 4 | Complete (bolt 017; 696 tests) |
+| `007-telegram-on-demand-checks` | 1 | 5 | Complete (bolt 019; 713 tests) |
 
-All 51 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management) are assigned exactly once.
+All 56 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management + 5 on-demand-check) are assigned exactly once.
