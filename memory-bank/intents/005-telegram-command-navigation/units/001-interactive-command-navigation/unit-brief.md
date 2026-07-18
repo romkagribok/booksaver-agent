@@ -6,7 +6,7 @@ status: complete
 unit_type: cli
 default_bolt_type: simple-construction-bolt
 created: 2026-07-18T22:14:33.000Z
-updated: 2026-07-18T22:14:33.000Z
+updated: 2026-07-18T23:04:34Z
 ---
 
 # Unit Brief: Interactive Command Navigation
@@ -41,6 +41,7 @@ BookSaver's existing Telegram command surface.
 | FR-2 | Route callback queries through a reusable guarded router | Must |
 | FR-3 | Offer scoped selection for booking and savings inputs | Must |
 | FR-4 | Offer a complete owner-only admin interaction menu | Must |
+| FR-5 | Render callback results after Boolean Telegram acknowledgements | Must |
 
 ## Domain Concepts
 
@@ -66,8 +67,8 @@ BookSaver's existing Telegram command surface.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 4 |
-| Must Have | 4 |
+| Total Stories | 5 |
+| Must Have | 5 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -75,10 +76,11 @@ BookSaver's existing Telegram command surface.
 
 | Story ID | Title | Priority | Status |
 |----------|-------|----------|--------|
-| US-043 | Discover applicable commands natively | Must | In Progress |
-| US-044 | Route and authorize interactive callbacks | Must | In Progress |
-| US-045 | Select bookings and savings opportunities | Must | In Progress |
-| US-046 | Navigate owner administration safely | Must | In Progress |
+| US-043 | Discover applicable commands natively | Must | Complete |
+| US-044 | Route and authorize interactive callbacks | Must | Complete |
+| US-045 | Select bookings and savings opportunities | Must | Complete |
+| US-046 | Navigate owner administration safely | Must | Complete |
+| US-047 | Handle Boolean Telegram action results | Must | Complete |
 
 ## Dependencies
 
@@ -154,6 +156,7 @@ No new durable data. Callback payloads are transient, and every entity is reload
 | Bolt | Type | Stories | Objective |
 |------|------|---------|-----------|
 | `016-interactive-command-navigation` | Simple Construction | US-043–US-046 | Deliver scoped command discovery and interactive current-command inputs |
+| `018-interactive-command-navigation` | Simple Construction | US-047 | Correct Boolean action responses and callback rendering isolation |
 
 ## Notes
 

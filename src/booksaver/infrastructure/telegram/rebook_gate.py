@@ -661,13 +661,21 @@ def register_rebook_command(
             opportunity_id = callback.data.removeprefix("rebook:select:")
             try:
                 client.answer_callback_query(callback.callback_query_id)
+            except Exception:
+                logger.warning(
+                    "Could not answer rebook selection callback %s",
+                    callback.callback_query_id,
+                )
+            try:
                 client.edit_message_text(
                     callback.chat_id,
                     callback.message_id,
                     "Starting the selected guided rebook…",
                 )
             except Exception:
-                logger.warning("Could not update rebook selection message")
+                logger.warning(
+                    "Could not update rebook selection message %s", callback.message_id
+                )
             _start_rebook(
                 IncomingCommand(
                     user_id=callback.user_id,

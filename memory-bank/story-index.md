@@ -147,7 +147,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Unit | Stories | Status |
 |------|---------|--------|
-| `001-interactive-command-navigation` | 4 stories | Complete (bolt 016) |
+| `001-interactive-command-navigation` | 5 stories | Complete (bolts 016 and 018) |
 
 ### 001-interactive-command-navigation: Interactive Command Navigation
 
@@ -157,6 +157,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-044` | Route and authorize interactive callbacks | Command Navigation | Complete | `001-interactive-command-navigation/stories/002-route-and-authorize-interactive-callbacks.md` |
 | `US-045` | Select bookings and savings opportunities | Command Navigation | Complete | `001-interactive-command-navigation/stories/003-select-bookings-and-savings-opportunities.md` |
 | `US-046` | Navigate owner administration safely | Command Navigation | Complete | `001-interactive-command-navigation/stories/004-navigate-owner-administration-safely.md` |
+| `US-047` | Handle Boolean Telegram action results | Command Navigation | Complete | `001-interactive-command-navigation/stories/005-handle-boolean-telegram-action-results.md` |
 
 ## Summary
 
@@ -166,6 +167,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
 | `003-telegram-interface` | 5 | 14 | Complete (bolts 008–012; all 14 stories US-023–036) |
 | `004-production-hardening` | 1 | 6 | Complete (bolts 013–015; 641 tests after property availability correction) |
-| `005-telegram-command-navigation` | 1 | 4 | Complete (bolt 016; 665 tests) |
+| `005-telegram-command-navigation` | 1 | 5 | Complete (bolts 016 and 018; 668 tests) |
 
-All 46 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 4 command-navigation) are assigned exactly once.
+All 47 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation) are assigned exactly once.

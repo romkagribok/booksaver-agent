@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,6 +22,8 @@ from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCom
 
 Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
+
+logger = logging.getLogger(__name__)
 
 
 def _format_timedelta(delta: timedelta) -> str:
@@ -267,11 +270,19 @@ def register_readonly_commands(
             text = _checks_text(callback.user_id, booking_id)
             try:
                 client.answer_callback_query(callback.callback_query_id)
+            except Exception:
+                logger.warning(
+                    "Could not answer checks callback %s",
+                    callback.callback_query_id,
+                )
+            try:
                 client.edit_message_text(callback.chat_id, callback.message_id, text)
             except Exception:
                 # The read is complete even if the original Telegram message
                 # was deleted before it could be edited.
-                pass
+                logger.warning(
+                    "Could not edit checks result message %s", callback.message_id
+                )
 
         callback_router.register("checks:", _checks_callback)
 

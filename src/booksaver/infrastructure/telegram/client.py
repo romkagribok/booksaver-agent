@@ -105,16 +105,16 @@ class TelegramBotClient:
 
     def answer_callback_query(
         self, callback_query_id: str, text: str | None = None
-    ) -> dict[str, Any]:
+    ) -> bool:
         result = self._call(
             "answerCallbackQuery",
             {"callback_query_id": callback_query_id, "text": text},
         )
-        return dict(result) if result else {}
+        return bool(result)
 
-    def delete_message(self, chat_id: int | str, message_id: int) -> dict[str, Any]:
+    def delete_message(self, chat_id: int | str, message_id: int) -> bool:
         result = self._call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-        return dict(result) if result else {}
+        return bool(result)
 
     def set_my_commands(
         self, commands: list[dict[str, str]], scope: dict[str, Any]

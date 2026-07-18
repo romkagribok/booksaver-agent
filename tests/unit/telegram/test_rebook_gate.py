@@ -46,12 +46,14 @@ class FakeClient:
     Thread-safe (accessed by both the test's main thread and worker threads
     spawned by `register_rebook_command`)."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, fail_answer: bool = False, fail_edit: bool = False) -> None:
         self._lock = threading.Lock()
         self._next_message_id = 1
         self.sent: list[dict[str, Any]] = []
         self.edits: list[dict[str, Any]] = []
         self.answered_callbacks: list[str] = []
+        self.fail_answer = fail_answer
+        self.fail_edit = fail_edit
 
     def send_message(
         self, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None
@@ -68,11 +70,15 @@ class FakeClient:
     def edit_message_text(
         self, chat_id: int, message_id: int, text: str, reply_markup: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        if self.fail_edit:
+            raise RuntimeError("edit failed")
         with self._lock:
             self.edits.append({"chat_id": chat_id, "message_id": message_id, "text": text})
             return {}
 
     def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> dict:
+        if self.fail_answer:
+            raise RuntimeError("answer failed")
         with self._lock:
             self.answered_callbacks.append(callback_query_id)
             return {}
@@ -617,6 +623,50 @@ def test_rebook_selection_callback_starts_existing_guided_session(tmp_path: Path
 
     _wait_until(lambda: len(client.sent) >= 1)
     assert any("Starting a guided rebook" in text for text in replies)
+    nonce = _nonce_from_sent(client.sent[0], "no")
+    callback_handler(
+        IncomingCallback(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            callback_query_id="cb-decline",
+            message_id=client.sent[0]["message_id"],
+            data=f"rebook:{nonce}:no",
+        )
+    )
+    _wait_until(lambda: any("ended: declined" in text for text in replies))
+
+
+def test_rebook_selection_starts_when_acknowledgement_and_picker_edit_fail(
+    tmp_path: Path, caplog
+) -> None:
+    db_path, telegram_user_id, _booking_id, opportunity_id = _fixture_db(tmp_path)
+    client = FakeClient(fail_answer=True, fail_edit=True)
+    router = CommandRouter()
+    replies: list[str] = []
+    callback_handler = register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+
+    callback_handler(
+        IncomingCallback(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            callback_query_id="cb-ui-fails",
+            message_id=1,
+            data=f"rebook:select:{opportunity_id}",
+        )
+    )
+
+    _wait_until(lambda: len(client.sent) >= 1)
+    assert any("Starting a guided rebook" in text for text in replies)
+    assert "Could not answer rebook selection callback" in caplog.text
+    assert "Could not update rebook selection message 1" in caplog.text
+
     nonce = _nonce_from_sent(client.sent[0], "no")
     callback_handler(
         IncomingCallback(

@@ -3,7 +3,7 @@ intent: 005-telegram-command-navigation
 phase: inception
 status: complete
 created: 2026-07-18T22:14:33.000Z
-updated: 2026-07-18T22:14:33.000Z
+updated: 2026-07-18T23:04:34Z
 ---
 
 # Requirements: Telegram Command Navigation
@@ -91,6 +91,20 @@ sent. Typed command arguments remain supported for operators and backward compat
   - Existing typed `/admin ...` syntax remains supported.
 - **Priority**: Must
 - **Related Stories**: US-046
+
+### FR-5: Render callback results after Boolean Telegram acknowledgements
+
+- **Description**: Telegram action endpoints that return Boolean success must not be treated as
+  message objects, and callback acknowledgement must not suppress result rendering or valid scoped
+  operation dispatch.
+- **Acceptance Criteria**:
+  - Boolean success from `answerCallbackQuery` and `deleteMessage` is returned without conversion.
+  - Checks rendering is attempted independently from callback acknowledgement.
+  - Rebook selection continues into its existing ownership check independently from callback UI
+    update failures.
+  - Callback acknowledgement/edit failures are logged and contained.
+- **Priority**: Must
+- **Related Stories**: US-047
 
 ## Non-Functional Requirements
 

@@ -3,7 +3,7 @@ intent: 005-telegram-command-navigation
 phase: inception
 status: complete
 created: 2026-07-18T22:14:33Z
-updated: 2026-07-18T22:36:07Z
+updated: 2026-07-18T23:04:34Z
 ---
 
 # Telegram Command Navigation - Unit Decomposition
@@ -18,7 +18,7 @@ and admin navigation share one Telegram gateway deployment seam and one integrat
 **Purpose**: Make every enumerable argument in the current Telegram command surface selectable while
 preserving typed commands, access control, and existing services.
 
-**Assigned requirements**: FR-1, FR-2, FR-3, FR-4.
+**Assigned requirements**: FR-1, FR-2, FR-3, FR-4, FR-5.
 
 **Stories**:
 
@@ -26,6 +26,7 @@ preserving typed commands, access control, and existing services.
 - US-044: Route and authorize interactive callbacks.
 - US-045: Select bookings and savings opportunities.
 - US-046: Navigate owner administration safely.
+- US-047: Handle Boolean Telegram action results.
 
 **Deliverables**:
 
@@ -43,6 +44,7 @@ preserving typed commands, access control, and existing services.
 | FR-2 | `001-interactive-command-navigation` | Shared callback dispatch is the picker foundation |
 | FR-3 | `001-interactive-command-navigation` | Booking/opportunity choices use scoped command handlers |
 | FR-4 | `001-interactive-command-navigation` | Admin menus use the same guarded callback boundary |
+| FR-5 | `001-interactive-command-navigation` | Telegram action response handling is a gateway adapter concern |
 
 ## Unit Dependency Graph
 
@@ -55,9 +57,10 @@ flowchart LR
 
 ## Execution Order
 
-1. Bolt `016-interactive-command-navigation` builds all four cohesive stories.
-2. Final human validation precedes deterministic completion and git delivery.
-3. VPS rebuild validates command discovery and callback interaction in Telegram.
+1. Bolt `016-interactive-command-navigation` builds the original four cohesive stories.
+2. Bolt `018-interactive-command-navigation` corrects the production callback-response defect.
+3. Final human validation precedes deterministic completion and git delivery.
+4. VPS rebuild validates command discovery and callback interaction in Telegram.
 
 ## Independence Validation
 

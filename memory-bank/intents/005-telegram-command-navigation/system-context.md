@@ -3,7 +3,7 @@ intent: 005-telegram-command-navigation
 phase: inception
 status: complete
 created: 2026-07-18T22:14:33Z
-updated: 2026-07-18T22:36:07Z
+updated: 2026-07-18T23:04:34Z
 ---
 
 # Telegram Command Navigation - System Context

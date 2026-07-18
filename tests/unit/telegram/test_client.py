@@ -78,18 +78,20 @@ def test_edit_message_text_calls_correct_method() -> None:
 
 
 def test_answer_callback_query_calls_correct_method() -> None:
-    transport = FakeTransport({"ok": True, "result": {}})
+    transport = FakeTransport({"ok": True, "result": True})
     client = TelegramBotClient("token", transport=transport)
-    client.answer_callback_query("cb-1", text="ok")
+    result = client.answer_callback_query("cb-1", text="ok")
+    assert result is True
     url, body = transport.calls[0]
     assert url.endswith("/answerCallbackQuery")
     assert body["callback_query_id"] == "cb-1"
 
 
 def test_delete_message_calls_correct_method() -> None:
-    transport = FakeTransport({"ok": True, "result": {}})
+    transport = FakeTransport({"ok": True, "result": True})
     client = TelegramBotClient("token", transport=transport)
-    client.delete_message(123, 7)
+    result = client.delete_message(123, 7)
+    assert result is True
     url, body = transport.calls[0]
     assert url.endswith("/deleteMessage")
     assert body["message_id"] == 7

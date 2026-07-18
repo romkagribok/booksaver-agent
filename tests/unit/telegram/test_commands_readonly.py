@@ -76,24 +76,32 @@ def _setup(tmp_path: Path) -> tuple[Path, CommandRouter, list[tuple[int, str]], 
 
 
 class _PickerClient:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_answer: bool = False, fail_edit: bool = False) -> None:
         self.answered: list[str] = []
         self.edits: list[tuple[int, int, str]] = []
+        self.fail_answer = fail_answer
+        self.fail_edit = fail_edit
 
     def answer_callback_query(self, callback_query_id: str, text=None):
+        if self.fail_answer:
+            raise RuntimeError("answer failed")
         self.answered.append(callback_query_id)
-        return {}
+        return True
 
     def edit_message_text(self, chat_id: int, message_id: int, text: str, reply_markup=None):
+        if self.fail_edit:
+            raise RuntimeError("edit failed")
         self.edits.append((chat_id, message_id, text))
         return {}
 
 
-def _interactive_setup(tmp_path: Path):
+def _interactive_setup(
+    tmp_path: Path, *, fail_answer: bool = False, fail_edit: bool = False
+):
     db_path = tmp_path / "booksaver.db"
     router = CommandRouter()
     callbacks = CallbackRouter()
-    client = _PickerClient()
+    client = _PickerClient(fail_answer=fail_answer, fail_edit=fail_edit)
     sent: list[tuple[int, str]] = []
     interactive: list[dict] = []
     register_readonly_commands(
@@ -279,6 +287,55 @@ def test_checks_picker_callback_renders_recent_history(tmp_path: Path) -> None:
 
     assert client.answered == ["cb-1"]
     assert "timeout" in client.edits[0][2]
+
+
+def test_checks_picker_renders_even_when_callback_acknowledgement_fails(
+    tmp_path: Path, caplog
+) -> None:
+    db_path, _router, callbacks, client, _sent, _interactive = _interactive_setup(
+        tmp_path, fail_answer=True
+    )
+    user_id = _register_caller(db_path, telegram_id=1)
+    booking_id = "f42b63a9-00d1-49f1-b0c4-544f5ab60fcf"
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(booking_id), user_id=user_id)
+
+    callbacks.dispatch(
+        IncomingCallback(
+            user_id=1,
+            chat_id=1,
+            callback_query_id="cb-answer-fails",
+            message_id=99,
+            data=f"checks:{booking_id}",
+        )
+    )
+
+    assert len(client.edits) == 1
+    assert "No checks recorded" in client.edits[0][2]
+    assert "Could not answer checks callback" in caplog.text
+
+
+def test_checks_picker_logs_edit_failure_without_raising(tmp_path: Path, caplog) -> None:
+    db_path, _router, callbacks, client, _sent, _interactive = _interactive_setup(
+        tmp_path, fail_edit=True
+    )
+    user_id = _register_caller(db_path, telegram_id=1)
+    booking_id = "f42b63a9-00d1-49f1-b0c4-544f5ab60fcf"
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(booking_id), user_id=user_id)
+
+    assert callbacks.dispatch(
+        IncomingCallback(
+            user_id=1,
+            chat_id=1,
+            callback_query_id="cb-edit-fails",
+            message_id=99,
+            data=f"checks:{booking_id}",
+        )
+    )
+
+    assert client.answered == ["cb-edit-fails"]
+    assert "Could not edit checks result message 99" in caplog.text
 
 
 def test_checks_picker_callback_cannot_read_another_users_booking(tmp_path: Path) -> None:
