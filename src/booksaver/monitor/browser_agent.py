@@ -89,7 +89,16 @@ class BrowserAgent:
 
                 self._budget.consume_llm_call()
                 action = self._brain.decide(goal, observation, history)
-                self._recorder.agent_action(step, action, tier2=tier2)
+                target = next(
+                    (element for element in observation.elements if element.ref == action.ref),
+                    None,
+                )
+                self._recorder.agent_action(
+                    step,
+                    action,
+                    tier2=tier2,
+                    target_label=target.label if target is not None else None,
+                )
 
                 if action.type is AgentActionType.GIVE_UP:
                     reason = action.value or "no reason given"
@@ -109,7 +118,7 @@ class BrowserAgent:
                         if streak >= _LOOP_GIVE_UP_AFTER:
                             detail = (
                                 f"agent stuck requesting screenshots at {step.value} "
-                                f"without acting on the calendar"
+                                "without taking a browser action"
                             )
                             self._recorder.agent_result(step, detail)
                             return EscalationResult(
@@ -119,8 +128,8 @@ class BrowserAgent:
                                 used_screenshot=used_screenshot,
                             )
                         history.append(
-                            "Screenshot already provided — stop requesting. Click the date "
-                            "display, previous/next month arrows, or a calendar day cell."
+                            "Screenshot already provided — stop requesting it and choose a "
+                            "safe action that advances the current step goal."
                         )
                         continue
                     self._recorder.screenshot_tier(step, "requested by agent")

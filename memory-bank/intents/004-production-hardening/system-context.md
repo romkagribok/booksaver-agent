@@ -3,7 +3,7 @@ intent: 004-production-hardening
 phase: inception
 status: complete
 created: 2026-07-18T17:48:48Z
-updated: 2026-07-18T19:25:20Z
+updated: 2026-07-18T21:47:06Z
 ---
 
 # Production Hardening - System Context
@@ -19,6 +19,10 @@ resource, and consistency of Telegram's command and identifier surface.
 The second live VPS trace refined the journey boundary: trusted search-results navigation is now the
 primary entry, while the LLM remains the adaptive layer for result, property, room-view, and offer
 interpretation drift. The homepage form is no longer an active automation dependency.
+
+The next property-page screenshot refined the downstream boundary: a safe property page may load
+before rates are visible and may be covered by consent. Property navigation, complete URL-context
+verification, and semantic availability/rate readiness are therefore separate fail-closed steps.
 
 ## Actors
 
@@ -84,6 +88,8 @@ flowchart LR
   authority: browser actions remain allowlisted and destructive actions remain forbidden.
 - Search entry uses Booking.com's results URL built from persisted data; homepage form interaction is
   not a prerequisite, and the registered property URL is not used as a direct price-source shortcut.
+- Consent is handled deterministically; unresolved room/rate readiness receives screenshot-first
+  guarded recovery and explicit sold-out content terminates without further clicking.
 - Exact booking dates and occupancy originate only from persisted booking data.
 - A recovery continuation cannot skip property/context verification or offer-equivalence rules.
 - Telegram booking lookup is always scoped to the authenticated Telegram user.

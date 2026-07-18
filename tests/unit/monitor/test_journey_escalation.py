@@ -112,3 +112,62 @@ class TestEscalationInJourney:
 
         assert result.ok
         assert not result.agent_assisted
+
+    def test_agent_recovers_semantic_room_content_with_screenshot_first(self):
+        browser = _happy_browser(fail_selectors={"hprt-table", "rt-room-table"})
+        browser.page_text = "Check available dates"
+
+        def _remove_anchors(b: FakeInteractiveBrowser, url: str) -> None:
+            if "/hotel/" in url:
+                b.present_selectors.difference_update(
+                    {"#hprt-table", '[data-testid="rt-room-table"]'}
+                )
+
+        def _reveal_rates(b: FakeInteractiveBrowser, action: AgentAction) -> None:
+            b.page_text = "Standard Double\n€ 350.00\nFree cancellation"
+
+        browser.on_goto = _remove_anchors
+        browser.on_act = _reveal_rates
+        journey = _journey_with_agent(
+            browser, [AgentAction(type=AgentActionType.CLICK, ref="e0")]
+        )
+
+        result = journey.run(make_booking())
+
+        assert result.ok
+        assert result.agent_assisted
+        assert ("screenshot", "") in browser.actions
+        read = next(
+            outcome
+            for outcome in result.outcomes
+            if outcome.step is JourneyStep.READ_ROOM_TABLE
+        )
+        assert "agent completed" in read.detail
+
+    def test_agent_revealed_no_availability_is_classified_without_more_recovery(self):
+        browser = _happy_browser(fail_selectors={"hprt-table", "rt-room-table"})
+        browser.page_text = "Check available dates"
+
+        def _remove_anchors(b: FakeInteractiveBrowser, url: str) -> None:
+            if "/hotel/" in url:
+                b.present_selectors.difference_update(
+                    {"#hprt-table", '[data-testid="rt-room-table"]'}
+                )
+
+        def _reveal_unavailable(b: FakeInteractiveBrowser, action: AgentAction) -> None:
+            b.page_text = "This property is not available for your dates"
+
+        browser.on_goto = _remove_anchors
+        browser.on_act = _reveal_unavailable
+        journey = _journey_with_agent(
+            browser,
+            [
+                AgentAction(type=AgentActionType.CLICK, ref="e0"),
+                AgentAction(type=AgentActionType.GIVE_UP, value="no availability"),
+            ],
+        )
+
+        result = journey.run(make_booking())
+
+        assert result.failure_code is FailureCode.NO_EQUIVALENT_OFFER
+        assert result.failed_step.step is JourneyStep.READ_ROOM_TABLE

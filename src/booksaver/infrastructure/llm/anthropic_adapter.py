@@ -233,13 +233,11 @@ element refs from the current observation. If the page shows a captcha or login
 wall, or the goal seems unreachable, call give_up with a short reason. Prefer
 give_up over guessing.
 
-Date-picker tips: the calendar often opens on the wrong month. Use the
-previous/next month arrow buttons until the target month is visible, click the
-check-in day, then the check-out day, then close the calendar (Escape or click
-outside) before submitting search. If the destination or property name is already
-shown in the search form (or "1 result found"), do NOT refill the search box —
-click the date display and fix dates only. Request a screenshot when the text list
-of elements is not enough to identify calendar controls."""
+Follow the supplied step goal rather than assuming the failure is a calendar.
+Dismiss cookie/consent panels when they obstruct the page. For room availability,
+scroll toward rates and use only read-only controls such as "Check available dates";
+if the page explicitly says no rooms are available or sold out, call give_up and
+state that outcome. Request a screenshot when text and element labels are not enough."""
 
 _AGENT_TOOLS: list[dict[str, Any]] = [
     {

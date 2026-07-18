@@ -25,7 +25,8 @@ flowchart TB
 
 - Booking.com integration happens through browser automation only. Live prices come from a trusted
   results query followed by exact property selection, fresh property navigation, context verification,
-  and room-rate extraction (ADR-013 amended by ADR-020); the homepage form, manage page, registered-
+  availability/rate readiness, and room-rate extraction (ADR-013 amended by ADR-020); property loading
+  does not depend on a legacy room-table selector, and the homepage form, manage page, registered-
   property deep link, and result-card headline price are not price sources.
 - The LLM is used for extraction and reasoning when DOM parsing is insufficient, and as a
   guarded browser agent when a scripted journey step fails (ADR-015/016): bounded action

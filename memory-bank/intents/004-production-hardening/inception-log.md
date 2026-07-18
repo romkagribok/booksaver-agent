@@ -28,11 +28,11 @@ from the first deployed production run.
 
 | Metric | Count |
 |--------|-------|
-| Functional Requirements | 4 approved |
+| Functional Requirements | 6 approved |
 | Non-Functional Requirement Groups | 3 approved |
 | Units | 1 |
-| Stories | 4 |
-| Bolts Planned | 1 |
+| Stories | 6 |
+| Bolts Planned | 3 |
 
 ## Decision Log
 
@@ -56,6 +56,14 @@ and avoid committing or pushing until the completed artifact set and code are re
 |------|--------|--------|--------|
 | 2026-07-18T17:30:28Z | Added production-hardening intent | Real VPS journey and packaging failures exposed requirements not covered by completed bolts | One new intent, unit, and bolt proposed |
 | 2026-07-18T18:57:24Z | Added FR-5 / US-041 and corrective bolt 014 | Live trace proved the trusted-query continuation works but occurs only after `fill_search` consumes nearly the full shared budget | Reopen the existing reliability unit for one incremental simple bolt; preserve all downstream verification and LLM seams |
+| 2026-07-18T20:00:27Z | Added FR-6 / US-042 and corrective bolt 015 | Query-first VPS screenshot proved the correct property loaded behind consent while `open_property` remained locked to two legacy rate selectors | Reopen the reliability unit; separate property/context/rate responsibilities and retain guarded semantic recovery |
+
+## Continuous-Flow Authorization: US-042
+
+The product owner authorized autonomous execution through the intermediate inception and simple-bolt
+Plan/Implement/Test checkpoints, with one consolidated approval immediately before official bolt
+completion. This is a user-directed exception to the default stop-at-each-checkpoint interaction; all
+artifacts, stage evidence, and state transitions remain mandatory and chronological.
 
 ## Corrective Inception Addendum: US-041
 
@@ -78,9 +86,9 @@ incremental defect correction rather than rewriting completed US-038 or bolt 013
 
 ## Next Steps
 
-1. Complete AI-DLC Checkpoint 4: explicitly authorize construction.
-2. Reconcile the existing source/test work through the simple bolt's mandatory stage checkpoints.
-3. After final human review, commit and push the implementation separately from this documentation checkpoint.
+1. Commit and push approved bolt 015 code and AI-DLC artifacts.
+2. Rebuild the VPS container from the pushed branch.
+3. Run a Telegram check and inspect its five-step trace plus extraction outcome.
 
 ## Dependencies
 
@@ -100,3 +108,8 @@ Plan, Implement, and Test checkpoints. US-041 is complete: checks now enter thro
 Booking.com results query, downstream guarded LLM recovery remains available, and verification passed
 with 633 tests, Ruff, and mypy across 72 source files. Intent 004 is complete again and awaits VPS
 deployment plus the operator's Telegram smoke test.
+
+Corrective bolt `015-production-reliability` completed on 2026-07-18T21:47:06Z after Plan, Implement,
+and Test ran under the product owner's continuous-flow authorization and the product owner approved
+the final gate. US-042 is complete; the deterministic completion script updated the bolt, story,
+unit, and intent. Verification passed with 641 tests, Ruff, and mypy across 72 source files.

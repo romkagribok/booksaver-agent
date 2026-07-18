@@ -205,6 +205,8 @@ class FakeInteractiveBrowser:
         self.elements: tuple[ElementInfo, ...] = ()  # agent observation elements
         self.fail_refs: set[str] = set()  # refs whose act() raises
         self.on_act = None  # optional hook: (browser, action) -> None
+        self.on_goto = None  # optional hook: (browser, url) -> None
+        self.property_redirect_url: str | None = None
         self.actions: list[tuple[str, str]] = []
         self.restored_cookies: list[bytes] = []
         # When set, [data-date] cells exist only for this month and the next.
@@ -253,9 +255,14 @@ class FakeInteractiveBrowser:
         self.url = url
         if "/hotel/" in url or "checkin=" in url:
             self.present_selectors.update({"#hprt-table", '[data-testid="rt-room-table"]'})
+        if "/hotel/" in url and self.property_redirect_url is not None:
+            self.url = self.property_redirect_url
+        if self.on_goto is not None:
+            self.on_goto(self, url)
 
     def click(self, selector: str) -> None:
         self.actions.append(("click", selector))
+        self.present_selectors.discard(selector)
         if "Previous month" in selector or "calendar-prev" in selector:
             self._shift_calendar("prev")
         elif "Next month" in selector or "calendar-next" in selector:

@@ -130,7 +130,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Unit | Stories | Status |
 |------|---------|--------|
-| `001-production-reliability` | 5 stories | Complete (bolts 013–014) |
+| `001-production-reliability` | 6 stories | Complete (bolts 013–015) |
 
 ### 001-production-reliability: Production Reliability
 
@@ -141,6 +141,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-039` | Package the persistence schema | Production Hardening | Complete | `001-production-reliability/stories/003-package-persistence-schema.md` |
 | `US-040` | Discover commands and use displayed booking identifiers | Production Hardening | Complete | `001-production-reliability/stories/004-discover-commands-and-use-booking-prefixes.md` |
 | `US-041` | Enter search from trusted query | Production Hardening | Complete | `001-production-reliability/stories/005-enter-search-from-trusted-query.md` |
+| `US-042` | Handle property availability page | Production Hardening | Complete | `001-production-reliability/stories/006-handle-property-availability-page.md` |
 
 ## Summary
 
@@ -149,6 +150,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
 | `003-telegram-interface` | 5 | 14 | Complete (bolts 008–012; all 14 stories US-023–036) |
-| `004-production-hardening` | 1 | 5 | Complete (bolts 013–014; 633 tests after query-entry correction) |
+| `004-production-hardening` | 1 | 6 | Complete (bolts 013–015; 641 tests after property availability correction) |
 
-All 41 stories (16 original + 6 Phase 2 + 14 Phase 3 + 5 production-hardening) are assigned exactly once.
+All 42 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening) are assigned exactly once.

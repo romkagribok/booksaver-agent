@@ -61,10 +61,18 @@ class TraceRecorder:
     def escalation_started(self, step: JourneyStep, trigger: str) -> None:
         self._add(TraceKind.ESCALATION_STARTED, f"{step.value}: {trigger}")
 
-    def agent_action(self, step: JourneyStep, action: AgentAction, tier2: bool) -> None:
+    def agent_action(
+        self,
+        step: JourneyStep,
+        action: AgentAction,
+        tier2: bool,
+        target_label: str | None = None,
+    ) -> None:
         parts = [action.type.value]
         if action.ref:
             parts.append(f"ref={action.ref}")
+        if target_label:
+            parts.append(f"label={target_label!r}")
         if action.value:
             parts.append(f"value={action.value!r}")
         tier = " [tier2]" if tier2 else ""

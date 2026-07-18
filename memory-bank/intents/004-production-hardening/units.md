@@ -3,14 +3,14 @@ intent: 004-production-hardening
 phase: inception
 status: complete
 created: 2026-07-18T17:48:48Z
-updated: 2026-07-18T19:25:20Z
+updated: 2026-07-18T21:47:06Z
 ---
 
 # Production Hardening - Unit Decomposition
 
 ## Units Overview
 
-This intent decomposes into one cohesive CLI-tool unit. The four requirements cross runtime seams,
+This intent decomposes into one cohesive CLI-tool unit. The six requirements cross runtime seams,
 but they share one deployability objective and must be regression-tested together against the same
 daemon distribution.
 
@@ -20,7 +20,7 @@ daemon distribution.
 continuation for the search form, make the installed package self-contained, and align Telegram's
 documented and accepted identifiers.
 
-**Assigned requirements**: FR-1, FR-2, FR-3, FR-4, FR-5 (all requirements assigned exactly once).
+**Assigned requirements**: FR-1, FR-2, FR-3, FR-4, FR-5, FR-6 (all requirements assigned exactly once).
 
 **Stories**:
 
@@ -29,6 +29,7 @@ documented and accepted identifiers.
 - US-039: Package the persistence schema.
 - US-040: Discover commands and use displayed booking identifiers.
 - US-041: Enter search from the trusted Booking.com results query.
+- US-042: Handle the property availability page without selector lock-in.
 
 **Deliverables**:
 
@@ -37,6 +38,8 @@ documented and accepted identifiers.
 - Wheel package-data declaration and packaging regression test.
 - Complete Telegram help plus user-scoped short-ID resolution.
 - Query-driven search entry that preserves downstream LLM adaptation and verification.
+- Context-preserving property navigation, deterministic consent dismissal, and semantic availability
+  readiness with screenshot-first guarded recovery.
 - Automated regression evidence and AI-DLC construction artifacts.
 
 **Dependencies**:
@@ -56,6 +59,7 @@ documented and accepted identifiers.
 | FR-3 | `001-production-reliability` | Ensures the hardened daemon is deployable from its wheel |
 | FR-4 | `001-production-reliability` | Aligns the deployed Telegram operational surface |
 | FR-5 | `001-production-reliability` | Corrects the search-entry ordering revealed by live VPS traces |
+| FR-6 | `001-production-reliability` | Separates property loading, context, and semantic rate readiness |
 
 ## Unit Dependency Graph
 
@@ -68,9 +72,10 @@ flowchart LR
 ## Execution Order
 
 1. Bolt `013-production-reliability` completed the initial four hardening stories.
-2. Execute corrective bolt `014-production-reliability` for trusted-query-first search entry.
-3. Review automated/static checks and ADR amendment evidence.
-4. After human approval and git delivery, rebuild and smoke-test the VPS container.
+2. Bolt `014-production-reliability` completed trusted-query-first search entry.
+3. Bolt `015-production-reliability` completed property-page handling and its deterministic final
+   completion gate.
+4. After git delivery, rebuild and smoke-test the VPS container.
 
 ## Independence Validation
 

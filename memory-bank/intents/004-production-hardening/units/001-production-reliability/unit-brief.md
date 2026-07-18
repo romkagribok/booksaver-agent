@@ -5,8 +5,8 @@ phase: inception
 status: complete
 unit_type: cli
 default_bolt_type: simple-construction-bolt
-created: 2026-07-18T17:48:48Z
-updated: 2026-07-18T19:25:20Z
+created: 2026-07-18T17:48:48.000Z
+updated: 2026-07-18T21:47:06Z
 ---
 
 # Unit Brief: Production Reliability
@@ -28,6 +28,8 @@ as the adaptive layer for Booking.com layout changes and preserving every existi
 - Add regression tests and record wheel/static/test evidence.
 - Enter Booking.com searches through the persisted trusted query without homepage form interaction.
 - Preserve guarded LLM adaptation for results, property, room-view, and extraction drift.
+- Preserve full context on the fresh property href, dismiss consent, and interpret availability/rate
+  readiness without requiring one legacy selector.
 
 ### Out of Scope
 
@@ -47,6 +49,8 @@ as the adaptive layer for Booking.com layout changes and preserving every existi
 | FR-2 | `fill_search` can continue safely from persisted exact booking data | Must |
 | FR-3 | Installed distributions include the SQLite schema resource | Must |
 | FR-4 | Telegram command discovery and accepted booking identifiers are consistent | Must |
+| FR-5 | Enter live searches through the trusted Booking.com results query | Must |
+| FR-6 | Interpret the property availability page without selector lock-in | Must |
 
 ---
 
@@ -77,8 +81,8 @@ as the adaptive layer for Booking.com layout changes and preserving every existi
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 5 |
-| Must Have | 5 |
+| Total Stories | 6 |
+| Must Have | 6 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -91,6 +95,7 @@ as the adaptive layer for Booking.com layout changes and preserving every existi
 | US-039 | Package the persistence schema | Must | Complete |
 | US-040 | Discover commands and use displayed booking identifiers | Must | Complete |
 | US-041 | Enter search from trusted query | Must | Complete |
+| US-042 | Handle property availability page | Must | Complete |
 
 ---
 
@@ -151,6 +156,7 @@ stdlib Telegram transport, setuptools wheel configuration, pytest, Ruff, and myp
 
 - Existing action guard and budget failures remain authoritative.
 - Only persisted booking data may construct the safe continuation URL.
+- Explicit unavailable inventory and bot walls cannot satisfy rate readiness.
 - Prefix lookup must never search outside the caller's repository scope.
 - Installed runtime must not depend on a source-tree-relative schema path.
 - The existing safety and equivalence regression surfaces are frozen.
@@ -165,6 +171,8 @@ stdlib Telegram transport, setuptools wheel configuration, pytest, Ruff, and myp
 - [x] `fill_search` can safely continue only for the two approved bounded failure codes.
 - [x] Fresh wheel installations contain and can load `schema.sql`.
 - [x] Telegram exposes the complete command reference and accepts unique user-owned short IDs.
+- [x] Trusted results navigation replaces homepage form interaction.
+- [x] Property navigation, complete context verification, and semantic rate readiness are distinct.
 
 ### Non-Functional
 
@@ -174,7 +182,7 @@ stdlib Telegram transport, setuptools wheel configuration, pytest, Ruff, and myp
 ### Quality
 
 - [x] All acceptance criteria have automated coverage where practical.
-- [x] AI-DLC artifacts and the global story index remain consistent for the US-041 correction.
+- [x] AI-DLC artifacts and the global story index remain consistent through the US-042 correction.
 - [x] Code and documentation are reviewed and approved before commit/push.
 
 ---
@@ -185,6 +193,7 @@ stdlib Telegram transport, setuptools wheel configuration, pytest, Ruff, and myp
 |------|------|---------|-----------|
 | `013-production-reliability` | Simple Construction | US-037–US-040 | Deliver and verify the cohesive production-hardening slice |
 | `014-production-reliability` | Simple Construction | US-041 | Promote trusted results navigation to primary search entry and preserve downstream LLM recovery |
+| `015-production-reliability` | Simple Construction | US-042 | Preserve property context, dismiss consent, and interpret rate availability semantically |
 
 ## Notes
 

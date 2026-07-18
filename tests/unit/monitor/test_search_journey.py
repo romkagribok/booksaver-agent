@@ -83,6 +83,70 @@ class TestHappyPath:
 
         assert result.ok
 
+    def test_fresh_property_href_receives_complete_trusted_context(self):
+        browser = _happy_browser()
+        browser.property_url = (
+            "https://www.booking.com/hotel/test.html?aid=304142&checkin=2020-01-01"
+            "&group_adults=9"
+        )
+
+        result = SearchJourney(browser).run(make_booking())
+
+        assert result.ok
+        property_url = [value for kind, value in browser.actions if kind == "goto"][1]
+        query = parse_qs(urlparse(property_url).query)
+        assert query["aid"] == ["304142"]
+        assert query["checkin"] == ["2026-09-01"]
+        assert query["checkout"] == ["2026-09-05"]
+        assert query["group_adults"] == ["2"]
+        assert query["group_children"] == ["0"]
+        assert query["no_rooms"] == ["1"]
+
+    def test_fresh_property_href_preserves_duplicate_non_context_parameters(self):
+        browser = _happy_browser()
+        browser.property_url = (
+            "https://www.booking.com/hotel/test.html?label=one&label=two"
+            "&checkin=2020-01-01"
+        )
+
+        result = SearchJourney(browser).run(make_booking())
+
+        assert result.ok
+        property_url = [value for kind, value in browser.actions if kind == "goto"][1]
+        query = parse_qs(urlparse(property_url).query)
+        assert query["label"] == ["one", "two"]
+        assert query["checkin"] == ["2026-09-01"]
+
+    def test_consent_panel_is_declined_after_navigation(self):
+        selector = 'button:text-is("Decline")'
+        browser = _happy_browser(present_selectors={selector})
+
+        result = SearchJourney(browser).run(make_booking())
+
+        assert result.ok
+        assert ("click", selector) in browser.actions
+
+    def test_semantic_rate_content_does_not_require_legacy_anchor(self):
+        browser = _happy_browser(fail_selectors={"hprt-table", "rt-room-table"})
+
+        def _remove_anchors(b: FakeInteractiveBrowser, url: str) -> None:
+            if "/hotel/" in url:
+                b.present_selectors.difference_update(
+                    {"#hprt-table", '[data-testid="rt-room-table"]'}
+                )
+
+        browser.on_goto = _remove_anchors
+
+        result = SearchJourney(browser).run(make_booking())
+
+        assert result.ok
+        read = next(
+            outcome
+            for outcome in result.outcomes
+            if outcome.step is JourneyStep.READ_ROOM_TABLE
+        )
+        assert "semantic room/rate content" in read.detail
+
 
 class TestStepFailures:
     def test_results_navigation_failure_is_navigation_error(self):
@@ -104,9 +168,10 @@ class TestStepFailures:
 
     def test_wrong_dates_on_property_page_fail_verify_context(self):
         browser = _happy_browser()
-        browser.property_url = (
+        browser.property_redirect_url = (
             "https://www.booking.com/hotel/test.html"
             "?checkin=2026-09-02&checkout=2026-09-05&group_adults=2"
+            "&group_children=0&no_rooms=1"
         )
 
         result = SearchJourney(browser).run(make_booking())
@@ -116,15 +181,34 @@ class TestStepFailures:
 
     def test_wrong_occupancy_on_property_page_fails_verify_context(self):
         browser = _happy_browser()
-        browser.property_url = (
+        browser.property_redirect_url = (
             "https://www.booking.com/hotel/test.html"
             "?checkin=2026-09-01&checkout=2026-09-05&group_adults=4"
+            "&group_children=0&no_rooms=1"
         )
 
         result = SearchJourney(browser).run(make_booking())
 
         assert result.failure_code is FailureCode.STEP_FAILED
         assert result.failed_step.step is JourneyStep.VERIFY_CONTEXT
+
+    def test_explicit_no_availability_fails_promptly(self):
+        browser = _happy_browser()
+        browser.page_text = "This property is not available for your dates"
+
+        result = SearchJourney(browser).run(make_booking())
+
+        assert result.failure_code is FailureCode.NO_EQUIVALENT_OFFER
+        assert result.failed_step.step is JourneyStep.READ_ROOM_TABLE
+
+    def test_non_booking_property_href_is_rejected(self):
+        browser = _happy_browser()
+        browser.property_url = "https://example.com/hotel/test.html"
+
+        result = SearchJourney(browser).run(make_booking())
+
+        assert not result.ok
+        assert result.failed_step.step is JourneyStep.OPEN_PROPERTY
 
 
 class TestWallDetection:

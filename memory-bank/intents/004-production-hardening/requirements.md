@@ -2,8 +2,8 @@
 intent: 004-production-hardening
 phase: inception
 status: complete
-created: 2026-07-18T17:30:28Z
-updated: 2026-07-18T19:25:20Z
+created: 2026-07-18T17:30:28.000Z
+updated: 2026-07-18T21:47:06Z
 ---
 
 # Requirements: Production Hardening
@@ -22,6 +22,11 @@ before taking the trusted-query continuation, leaving no useful budget for the a
 page. FR-5 corrects that ordering by making the same Booking.com results query the primary search
 entry while retaining the results, property, context, room, and offer verification journey.
 
+The next property-page screenshot showed that the exact hotel did load, but a consent panel covered
+the rate area and `open_property` required one of two legacy selectors before context verification.
+FR-6 separates safe property navigation, complete context verification, and semantic availability
+readiness so the LLM adapts at the price-bearing step instead of clicking blindly.
+
 This is a brown-field reliability enhancement and defect-fix intent. It preserves the existing
 architecture and safety model: the LLM remains the adaptive recovery mechanism for layout drift,
 browser actions remain guarded, exact booking data remains authoritative, and no cancellation or
@@ -36,6 +41,7 @@ purchase action becomes autonomous.
 | Make the VPS artifact self-contained | A built wheel contains the SQLite schema required to initialize a fresh `/data` volume | Must |
 | Make Telegram operations discoverable and usable | `/start` and `/help` expose all supported commands, and displayed short booking IDs work with `/checks` when uniquely resolvable for that user | Must |
 | Reserve adaptive recovery for price-bearing pages | No homepage form interaction occurs; trusted results navigation leaves the shared LLM/time budget available for downstream layout or interpretation drift | Must |
+| Interpret changed property availability layouts safely | Consent is dismissed, full context is verified, and rate readiness or explicit no availability is established without selector lock-in | Must |
 
 ---
 
@@ -129,6 +135,24 @@ purchase action becomes autonomous.
 - **Priority**: Must
 - **Related Stories**: US-041
 
+### FR-6: Interpret the property availability page without selector lock-in
+
+- **Description**: After exact property selection, BookSaver must preserve trusted search context,
+  dismiss consent overlays, verify the property URL, and interpret room/availability content in its
+  own named step. Loading the property must not require either legacy room-table selector.
+- **Acceptance Criteria**:
+  - Persisted dates and complete occupancy overwrite conflicting/missing context on the fresh result
+    href before navigation.
+  - Consent overlays are dismissed after results/property navigation without spending LLM calls.
+  - `open_property` proves safe property navigation; `verify_context` checks all date/occupancy keys;
+    `read_room_table` alone owns rate readiness.
+  - Known anchors or conservative semantic room/rate evidence can reach existing offer extraction.
+  - Missing content invokes screenshot-first guarded LLM recovery with a step-specific goal.
+  - Explicit unavailable/sold-out content returns `NO_EQUIVALENT_OFFER` promptly.
+  - Bot walls, mismatches, destructive actions, and budget breaches remain terminal.
+- **Priority**: Must
+- **Related Stories**: US-042
+
 ---
 
 ## Non-Functional Requirements
@@ -139,8 +163,9 @@ purchase action becomes autonomous.
 |-------------|--------|--------|
 | Duplicate-action containment | Identical browser executions before intervention | At most 2 per unverified action sequence |
 | Safe degradation | Recovery paths that preserve downstream verification | 100%; no offer bypasses context/equivalence checks |
-| Regression safety | Automated suite after implementation | 100% pass (650/650 at correction evidence point) |
+| Regression safety | Automated suite after implementation | 100% pass (641/641 for bolt 015) |
 | Budget preservation | Homepage form LLM/time consumption | 0 calls and no form interaction |
+| Availability termination | Explicit sold-out/no-availability response | Prompt `NO_EQUIVALENT_OFFER`; no repeated recovery |
 
 ### Safety and Security
 

@@ -41,6 +41,7 @@ class TestTraceRecorder:
             JourneyStep.FILL_SEARCH,
             AgentAction(type=AgentActionType.CLICK, ref="e0"),
             tier2=False,
+            target_label="Check available dates",
         )
         recorder.agent_result(JourneyStep.FILL_SEARCH, "step completed by agent")
         result = _success_result()
@@ -56,6 +57,7 @@ class TestTraceRecorder:
         ]
         assert trace.check_id == result.check_id
         assert trace.booking_id == "b-1"
+        assert "label='Check available dates'" in trace.events[2].detail
         assert "350.00 EUR via agent" in trace.events[-1].detail
 
     def test_failure_result_recorded_with_code(self):

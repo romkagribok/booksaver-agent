@@ -4,7 +4,7 @@ import logging
 import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from booksaver.application.ports import InteractiveBrowser
 from booksaver.domain.agent import BudgetExceeded
@@ -21,7 +21,13 @@ logger = logging.getLogger(__name__)
 
 # Failures the agent cannot fix: captchas and logged-out sessions need the human
 # (booksaver auth) — escalating would only burn budget.
-_NON_ESCALATABLE = frozenset({FailureCode.BOT_WALL, FailureCode.AUTH_REQUIRED})
+_NON_ESCALATABLE = frozenset(
+    {
+        FailureCode.BOT_WALL,
+        FailureCode.AUTH_REQUIRED,
+        FailureCode.NO_EQUIVALENT_OFFER,
+    }
+)
 
 _SEARCH_RESULTS_URL = "https://www.booking.com/searchresults.html"
 
@@ -31,12 +37,36 @@ _CAPTCHA_MARKERS = re.compile(
 _SIGN_IN_MARKERS = re.compile(
     r"(sign in to manage|log in to your account|create an account)", re.I
 )
+_NO_AVAILABILITY_MARKERS = re.compile(
+    r"(not available for (?:your|these) dates|no availability|no rooms? available|"
+    r"sold out|unavailable on our site|we have no availability)",
+    re.I,
+)
+_RATE_PRICE_MARKERS = re.compile(
+    r"(?:US\$|C\$|A\$|\$|€|£|¥|USD|EUR|GBP|CAD|AUD)\s*[\d,.]+|"
+    r"[\d,.]+\s*(?:USD|EUR|GBP|CAD|AUD)\b",
+    re.I,
+)
+_RATE_CONTEXT_MARKERS = re.compile(
+    r"\b(room|suite|studio|apartment|double|twin|single|king|queen|"
+    r"free cancellation|refundable|non-?refundable)\b",
+    re.I,
+)
 
 # Known-good selectors as of bolt 006. Drift here is expected: a missing selector
 # fails its named step, where bolt 007's guarded LLM agent can take over.
 _SEL_PROPERTY_CARD = '[data-testid="property-card"]'
 _SEL_PROPERTY_TITLE = '[data-testid="property-card"] [data-testid="title"]'
 _SEL_ROOM_TABLE_ANCHORS = ("#hprt-table", '[data-testid="rt-room-table"]')
+_CONSENT_DISMISS_SELECTORS = (
+    'button:text-is("Decline")',
+    'button[aria-label="Decline"]',
+    "#onetrust-reject-all-handler",
+    'button:text-is("Reject all")',
+    'button:text-is("Accept")',
+    'button[aria-label="Accept"]',
+    "#onetrust-accept-btn-handler",
+)
 
 _STEP_FAILURE_CODES = {
     JourneyStep.SUBMIT_SEARCH: FailureCode.NAVIGATION_ERROR,
@@ -72,6 +102,42 @@ def _search_results_url(
         params["dest_id"] = dest_id
         params["dest_type"] = dest_type
     return f"{_SEARCH_RESULTS_URL}?{urlencode(params)}"
+
+
+def _is_booking_property_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    hostname = (parsed.hostname or "").lower()
+    return (hostname == "booking.com" or hostname.endswith(".booking.com")) and (
+        "/hotel/" in parsed.path
+    )
+
+
+def _property_url_with_context(href: str, booking: Booking) -> str:
+    """Merge trusted search context into the fresh result-card property href."""
+    absolute = urljoin(_SEARCH_RESULTS_URL, href)
+    if not _is_booking_property_url(absolute):
+        raise RuntimeError(f"Unsafe or non-property Booking.com result href: {absolute}")
+    occ = booking.occupancy
+    assert occ is not None
+    parsed = urlsplit(absolute)
+    trusted = {
+        "checkin": booking.stay_dates.check_in.isoformat(),
+        "checkout": booking.stay_dates.check_out.isoformat(),
+        "group_adults": str(occ.adults),
+        "group_children": str(occ.children),
+        "no_rooms": str(occ.rooms),
+    }
+    # Preserve opaque result-card parameters exactly, including duplicates, while
+    # ensuring stale search context can never override the persisted booking.
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in trusted
+    ]
+    query.extend(trusted.items())
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
 
 
 class SearchJourney:
@@ -133,7 +199,8 @@ class SearchJourney:
                         goal=self._step_goal(step, booking),
                         verify=_verify,
                         trigger=trigger,
-                        screenshot_first=step is JourneyStep.SUBMIT_SEARCH,
+                        screenshot_first=step
+                        in (JourneyStep.SUBMIT_SEARCH, JourneyStep.READ_ROOM_TABLE),
                     )
                     if escalation.ok:
                         agent_assisted = True
@@ -141,6 +208,19 @@ class SearchJourney:
                         self._record(outcome)
                         outcomes.append(outcome)
                         continue
+                    final_code = self._classify_failure(step)
+                    if final_code in _NON_ESCALATABLE:
+                        detail = str(exc)
+                        if final_code is FailureCode.NO_EQUIVALENT_OFFER:
+                            detail = "Booking.com reports no availability for the requested stay"
+                        outcome = StepOutcome.failed(step, detail)
+                        self._record(outcome)
+                        outcomes.append(outcome)
+                        return JourneyResult(
+                            outcomes=tuple(outcomes),
+                            failure_code=final_code,
+                            agent_assisted=True,
+                        )
                     outcome = StepOutcome.failed(step, escalation.detail)
                     self._record(outcome)
                     outcomes.append(outcome)
@@ -177,12 +257,14 @@ class SearchJourney:
             JourneyStep.LOCATE_PROPERTY: f"Find the property {booking.property.name!r} "
             "in the search results list.",
             JourneyStep.OPEN_PROPERTY: f"Open the property page for "
-            f"{booking.property.name!r} so its room/rate table is visible.",
+            f"{booking.property.name!r} with the trusted dates and occupancy preserved.",
             JourneyStep.VERIFY_CONTEXT: "Ensure the property page shows prices for "
             f"check-in {booking.stay_dates.check_in.isoformat()} to check-out "
             f"{booking.stay_dates.check_out.isoformat()} with the right party size.",
-            JourneyStep.READ_ROOM_TABLE: "Make the room/rate table with prices and "
-            "cancellation policies fully visible.",
+            JourneyStep.READ_ROOM_TABLE: "Reveal room/rate content with prices and "
+            "cancellation policies. Dismiss any consent panel, scroll toward availability, "
+            "and click a read-only 'Check available dates' control if shown. If the page "
+            "explicitly says the stay is unavailable or sold out, give up with that reason.",
         }
         return goals[step]
 
@@ -203,12 +285,12 @@ class SearchJourney:
                     for t in self._browser.query_text(_SEL_PROPERTY_TITLE)
                 )
             if step is JourneyStep.OPEN_PROPERTY:
-                return any(self._browser.exists(a) for a in _SEL_ROOM_TABLE_ANCHORS)
+                return _is_booking_property_url(self._browser.snapshot().url)
             if step is JourneyStep.VERIFY_CONTEXT:
                 self._verify_context(booking)
                 return True
             if step is JourneyStep.READ_ROOM_TABLE:
-                return not _CAPTCHA_MARKERS.search(self._safe_text())
+                return self._room_content_ready()
         except Exception:
             return False
         return False
@@ -217,6 +299,10 @@ class SearchJourney:
         page_text = self._safe_text()
         if _CAPTCHA_MARKERS.search(page_text):
             return FailureCode.BOT_WALL
+        if step is JourneyStep.READ_ROOM_TABLE and _NO_AVAILABILITY_MARKERS.search(
+            page_text
+        ):
+            return FailureCode.NO_EQUIVALENT_OFFER
         # AUTH_REQUIRED means "your saved session dropped" — it presupposes a
         # session existed. In logged-out mode there is nothing to drop (US-035,
         # FR-8): a "sign in" banner just reflects the anonymous journey and must
@@ -234,6 +320,26 @@ class SearchJourney:
         except Exception:
             return ""
 
+    def _dismiss_consent(self) -> str | None:
+        """Best-effort consent dismissal, preferring privacy-preserving rejection."""
+        for selector in _CONSENT_DISMISS_SELECTORS:
+            try:
+                if not self._browser.exists(selector):
+                    continue
+                self._browser.click(selector)
+                return selector
+            except Exception:
+                continue
+        return None
+
+    def _room_content_ready(self) -> bool:
+        text = self._safe_text()
+        if _CAPTCHA_MARKERS.search(text) or _NO_AVAILABILITY_MARKERS.search(text):
+            return False
+        if any(self._browser.exists(anchor) for anchor in _SEL_ROOM_TABLE_ANCHORS):
+            return True
+        return bool(_RATE_PRICE_MARKERS.search(text) and _RATE_CONTEXT_MARKERS.search(text))
+
     # ── steps ────────────────────────────────────────────────────────────────
 
     def _submit_search(self, booking: Booking) -> str:
@@ -242,10 +348,12 @@ class SearchJourney:
         # table), not a registered-property or checkout deep link.
         url = _search_results_url(booking)
         self._browser.goto(url)
+        dismissed = self._dismiss_consent()
         if _CAPTCHA_MARKERS.search(self._safe_text()):
             raise RuntimeError("Bot-detection interstitial on the search-results page")
         self._browser.wait_for(_SEL_PROPERTY_CARD)
-        return f"results loaded ({url})"
+        suffix = f"; consent dismissed via {dismissed}" if dismissed else ""
+        return f"results loaded ({url}){suffix}"
 
     def _locate_property(self, booking: Booking) -> str:
         titles = self._browser.query_text(_SEL_PROPERTY_TITLE)
@@ -269,40 +377,56 @@ class SearchJourney:
             raise RuntimeError(
                 f"No title-link href for property {booking.property.name!r} at index {index}"
             )
-        self._browser.goto(hrefs[index])
-        last_error: Exception | None = None
-        for anchor in _SEL_ROOM_TABLE_ANCHORS:
-            try:
-                self._browser.wait_for(anchor, timeout_ms=15_000)
-                return f"room table anchor: {anchor}"
-            except Exception as exc:
-                last_error = exc
-        raise RuntimeError(f"No room table anchor found: {last_error}")
+        url = _property_url_with_context(hrefs[index], booking)
+        self._browser.goto(url)
+        dismissed = self._dismiss_consent()
+        snapshot = self._browser.snapshot()
+        if _CAPTCHA_MARKERS.search(snapshot.text):
+            raise RuntimeError("Bot-detection interstitial on the property page")
+        if not _is_booking_property_url(snapshot.url):
+            raise RuntimeError(f"Property navigation landed on unexpected URL: {snapshot.url}")
+        suffix = f"; consent dismissed via {dismissed}" if dismissed else ""
+        return f"property loaded ({snapshot.url}){suffix}"
 
     def _verify_context(self, booking: Booking) -> str:
         occ = booking.occupancy
         assert occ is not None
-        snapshot = self._browser.snapshot()
-        url = snapshot.url
+        url = self._browser.snapshot().url
+        query = dict(parse_qsl(urlsplit(url).query, keep_blank_values=True))
         checks = {
             "checkin": booking.stay_dates.check_in.isoformat(),
             "checkout": booking.stay_dates.check_out.isoformat(),
             "group_adults": str(occ.adults),
+            "group_children": str(occ.children),
+            "no_rooms": str(occ.rooms),
         }
         mismatches = [
-            f"{param}={expected} not in page URL"
+            f"{param}={expected} missing from property URL"
             for param, expected in checks.items()
-            if f"{param}={expected}" not in url
+            if query.get(param) != expected
         ]
         if mismatches:
             raise RuntimeError("; ".join(mismatches))
         return "dates and occupancy verified in property URL"
 
     def _await_room_table(self, booking: Booking) -> str:
-        # The page is already on the room table (open_property waited for its
-        # anchor); this step exists as the named escalation seam for extraction
-        # oddities and re-checks the wall/auth markers before extraction runs.
+        self._dismiss_consent()
         text = self._safe_text()
         if _CAPTCHA_MARKERS.search(text):
             raise RuntimeError("Bot-detection interstitial on the property page")
-        return "room table present"
+        if _NO_AVAILABILITY_MARKERS.search(text):
+            raise RuntimeError("Booking.com reports no availability for the requested stay")
+        if _RATE_PRICE_MARKERS.search(text) and _RATE_CONTEXT_MARKERS.search(text):
+            return "semantic room/rate content present without a legacy table anchor"
+        for anchor in _SEL_ROOM_TABLE_ANCHORS:
+            try:
+                self._browser.wait_for(anchor, timeout_ms=5_000)
+                return f"room table anchor: {anchor}"
+            except Exception:
+                continue
+        # Content may have loaded while the selector waits elapsed.
+        if self._room_content_ready():
+            return "semantic room/rate content present without a legacy table anchor"
+        raise RuntimeError(
+            "No room/rate content or explicit availability outcome found on property page"
+        )
