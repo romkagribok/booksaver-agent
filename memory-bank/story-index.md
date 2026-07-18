@@ -126,6 +126,21 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-034` | Deploy daemon and bot on a VPS | Phase 3 | Complete | `005-vps-deployment/stories/001-deploy-on-vps.md` |
 | `US-035` | Logged-out checks with optional cookie import | Phase 3 | Complete | `005-vps-deployment/stories/002-logged-out-checks-and-cookie-import.md` |
 
+## 004-production-hardening
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-production-reliability` | 4 stories | Ready for construction |
+
+### 001-production-reliability: Production Reliability
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-037` | Adapt after repeated browser actions | Production Hardening | Ready | `001-production-reliability/stories/001-adapt-after-repeated-browser-actions.md` |
+| `US-038` | Continue `fill_search` from trusted booking data | Production Hardening | Ready | `001-production-reliability/stories/002-continue-fill-search-from-trusted-data.md` |
+| `US-039` | Package the persistence schema | Production Hardening | Ready | `001-production-reliability/stories/003-package-persistence-schema.md` |
+| `US-040` | Discover commands and use displayed booking identifiers | Production Hardening | Ready | `001-production-reliability/stories/004-discover-commands-and-use-booking-prefixes.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -133,5 +148,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `001-booksaver-agent-mvp` | 5 | 16 | MVP complete (14/14 MVP stories); Unit 5 (extensibility) is post-MVP |
 | `002-agentic-search-monitor` | 2 | 6 | Complete (bolts 006–007; 345 tests) |
 | `003-telegram-interface` | 5 | 14 | Complete (bolts 008–012; all 14 stories US-023–036) |
+| `004-production-hardening` | 1 | 4 | Inception complete (US-037–040 ready; bolt 013 planned) |
 
-All 36 stories (16 original + 6 Phase 2 + 14 Phase 3) are assigned exactly once.
+All 40 stories (16 original + 6 Phase 2 + 14 Phase 3 + 4 production-hardening) are assigned exactly once.
