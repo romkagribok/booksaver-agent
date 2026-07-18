@@ -22,6 +22,9 @@ booksaver = "booksaver.cli.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"booksaver.infrastructure.persistence" = ["schema.sql"]
+
 [tool.ruff]
 src = ["src"]
 line-length = 100

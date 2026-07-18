@@ -75,13 +75,25 @@ def test_start_sends_welcome_message(tmp_path: Path) -> None:
     router.dispatch(_cmd("/start"))
     assert len(sent) == 1
     assert "Welcome" in sent[0][1]
+    assert "/register" in sent[0][1]
 
 
 def test_help_lists_all_commands(tmp_path: Path) -> None:
     _db, router, sent, _sched = _setup(tmp_path)
     router.dispatch(_cmd("/help"))
     text = sent[0][1]
-    for cmd in ("/status", "/bookings", "/savings", "/checks", "/cancelflow"):
+    for cmd in (
+        "/status",
+        "/register",
+        "/bookings",
+        "/savings",
+        "/checks",
+        "/rebook",
+        "/setkey",
+        "/deletekey",
+        "/admin",
+        "/cancelflow",
+    ):
         assert cmd in text
 
 
@@ -202,6 +214,64 @@ def test_checks_reports_recent_history_including_failures(tmp_path: Path) -> Non
     router.dispatch(_cmd("/checks", args="b-1", chat_id=1))
     text = sent[0][1]
     assert "timeout" in text
+
+
+def test_checks_accepts_unique_displayed_booking_id_prefix(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    full_id = "f42b63a9-00d1-49f1-b0c4-544f5ab60fcf"
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(full_id), user_id=user_id)
+        SqliteCheckHistoryRepository(store).add(
+            CheckResult.failure(
+                full_id,
+                datetime.now(UTC),
+                FailureReason(code=FailureCode.AGENT_GAVE_UP, detail="calendar drift"),
+            )
+        )
+
+    router.dispatch(_cmd("/checks", args="f42b63a9", chat_id=1))
+
+    assert "agent_gave_up" in sent[0][1]
+
+
+def test_checks_rejects_ambiguous_displayed_booking_id_prefix(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    with SqliteStore(db_path) as store:
+        repo = SqliteBookingRepository(store)
+        repo.add(_booking("f42b63a9-0000-4000-8000-000000000001"), user_id=user_id)
+        repo.add(_booking("f42b63a9-0000-4000-8000-000000000002"), user_id=user_id)
+
+    router.dispatch(_cmd("/checks", args="f42b63a9", chat_id=1))
+
+    assert sent[0][1] == "No checks recorded for booking 'f42b63a9'."
+
+
+def test_checks_rejects_prefix_shorter_than_displayed_id(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(
+            _booking("f42b63a9-00d1-49f1-b0c4-544f5ab60fcf"), user_id=user_id
+        )
+
+    router.dispatch(_cmd("/checks", args="f42b63a", chat_id=1))
+
+    assert sent[0][1] == "No checks recorded for booking 'f42b63a'."
+
+
+def test_checks_does_not_resolve_another_users_prefix(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_a = _register_caller(db_path, telegram_id=1)
+    _register_caller(db_path, telegram_id=2)
+    full_id = "f42b63a9-00d1-49f1-b0c4-544f5ab60fcf"
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(full_id), user_id=user_a)
+
+    router.dispatch(_cmd("/checks", args="f42b63a9", chat_id=2))
+
+    assert sent[0][1] == "No checks recorded for booking 'f42b63a9'."
 
 
 def test_checks_unknown_booking_reports_none_found(tmp_path: Path) -> None:

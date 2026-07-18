@@ -20,13 +20,17 @@ Reply = Callable[[int, str], None]
 
 HELP_TEXT = (
     "BookSaver commands:\n"
-    "/start - welcome message\n"
+    "/start - welcome and command list\n"
     "/help - this message\n"
     "/status - daemon health, bookings, next scheduled run\n"
+    "/register - add a refundable Booking.com hotel\n"
     "/bookings - list monitored bookings\n"
     "/savings - list detected savings opportunities\n"
     "/checks <booking_id> - recent check history for a booking\n"
     "/rebook [opportunity_id] - guided rebook with inline confirmations\n"
+    "/setkey - use your own Anthropic API key\n"
+    "/deletekey - return to the owner's shared API key\n"
+    "/admin - owner-only user and invite management\n"
     "/cancelflow - cancel an in-progress dialog"
 )
 
@@ -74,7 +78,7 @@ def register_readonly_commands(
         return user if user is not None and user.is_active else None
 
     def _start(cmd: IncomingCommand) -> None:
-        reply(cmd.chat_id, "Welcome to BookSaver. Send /help to see what I can do.")
+        reply(cmd.chat_id, f"Welcome to BookSaver.\n\n{HELP_TEXT}")
 
     def _help(cmd: IncomingCommand) -> None:
         reply(cmd.chat_id, HELP_TEXT)
@@ -190,13 +194,31 @@ def register_readonly_commands(
             if user is None:
                 reply(cmd.chat_id, _NOT_RECOGNIZED)
                 return
-            owner_user_id = SqliteBookingRepository(store).get_owner_user_id(booking_id)
-            if owner_user_id != user.user_id:
+            # Telegram displays the first eight characters of booking UUIDs.
+            # Resolve that prefix only within the caller's own booking scope;
+            # ambiguous/short/cross-user prefixes use the same not-found reply.
+            owned_ids = [
+                booking.booking_id
+                for booking in SqliteBookingRepository(store).list_all_for_user(user.user_id)
+            ]
+            resolved_booking_id: str | None
+            if booking_id in owned_ids:
+                resolved_booking_id = booking_id
+            elif len(booking_id) >= 8:
+                prefix_matches = [value for value in owned_ids if value.startswith(booking_id)]
+                resolved_booking_id = (
+                    prefix_matches[0] if len(prefix_matches) == 1 else None
+                )
+            else:
+                resolved_booking_id = None
+            if resolved_booking_id is None:
                 # Same message for "doesn't exist" and "not yours" — don't
                 # leak which booking ids exist to a different user.
                 reply(cmd.chat_id, f"No checks recorded for booking '{booking_id}'.")
                 return
-            results = SqliteCheckHistoryRepository(store).get_recent(booking_id, limit=5)
+            results = SqliteCheckHistoryRepository(store).get_recent(
+                resolved_booking_id, limit=5
+            )
         if not results:
             reply(cmd.chat_id, f"No checks recorded for booking '{booking_id}'.")
             return

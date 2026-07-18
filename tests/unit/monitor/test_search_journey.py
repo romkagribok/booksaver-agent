@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import date
+
+from booksaver.domain.agent import EscalationResult
 from booksaver.domain.check_result import FailureCode
 from booksaver.domain.journey import JourneyStep
 from booksaver.domain.session import SessionMode
@@ -67,6 +70,109 @@ class TestStepFailures:
         result = SearchJourney(browser).run(make_booking())
         assert result.failure_code.value == "step_failed"
         assert result.failed_step.step is JourneyStep.FILL_SEARCH
+
+    def test_agent_loop_at_fill_search_falls_back_to_exact_results_url(self):
+        class LoopingEscalator:
+            last_screenshot = b"png"
+
+            def __init__(self) -> None:
+                self.screenshot_first: bool | None = None
+
+            def complete_step(self, *args, **kwargs):
+                self.screenshot_first = kwargs["screenshot_first"]
+                return EscalationResult(
+                    ok=False,
+                    detail="agent stuck in loop at fill_search",
+                    failure_code=FailureCode.AGENT_GAVE_UP,
+                    used_screenshot=True,
+                )
+
+        browser = _happy_browser(
+            fail_selectors={"calendar-prev"},
+            calendar_month=date(2026, 11, 1),
+        )
+        escalator = LoopingEscalator()
+
+        result = SearchJourney(browser, escalator=escalator).run(make_booking())
+
+        assert result.ok
+        assert result.agent_assisted
+        assert escalator.screenshot_first is True
+        fill_outcome = next(o for o in result.outcomes if o.step is JourneyStep.FILL_SEARCH)
+        assert fill_outcome.ok
+        assert "exact search-results URL" in fill_outcome.detail
+        submitted_urls = [url for kind, url in browser.actions if kind == "goto"]
+        assert any(
+            "checkin=2026-09-01" in url
+            and "checkout=2026-09-05" in url
+            and "group_adults=2" in url
+            and "group_children=0" in url
+            and "no_rooms=1" in url
+            for url in submitted_urls
+        )
+
+    def test_agent_budget_exhaustion_at_fill_search_uses_exact_results_url(self):
+        class BudgetEscalator:
+            last_screenshot = b"png"
+
+            def complete_step(self, *args, **kwargs):
+                return EscalationResult(
+                    ok=False,
+                    detail="agent step cap exceeded",
+                    failure_code=FailureCode.BUDGET_EXCEEDED,
+                    used_screenshot=True,
+                )
+
+        browser = _happy_browser(fail_selectors={"data-date"})
+
+        result = SearchJourney(browser, escalator=BudgetEscalator()).run(make_booking())
+
+        assert result.ok
+        fill_outcome = next(o for o in result.outcomes if o.step is JourneyStep.FILL_SEARCH)
+        assert "exact search-results URL" in fill_outcome.detail
+
+    def test_guard_rejection_at_fill_search_remains_terminal(self):
+        class GuardedEscalator:
+            last_screenshot = b"png"
+
+            def complete_step(self, *args, **kwargs):
+                return EscalationResult(
+                    ok=False,
+                    detail="action refused by guard",
+                    failure_code=FailureCode.BLOCKED_ACTION,
+                    used_screenshot=True,
+                )
+
+        browser = _happy_browser(fail_selectors={"data-date"})
+
+        result = SearchJourney(browser, escalator=GuardedEscalator()).run(make_booking())
+
+        assert not result.ok
+        assert result.failure_code is FailureCode.BLOCKED_ACTION
+        assert result.failed_step.step is JourneyStep.FILL_SEARCH
+
+    def test_fallback_does_not_bypass_downstream_context_verification(self):
+        class LoopingEscalator:
+            last_screenshot = b"png"
+
+            def complete_step(self, *args, **kwargs):
+                return EscalationResult(
+                    ok=False,
+                    detail="agent stuck in loop",
+                    failure_code=FailureCode.AGENT_GAVE_UP,
+                    used_screenshot=True,
+                )
+
+        browser = _happy_browser(fail_selectors={"data-date"})
+        browser.property_url = (
+            "https://www.booking.com/hotel/test.html"
+            "?checkin=2026-09-02&checkout=2026-09-05&group_adults=2"
+        )
+
+        result = SearchJourney(browser, escalator=LoopingEscalator()).run(make_booking())
+
+        assert not result.ok
+        assert result.failed_step.step is JourneyStep.VERIFY_CONTEXT
 
     def test_property_absent_from_results_is_property_not_found(self):
         browser = _happy_browser()

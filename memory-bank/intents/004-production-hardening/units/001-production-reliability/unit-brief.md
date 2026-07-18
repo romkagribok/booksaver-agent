@@ -2,11 +2,11 @@
 unit: 001-production-reliability
 intent: 004-production-hardening
 phase: inception
-status: stories-defined
+status: complete
 unit_type: cli
 default_bolt_type: simple-construction-bolt
 created: 2026-07-18T17:48:48Z
-updated: 2026-07-18T17:48:48Z
+updated: 2026-07-18T18:12:29Z
 ---
 
 # Unit Brief: Production Reliability
@@ -84,10 +84,10 @@ as the adaptive layer for Booking.com layout changes and preserving every existi
 
 | Story ID | Title | Priority | Status |
 |----------|-------|----------|--------|
-| US-037 | Adapt after repeated browser actions | Must | Ready |
-| US-038 | Continue `fill_search` from trusted booking data | Must | Ready |
-| US-039 | Package the persistence schema | Must | Ready |
-| US-040 | Discover commands and use displayed booking identifiers | Must | Ready |
+| US-037 | Adapt after repeated browser actions | Must | Complete |
+| US-038 | Continue `fill_search` from trusted booking data | Must | Complete |
+| US-039 | Package the persistence schema | Must | Complete |
+| US-040 | Discover commands and use displayed booking identifiers | Must | Complete |
 
 ---
 
@@ -158,21 +158,21 @@ stdlib Telegram transport, setuptools wheel configuration, pytest, Ruff, and myp
 
 ### Functional
 
-- [ ] Duplicate identical agent execution is contained and a fresh visual observation is provided.
-- [ ] `fill_search` can safely continue only for the two approved bounded failure codes.
-- [ ] Fresh wheel installations contain and can load `schema.sql`.
-- [ ] Telegram exposes the complete command reference and accepts unique user-owned short IDs.
+- [x] Duplicate identical agent execution is contained and a fresh visual observation is provided.
+- [x] `fill_search` can safely continue only for the two approved bounded failure codes.
+- [x] Fresh wheel installations contain and can load `schema.sql`.
+- [x] Telegram exposes the complete command reference and accepts unique user-owned short IDs.
 
 ### Non-Functional
 
-- [ ] No destructive action or downstream verification bypass is introduced.
-- [ ] Full pytest suite, Ruff, mypy, and wheel-content checks pass.
+- [x] No destructive action or downstream verification bypass is introduced.
+- [x] Full pytest suite, Ruff, mypy, and wheel-content checks pass.
 
 ### Quality
 
-- [ ] All acceptance criteria have automated coverage where practical.
-- [ ] AI-DLC artifacts and the global story index remain consistent.
-- [ ] Code and documentation are reviewed and approved before commit/push.
+- [x] All acceptance criteria have automated coverage where practical.
+- [x] AI-DLC artifacts and the global story index remain consistent for intent 004.
+- [x] Code and documentation are reviewed and approved before commit/push.
 
 ---
 

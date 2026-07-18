@@ -3,17 +3,26 @@ id: 013-production-reliability
 unit: 001-production-reliability
 intent: 004-production-hardening
 type: simple-construction-bolt
-status: planned
+status: complete
 stories:
   - 001-adapt-after-repeated-browser-actions
   - 002-continue-fill-search-from-trusted-data
   - 003-package-persistence-schema
   - 004-discover-commands-and-use-booking-prefixes
 created: 2026-07-18T17:48:48Z
-started: null
-completed: null
+started: 2026-07-18T17:59:20Z
+completed: 2026-07-18T18:12:12Z
 current_stage: null
-stages_completed: []
+stages_completed:
+  - name: plan
+    completed: 2026-07-18T18:02:53Z
+    artifact: implementation-plan.md
+  - name: implement
+    completed: 2026-07-18T18:08:02Z
+    artifact: implementation-walkthrough.md
+  - name: test
+    completed: 2026-07-18T18:11:59Z
+    artifact: test-walkthrough.md
 requires_bolts:
   - 007-agentic-escalation
   - 012-vps-deployment
@@ -46,13 +55,13 @@ product constraints.
 
 ## Stories Included
 
-- [ ] **001-adapt-after-repeated-browser-actions / US-037**: Detect duplicate proposals, refuse
+- [x] **001-adapt-after-repeated-browser-actions / US-037**: Detect duplicate proposals, refuse
   excess browser executions, trace the refusal, and provide a fresh screenshot (Must).
-- [ ] **002-continue-fill-search-from-trusted-data / US-038**: After bounded LLM exhaustion, continue
+- [x] **002-continue-fill-search-from-trusted-data / US-038**: After bounded LLM exhaustion, continue
   only `fill_search` from persisted exact search context and retain all downstream checks (Must).
-- [ ] **003-package-persistence-schema / US-039**: Include the SQLite schema in built wheels and verify
+- [x] **003-package-persistence-schema / US-039**: Include the SQLite schema in built wheels and verify
   the distribution contents (Must).
-- [ ] **004-discover-commands-and-use-booking-prefixes / US-040**: Show the complete Telegram command
+- [x] **004-discover-commands-and-use-booking-prefixes / US-040**: Show the complete Telegram command
   surface and resolve exact or unique caller-owned booking prefixes (Must).
 
 ## Bolt Type
@@ -65,9 +74,9 @@ without adding a new bounded context, entity lifecycle, persistence model, or ar
 
 ## Stages
 
-- [ ] **1. Plan**: Pending → `implementation-plan.md`
-- [ ] **2. Implement**: Pending → source/tests + `implementation-walkthrough.md`
-- [ ] **3. Test**: Pending → tests/static/package verification + `test-walkthrough.md`
+- ✅ **1. Plan**: Complete → `implementation-plan.md`
+- ✅ **2. Implement**: Complete → source/tests + `implementation-walkthrough.md`
+- ✅ **3. Test**: Complete → tests/static/package verification + `test-walkthrough.md`
 
 Each stage requires its mandatory human checkpoint. Construction artifacts must note that source and
 test work existed before the missing AI-DLC documentation was identified.
@@ -109,12 +118,12 @@ test work existed before the missing AI-DLC documentation was identified.
 
 ## Success Criteria
 
-- [ ] All four stories are implemented and their acceptance criteria verified.
-- [ ] Existing forbidden-action and budget behavior remains unchanged.
-- [ ] Existing property/search-context/equivalence verification remains mandatory.
-- [ ] Full pytest suite, Ruff, mypy, and `git diff --check` pass.
-- [ ] A built wheel contains `booksaver/infrastructure/persistence/schema.sql`.
-- [ ] Code and AI-DLC artifacts receive human review before commit and push.
+- [x] All four stories are implemented and their acceptance criteria verified.
+- [x] Existing forbidden-action and budget behavior remains safe and bounded.
+- [x] Existing property/search-context/equivalence verification remains mandatory.
+- [x] Full pytest suite, Ruff, mypy, and `git diff --check` pass.
+- [x] A built wheel contains `booksaver/infrastructure/persistence/schema.sql`.
+- [x] Code and AI-DLC artifacts received human review before commit and push.
 
 ## Notes
 

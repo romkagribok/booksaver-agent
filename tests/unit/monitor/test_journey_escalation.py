@@ -64,15 +64,25 @@ class TestEscalationInJourney:
         assert fill.ok
         assert "agent completed" in fill.detail
 
-    def test_agent_give_up_fails_check_with_agent_gave_up(self):
+    def test_agent_give_up_at_fill_search_uses_safe_results_url_fallback(self):
         browser = _happy_browser(fail_selectors={"data-date"})
+        journey = _journey_with_agent(
+            browser, [AgentAction(type=AgentActionType.GIVE_UP, value="hopeless")]
+        )
+        result = journey.run(make_booking())
+        assert result.ok
+        assert result.agent_assisted
+        fill = next(o for o in result.outcomes if o.step is JourneyStep.FILL_SEARCH)
+        assert "exact search-results URL" in fill.detail
+
+    def test_agent_give_up_at_other_step_remains_terminal(self):
+        browser = _happy_browser(fail_selectors={"property-card"})
         journey = _journey_with_agent(
             browser, [AgentAction(type=AgentActionType.GIVE_UP, value="hopeless")]
         )
         result = journey.run(make_booking())
         assert not result.ok
         assert result.failure_code is FailureCode.AGENT_GAVE_UP
-        assert result.agent_assisted
 
     def test_budget_breach_during_escalation_maps_to_budget_exceeded(self):
         # SUBMIT_SEARCH has a real postcondition (property cards visible) that the

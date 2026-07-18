@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
     AgentBudget,
     AgentSettings,
     ElementInfo,
+    TraceKind,
 )
-from booksaver.domain.check_result import FailureCode
+from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
 from booksaver.domain.journey import JourneyStep
 from booksaver.monitor.browser_agent import BrowserAgent
 from booksaver.monitor.trace import TraceRecorder
@@ -56,22 +59,38 @@ class TestScreenshotRequestCap:
 
 class TestLoopDetection:
     def test_repeated_identical_action_gives_up_before_budget(self):
-        agent, brain, _ = _agent(_browser(), [_click()] * 10)
+        browser = _browser()
+        agent, brain, _ = _agent(browser, [_click()] * 10)
         result = agent.complete_step(
             JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
         )
         assert result.failure_code is FailureCode.AGENT_GAVE_UP
         assert "loop" in result.detail.lower()
         assert len(brain.decisions) == 5
+        # Once two identical clicks fail verification, later copies are refused
+        # instead of spending browser time clicking the same element again.
+        executed = [detail for kind, detail in browser.actions if kind == "act"]
+        assert len(executed) == 2
 
-    def test_loop_hint_escalates_to_screenshot(self):
+    def test_refused_duplicate_is_traced_and_refreshes_screenshot(self):
         browser = _browser()
-        agent, brain, _ = _agent(browser, [_click()] * 5)
-        agent.complete_step(
+        agent, brain, recorder = _agent(browser, [_click()] * 5)
+        result = agent.complete_step(
             JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
         )
-        # fourth decision (index 3) follows three identical unverified clicks
+        assert result.failure_code is FailureCode.AGENT_GAVE_UP
+        # Third proposal is refused after two executions. The next decision gets
+        # a fresh screenshot and the refusal is present in the durable trace.
         assert brain.decisions[3].screenshot is not None
+        trace = recorder.finish(
+            CheckResult.failure(
+                "b-1",
+                datetime.now(UTC),
+                FailureReason(code=result.failure_code, detail=result.detail),
+            )
+        )
+        assert any(event.kind is TraceKind.AGENT_BLOCKED for event in trace.events)
+        assert any("repeated action refused" in event.detail for event in trace.events)
 
 
 class TestLoopOutcomes:
@@ -166,7 +185,7 @@ class TestScreenshotTiers:
 
 
 class TestGuardInLoop:
-    def test_blocked_click_is_refused_and_loop_continues(self):
+    def test_blocked_click_is_terminal(self):
         browser = _browser()
         agent, brain, _ = _agent(
             browser,
@@ -177,7 +196,8 @@ class TestGuardInLoop:
         )
         # the Book-now click never reached the browser
         assert not any("e1" in detail for kind, detail in browser.actions if kind == "act")
-        assert result.failure_code is FailureCode.AGENT_GAVE_UP
+        assert result.failure_code is FailureCode.BLOCKED_ACTION
+        assert len(brain.decisions) == 1
 
     def test_landing_on_blocked_url_fails_check(self):
         browser = _browser()

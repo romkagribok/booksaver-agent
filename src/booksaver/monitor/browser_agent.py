@@ -27,6 +27,10 @@ _FAILURES_BEFORE_SCREENSHOT = 2
 # an already-correct search box). Nudge early, give up before burning the step budget.
 _LOOP_HINT_AFTER = 3
 _LOOP_GIVE_UP_AFTER = 5
+# Never execute the same successful-but-unverified browser action more than
+# twice. After that, the model receives a fresh screenshot and a hard refusal
+# so it must choose a different control instead of burning browser time.
+_REPEAT_ACTION_EXECUTION_LIMIT = 2
 # Screenshot requests are expensive (2x step cost) and agents can spam them when stuck.
 _MAX_SCREENSHOT_REQUESTS = 2
 
@@ -124,16 +128,48 @@ class BrowserAgent:
                     history.append("screenshot requested; provided next turn")
                     continue
 
+                action_key = _action_key(action)
+                recent_action_keys.append(action_key)
+                proposed_streak = _action_streak(recent_action_keys)
+                if proposed_streak > _REPEAT_ACTION_EXECUTION_LIMIT:
+                    detail = (
+                        f"repeated action refused: {action_key} already failed to "
+                        "progress the verified step goal"
+                    )
+                    self._recorder.agent_blocked(step, detail)
+                    history.append(
+                        f"action refused by loop guard: {detail}. Choose a DIFFERENT "
+                        "element or action based on the fresh screenshot."
+                    )
+                    if proposed_streak >= _LOOP_GIVE_UP_AFTER:
+                        result_detail = (
+                            f"agent stuck in loop at {step.value}: repeated "
+                            f"{action_key} {_LOOP_GIVE_UP_AFTER} times without progress"
+                        )
+                        self._recorder.agent_result(step, result_detail)
+                        return EscalationResult(
+                            ok=False,
+                            detail=result_detail,
+                            failure_code=FailureCode.AGENT_GAVE_UP,
+                            used_screenshot=used_screenshot,
+                        )
+                    tier2_pending = True
+                    continue
+
                 blocked = blocked_action_reason(action, observation)
                 if blocked is not None:
                     self._recorder.agent_blocked(step, blocked)
-                    history.append(f"action refused by guard: {blocked}")
-                    continue  # the agent may pick another action within budget
+                    detail = f"action refused by guard: {blocked}"
+                    self._recorder.agent_result(step, detail)
+                    return EscalationResult(
+                        ok=False,
+                        detail=detail,
+                        failure_code=FailureCode.BLOCKED_ACTION,
+                        used_screenshot=used_screenshot,
+                    )
 
                 try:
                     self._browser.act(action)
-                    action_key = _action_key(action)
-                    recent_action_keys.append(action_key)
                     history.append(f"did {action.type.value} ref={action.ref}")
                     consecutive_failures = 0
                 except Exception as exc:

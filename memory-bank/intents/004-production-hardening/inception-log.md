@@ -77,3 +77,11 @@ and avoid committing or pushing until the completed artifact set and code are re
 
 Depends on the completed search journey and agentic escalation capabilities in intent 002 and the
 completed Telegram/VPS capabilities in intent 003.
+
+## Construction Outcome
+
+Bolt `013-production-reliability` completed on 2026-07-18T18:12:12Z after the mandatory Plan,
+Implement, and Test checkpoints. All four stories (US-037–US-040) are complete. Verification passed:
+650 tests, Ruff, mypy across 72 source files, wheel resource inspection, and isolated installed-wheel
+initialization of a fresh schema-v8 SQLite database. The implementation awaits git delivery and the
+operator's live Telegram/VPS smoke test.

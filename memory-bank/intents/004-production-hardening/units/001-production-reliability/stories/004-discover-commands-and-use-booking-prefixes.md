@@ -2,11 +2,11 @@
 id: 004-discover-commands-and-use-booking-prefixes
 unit: 001-production-reliability
 intent: 004-production-hardening
-status: ready
+status: complete
 priority: must
 created: 2026-07-18T17:48:48Z
 assigned_bolt: 013-production-reliability
-implemented: false
+implemented: true
 ---
 
 # Story: Discover Commands and Use Booking Prefixes

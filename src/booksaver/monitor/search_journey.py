@@ -280,6 +280,24 @@ class SearchJourney:
                         self._record(outcome)
                         outcomes.append(outcome)
                         continue
+                    if self._can_use_exact_search_fallback(step, escalation.failure_code):
+                        # The agent received screenshots and had a chance to repair the
+                        # homepage form. If Booking changes the calendar/occupancy UI so
+                        # thoroughly that it still loops, the next scripted step remains
+                        # a safe, read-only escape hatch: it opens a search-results URL
+                        # built from the booking's exact dates and occupancy. This is not
+                        # a checkout/reservation URL and the normal property/context
+                        # verification steps still run afterward.
+                        agent_assisted = True
+                        detail = (
+                            f"agent recovery did not complete the form ({escalation.detail}); "
+                            "continuing via exact search-results URL"
+                        )
+                        logger.warning("Journey %s fallback: %s", step.value, detail)
+                        outcome = StepOutcome.success(step, detail)
+                        self._record(outcome)
+                        outcomes.append(outcome)
+                        continue
                     outcome = StepOutcome.failed(step, escalation.detail)
                     self._record(outcome)
                     outcomes.append(outcome)
@@ -302,6 +320,22 @@ class SearchJourney:
             self._record(outcome)
             outcomes.append(outcome)
         return JourneyResult(outcomes=tuple(outcomes), agent_assisted=agent_assisted)
+
+    @staticmethod
+    def _can_use_exact_search_fallback(
+        step: JourneyStep, failure_code: FailureCode | None
+    ) -> bool:
+        """Whether a failed agent attempt can safely defer form state to submit.
+
+        Only ``fill_search`` has an equivalent deterministic continuation: the
+        following step builds a read-only Booking.com search URL from trusted
+        booking data. Guard violations remain terminal and every later journey
+        postcondition still has to pass.
+        """
+        return step is JourneyStep.FILL_SEARCH and failure_code in {
+            FailureCode.AGENT_GAVE_UP,
+            FailureCode.BUDGET_EXCEEDED,
+        }
 
     def _record(self, outcome: StepOutcome) -> None:
         if self._recorder is not None:
