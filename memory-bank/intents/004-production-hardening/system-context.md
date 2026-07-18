@@ -1,9 +1,9 @@
 ---
 intent: 004-production-hardening
 phase: inception
-status: context-defined
+status: complete
 created: 2026-07-18T17:48:48Z
-updated: 2026-07-18T17:48:48Z
+updated: 2026-07-18T19:25:20Z
 ---
 
 # Production Hardening - System Context
@@ -15,6 +15,10 @@ browser automation, an Anthropic-backed browser agent, and local SQLite persiste
 hardens the seams revealed by a real VPS check: agent recovery from Booking.com layout drift,
 trusted-data continuation after bounded recovery fails, completeness of the packaged persistence
 resource, and consistency of Telegram's command and identifier surface.
+
+The second live VPS trace refined the journey boundary: trusted search-results navigation is now the
+primary entry, while the LLM remains the adaptive layer for result, property, room-view, and offer
+interpretation drift. The homepage form is no longer an active automation dependency.
 
 ## Actors
 
@@ -63,7 +67,7 @@ flowchart LR
     Scheduler["Scheduler"] --> Journey["Search journey"]
     Store["SQLite booking and trace store"] --> Scheduler
     Gateway <--> Store
-    Journey -- "scripted step fails" --> Agent["Screenshot-aware browser agent"]
+    Journey -- "downstream scripted step fails" --> Agent["Screenshot-aware browser agent"]
     Agent <--> Anthropic["Anthropic API"]
     Agent --> Guard["Action guard and loop guard"]
     Guard --> Browser["Playwright browser adapter"]
@@ -78,6 +82,8 @@ flowchart LR
 
 - The LLM is the primary adaptive recovery path for layout drift, but it cannot expand its own
   authority: browser actions remain allowlisted and destructive actions remain forbidden.
+- Search entry uses Booking.com's results URL built from persisted data; homepage form interaction is
+  not a prerequisite, and the registered property URL is not used as a direct price-source shortcut.
 - Exact booking dates and occupancy originate only from persisted booking data.
 - A recovery continuation cannot skip property/context verification or offer-equivalence rules.
 - Telegram booking lookup is always scoped to the authenticated Telegram user.

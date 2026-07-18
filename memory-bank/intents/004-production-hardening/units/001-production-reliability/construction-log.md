@@ -2,7 +2,7 @@
 unit: 001-production-reliability
 intent: 004-production-hardening
 created: 2026-07-18T17:59:20Z
-last_updated: 2026-07-18T18:12:29Z
+last_updated: 2026-07-18T19:25:20Z
 ---
 
 # Construction Log: production-reliability
@@ -21,12 +21,14 @@ last_updated: 2026-07-18T18:12:29Z
 | Date | Action | Change | Reason | Approved |
 |------|--------|--------|--------|----------|
 | 2026-07-18T17:59:20Z | None | Original one-bolt plan retained | Four cohesive hardening stories share one deployable/testable daemon slice | Checkpoint 3 approved |
+| 2026-07-18T18:57:24Z | Append bolt | Added `014-production-reliability` for US-041 | Production traces show completed US-038 falls back too late and exhausts the shared budget before property-page recovery | Product owner explicitly directed query-first search and AI-DLC execution |
 
 ## Current Bolt Structure
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
 | 013-production-reliability | US-037–US-040 | ✅ complete | No |
+| 014-production-reliability | US-041 | ✅ complete | Yes — corrective production evidence |
 
 ## Execution History
 
@@ -37,17 +39,22 @@ last_updated: 2026-07-18T18:12:29Z
 | 2026-07-18T18:08:02Z | 013-production-reliability | stage-complete | implement → test |
 | 2026-07-18T18:11:59Z | 013-production-reliability | stage-complete | test → completion gate |
 | 2026-07-18T18:12:12Z | 013-production-reliability | completed | All 3 stages done; official completion script succeeded |
+| 2026-07-18T18:57:24Z | 014-production-reliability | started | Stage 1: plan; trusted-query-first correction |
+| 2026-07-18T19:14:54Z | 014-production-reliability | stage-complete | Plan approved; advanced to implement |
+| 2026-07-18T19:22:47Z | 014-production-reliability | stage-complete | Implementation approved; advanced to test |
+| 2026-07-18T19:25:07Z | 014-production-reliability | stage-complete | Test approved; completion gate authorized |
+| 2026-07-18T19:25:20Z | 014-production-reliability | completed | All 3 stages done; official completion script succeeded |
 
 ## Execution Summary
 
 | Metric | Value |
 |--------|-------|
 | Original bolts planned | 1 |
-| Current bolt count | 1 |
-| Bolts completed | 1 |
+| Current bolt count | 2 |
+| Bolts completed | 2 |
 | Bolts in progress | 0 |
 | Bolts remaining | 0 |
-| Replanning events | 0 |
+| Replanning events | 1 |
 
 ## Notes
 
@@ -58,3 +65,8 @@ reconciled, and documented the actual implementation before its checkpoint appro
 Bolt 013 completed after all three mandatory human checkpoints. Verification evidence is recorded in
 `memory-bank/bolts/013-production-reliability/test-walkthrough.md`: 650 tests, Ruff, mypy, wheel
 inspection, and isolated fresh-database initialization all passed.
+
+Bolt 014 completed after all three mandatory human checkpoints. Verification evidence is recorded in
+`memory-bank/bolts/014-production-reliability/test-walkthrough.md`: 633 tests, Ruff, and mypy across
+72 source files passed. The lower test count reflects removal of obsolete homepage calendar/form tests;
+query construction, active step ordering, downstream LLM recovery, and safety coverage replace them.

@@ -1,9 +1,9 @@
 ---
 intent: 004-production-hardening
 phase: inception
-status: units-decomposed
+status: complete
 created: 2026-07-18T17:48:48Z
-updated: 2026-07-18T17:48:48Z
+updated: 2026-07-18T19:25:20Z
 ---
 
 # Production Hardening - Unit Decomposition
@@ -20,7 +20,7 @@ daemon distribution.
 continuation for the search form, make the installed package self-contained, and align Telegram's
 documented and accepted identifiers.
 
-**Assigned requirements**: FR-1, FR-2, FR-3, FR-4 (all requirements assigned exactly once).
+**Assigned requirements**: FR-1, FR-2, FR-3, FR-4, FR-5 (all requirements assigned exactly once).
 
 **Stories**:
 
@@ -28,6 +28,7 @@ documented and accepted identifiers.
 - US-038: Continue `fill_search` from trusted booking data.
 - US-039: Package the persistence schema.
 - US-040: Discover commands and use displayed booking identifiers.
+- US-041: Enter search from the trusted Booking.com results query.
 
 **Deliverables**:
 
@@ -35,6 +36,7 @@ documented and accepted identifiers.
 - Safe exact-data search continuation with normal downstream verification.
 - Wheel package-data declaration and packaging regression test.
 - Complete Telegram help plus user-scoped short-ID resolution.
+- Query-driven search entry that preserves downstream LLM adaptation and verification.
 - Automated regression evidence and AI-DLC construction artifacts.
 
 **Dependencies**:
@@ -53,6 +55,7 @@ documented and accepted identifiers.
 | FR-2 | `001-production-reliability` | Changes the same search-journey failure path |
 | FR-3 | `001-production-reliability` | Ensures the hardened daemon is deployable from its wheel |
 | FR-4 | `001-production-reliability` | Aligns the deployed Telegram operational surface |
+| FR-5 | `001-production-reliability` | Corrects the search-entry ordering revealed by live VPS traces |
 
 ## Unit Dependency Graph
 
@@ -64,9 +67,10 @@ flowchart LR
 
 ## Execution Order
 
-1. Execute bolt `013-production-reliability` for all four cohesive hardening stories.
-2. Review automated/static checks and built-wheel inspection.
-3. After human approval and git delivery, rebuild and smoke-test the VPS container.
+1. Bolt `013-production-reliability` completed the initial four hardening stories.
+2. Execute corrective bolt `014-production-reliability` for trusted-query-first search entry.
+3. Review automated/static checks and ADR amendment evidence.
+4. After human approval and git delivery, rebuild and smoke-test the VPS container.
 
 ## Independence Validation
 

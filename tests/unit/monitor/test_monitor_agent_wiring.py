@@ -77,11 +77,11 @@ def _monitor(
 class TestAgentAssistedMarker:
     def test_agent_assisted_success_marked_agent(self):
         browser = _happy_browser()
-        browser.fail_selectors = {"data-date"}
+        browser.fail_selectors = {"property-card"}
 
         def _fix(b: FakeInteractiveBrowser, action: AgentAction) -> None:
             b.fail_selectors.clear()
-            b.page_text = f"{b.page_text}\nSep 1 — Sep 5"
+            b.present_selectors.add('[data-testid="property-card"]')
 
         browser.on_act = _fix
         brain = FakeAgentBrain([AgentAction(type=AgentActionType.CLICK, ref="e0")])
@@ -97,10 +97,10 @@ class TestAgentAssistedMarker:
 
     def test_without_brain_step_failures_stay_scripted_codes(self):
         browser = _happy_browser()
-        browser.fail_selectors = {"data-date"}
+        browser.fail_selectors = {"property-card"}
         monitor = _monitor(browser, brain=None)
         result = monitor.run_check(make_booking())
-        assert result.failure_reason.code is FailureCode.STEP_FAILED
+        assert result.failure_reason.code is FailureCode.NAVIGATION_ERROR
 
 
 class TestTracePersistence:
@@ -111,16 +111,16 @@ class TestTracePersistence:
         [trace] = trace_repo.traces
         assert trace.check_id == result.check_id
         kinds = [e.kind for e in trace.events]
-        assert kinds.count(TraceKind.JOURNEY_STEP) == 8  # all steps recorded
+        assert kinds.count(TraceKind.JOURNEY_STEP) == 5  # all active steps recorded
         assert kinds[-1] is TraceKind.CHECK_RESULT
 
     def test_escalation_events_appear_in_trace(self):
         browser = _happy_browser()
-        browser.fail_selectors = {"data-date"}
+        browser.fail_selectors = {"property-card"}
 
         def _fix(b: FakeInteractiveBrowser, action: AgentAction) -> None:
             b.fail_selectors.clear()
-            b.page_text = f"{b.page_text}\nSep 1 — Sep 5"
+            b.present_selectors.add('[data-testid="property-card"]')
 
         browser.on_act = _fix
         trace_repo = FakeCheckTraceRepository()

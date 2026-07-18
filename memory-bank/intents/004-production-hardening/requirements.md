@@ -3,7 +3,7 @@ intent: 004-production-hardening
 phase: inception
 status: complete
 created: 2026-07-18T17:30:28Z
-updated: 2026-07-18T18:12:29Z
+updated: 2026-07-18T19:25:20Z
 ---
 
 # Requirements: Production Hardening
@@ -15,6 +15,12 @@ real production check. The deployed agent successfully reached Booking.com, but 
 variation caused the scripted `fill_search` step to fail and the screenshot-aware LLM agent to repeat
 the same click until its loop guard stopped the run. The deployment also exposed a missing packaged
 SQLite schema resource and Telegram discoverability/usability gaps.
+
+Subsequent VPS evidence showed that FR-2's continuation is safe and reaches the exact property, but
+the ordering is defective: homepage form recovery consumed 348 of a 360-second shared check budget
+before taking the trusted-query continuation, leaving no useful budget for the ambiguous property
+page. FR-5 corrects that ordering by making the same Booking.com results query the primary search
+entry while retaining the results, property, context, room, and offer verification journey.
 
 This is a brown-field reliability enhancement and defect-fix intent. It preserves the existing
 architecture and safety model: the LLM remains the adaptive recovery mechanism for layout drift,
@@ -29,6 +35,7 @@ purchase action becomes autonomous.
 | Keep agent recovery bounded and safe | Repeated identical actions are detected before five duplicate browser executions, while forbidden actions and hard budgets remain terminal | Must |
 | Make the VPS artifact self-contained | A built wheel contains the SQLite schema required to initialize a fresh `/data` volume | Must |
 | Make Telegram operations discoverable and usable | `/start` and `/help` expose all supported commands, and displayed short booking IDs work with `/checks` when uniquely resolvable for that user | Must |
+| Reserve adaptive recovery for price-bearing pages | No homepage form interaction occurs; trusted results navigation leaves the shared LLM/time budget available for downstream layout or interpretation drift | Must |
 
 ---
 
@@ -101,6 +108,27 @@ purchase action becomes autonomous.
 - **Priority**: Must
 - **Related Stories**: US-040
 
+### FR-5: Enter live searches through the trusted Booking.com results query
+
+- **Description**: Each price check must begin with Booking.com's read-only search-results URL built
+  from persisted property, date, and occupancy values. It must not operate or recover the homepage
+  form before that navigation. This changes the entry mechanism, not the price source: BookSaver must
+  still select the exact property from Booking.com's fresh results, open that result's property link,
+  verify context, and read equivalent refundable room offers before savings evaluation.
+- **Acceptance Criteria**:
+  - The active journey performs no homepage search-box, autocomplete, calendar, occupancy, or submit
+    interaction.
+  - The results URL is constructed solely from persisted property name, check-in, check-out, adults,
+    children, and rooms.
+  - Exact result-card property matching, fresh result-link navigation, date/occupancy verification,
+    and room-offer extraction remain mandatory.
+  - Existing guarded screenshot-capable LLM recovery remains available when a downstream scripted
+    step encounters layout or interpretation drift.
+  - A bot wall, mismatched result/context, missing equivalent refundable offer, or budget breach fails
+    closed and cannot create savings.
+- **Priority**: Must
+- **Related Stories**: US-041
+
 ---
 
 ## Non-Functional Requirements
@@ -111,7 +139,8 @@ purchase action becomes autonomous.
 |-------------|--------|--------|
 | Duplicate-action containment | Identical browser executions before intervention | At most 2 per unverified action sequence |
 | Safe degradation | Recovery paths that preserve downstream verification | 100%; no offer bypasses context/equivalence checks |
-| Regression safety | Automated suite after implementation | 100% pass (645/645 at inception evidence point) |
+| Regression safety | Automated suite after implementation | 100% pass (650/650 at correction evidence point) |
+| Budget preservation | Homepage form LLM/time consumption | 0 calls and no form interaction |
 
 ### Safety and Security
 
@@ -137,10 +166,9 @@ purchase action becomes autonomous.
 - Preserve the single-process daemon, synchronous Playwright adapter, plain Anthropic tool-use loop,
   SQLite persistence, and existing module boundaries.
 - Use the existing exact search-URL builder and verification pipeline; do not introduce a second
-  independent scraping strategy.
-- The LLM remains the primary adaptation mechanism after scripted failure. Deterministic logic may
-  bound repeated actions and provide a safe continuation from trusted data, but must not interpret
-  layout-specific controls as the sole recovery strategy.
+  independent scraping strategy or use a registered-property deep link as the price source.
+- The LLM remains the primary adaptation mechanism after downstream scripted failure. Do not spend
+  its shared budget operating the homepage form when persisted data already expresses the same search.
 - Add no runtime dependency and create no new architectural decision unless construction identifies
   a genuine deviation from ADR-013 through ADR-017.
 
@@ -159,6 +187,7 @@ purchase action becomes autonomous.
 | Booking.com's read-only search URL continues to accept property, date, and occupancy query parameters | Safe continuation could land on a generic or mismatched page | Existing property and search-context verification must fail the check before extraction |
 | A fresh screenshot plus explicit duplicate refusal helps the LLM choose a different action | The model may still propose the same action | Keep the hard proposal limit and return `AGENT_GAVE_UP` without further browser execution |
 | Eight UUID characters are normally unique within one user's small booking set | Two bookings may share a prefix | Resolve only unique prefixes; ambiguous prefixes fail closed |
+| Booking.com's results URL remains a supported representation of its visible search | URL behavior may drift | Keep named results/property verification seams and guarded LLM recovery; fail closed on mismatch |
 
 ---
 
@@ -169,6 +198,7 @@ purchase action becomes autonomous.
 | Should layout robustness be implemented as more calendar-specific selectors or through the screenshot-aware LLM? | Product owner | Resolved 2026-07-18: prioritize the screenshot-aware LLM so ordinary layout changes can adapt; deterministic code only bounds loops and preserves safe trusted-data continuation. |
 | May a recovery bypass safety or downstream offer verification to complete more checks? | Product owner / architecture constraints | Resolved: no. Guard failures remain terminal and all normal property/context/equivalence checks remain mandatory. |
 | Should this work alter completed intents 002 and 003 retrospectively? | AI-DLC process | Resolved: no. Record it as intent 004 with explicit dependencies on the completed capabilities. |
+| After the trusted-query fallback succeeded but arrived too late, should BookSaver continue operating the homepage form? | Product owner | Resolved 2026-07-18: no. Promote the trusted Booking.com results query to primary entry and preserve LLM recovery for downstream pages. |
 
 ---
 

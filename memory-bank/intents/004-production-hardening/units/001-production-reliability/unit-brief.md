@@ -6,7 +6,7 @@ status: complete
 unit_type: cli
 default_bolt_type: simple-construction-bolt
 created: 2026-07-18T17:48:48Z
-updated: 2026-07-18T18:12:29Z
+updated: 2026-07-18T19:25:20Z
 ---
 
 # Unit Brief: Production Reliability
@@ -26,6 +26,8 @@ as the adaptive layer for Booking.com layout changes and preserving every existi
 - Include `schema.sql` in built Python distributions.
 - Complete Telegram command discovery and resolve unique caller-owned booking prefixes.
 - Add regression tests and record wheel/static/test evidence.
+- Enter Booking.com searches through the persisted trusted query without homepage form interaction.
+- Preserve guarded LLM adaptation for results, property, room-view, and extraction drift.
 
 ### Out of Scope
 
@@ -75,8 +77,8 @@ as the adaptive layer for Booking.com layout changes and preserving every existi
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 4 |
-| Must Have | 4 |
+| Total Stories | 5 |
+| Must Have | 5 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -88,6 +90,7 @@ as the adaptive layer for Booking.com layout changes and preserving every existi
 | US-038 | Continue `fill_search` from trusted booking data | Must | Complete |
 | US-039 | Package the persistence schema | Must | Complete |
 | US-040 | Discover commands and use displayed booking identifiers | Must | Complete |
+| US-041 | Enter search from trusted query | Must | Complete |
 
 ---
 
@@ -171,7 +174,7 @@ stdlib Telegram transport, setuptools wheel configuration, pytest, Ruff, and myp
 ### Quality
 
 - [x] All acceptance criteria have automated coverage where practical.
-- [x] AI-DLC artifacts and the global story index remain consistent for intent 004.
+- [x] AI-DLC artifacts and the global story index remain consistent for the US-041 correction.
 - [x] Code and documentation are reviewed and approved before commit/push.
 
 ---
@@ -181,6 +184,7 @@ stdlib Telegram transport, setuptools wheel configuration, pytest, Ruff, and myp
 | Bolt | Type | Stories | Objective |
 |------|------|---------|-----------|
 | `013-production-reliability` | Simple Construction | US-037–US-040 | Deliver and verify the cohesive production-hardening slice |
+| `014-production-reliability` | Simple Construction | US-041 | Promote trusted results navigation to primary search entry and preserve downstream LLM recovery |
 
 ## Notes
 

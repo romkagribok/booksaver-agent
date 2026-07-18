@@ -28,7 +28,7 @@ def _happy_browser(**overrides) -> FakeInteractiveBrowser:
         **overrides,
     )
     browser.property_url = _PROPERTY_URL
-    browser.elements = (ElementInfo(ref="e0", role="button", label="Accept dates"),)
+    browser.elements = (ElementInfo(ref="e0", role="button", label="Show results"),)
     return browser
 
 
@@ -46,68 +46,69 @@ def _journey_with_agent(
 
 
 class TestEscalationInJourney:
-    def test_agent_completes_failed_step_and_journey_continues(self):
-        browser = _happy_browser(fail_selectors={"data-date"})  # FILL_SEARCH breaks
+    def test_agent_recovers_results_layout_and_journey_continues(self):
+        browser = _happy_browser(fail_selectors={"property-card"})
 
         def _fix(b: FakeInteractiveBrowser, action: AgentAction) -> None:
-            b.fail_selectors.clear()  # agent "closed the datepicker overlay"
-            b.page_text = f"{b.page_text}\nSep 1 — Sep 5"
+            b.fail_selectors.clear()
+            b.present_selectors.add('[data-testid="property-card"]')
 
         browser.on_act = _fix
         journey = _journey_with_agent(
             browser, [AgentAction(type=AgentActionType.CLICK, ref="e0")]
         )
+
         result = journey.run(make_booking())
+
         assert result.ok
         assert result.agent_assisted
-        fill = next(o for o in result.outcomes if o.step is JourneyStep.FILL_SEARCH)
-        assert fill.ok
-        assert "agent completed" in fill.detail
-
-    def test_agent_give_up_at_fill_search_uses_safe_results_url_fallback(self):
-        browser = _happy_browser(fail_selectors={"data-date"})
-        journey = _journey_with_agent(
-            browser, [AgentAction(type=AgentActionType.GIVE_UP, value="hopeless")]
+        submit = next(
+            outcome
+            for outcome in result.outcomes
+            if outcome.step is JourneyStep.SUBMIT_SEARCH
         )
-        result = journey.run(make_booking())
-        assert result.ok
-        assert result.agent_assisted
-        fill = next(o for o in result.outcomes if o.step is JourneyStep.FILL_SEARCH)
-        assert "exact search-results URL" in fill.detail
+        assert submit.ok
+        assert "agent completed" in submit.detail
 
-    def test_agent_give_up_at_other_step_remains_terminal(self):
+    def test_agent_give_up_at_results_step_is_terminal(self):
         browser = _happy_browser(fail_selectors={"property-card"})
         journey = _journey_with_agent(
             browser, [AgentAction(type=AgentActionType.GIVE_UP, value="hopeless")]
         )
+
         result = journey.run(make_booking())
+
         assert not result.ok
         assert result.failure_code is FailureCode.AGENT_GAVE_UP
+        assert result.failed_step.step is JourneyStep.SUBMIT_SEARCH
 
-    def test_budget_breach_during_escalation_maps_to_budget_exceeded(self):
-        # SUBMIT_SEARCH has a real postcondition (property cards visible) that the
-        # agent's clicks never satisfy, so the loop runs until the step cap trips.
+    def test_budget_breach_during_results_recovery_is_terminal(self):
         browser = _happy_browser(fail_selectors={"property-card"})
         journey = _journey_with_agent(
             browser,
             [AgentAction(type=AgentActionType.CLICK, ref="e0")] * 10,
             settings=AgentSettings(max_steps=2),
         )
+
         result = journey.run(make_booking())
+
         assert result.failure_code is FailureCode.BUDGET_EXCEEDED
+        assert result.failed_step.step is JourneyStep.SUBMIT_SEARCH
 
     def test_bot_wall_is_never_escalated(self):
         browser = _happy_browser()
         browser.page_text = "please verify you are human - hcaptcha"
         script = [AgentAction(type=AgentActionType.CLICK, ref="e0")]
         journey = _journey_with_agent(browser, script)
+
         result = journey.run(make_booking())
+
         assert result.failure_code is FailureCode.BOT_WALL
         assert not result.agent_assisted
-        assert script  # brain was never consulted
+        assert script
 
     def test_scripted_only_run_is_not_agent_assisted(self):
-        journey = _journey_with_agent(_happy_browser(), [])
-        result = journey.run(make_booking())
+        result = _journey_with_agent(_happy_browser(), []).run(make_booking())
+
         assert result.ok
         assert not result.agent_assisted

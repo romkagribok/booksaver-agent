@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from urllib.parse import parse_qs, urlparse
 
-from booksaver.domain.agent import EscalationResult
 from booksaver.domain.check_result import FailureCode
 from booksaver.domain.journey import JourneyStep
 from booksaver.domain.session import SessionMode
@@ -14,6 +13,13 @@ _PROPERTY_URL = (
     "https://www.booking.com/hotel/test.html"
     "?checkin=2026-09-01&checkout=2026-09-05&group_adults=2"
 )
+_ACTIVE_STEPS = [
+    JourneyStep.SUBMIT_SEARCH,
+    JourneyStep.LOCATE_PROPERTY,
+    JourneyStep.OPEN_PROPERTY,
+    JourneyStep.VERIFY_CONTEXT,
+    JourneyStep.READ_ROOM_TABLE,
+]
 
 
 def _happy_browser(**overrides) -> FakeInteractiveBrowser:
@@ -27,157 +33,71 @@ def _happy_browser(**overrides) -> FakeInteractiveBrowser:
 
 
 class TestHappyPath:
-    def test_all_steps_succeed(self):
-        journey = SearchJourney(_happy_browser())
-        result = journey.run(make_booking())
+    def test_all_active_steps_succeed(self):
+        result = SearchJourney(_happy_browser()).run(make_booking())
+
         assert result.ok
-        assert [o.step for o in result.outcomes] == list(JourneyStep)
-        assert all(o.ok for o in result.outcomes)
+        assert [outcome.step for outcome in result.outcomes] == _ACTIVE_STEPS
+        assert all(outcome.ok for outcome in result.outcomes)
+
+    def test_first_navigation_is_exact_results_query(self):
+        browser = _happy_browser()
+
+        SearchJourney(browser).run(make_booking())
+
+        first_url = next(value for kind, value in browser.actions if kind == "goto")
+        parsed = urlparse(first_url)
+        query = parse_qs(parsed.query)
+        assert parsed.path == "/searchresults.html"
+        assert query == {
+            "ss": ["Hotel Test"],
+            "checkin": ["2026-09-01"],
+            "checkout": ["2026-09-05"],
+            "group_adults": ["2"],
+            "group_children": ["0"],
+            "no_rooms": ["1"],
+            "sb": ["1"],
+            "src": ["searchresults"],
+        }
+
+    def test_homepage_form_is_never_operated(self):
+        browser = _happy_browser(
+            fail_selectors={
+                'input[name="ss"]',
+                "searchbox-datepicker",
+                "occupancy-config",
+                'button[type="submit"]',
+            }
+        )
+
+        result = SearchJourney(browser).run(make_booking())
+
+        assert result.ok
+        assert not [action for action in browser.actions if action[0] in {"fill", "click", "press"}]
 
     def test_property_matched_by_normalised_name(self):
         browser = _happy_browser()
-        browser.titles = ["HOTEL TEST!"]  # punctuation/case differences still match
-        result = SearchJourney(browser).run(make_booking())
-        assert result.ok
+        browser.titles = ["HOTEL TEST!"]
 
-    def test_search_uses_property_name_and_dates(self):
-        browser = _happy_browser()
-        SearchJourney(browser).run(make_booking())
-        fills = [a for kind, a in browser.actions if kind == "fill"]
-        assert any("Hotel Test" in f for f in fills)
-        clicks = [a for kind, a in browser.actions if kind == "click"]
-        assert any('data-date="2026-09-01"' in c for c in clicks)
-        assert any('data-date="2026-09-05"' in c for c in clicks)
+        result = SearchJourney(browser).run(make_booking())
+
+        assert result.ok
 
 
 class TestStepFailures:
-    def test_home_page_unreachable_is_navigation_error(self):
-        browser = _happy_browser(fail_goto=True)
-        result = SearchJourney(browser).run(make_booking())
+    def test_results_navigation_failure_is_navigation_error(self):
+        result = SearchJourney(_happy_browser(fail_goto=True)).run(make_booking())
+
         assert not result.ok
         assert result.failure_code is FailureCode.NAVIGATION_ERROR
-        assert result.failed_step.step is JourneyStep.OPEN_HOME
-
-    def test_missing_search_box_fails_fill_search_step(self):
-        browser = _happy_browser(fail_selectors={'input[name="ss"]'})
-        result = SearchJourney(browser).run(make_booking())
-        assert not result.ok
-        # open_home waits for the search box, so the drift surfaces there
-        assert result.failed_step.step is JourneyStep.OPEN_HOME
-
-    def test_missing_date_cell_is_step_failed(self):
-        browser = FakeInteractiveBrowser(fail_selectors={"data-date"})
-        result = SearchJourney(browser).run(make_booking())
-        assert result.failure_code.value == "step_failed"
-        assert result.failed_step.step is JourneyStep.FILL_SEARCH
-
-    def test_agent_loop_at_fill_search_falls_back_to_exact_results_url(self):
-        class LoopingEscalator:
-            last_screenshot = b"png"
-
-            def __init__(self) -> None:
-                self.screenshot_first: bool | None = None
-
-            def complete_step(self, *args, **kwargs):
-                self.screenshot_first = kwargs["screenshot_first"]
-                return EscalationResult(
-                    ok=False,
-                    detail="agent stuck in loop at fill_search",
-                    failure_code=FailureCode.AGENT_GAVE_UP,
-                    used_screenshot=True,
-                )
-
-        browser = _happy_browser(
-            fail_selectors={"calendar-prev"},
-            calendar_month=date(2026, 11, 1),
-        )
-        escalator = LoopingEscalator()
-
-        result = SearchJourney(browser, escalator=escalator).run(make_booking())
-
-        assert result.ok
-        assert result.agent_assisted
-        assert escalator.screenshot_first is True
-        fill_outcome = next(o for o in result.outcomes if o.step is JourneyStep.FILL_SEARCH)
-        assert fill_outcome.ok
-        assert "exact search-results URL" in fill_outcome.detail
-        submitted_urls = [url for kind, url in browser.actions if kind == "goto"]
-        assert any(
-            "checkin=2026-09-01" in url
-            and "checkout=2026-09-05" in url
-            and "group_adults=2" in url
-            and "group_children=0" in url
-            and "no_rooms=1" in url
-            for url in submitted_urls
-        )
-
-    def test_agent_budget_exhaustion_at_fill_search_uses_exact_results_url(self):
-        class BudgetEscalator:
-            last_screenshot = b"png"
-
-            def complete_step(self, *args, **kwargs):
-                return EscalationResult(
-                    ok=False,
-                    detail="agent step cap exceeded",
-                    failure_code=FailureCode.BUDGET_EXCEEDED,
-                    used_screenshot=True,
-                )
-
-        browser = _happy_browser(fail_selectors={"data-date"})
-
-        result = SearchJourney(browser, escalator=BudgetEscalator()).run(make_booking())
-
-        assert result.ok
-        fill_outcome = next(o for o in result.outcomes if o.step is JourneyStep.FILL_SEARCH)
-        assert "exact search-results URL" in fill_outcome.detail
-
-    def test_guard_rejection_at_fill_search_remains_terminal(self):
-        class GuardedEscalator:
-            last_screenshot = b"png"
-
-            def complete_step(self, *args, **kwargs):
-                return EscalationResult(
-                    ok=False,
-                    detail="action refused by guard",
-                    failure_code=FailureCode.BLOCKED_ACTION,
-                    used_screenshot=True,
-                )
-
-        browser = _happy_browser(fail_selectors={"data-date"})
-
-        result = SearchJourney(browser, escalator=GuardedEscalator()).run(make_booking())
-
-        assert not result.ok
-        assert result.failure_code is FailureCode.BLOCKED_ACTION
-        assert result.failed_step.step is JourneyStep.FILL_SEARCH
-
-    def test_fallback_does_not_bypass_downstream_context_verification(self):
-        class LoopingEscalator:
-            last_screenshot = b"png"
-
-            def complete_step(self, *args, **kwargs):
-                return EscalationResult(
-                    ok=False,
-                    detail="agent stuck in loop",
-                    failure_code=FailureCode.AGENT_GAVE_UP,
-                    used_screenshot=True,
-                )
-
-        browser = _happy_browser(fail_selectors={"data-date"})
-        browser.property_url = (
-            "https://www.booking.com/hotel/test.html"
-            "?checkin=2026-09-02&checkout=2026-09-05&group_adults=2"
-        )
-
-        result = SearchJourney(browser, escalator=LoopingEscalator()).run(make_booking())
-
-        assert not result.ok
-        assert result.failed_step.step is JourneyStep.VERIFY_CONTEXT
+        assert result.failed_step.step is JourneyStep.SUBMIT_SEARCH
 
     def test_property_absent_from_results_is_property_not_found(self):
         browser = _happy_browser()
         browser.titles = ["Wrong Hotel", "Another Wrong Hotel"]
+
         result = SearchJourney(browser).run(make_booking())
+
         assert result.failure_code is FailureCode.PROPERTY_NOT_FOUND
         assert result.failed_step.step is JourneyStep.LOCATE_PROPERTY
         assert "Hotel Test" in result.failed_step.detail
@@ -188,71 +108,67 @@ class TestStepFailures:
             "https://www.booking.com/hotel/test.html"
             "?checkin=2026-09-02&checkout=2026-09-05&group_adults=2"
         )
+
         result = SearchJourney(browser).run(make_booking())
+
         assert result.failure_code is FailureCode.STEP_FAILED
         assert result.failed_step.step is JourneyStep.VERIFY_CONTEXT
 
-    def test_wrong_occupancy_in_url_fails_verify_context(self):
+    def test_wrong_occupancy_on_property_page_fails_verify_context(self):
         browser = _happy_browser()
         browser.property_url = (
             "https://www.booking.com/hotel/test.html"
             "?checkin=2026-09-01&checkout=2026-09-05&group_adults=4"
         )
+
         result = SearchJourney(browser).run(make_booking())
+
+        assert result.failure_code is FailureCode.STEP_FAILED
         assert result.failed_step.step is JourneyStep.VERIFY_CONTEXT
 
 
 class TestWallDetection:
-    def test_captcha_on_home_page_is_bot_wall(self):
+    def test_captcha_on_results_page_is_bot_wall(self):
         browser = _happy_browser()
         browser.page_text = "Please verify you are human to continue"
+
         result = SearchJourney(browser).run(make_booking())
+
         assert result.failure_code is FailureCode.BOT_WALL
-        assert result.failed_step.step is JourneyStep.DISMISS_OVERLAYS
+        assert result.failed_step.step is JourneyStep.SUBMIT_SEARCH
 
     def test_signed_out_page_classified_as_auth_required(self):
         browser = _happy_browser(fail_selectors={"property-card"})
         browser.page_text = "Log in to your account to continue"
+
         result = SearchJourney(browser).run(make_booking())
+
         assert result.failure_code is FailureCode.AUTH_REQUIRED
 
     def test_captcha_takes_priority_over_step_code(self):
         browser = _happy_browser(fail_selectors={"property-card"})
         browser.page_text = "unusual traffic detected - hcaptcha"
+
         result = SearchJourney(browser).run(make_booking())
+
         assert result.failure_code is FailureCode.BOT_WALL
 
-    def test_signed_out_page_never_classified_as_auth_required_when_logged_out(self):
-        # US-035/FR-8: AUTH_REQUIRED presupposes a session that dropped. With no
-        # session at all, a "sign in" banner is just the anonymous journey and
-        # must fall through to the step-specific failure code instead.
+    def test_signed_out_page_is_not_auth_failure_when_logged_out(self):
         browser = _happy_browser(fail_selectors={"property-card"})
         browser.page_text = "Log in to your account to continue"
+
         result = SearchJourney(browser, session_mode=SessionMode.LOGGED_OUT).run(
             make_booking()
         )
+
         assert result.failure_code is not FailureCode.AUTH_REQUIRED
 
-    def test_captcha_still_wins_over_step_code_when_logged_out(self):
+    def test_captcha_still_wins_when_logged_out(self):
         browser = _happy_browser(fail_selectors={"property-card"})
         browser.page_text = "unusual traffic detected - hcaptcha"
+
         result = SearchJourney(browser, session_mode=SessionMode.LOGGED_OUT).run(
             make_booking()
         )
+
         assert result.failure_code is FailureCode.BOT_WALL
-
-
-class TestOverlays:
-    def test_present_consent_banner_is_clicked(self):
-        browser = _happy_browser(present_selectors={"#onetrust-accept-btn-handler"})
-        result = SearchJourney(browser).run(make_booking())
-        assert result.ok
-        clicks = [a for kind, a in browser.actions if kind == "click"]
-        assert "#onetrust-accept-btn-handler" in clicks
-
-    def test_absent_overlays_do_not_fail_the_step(self):
-        result = SearchJourney(_happy_browser()).run(make_booking())
-        overlay = next(
-            o for o in result.outcomes if o.step is JourneyStep.DISMISS_OVERLAYS
-        )
-        assert overlay.ok

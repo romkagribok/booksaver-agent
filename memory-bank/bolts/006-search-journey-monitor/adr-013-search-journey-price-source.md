@@ -1,6 +1,6 @@
 # ADR-013: Full search journey replaces the manage page as the sole price source
 
-- **Status**: accepted
+- **Status**: amended by ADR-020
 - **Date**: 2026-07-05
 - **Bolt**: 006-search-journey-monitor (search-journey-monitor)
 
@@ -49,3 +49,11 @@ Checkpoint 1, deliberately choosing the journey over deep-linking):
   `BOT_WALL` is recorded distinctly and feeds the existing failure tracker/backoff.
 - The savings gate's semantics are preserved by verifying property/dates upstream and
   emitting only non-contradicting extracted fields (see ddd-01 mapping rules).
+
+## Amendment
+
+ADR-020 (2026-07-18) supersedes only the homepage form-entry requirement in Decision item 1 after
+production traces showed it consumed the shared agent budget before reaching the price-bearing
+property page. The amended journey enters through a Booking.com search-results query built from
+persisted data, then retains exact result selection, fresh property navigation, context verification,
+and room-table pricing. The manage page and direct registered-property deep links remain rejected.

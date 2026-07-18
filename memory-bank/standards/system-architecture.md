@@ -8,7 +8,7 @@ Use a single-process, local-first daemon architecture. Keep components modular i
 flowchart TB
     Config["LocalConfig (+ agent caps)"] --> Scheduler["Scheduler"]
     Scheduler --> Monitor["BookingComSearchMonitor"]
-    Monitor --> Journey["SearchJourney (scripted steps)"]
+    Monitor --> Journey["SearchJourney (trusted results query → verified property)"]
     Journey --> Browser["BrowserAutomation"]
     Journey -- "step failed" --> Agent["BrowserAgent (LLM, guarded)"]
     Agent --> Browser
@@ -23,8 +23,10 @@ flowchart TB
 
 ## Boundaries
 
-- Booking.com integration happens through browser automation only. Live prices come from
-  the full search journey (ADR-013); the manage page is never a price source.
+- Booking.com integration happens through browser automation only. Live prices come from a trusted
+  results query followed by exact property selection, fresh property navigation, context verification,
+  and room-rate extraction (ADR-013 amended by ADR-020); the homepage form, manage page, registered-
+  property deep link, and result-card headline price are not price sources.
 - The LLM is used for extraction and reasoning when DOM parsing is insufficient, and as a
   guarded browser agent when a scripted journey step fails (ADR-015/016): bounded action
   vocabulary, adapter-level denylist against reserve/checkout/payment/cancel, hard

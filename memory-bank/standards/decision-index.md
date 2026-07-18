@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-11T19:42:53Z
-total_decisions: 19
+last_updated: 2026-07-18T19:19:28Z
+total_decisions: 20
 ---
 
 # Decision Index
@@ -17,6 +17,14 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-020: Query-driven entry preserves the verified customer search
+- **Status**: accepted
+- **Date**: 2026-07-18
+- **Bolt**: 014-production-reliability (production-reliability)
+- **Path**: `bolts/014-production-reliability/adr-020-query-driven-search-entry.md`
+- **Summary**: Production traces showed homepage form recovery consumed the shared check budget even though navigation used an independently constructed Booking.com results query. Checks now enter through that persisted-data query, while exact result selection, fresh property navigation, context verification, room-rate extraction, and guarded downstream LLM recovery remain mandatory.
+- **Read when**: Working on search entry, journey step ordering, Booking.com results URLs, agent budget allocation, or reconsidering homepage form automation versus direct property links.
 
 ### ADR-019: Fernet (via `cryptography`) for personal-key encryption at rest
 - **Status**: accepted
@@ -67,11 +75,11 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Touching registration, the bookings schema, search-query construction, or considering defaults for any user-specific search parameter.
 
 ### ADR-013: Full search journey replaces the manage page as the sole price source
-- **Status**: accepted
+- **Status**: amended by ADR-020
 - **Date**: 2026-07-05
 - **Bolt**: 006-search-journey-monitor (search-journey-monitor)
 - **Path**: `bolts/006-search-journey-monitor/adr-013-search-journey-price-source.md`
-- **Summary**: Live prices come exclusively from the full customer search journey (home → search → results → verified property → room table) with the saved session; no deep-link shortcut, and `myreservations.html` is never opened for prices. Journey steps are named seams for bolt 007's LLM-agent escalation.
+- **Summary**: Live prices come exclusively from Booking.com's customer search journey (results query → exact property result → verified property → room table); `myreservations.html`, direct registered-property deep links, and result-card headline prices are never price sources. ADR-020 replaces the original homepage form entry with persisted-data results navigation while retaining downstream LLM seams.
 - **Read when**: Working on the price monitor, journey steps, navigation failure codes, bot-wall handling, or reconsidering deep-linking/manage-page extraction.
 
 ### ADR-012: Guided final click — MVP does not automate the destructive button press

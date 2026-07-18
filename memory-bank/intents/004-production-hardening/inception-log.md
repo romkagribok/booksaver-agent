@@ -55,6 +55,15 @@ and avoid committing or pushing until the completed artifact set and code are re
 | Date | Change | Reason | Impact |
 |------|--------|--------|--------|
 | 2026-07-18T17:30:28Z | Added production-hardening intent | Real VPS journey and packaging failures exposed requirements not covered by completed bolts | One new intent, unit, and bolt proposed |
+| 2026-07-18T18:57:24Z | Added FR-5 / US-041 and corrective bolt 014 | Live trace proved the trusted-query continuation works but occurs only after `fill_search` consumes nearly the full shared budget | Reopen the existing reliability unit for one incremental simple bolt; preserve all downstream verification and LLM seams |
+
+## Corrective Inception Addendum: US-041
+
+The product owner explicitly directed BookSaver to skip the homepage search form after reviewing the
+live trace and the implemented flow. That direction resolves the requirements checkpoint: the trusted
+Booking.com results query becomes primary, search results and the fresh property link remain mandatory,
+and the LLM remains available for downstream drift. Story US-041 and bolt 014 record this as an
+incremental defect correction rather than rewriting completed US-038 or bolt 013.
 
 ## Ready for Construction
 
@@ -85,3 +94,9 @@ Implement, and Test checkpoints. All four stories (US-037–US-040) are complete
 650 tests, Ruff, mypy across 72 source files, wheel resource inspection, and isolated installed-wheel
 initialization of a fresh schema-v8 SQLite database. The implementation awaits git delivery and the
 operator's live Telegram/VPS smoke test.
+
+Corrective bolt `014-production-reliability` completed on 2026-07-18T19:25:20Z after all mandatory
+Plan, Implement, and Test checkpoints. US-041 is complete: checks now enter through the trusted
+Booking.com results query, downstream guarded LLM recovery remains available, and verification passed
+with 633 tests, Ruff, and mypy across 72 source files. Intent 004 is complete again and awaits VPS
+deployment plus the operator's Telegram smoke test.
