@@ -238,6 +238,22 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-070` | Stop work after revocation | Telegram Privacy | Complete | `001-telegram-privacy-boundaries/stories/004-stop-work-after-revocation.md` |
 | `US-071` | Prove cross-user isolation | Telegram Privacy | Complete | `001-telegram-privacy-boundaries/stories/005-prove-cross-user-isolation.md` |
 
+## 011-post-rebook-monitoring
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-post-rebook-monitoring` | 5 stories | Complete (bolt 023; 788 tests) |
+
+### 001-post-rebook-monitoring: Post-Rebook Monitoring
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-072` | Collect actual replacement facts | Post-Rebook Monitoring | Complete | `001-post-rebook-monitoring/stories/001-collect-actual-replacement-facts.md` |
+| `US-073` | Propagate monitored replacement atomically | Post-Rebook Monitoring | Complete | `001-post-rebook-monitoring/stories/002-propagate-monitored-replacement-atomically.md` |
+| `US-074` | Reconcile partial outcomes safely | Post-Rebook Monitoring | Complete | `001-post-rebook-monitoring/stories/003-reconcile-partial-outcomes-safely.md` |
+| `US-075` | Preserve audit and invalidate stale savings | Post-Rebook Monitoring | Complete | `001-post-rebook-monitoring/stories/004-preserve-audit-and-invalidate-stale-savings.md` |
+| `US-076` | Preserve access and visible completion | Post-Rebook Monitoring | Complete | `001-post-rebook-monitoring/stories/005-preserve-access-and-visible-completion.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -252,5 +268,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `008-currency-aligned-price-checks` | 1 | 5 | Complete (bolt 020; 721 tests) |
 | `009-invite-first-sharing` | 1 | 5 | Complete (bolt 021; 763 tests) |
 | `010-telegram-privacy-boundaries` | 1 | 5 | Complete (bolt 022; 763 tests) |
+| `011-post-rebook-monitoring` | 1 | 5 | Complete (bolt 023; 788 tests) |
 
-All 71 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management + 5 on-demand-check + 5 currency-alignment + 5 invite-first-sharing + 5 Telegram-privacy) are assigned exactly once.
+All 76 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management + 5 on-demand-check + 5 currency-alignment + 5 invite-first-sharing + 5 Telegram-privacy + 5 post-rebook-monitoring) are assigned exactly once.

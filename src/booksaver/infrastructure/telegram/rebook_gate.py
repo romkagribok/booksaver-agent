@@ -18,6 +18,7 @@ from booksaver.application.ports import (
 )
 from booksaver.application.rebook_service import RebookSessionService, UnknownOpportunityError
 from booksaver.domain.models import Booking
+from booksaver.domain.post_rebook import HandoffOutcome, PostRebookContext
 from booksaver.domain.rebook import (
     ConfirmationAnswer,
     ConfirmationPrompt,
@@ -36,6 +37,8 @@ from booksaver.infrastructure.persistence.sqlite_store import (
 )
 
 from .client import TelegramBotClient
+from .dialogs import DialogManager
+from .rebook_propagation import reconcile_reported_outcomes
 from .router import CommandRouter, IncomingCallback, IncomingCommand
 
 logger = logging.getLogger(__name__)
@@ -401,11 +404,10 @@ def _ask_outcome(
     timeout_seconds: float,
     stop_event: threading.Event,
     is_active: ActiveUserPredicate = lambda: True,
-) -> bool | None:
-    """One inline-keyboard "did you complete it?" question. Returns True
-    (completed), False (abandoned), or None (no answer — timeout/shutdown)."""
+) -> HandoffOutcome:
+    """Ask one device-handoff outcome and visibly acknowledge the answer."""
     if not is_active():
-        return None
+        return HandoffOutcome.UNREPORTED
 
     nonce = uuid.uuid4().hex
     keyboard = {
@@ -427,8 +429,19 @@ def _ask_outcome(
     finally:
         registry.discard(nonce)
     if not answered:
-        return None
-    return bool(pending.approved)
+        return HandoffOutcome.UNREPORTED
+    outcome = (
+        HandoffOutcome.COMPLETED if pending.approved else HandoffOutcome.ABANDONED
+    )
+    try:
+        client.edit_message_text(
+            chat_id,
+            message_id,
+            f"Recorded: {outcome.value}.",
+        )
+    except Exception:
+        logger.warning("Could not acknowledge rebook outcome in message %s", message_id)
+    return outcome
 
 
 def run_outcome_followup(
@@ -442,6 +455,11 @@ def run_outcome_followup(
     timeout_seconds: float,
     stop_event: threading.Event,
     is_active: ActiveUserPredicate = lambda: True,
+    dialog_manager: DialogManager | None = None,
+    db_path: Path | None = None,
+    local_user_id: int | None = None,
+    source_booking: Booking | None = None,
+    opportunity_id: str | None = None,
 ) -> None:
     """US-033: after the guided session ends, ask (separately) whether the
     cancellation and/or the new booking were actually completed on the user's
@@ -450,6 +468,10 @@ def run_outcome_followup(
     `TelegramNavigator` already recorded stands on its own; this appends an
     explicit "unreported" marker so the two cases are told apart in the log).
     """
+    outcomes = {
+        "cancellation": HandoffOutcome.UNREPORTED,
+        "booking": HandoffOutcome.UNREPORTED,
+    }
     steps: list[tuple[str, str]] = []
     if navigator.cancel_handoff_sent:
         steps.append(("cancellation", "Did you complete cancelling the old reservation?"))
@@ -471,12 +493,40 @@ def run_outcome_followup(
         )
         if not is_active():
             break
-        if outcome is None:
-            detail = f"telegram_outcome kind={kind} status=unreported"
-        else:
-            status = "completed" if outcome else "abandoned"
-            detail = f"telegram_outcome kind={kind} status={status}"
+        outcomes[kind] = outcome
+        detail = f"telegram_outcome kind={kind} status={outcome.value}"
         event_repo.append(RebookEvent.record(session_id, EventType.ACTION_EXECUTED, detail))
+
+    integration = (
+        dialog_manager is not None
+        and db_path is not None
+        and local_user_id is not None
+        and source_booking is not None
+        and opportunity_id is not None
+    )
+    if integration and is_active():
+        assert dialog_manager is not None
+        assert db_path is not None
+        assert local_user_id is not None
+        assert source_booking is not None
+        assert opportunity_id is not None
+        context = PostRebookContext(
+            user_id=local_user_id,
+            session_id=session_id,
+            opportunity_id=opportunity_id,
+            source_booking=source_booking,
+            cancellation_outcome=outcomes["cancellation"],
+        )
+        reconcile_reported_outcomes(
+            client=client,
+            dialog_manager=dialog_manager,
+            db_path=db_path,
+            chat_id=chat_id,
+            telegram_user_id=telegram_user_id,
+            context=context,
+            replacement_outcome=outcomes["booking"],
+            is_active=is_active,
+        )
 
 
 # ── /rebook command wiring ─────────────────────────────────────────────────
@@ -513,6 +563,7 @@ def register_rebook_command(
     stop_event: threading.Event,
     confirm_timeout_seconds: float,
     send: Callable[[int, str, dict[str, Any] | None], None] | None = None,
+    dialog_manager: DialogManager | None = None,
 ) -> Callable[[IncomingCallback], None]:
     """Registers `/rebook` (US-032/US-033) and returns the callback_handler to
     wire into `BotLoop(callback_handler=...)`.
@@ -671,11 +722,28 @@ def register_rebook_command(
                         timeout_seconds=confirm_timeout_seconds,
                         stop_event=stop_event,
                         is_active=is_active,
+                        dialog_manager=dialog_manager,
+                        db_path=db_path,
+                        local_user_id=local_user_id,
+                        source_booking=booking,
+                        opportunity_id=opportunity_id,
                     )
         finally:
             session_guard.release(local_user_id)
 
     def _start_rebook(cmd: IncomingCommand, opportunity_id: str) -> None:
+        active_dialog = (
+            dialog_manager.active_dialog_name(cmd.chat_id)
+            if dialog_manager is not None
+            else None
+        )
+        if active_dialog is not None and active_dialog.startswith("post-rebook:"):
+            reply(
+                cmd.chat_id,
+                "Finish the replacement-details dialog, or use /cancelflow, before "
+                "starting another guided rebook.",
+            )
+            return
         if not db_path.exists():
             reply(cmd.chat_id, "No local database yet — nothing to rebook.")
             return

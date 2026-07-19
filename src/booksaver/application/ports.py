@@ -8,6 +8,7 @@ from booksaver.domain.agent import AgentAction, CheckTrace, Observation
 from booksaver.domain.check_result import CheckResult
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
+from booksaver.domain.post_rebook import PostRebookContext, PostRebookResult, ReplacementFacts
 from booksaver.domain.rebook import (
     ConfirmationAnswer,
     ConfirmationPrompt,
@@ -33,6 +34,14 @@ class BookingRepository(Protocol):
     def set_occupancy(self, booking_id: str, occupancy: Occupancy) -> None: ...
     def update(self, booking: Booking) -> None: ...
     def delete(self, booking_id: str) -> bool: ...
+
+
+@runtime_checkable
+class PostRebookRepository(Protocol):
+    def archive_cancelled_source(self, context: PostRebookContext) -> PostRebookResult: ...
+    def activate_replacement(
+        self, context: PostRebookContext, facts: ReplacementFacts
+    ) -> PostRebookResult: ...
 
 
 @runtime_checkable

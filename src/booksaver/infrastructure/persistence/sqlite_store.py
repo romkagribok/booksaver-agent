@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import secrets
 import sqlite3
+import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -21,6 +22,14 @@ from booksaver.domain.check_result import (
 )
 from booksaver.domain.errors import BookingRejectedError
 from booksaver.domain.models import Booking, BookingStatus
+from booksaver.domain.post_rebook import (
+    MonitoringDisposition,
+    PostRebookContext,
+    PostRebookRejected,
+    PostRebookRejection,
+    PostRebookResult,
+    ReplacementFacts,
+)
 from booksaver.domain.rebook import (
     EventType as RebookEventType,
 )
@@ -515,6 +524,186 @@ class SqliteBookingRepository:
                 )
             _delete_booking_rows(conn, booking_id)
         return True
+
+    def _load_post_rebook_state(
+        self,
+        context: PostRebookContext,
+        handoff_kind: str,
+    ) -> tuple[Booking, bool, bool]:
+        """Load guarded reconciliation state inside an existing write transaction.
+
+        Returns the current booking plus whether this session already archived or
+        activated it. Every lookup is deliberately scoped by local owner id.
+        """
+        conn = self._store.conn
+        user = conn.execute(
+            "SELECT access_state FROM users WHERE user_id = ?",
+            (context.user_id,),
+        ).fetchone()
+        if user is None or user["access_state"] != "active":
+            raise PostRebookRejected(PostRebookRejection.ACCESS_LOST)
+
+        row = conn.execute(
+            "SELECT * FROM bookings WHERE booking_id = ? AND user_id = ?",
+            (context.source_booking.booking_id, context.user_id),
+        ).fetchone()
+        if row is None:
+            raise PostRebookRejected(PostRebookRejection.STALE)
+
+        session = conn.execute(
+            "SELECT state FROM rebook_sessions "
+            "WHERE session_id = ? AND booking_id = ? AND opportunity_id = ?",
+            (
+                context.session_id,
+                context.source_booking.booking_id,
+                context.opportunity_id,
+            ),
+        ).fetchone()
+        if session is None or session["state"] not in ("completed", "declined", "error"):
+            raise PostRebookRejected(PostRebookRejection.STALE)
+
+        handoff = conn.execute(
+            "SELECT 1 FROM rebook_events WHERE session_id = ? "
+            "AND detail LIKE ? LIMIT 1",
+            (context.session_id, f"telegram_handoff kind={handoff_kind} %"),
+        ).fetchone()
+        if handoff is None:
+            raise PostRebookRejected(PostRebookRejection.STALE)
+
+        archived = conn.execute(
+            "SELECT 1 FROM rebook_events WHERE session_id = ? "
+            "AND detail LIKE 'post_rebook disposition=source_archived%' LIMIT 1",
+            (context.session_id,),
+        ).fetchone()
+        activated = conn.execute(
+            "SELECT 1 FROM rebook_events WHERE session_id = ? "
+            "AND detail LIKE 'post_rebook disposition=replacement_active%' LIMIT 1",
+            (context.session_id,),
+        ).fetchone()
+        return self._row_to_booking(row), archived is not None, activated is not None
+
+    def _append_post_rebook_event(self, session_id: str, detail: str) -> None:
+        self._store.conn.execute(
+            "INSERT INTO rebook_events "
+            "(event_id, session_id, event_type, detail, occurred_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                str(uuid.uuid4()),
+                session_id,
+                RebookEventType.ACTION_EXECUTED.value,
+                detail,
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+
+    def archive_cancelled_source(self, context: PostRebookContext) -> PostRebookResult:
+        """Archive a user-reported cancelled source and invalidate its savings atomically."""
+        conn = self._store.conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            current, already_archived, _already_activated = self._load_post_rebook_state(
+                context, "cancel"
+            )
+            archived_source = replace(context.source_booking, status=BookingStatus.ARCHIVED)
+            if current == archived_source and already_archived:
+                conn.commit()
+                return PostRebookResult(
+                    MonitoringDisposition.SOURCE_ALREADY_ARCHIVED, current
+                )
+            if current != context.source_booking:
+                raise PostRebookRejected(PostRebookRejection.STALE)
+
+            conn.execute(
+                "UPDATE bookings SET status = 'archived' WHERE booking_id = ? AND user_id = ?",
+                (context.source_booking.booking_id, context.user_id),
+            )
+            conn.execute(
+                "DELETE FROM savings_opportunities WHERE booking_id = ?",
+                (context.source_booking.booking_id,),
+            )
+            self._append_post_rebook_event(
+                context.session_id,
+                "post_rebook disposition=source_archived",
+            )
+            conn.commit()
+            return PostRebookResult(MonitoringDisposition.SOURCE_ARCHIVED, archived_source)
+        except Exception:
+            conn.rollback()
+            raise
+
+    def activate_replacement(
+        self, context: PostRebookContext, facts: ReplacementFacts
+    ) -> PostRebookResult:
+        """Activate actual replacement facts over the stable booking id atomically."""
+        replacement = replace(
+            context.source_booking,
+            confirmation_id=facts.confirmation_id,
+            property=Property(
+                name=context.source_booking.property.name,
+                booking_com_ref=facts.property_ref,
+            ),
+            baseline_price=facts.actual_total,
+            status=BookingStatus.ACTIVE,
+        )
+        conn = self._store.conn
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            current, source_archived, already_activated = self._load_post_rebook_state(
+                context, "book"
+            )
+            if current == replacement and already_activated:
+                conn.commit()
+                return PostRebookResult(
+                    MonitoringDisposition.REPLACEMENT_ALREADY_ACTIVE, current
+                )
+
+            archived_source = replace(context.source_booking, status=BookingStatus.ARCHIVED)
+            source_is_valid = current == context.source_booking or (
+                current == archived_source and source_archived
+            )
+            if not source_is_valid:
+                raise PostRebookRejected(PostRebookRejection.STALE)
+
+            conflict = conn.execute(
+                "SELECT 1 FROM bookings WHERE confirmation_id = ? AND booking_id != ? LIMIT 1",
+                (facts.confirmation_id.value, context.source_booking.booking_id),
+            ).fetchone()
+            if conflict is not None:
+                raise PostRebookRejected(PostRebookRejection.CONFLICT)
+
+            conn.execute(
+                "UPDATE bookings SET confirmation_id = ?, property_ref = ?, "
+                "baseline_amount = ?, baseline_currency = ?, status = 'active' "
+                "WHERE booking_id = ? AND user_id = ?",
+                (
+                    facts.confirmation_id.value,
+                    facts.property_ref,
+                    str(facts.actual_total.amount),
+                    facts.actual_total.currency,
+                    context.source_booking.booking_id,
+                    context.user_id,
+                ),
+            )
+            conn.execute(
+                "DELETE FROM savings_opportunities WHERE booking_id = ?",
+                (context.source_booking.booking_id,),
+            )
+            self._append_post_rebook_event(
+                context.session_id,
+                "post_rebook disposition=replacement_active "
+                f"actual_amount={facts.actual_total.amount} "
+                f"currency={facts.actual_total.currency}",
+            )
+            conn.commit()
+            return PostRebookResult(MonitoringDisposition.REPLACEMENT_ACTIVE, replacement)
+        except sqlite3.IntegrityError as exc:
+            conn.rollback()
+            if "confirmation_id" in str(exc):
+                raise PostRebookRejected(PostRebookRejection.CONFLICT) from exc
+            raise
+        except Exception:
+            conn.rollback()
+            raise
 
     def get_by_id(self, booking_id: str) -> Booking | None:
         row = self._store.conn.execute(

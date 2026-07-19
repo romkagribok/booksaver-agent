@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-19T02:39:40Z
-total_decisions: 22
+last_updated: 2026-07-19T19:55:13Z
+total_decisions: 23
 ---
 
 # Decision Index
@@ -17,6 +17,18 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-023: Stable-ID atomic post-rebook propagation
+- **Status**: accepted
+- **Date**: 2026-07-19
+- **Bolt**: 023-post-rebook-monitoring (post-rebook-monitoring)
+- **Path**: `bolts/023-post-rebook-monitoring/adr-023-stable-id-post-rebook-propagation.md`
+- **Summary**: A detected savings opportunity is not a checkout receipt and successful device-side
+  rebooking otherwise leaves the old baseline monitored. A validated replacement updates the same
+  stable booking ID in one guarded transaction, while completed cancellation archives immediately
+  until a validated replacement can reactivate it.
+- **Read when**: Changing rebook outcome handling, monitored booking replacement, baseline updates,
+  stale-savings invalidation, or transaction rules around device-side rebooking.
 
 ### ADR-022: Fixed invite-first admission for non-owner Telegram users
 - **Status**: accepted

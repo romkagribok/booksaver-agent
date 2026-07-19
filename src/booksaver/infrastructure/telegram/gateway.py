@@ -188,10 +188,26 @@ def build_bot_runner(
     def _cancelflow(cmd: IncomingCommand) -> None:
         if key_flow.cancel(cmd.chat_id):
             _reply(cmd.chat_id, "Cancelled the current dialog.")
-        elif dialog_manager.cancel(cmd.chat_id):
-            _reply(cmd.chat_id, "Cancelled the current dialog.")
         else:
-            _reply(cmd.chat_id, "No active dialog to cancel.")
+            dialog_name = dialog_manager.active_dialog_name(cmd.chat_id)
+            if dialog_manager.cancel(cmd.chat_id):
+                if dialog_name == "post-rebook:archived":
+                    _reply(
+                        cmd.chat_id,
+                        "Replacement details cancelled. The reported-cancelled old "
+                        "reservation remains archived, so no reservation is monitored for "
+                        "that stay.",
+                    )
+                elif dialog_name == "post-rebook:original-active":
+                    _reply(
+                        cmd.chat_id,
+                        "Replacement details cancelled. The original reservation remains "
+                        "monitored with its existing baseline.",
+                    )
+                else:
+                    _reply(cmd.chat_id, "Cancelled the current dialog.")
+            else:
+                _reply(cmd.chat_id, "No active dialog to cancel.")
 
     router.register("/cancelflow", _cancelflow)
 
@@ -207,6 +223,7 @@ def build_bot_runner(
         stop_event=scheduler.stop_event,
         confirm_timeout_seconds=settings.rebook_confirm_timeout_seconds,
         send=_send,
+        dialog_manager=dialog_manager,
     )
     callback_router.register("rebook:", rebook_callback_handler)
     # ── end US-032/US-033 wiring ─────────────────────────────────────────────
