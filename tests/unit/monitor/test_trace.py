@@ -36,6 +36,7 @@ class TestTraceRecorder:
     def test_events_ordered_and_typed(self):
         recorder = TraceRecorder("b-1")
         recorder.journey_step(StepOutcome.success(JourneyStep.OPEN_HOME, "ok"))
+        recorder.currency_alignment("requested=EUR observed=USD; recovery started")
         recorder.escalation_started(JourneyStep.FILL_SEARCH, "selector missing")
         recorder.agent_action(
             JourneyStep.FILL_SEARCH,
@@ -47,9 +48,10 @@ class TestTraceRecorder:
         result = _success_result()
         trace = recorder.finish(result)
 
-        assert [e.seq for e in trace.events] == [0, 1, 2, 3, 4]
+        assert [e.seq for e in trace.events] == [0, 1, 2, 3, 4, 5]
         assert [e.kind for e in trace.events] == [
             TraceKind.JOURNEY_STEP,
+            TraceKind.CURRENCY_ALIGNMENT,
             TraceKind.ESCALATION_STARTED,
             TraceKind.AGENT_ACTION,
             TraceKind.AGENT_RESULT,
@@ -57,7 +59,8 @@ class TestTraceRecorder:
         ]
         assert trace.check_id == result.check_id
         assert trace.booking_id == "b-1"
-        assert "label='Check available dates'" in trace.events[2].detail
+        assert "requested=EUR observed=USD" in trace.events[1].detail
+        assert "label='Check available dates'" in trace.events[3].detail
         assert "350.00 EUR via agent" in trace.events[-1].detail
 
     def test_failure_result_recorded_with_code(self):

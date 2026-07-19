@@ -10,7 +10,12 @@ from booksaver.daemon.check_coordinator import (
     ImmediateCompletion,
     ImmediateCompletionKind,
 )
-from booksaver.domain.check_result import CheckResult, ExtractionMethod
+from booksaver.domain.check_result import (
+    CheckResult,
+    ExtractionMethod,
+    FailureCode,
+    FailureReason,
+)
 from booksaver.domain.models import Booking
 from booksaver.domain.user import UserRole
 from booksaver.domain.value_objects import (
@@ -205,4 +210,34 @@ def test_success_completion_names_property_price_and_check(tmp_path: Path) -> No
 
     assert "Own Hotel" in sent[-1][1]
     assert "315.50 EUR" in sent[-1][1]
+    assert result.check_id[:8] in sent[-1][1]
+
+
+def test_currency_failure_is_actionable_in_completion(tmp_path: Path) -> None:
+    coordinator = FakeCoordinator()
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+    booking = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
+    _add_user_booking(db_path, 101, booking)
+    router.dispatch(IncomingCommand(101, 101, "/checknow", booking.booking_id, "raw"))
+    result = CheckResult.failure(
+        booking.booking_id,
+        datetime.now(UTC),
+        FailureReason(
+            FailureCode.CURRENCY_MISMATCH,
+            "Baseline EUR; matching refundable offers rendered in USD. "
+            "No cross-currency comparison was made.",
+        ),
+    )
+
+    coordinator.completions[0](
+        ImmediateCompletion(
+            ImmediateCompletionKind.RESULT,
+            result=result,
+            property_name="Own Hotel",
+        )
+    )
+
+    assert "currency_mismatch" in sent[-1][1]
+    assert "Baseline EUR" in sent[-1][1]
+    assert "rendered in USD" in sent[-1][1]
     assert result.check_id[:8] in sent[-1][1]

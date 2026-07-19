@@ -24,8 +24,9 @@ from booksaver.domain.check_result import (
     RefundIndicators,
 )
 from booksaver.domain.errors import UserKeyInvalidError
+from booksaver.domain.journey import JourneyResult, JourneyStep
 from booksaver.domain.models import Booking
-from booksaver.domain.offer import OfferCandidate, select_offer
+from booksaver.domain.offer import OfferCandidate, OfferSelection, select_offer
 from booksaver.domain.session import SessionMode
 from booksaver.monitor import room_table
 from booksaver.monitor.browser_agent import BrowserAgent
@@ -212,33 +213,17 @@ class BookingComSearchMonitor:
             escalator = BrowserAgent(self._browser, self._brain, budget, recorder)
             self._last_escalator = escalator
 
-        journey = SearchJourney(
+        search_journey = SearchJourney(
             self._browser,
             escalator=escalator,
             recorder=recorder,
             checkpoint=budget.check_time,
             session_mode=session_mode,
-        ).run(booking)
+        )
+        journey = search_journey.run(booking)
 
         if not journey.ok:
-            failed = journey.failed_step
-            assert failed is not None and journey.failure_code is not None
-            detail = f"step={failed.step.value}: {failed.detail}"
-            if journey.failure_code is FailureCode.AUTH_REQUIRED:
-                # US-035: the saved session looked usable but Booking.com
-                # still treated the journey as signed out — never degrade
-                # silently to logged-out prices; point at the VPS-compatible
-                # fix explicitly.
-                detail += (
-                    " (fix: run `booksaver auth import <file>` with a fresh cookie "
-                    "export — see the runbook's cookie-import section; works on a "
-                    "display-less VPS, unlike `booksaver auth`)"
-                )
-            return CheckResult.failure(
-                booking.booking_id,
-                now,
-                FailureReason(code=journey.failure_code, detail=detail),
-            )
+            return self._journey_failure(booking, journey, now)
 
         try:
             page_text = self._browser.snapshot().text
@@ -249,20 +234,14 @@ class BookingComSearchMonitor:
                 FailureReason(code=FailureCode.NAVIGATION_ERROR, detail=str(exc)),
             )
 
-        candidates = room_table.parse_candidates(page_text, booking)
-        method = ExtractionMethod.DOM
-        if not room_table.has_confident_exact_match(candidates, booking):
-            try:
-                llm_candidates = self._try_llm_offers(page_text, booking, budget)
-            except BudgetExceeded as exc:
-                return CheckResult.failure(
-                    booking.booking_id,
-                    now,
-                    FailureReason(code=FailureCode.BUDGET_EXCEEDED, detail=str(exc)),
-                )
-            if llm_candidates is not None:
-                candidates = llm_candidates
-                method = ExtractionMethod.LLM
+        try:
+            candidates, method = self._extract_candidates(page_text, booking, budget)
+        except BudgetExceeded as exc:
+            return CheckResult.failure(
+                booking.booking_id,
+                now,
+                FailureReason(code=FailureCode.BUDGET_EXCEEDED, detail=str(exc)),
+            )
 
         if journey.agent_assisted:
             method = ExtractionMethod.AGENT  # US-020: scripted vs agent-assisted marker
@@ -278,18 +257,20 @@ class BookingComSearchMonitor:
             )
 
         selection = select_offer(candidates, booking)
-        if selection.chosen is None:
-            return CheckResult.failure(
-                booking.booking_id,
-                now,
-                FailureReason(
-                    code=FailureCode.NO_EQUIVALENT_OFFER,
-                    detail=(
-                        f"{len(candidates)} offers parsed, none equivalent+refundable "
-                        f"(excluded: {selection.exclusion_summary()})"
-                    ),
-                ),
+        if selection.chosen is None and selection.currency_mismatches:
+            return self._recover_currency(
+                booking=booking,
+                initial_selection=selection,
+                search_journey=search_journey,
+                escalator=escalator,
+                budget=budget,
+                recorder=recorder,
+                now=now,
+                session_mode=session_mode,
+                initial_agent_assisted=journey.agent_assisted,
             )
+        if selection.chosen is None:
+            return self._no_equivalent_failure(booking, candidates, selection, now)
 
         if session_mode is SessionMode.LOGGED_OUT:
             # US-035: not persisted to check_history (schema owned elsewhere,
@@ -301,6 +282,223 @@ class BookingComSearchMonitor:
                 booking.booking_id,
             )
         return self._to_success(booking, selection.chosen, method, now, session_mode)
+
+    def _recover_currency(
+        self,
+        *,
+        booking: Booking,
+        initial_selection: OfferSelection,
+        search_journey: SearchJourney,
+        escalator: BrowserAgent | None,
+        budget: AgentBudget,
+        recorder: TraceRecorder,
+        now: datetime,
+        session_mode: SessionMode,
+        initial_agent_assisted: bool,
+    ) -> CheckResult:
+        desired = booking.baseline_price.currency
+        observed = self._observed_currencies(initial_selection)
+        recorder.currency_alignment(
+            f"requested={desired}; observed={','.join(observed)}; recovery started"
+        )
+
+        recovery_detail: str
+        alignment_agent_assisted = False
+        try:
+            budget.check_time()
+            recovery_detail = search_journey.align_currency(booking)
+            recorder.currency_alignment(f"method=scripted; {recovery_detail}")
+        except BudgetExceeded as exc:
+            recorder.currency_alignment(f"method=scripted; budget exceeded: {exc}")
+            return CheckResult.failure(
+                booking.booking_id,
+                now,
+                FailureReason(code=FailureCode.BUDGET_EXCEEDED, detail=str(exc)),
+            )
+        except Exception as exc:
+            scripted_detail = str(exc)
+            recorder.currency_alignment(
+                f"method=scripted; unavailable: {scripted_detail}"
+            )
+            if escalator is None:
+                return self._currency_failure(
+                    booking,
+                    observed,
+                    "scripted preference was unavailable and no browser agent was configured",
+                    now,
+                )
+            escalation = escalator.complete_step(
+                JourneyStep.ALIGN_CURRENCY,
+                goal=(
+                    f"Set Booking.com's displayed currency to {desired}. Use only the "
+                    "visible header currency control and choose the exact requested currency; "
+                    "do not change property, dates, occupancy, or enter any booking flow."
+                ),
+                verify=lambda: search_journey.currency_preference_visible(desired),
+                trigger=(
+                    f"Rendered equivalent refundable offers use {','.join(observed)} while "
+                    f"the booking baseline uses {desired}; scripted selector failed: "
+                    f"{scripted_detail}"
+                ),
+            )
+            alignment_agent_assisted = True
+            recovery_detail = escalation.detail
+            recorder.currency_alignment(
+                f"method=agent; result={'ok' if escalation.ok else 'failed'}; "
+                f"detail={escalation.detail}"
+            )
+            if not escalation.ok:
+                if escalation.failure_code is FailureCode.BUDGET_EXCEEDED:
+                    return CheckResult.failure(
+                        booking.booking_id,
+                        now,
+                        FailureReason(
+                            code=FailureCode.BUDGET_EXCEEDED,
+                            detail=escalation.detail,
+                        ),
+                    )
+                return self._currency_failure(
+                    booking,
+                    observed,
+                    f"scripted and agent recovery failed ({escalation.detail})",
+                    now,
+                )
+
+        retry_journey = SearchJourney(
+            self._browser,
+            escalator=escalator,
+            recorder=recorder,
+            checkpoint=budget.check_time,
+            session_mode=session_mode,
+        ).run(booking)
+        if not retry_journey.ok:
+            return self._journey_failure(booking, retry_journey, now)
+
+        try:
+            page_text = self._browser.snapshot().text
+        except Exception as exc:
+            return CheckResult.failure(
+                booking.booking_id,
+                now,
+                FailureReason(code=FailureCode.NAVIGATION_ERROR, detail=str(exc)),
+            )
+        try:
+            candidates, method = self._extract_candidates(page_text, booking, budget)
+        except BudgetExceeded as exc:
+            return CheckResult.failure(
+                booking.booking_id,
+                now,
+                FailureReason(code=FailureCode.BUDGET_EXCEEDED, detail=str(exc)),
+            )
+        if retry_journey.agent_assisted or alignment_agent_assisted or initial_agent_assisted:
+            method = ExtractionMethod.AGENT
+
+        if not candidates:
+            return CheckResult.failure(
+                booking.booking_id,
+                now,
+                FailureReason(
+                    code=FailureCode.EXTRACTION_FAILED,
+                    detail="No offers could be parsed after currency alignment.",
+                ),
+            )
+        selection = select_offer(candidates, booking)
+        if selection.chosen is not None:
+            recorder.currency_alignment(
+                f"verification=success; rendered={selection.chosen.total.currency}; "
+                f"recovery={recovery_detail}"
+            )
+            return self._to_success(
+                booking, selection.chosen, method, now, session_mode
+            )
+        if selection.currency_mismatches:
+            final_observed = self._observed_currencies(selection)
+            recorder.currency_alignment(
+                f"verification=failed; requested={desired}; "
+                f"observed={','.join(final_observed)}"
+            )
+            return self._currency_failure(
+                booking,
+                final_observed,
+                "Booking.com still rendered another currency after one bounded recovery",
+                now,
+            )
+        return self._no_equivalent_failure(booking, candidates, selection, now)
+
+    def _extract_candidates(
+        self, page_text: str, booking: Booking, budget: AgentBudget
+    ) -> tuple[list[OfferCandidate], ExtractionMethod]:
+        candidates = room_table.parse_candidates(page_text, booking)
+        method = ExtractionMethod.DOM
+        if not room_table.has_confident_exact_match(candidates, booking):
+            llm_candidates = self._try_llm_offers(page_text, booking, budget)
+            if llm_candidates is not None:
+                candidates = llm_candidates
+                method = ExtractionMethod.LLM
+        return candidates, method
+
+    @staticmethod
+    def _observed_currencies(selection: OfferSelection) -> tuple[str, ...]:
+        return tuple(sorted({c.total.currency for c in selection.currency_mismatches}))
+
+    @staticmethod
+    def _currency_failure(
+        booking: Booking,
+        observed: tuple[str, ...],
+        recovery: str,
+        now: datetime,
+    ) -> CheckResult:
+        desired = booking.baseline_price.currency
+        observed_label = ", ".join(observed) or "unknown"
+        return CheckResult.failure(
+            booking.booking_id,
+            now,
+            FailureReason(
+                code=FailureCode.CURRENCY_MISMATCH,
+                detail=(
+                    f"Baseline {desired}; matching refundable offers rendered in "
+                    f"{observed_label}. {recovery}. No cross-currency comparison was made."
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _no_equivalent_failure(
+        booking: Booking,
+        candidates: list[OfferCandidate],
+        selection: OfferSelection,
+        now: datetime,
+    ) -> CheckResult:
+        return CheckResult.failure(
+            booking.booking_id,
+            now,
+            FailureReason(
+                code=FailureCode.NO_EQUIVALENT_OFFER,
+                detail=(
+                    f"{len(candidates)} offers parsed, none equivalent+refundable "
+                    f"(excluded: {selection.exclusion_summary()})"
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _journey_failure(
+        booking: Booking, journey: JourneyResult, now: datetime
+    ) -> CheckResult:
+        failed = journey.failed_step
+        assert failed is not None and journey.failure_code is not None
+        detail = f"step={failed.step.value}: {failed.detail}"
+        if journey.failure_code is FailureCode.AUTH_REQUIRED:
+            detail += (
+                " (fix: run `booksaver auth import <file>` with a fresh cookie "
+                "export — see the runbook's cookie-import section; works on a "
+                "display-less VPS, unlike `booksaver auth`)"
+            )
+        return CheckResult.failure(
+            booking.booking_id,
+            now,
+            FailureReason(code=journey.failure_code, detail=detail),
+        )
 
     def _persist_trace(
         self,

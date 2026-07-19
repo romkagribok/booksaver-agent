@@ -33,6 +33,7 @@ class FailureCode(Enum):
     STEP_FAILED = "step_failed"
     PROPERTY_NOT_FOUND = "property_not_found"
     NO_EQUIVALENT_OFFER = "no_equivalent_offer"
+    CURRENCY_MISMATCH = "currency_mismatch"
     BOT_WALL = "bot_wall"
     # Agentic-escalation codes (bolt 007, ADR-015/016/017)
     AGENT_GAVE_UP = "agent_gave_up"

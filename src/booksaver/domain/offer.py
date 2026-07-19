@@ -41,6 +41,15 @@ class OfferSelection:
     chosen: OfferCandidate | None
     excluded: tuple[tuple[OfferCandidate, ExclusionReason], ...]
 
+    @property
+    def currency_mismatches(self) -> tuple[OfferCandidate, ...]:
+        """Otherwise-eligible offers rejected only for rendered currency."""
+        return tuple(
+            candidate
+            for candidate, reason in self.excluded
+            if reason is ExclusionReason.CURRENCY_MISMATCH
+        )
+
     def exclusion_summary(self) -> str:
         counts: dict[str, int] = {}
         for _, reason in self.excluded:

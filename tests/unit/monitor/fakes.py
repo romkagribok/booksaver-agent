@@ -187,17 +187,20 @@ class FakeInteractiveBrowser:
         url: str = "https://www.booking.com",
         counters: dict[str, int] | None = None,
         fail_selectors: frozenset[str] | set[str] = frozenset(),
+        fail_click_selectors: frozenset[str] | set[str] = frozenset(),
         fail_goto: bool = False,
         authenticated: bool = True,
         present_selectors: set[str] | None = None,
         calendar_month: date | None = date(2026, 9, 1),
         search_box_value: str = "",
+        currency_label: str | None = None,
     ) -> None:
         self.titles = titles or []
         self.page_text = page_text
         self.url = url
         self.counters = counters or {"group_adults": 2, "group_children": 0, "no_rooms": 1}
         self.fail_selectors = set(fail_selectors)
+        self.fail_click_selectors = set(fail_click_selectors)
         self.fail_goto = fail_goto
         self.authenticated = authenticated
         self.present_selectors = present_selectors or set()
@@ -212,6 +215,7 @@ class FakeInteractiveBrowser:
         # When set, [data-date] cells exist only for this month and the next.
         self.calendar_month = calendar_month
         self.search_box_value = search_box_value
+        self.currency_label = currency_label
 
     def _month_index(self, d: date) -> int:
         return d.year * 12 + (d.month - 1)
@@ -267,7 +271,13 @@ class FakeInteractiveBrowser:
             self._shift_calendar("prev")
         elif "Next month" in selector or "calendar-next" in selector:
             self._shift_calendar("next")
+        for fragment in self.fail_click_selectors:
+            if fragment in selector:
+                raise RuntimeError(f"element not clickable: {selector}")
         self._check(selector)
+        currency_match = re.search(r':has-text\("([A-Z]{3})"\)', selector)
+        if currency_match is not None:
+            self.currency_label = currency_match.group(1)
         if "title" in selector and self.property_url:
             self.url = self.property_url
 
@@ -302,6 +312,8 @@ class FakeInteractiveBrowser:
 
     def query_text(self, selector: str) -> list[str]:
         self._check(selector)
+        if "currency-picker-trigger" in selector or 'aria-label*="currency"' in selector:
+            return [self.currency_label] if self.currency_label else []
         if "title" in selector:
             return list(self.titles)
         if selector.startswith("input#"):
@@ -314,6 +326,15 @@ class FakeInteractiveBrowser:
 
     def query_attr(self, selector: str, attr: str) -> list[str]:
         self._check(selector)
+        if (
+            attr in {"aria-label", "title"}
+            and (
+                "currency-picker-trigger" in selector
+                or 'aria-label*="currency"' in selector
+            )
+            and self.currency_label
+        ):
+            return [f"Prices in {self.currency_label}"]
         if attr == "href" and "title-link" in selector:
             if self.property_url:
                 return [self.property_url for _ in self.titles] or [self.property_url]

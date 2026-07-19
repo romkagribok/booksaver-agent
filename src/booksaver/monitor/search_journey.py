@@ -30,6 +30,7 @@ _NON_ESCALATABLE = frozenset(
 )
 
 _SEARCH_RESULTS_URL = "https://www.booking.com/searchresults.html"
+_CURRENCY_QUERY_PARAM = "selected_currency"
 
 _CAPTCHA_MARKERS = re.compile(
     r"(are you a human|verify you are human|hcaptcha|px-captcha|unusual traffic)", re.I
@@ -67,6 +68,17 @@ _CONSENT_DISMISS_SELECTORS = (
     'button[aria-label="Accept"]',
     "#onetrust-accept-btn-handler",
 )
+_CURRENCY_TRIGGER_SELECTORS = (
+    '[data-testid="header-currency-picker-trigger"]',
+    'button[aria-label*="currency" i]',
+)
+_CURRENCY_NAMES = {
+    "USD": ("US Dollar", "U.S. Dollar"),
+    "EUR": ("Euro",),
+    "GBP": ("British Pound", "Pound Sterling"),
+    "CAD": ("Canadian Dollar",),
+    "AUD": ("Australian Dollar",),
+}
 
 _STEP_FAILURE_CODES = {
     JourneyStep.SUBMIT_SEARCH: FailureCode.NAVIGATION_ERROR,
@@ -95,6 +107,7 @@ def _search_results_url(
         "group_adults": str(occ.adults),
         "group_children": str(occ.children),
         "no_rooms": str(occ.rooms),
+        _CURRENCY_QUERY_PARAM: booking.baseline_price.currency,
         "sb": "1",
         "src": "searchresults",
     }
@@ -126,6 +139,7 @@ def _property_url_with_context(href: str, booking: Booking) -> str:
         "group_adults": str(occ.adults),
         "group_children": str(occ.children),
         "no_rooms": str(occ.rooms),
+        _CURRENCY_QUERY_PARAM: booking.baseline_price.currency,
     }
     # Preserve opaque result-card parameters exactly, including duplicates, while
     # ensuring stale search context can never override the persisted booking.
@@ -331,6 +345,80 @@ class SearchJourney:
             except Exception:
                 continue
         return None
+
+    def currency_preference_visible(self, currency: str) -> bool:
+        """Verify the current header control, never a requested URL parameter."""
+        markers = (currency, *_CURRENCY_NAMES.get(currency, ()))
+        normalised_markers = tuple(
+            re.sub(r"[^A-Z]", "", marker.upper()) for marker in markers
+        )
+        for selector in _CURRENCY_TRIGGER_SELECTORS:
+            values: list[str] = []
+            try:
+                values.extend(self._browser.query_text(selector))
+                values.extend(self._browser.query_attr(selector, "aria-label"))
+                values.extend(self._browser.query_attr(selector, "title"))
+            except Exception:
+                continue
+            for value in values:
+                normalised = re.sub(r"[^A-Z]", "", value.upper())
+                if any(marker and marker in normalised for marker in normalised_markers):
+                    return True
+        return False
+
+    def align_currency(self, booking: Booking) -> str:
+        """Operate Booking.com's visible currency preference deterministically.
+
+        The caller must still reload the trusted journey and verify currencies on
+        rendered room offers. Header state is only a recovery postcondition, never
+        permission to compare unlike amounts.
+        """
+        currency = booking.baseline_price.currency
+        self._dismiss_consent()
+        trigger_used: str | None = None
+        trigger_errors: list[str] = []
+        for selector in _CURRENCY_TRIGGER_SELECTORS:
+            try:
+                self._browser.click_first_visible(selector)
+                trigger_used = selector
+                break
+            except Exception as exc:
+                trigger_errors.append(str(exc))
+        if trigger_used is None:
+            raise RuntimeError(
+                "Currency preference control not found: " + "; ".join(trigger_errors)
+            )
+
+        option_errors: list[str] = []
+        option_used: str | None = None
+        option_markers = (currency, *_CURRENCY_NAMES.get(currency, ()))
+        for marker in option_markers:
+            selectors = (
+                f'[role="dialog"] [data-testid="selection-item"]:has-text("{marker}")',
+                f'[role="dialog"] button:has-text("{marker}")',
+                f'button:has-text("{marker}")',
+            )
+            for selector in selectors:
+                try:
+                    self._browser.click_first_visible(selector)
+                    option_used = selector
+                    break
+                except Exception as exc:
+                    option_errors.append(str(exc))
+            if option_used is not None:
+                break
+        if option_used is None:
+            raise RuntimeError(
+                f"Currency option {currency} not found: " + "; ".join(option_errors)
+            )
+        if not self.currency_preference_visible(currency):
+            raise RuntimeError(
+                f"Currency control did not confirm {currency} after selecting it"
+            )
+        return (
+            f"requested={currency}; trigger={trigger_used}; option={option_used}; "
+            "header preference verified"
+        )
 
     def _room_content_ready(self) -> bool:
         text = self._safe_text()

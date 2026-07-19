@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from booksaver.domain.agent import AgentAction, AgentActionType, ElementInfo
 from booksaver.domain.check_result import CheckOutcome, ExtractionMethod, FailureCode
 from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.savings import SavingsOpportunity, detect_savings
@@ -11,6 +12,7 @@ from booksaver.monitor.search_check_job import BookingComSearchMonitor
 from booksaver.monitor.session_manager import SessionManager
 
 from .fakes import (
+    FakeAgentBrain,
     FakeBookingRepository,
     FakeCheckHistoryRepository,
     FakeInteractiveBrowser,
@@ -46,6 +48,7 @@ def _monitor(
     bookings: list | None = None,
     llm: FakeLLMExtractor | None = None,
     session: FakeSessionRepository | None = None,
+    brain: FakeAgentBrain | None = None,
 ) -> tuple[BookingComSearchMonitor, FakeCheckHistoryRepository]:
     history = FakeCheckHistoryRepository()
     monitor = BookingComSearchMonitor(
@@ -55,6 +58,7 @@ def _monitor(
         booking_repo=FakeBookingRepository(bookings if bookings is not None else []),
         failure_tracker=FailureTracker(history),
         llm=llm,
+        brain=brain,
     )
     return monitor, history
 
@@ -158,6 +162,120 @@ class TestLLMFallback:
         assert result.failure_reason.code is FailureCode.EXTRACTION_FAILED
         assert llm.offer_calls == []
         assert monitor.last_llm_calls_used == 0
+
+
+class TestCurrencyAlignmentRecovery:
+    @staticmethod
+    def _usd_browser(**overrides) -> FakeInteractiveBrowser:
+        browser = FakeInteractiveBrowser(
+            titles=["Hotel Test"],
+            page_text="Standard Double\nUSD 350.00\nFree cancellation",
+            currency_label="USD",
+            **overrides,
+        )
+        browser.property_url = _PROPERTY_URL
+        return browser
+
+    def test_scripted_alignment_reloads_once_and_recovers_same_currency(self):
+        browser = self._usd_browser()
+        result_searches = 0
+
+        def _refresh_in_eur(b: FakeInteractiveBrowser, url: str) -> None:
+            nonlocal result_searches
+            if "/searchresults.html" in url:
+                result_searches += 1
+                if result_searches == 2:
+                    b.page_text = (
+                        "Standard Double\nEUR 330.00\nFree cancellation"
+                    )
+
+        browser.on_goto = _refresh_in_eur
+        monitor, _ = _monitor(browser)
+
+        result = monitor.run_check(make_booking())
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert result.live_price == Money(Decimal("330.00"), "EUR")
+        assert result.extraction_method is ExtractionMethod.DOM
+        assert result_searches == 2
+        assert monitor.last_llm_calls_used == 0
+
+    def test_persistent_mismatch_fails_closed_after_one_refresh(self):
+        browser = self._usd_browser()
+        monitor, _ = _monitor(browser)
+
+        result = monitor.run_check(make_booking())
+
+        assert result.failure_reason.code is FailureCode.CURRENCY_MISMATCH
+        assert "Baseline EUR" in result.failure_reason.detail
+        assert "rendered in USD" in result.failure_reason.detail
+        assert "No cross-currency comparison" in result.failure_reason.detail
+        searches = [
+            url
+            for action, url in browser.actions
+            if action == "goto" and "/searchresults.html" in url
+        ]
+        assert len(searches) == 2
+
+    def test_agent_fallback_is_guarded_and_marks_recovered_result(self):
+        browser = self._usd_browser(
+            fail_click_selectors={
+                "header-currency-picker-trigger",
+                'aria-label*="currency"',
+            }
+        )
+        browser.elements = (
+            ElementInfo(ref="e0", role="button", label="Currency: USD"),
+            ElementInfo(ref="e1", role="button", label="EUR Euro"),
+        )
+        result_searches = 0
+
+        def _refresh_in_eur(b: FakeInteractiveBrowser, url: str) -> None:
+            nonlocal result_searches
+            if "/searchresults.html" in url:
+                result_searches += 1
+                if result_searches == 2:
+                    b.page_text = "Standard Double\nEUR 325.00\nFree cancellation"
+
+        def _select_eur(b: FakeInteractiveBrowser, action: AgentAction) -> None:
+            if action.ref == "e1":
+                b.currency_label = "EUR"
+
+        browser.on_goto = _refresh_in_eur
+        browser.on_act = _select_eur
+        brain = FakeAgentBrain(
+            [AgentAction(type=AgentActionType.CLICK, ref="e1")]
+        )
+        monitor, _ = _monitor(browser, brain=brain)
+
+        result = monitor.run_check(make_booking())
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert result.live_price == Money(Decimal("325.00"), "EUR")
+        assert result.extraction_method is ExtractionMethod.AGENT
+        assert monitor.last_llm_calls_used == 1
+        assert len(brain.decisions) == 1
+
+    def test_no_agent_reports_actionable_currency_failure(self):
+        browser = self._usd_browser(
+            fail_click_selectors={
+                "header-currency-picker-trigger",
+                'aria-label*="currency"',
+            }
+        )
+        monitor, _ = _monitor(browser, brain=None)
+
+        result = monitor.run_check(make_booking())
+
+        assert result.failure_reason.code is FailureCode.CURRENCY_MISMATCH
+        assert "no browser agent was configured" in result.failure_reason.detail
+        assert monitor.last_llm_calls_used == 0
+        searches = [
+            url
+            for action, url in browser.actions
+            if action == "goto" and "/searchresults.html" in url
+        ]
+        assert len(searches) == 1
 
 
 class TestJourneyFailureMapping:

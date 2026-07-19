@@ -58,6 +58,9 @@ class TraceRecorder:
             detail += f" — {outcome.detail}"
         self._add(TraceKind.JOURNEY_STEP, detail)
 
+    def currency_alignment(self, detail: str) -> None:
+        self._add(TraceKind.CURRENCY_ALIGNMENT, detail)
+
     def escalation_started(self, step: JourneyStep, trigger: str) -> None:
         self._add(TraceKind.ESCALATION_STARTED, f"{step.value}: {trigger}")
 

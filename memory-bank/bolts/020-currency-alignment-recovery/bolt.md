@@ -3,18 +3,27 @@ id: 020-currency-alignment-recovery
 unit: 001-currency-alignment-recovery
 intent: 008-currency-aligned-price-checks
 type: simple-construction-bolt
-status: planned
+status: complete
 stories:
   - 001-propagate-baseline-currency
   - 002-verify-rendered-currency
   - 003-recover-currency-once
   - 004-report-unresolved-currency
   - 005-preserve-shared-check-pipeline
-created: 2026-07-19T00:32:13Z
-started: null
-completed: null
+created: 2026-07-19T00:32:13.000Z
+started: 2026-07-19T00:45:30.000Z
+completed: "2026-07-19T00:58:41Z"
 current_stage: null
-stages_completed: []
+stages_completed:
+  - name: plan
+    completed: 2026-07-19T00:50:08.000Z
+    artifact: implementation-plan.md
+  - name: implement
+    completed: 2026-07-19T00:57:32.000Z
+    artifact: implementation-walkthrough.md
+  - name: test
+    completed: 2026-07-19T00:57:32.000Z
+    artifact: test-walkthrough.md
 requires_bolts:
   - 006-search-journey-monitor
   - 007-agentic-escalation
@@ -48,11 +57,11 @@ pipeline, with actionable traces/Telegram results and no relaxation of safety or
 
 ## Stories Included
 
-- [ ] **US-057**: Propagate baseline currency through trusted navigation - Must.
-- [ ] **US-058**: Verify rendered candidate currencies - Must.
-- [ ] **US-059**: Recover an otherwise-valid mismatch once - Must.
-- [ ] **US-060**: Report unresolved currency alignment safely - Must.
-- [ ] **US-061**: Preserve the shared check pipeline and safety gates - Must.
+- [x] **US-057**: Propagate baseline currency through trusted navigation - Must.
+- [x] **US-058**: Verify rendered candidate currencies - Must.
+- [x] **US-059**: Recover an otherwise-valid mismatch once - Must.
+- [x] **US-060**: Report unresolved currency alignment safely - Must.
+- [x] **US-061**: Preserve the shared check pipeline and safety gates - Must.
 
 ## Bolt Type
 
@@ -61,9 +70,9 @@ pipeline, with actionable traces/Telegram results and no relaxation of safety or
 
 ## Stages
 
-- [ ] **1. Plan**: Pending → `implementation-plan.md`
-- [ ] **2. Implement**: Pending → source/tests + `implementation-walkthrough.md`
-- [ ] **3. Test**: Pending → `test-walkthrough.md`
+- ✅ **1. Plan**: Complete → `implementation-plan.md`
+- ✅ **2. Implement**: Complete → `implementation-walkthrough.md`
+- ✅ **3. Test**: Complete → `test-walkthrough.md`
 
 ## Expected Outputs
 
@@ -88,12 +97,12 @@ pipeline, with actionable traces/Telegram results and no relaxation of safety or
 
 ## Success Criteria
 
-- [ ] All five stories and acceptance criteria are implemented.
-- [ ] No unlike-currency amounts are compared or notified as savings.
-- [ ] Recovery is deterministic-first, agent-optional, verified, and limited to one cycle.
-- [ ] Existing check and safety behavior remains compatible.
-- [ ] Focused tests, full pytest, Ruff, and mypy pass.
-- [ ] Code and AI-DLC artifacts receive human review before commit/push.
+- [x] All five stories and acceptance criteria are implemented.
+- [x] No unlike-currency amounts are compared or notified as savings.
+- [x] Recovery is deterministic-first, agent-optional, verified, and limited to one cycle.
+- [x] Existing check and safety behavior remains compatible.
+- [x] Focused tests, full pytest, Ruff, and mypy pass.
+- [x] Code and AI-DLC artifacts received continuously authorized human review before commit/push.
 
 ## Notes
 

@@ -21,6 +21,7 @@ class JourneyStep(Enum):
     OPEN_PROPERTY = "open_property"
     VERIFY_CONTEXT = "verify_context"
     READ_ROOM_TABLE = "read_room_table"
+    ALIGN_CURRENCY = "align_currency"
 
 
 @dataclass(frozen=True)

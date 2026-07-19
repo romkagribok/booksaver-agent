@@ -1,9 +1,9 @@
 ---
 intent: 008-currency-aligned-price-checks
 phase: inception
-status: inception-complete
-created: 2026-07-19T00:28:15Z
-updated: 2026-07-19T00:44:22Z
+status: complete
+created: 2026-07-19T00:28:15.000Z
+updated: 2026-07-19T00:44:22.000Z
 ---
 
 # Requirements: Currency-Aligned Price Checks

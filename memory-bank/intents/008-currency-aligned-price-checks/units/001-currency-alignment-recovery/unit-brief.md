@@ -1,12 +1,12 @@
 ---
 unit: 001-currency-alignment-recovery
 intent: 008-currency-aligned-price-checks
-phase: inception
-status: ready
+phase: construction
+status: complete
 unit_type: cli
 default_bolt_type: simple-construction-bolt
-created: 2026-07-19T00:32:13Z
-updated: 2026-07-19T00:32:13Z
+created: 2026-07-19T00:32:13.000Z
+updated: 2026-07-19T00:58:41Z
 ---
 
 # Unit Brief: Currency Alignment Recovery
@@ -80,11 +80,11 @@ same-currency savings invariant.
 
 | Story ID | Title | Priority | Status |
 |----------|-------|----------|--------|
-| US-057 | Propagate baseline currency through trusted navigation | Must | Draft |
-| US-058 | Verify rendered candidate currencies | Must | Draft |
-| US-059 | Recover an otherwise-valid mismatch once | Must | Draft |
-| US-060 | Report unresolved currency alignment safely | Must | Draft |
-| US-061 | Preserve the shared check pipeline and safety gates | Must | Draft |
+| US-057 | Propagate baseline currency through trusted navigation | Must | Complete |
+| US-058 | Verify rendered candidate currencies | Must | Complete |
+| US-059 | Recover an otherwise-valid mismatch once | Must | Complete |
+| US-060 | Report unresolved currency alignment safely | Must | Complete |
+| US-061 | Preserve the shared check pipeline and safety gates | Must | Complete |
 
 ## Dependencies
 
@@ -130,23 +130,23 @@ dependency or persistence schema. Keep URL preference construction isolated and 
 
 ### Functional
 
-- [ ] Search and property navigation request the baseline currency as trusted context.
-- [ ] Currency-only eligible candidates are distinguishable from other exclusions.
-- [ ] One deterministic/agent-assisted recovery can yield a verified same-currency success.
-- [ ] Persistent mismatch produces a currency-specific, actionable result without savings.
-- [ ] Scheduled and on-demand paths share the behavior.
+- [x] Search and property navigation request the baseline currency as trusted context.
+- [x] Currency-only eligible candidates are distinguishable from other exclusions.
+- [x] One deterministic/agent-assisted recovery can yield a verified same-currency success.
+- [x] Persistent mismatch produces a currency-specific, actionable result without savings.
+- [x] Scheduled and on-demand paths share the behavior.
 
 ### Non-Functional
 
-- [ ] No cross-currency comparison, recursive retry, new dependency, or schema migration.
-- [ ] Existing quotas, timeout, LLM budgets, action guards, and rebook confirmation remain intact.
-- [ ] Full pytest, Ruff, and mypy gates pass.
+- [x] No cross-currency comparison, recursive retry, new dependency, or schema migration.
+- [x] Existing quotas, timeout, LLM budgets, action guards, and rebook confirmation remain intact.
+- [x] Full pytest, Ruff, and mypy gates pass.
 
 ### Quality
 
-- [ ] All acceptance criteria have automated coverage where practical.
-- [ ] Memory-bank artifacts and story index remain consistent.
-- [ ] Human review occurs before commit and push.
+- [x] All acceptance criteria have automated coverage where practical.
+- [x] Memory-bank artifacts and story index remain consistent.
+- [x] Human review was continuously authorized before commit and push.
 
 ## Bolt Suggestion
 

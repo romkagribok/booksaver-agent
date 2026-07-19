@@ -59,6 +59,18 @@ class TestExclusionRules:
         selection = select_offer([_candidate(currency="USD")], make_booking())
         assert selection.chosen is None
         assert selection.excluded[0][1] is ExclusionReason.CURRENCY_MISMATCH
+        assert selection.currency_mismatches == selection.excluded[0][:1]
+
+    def test_only_otherwise_eligible_candidates_are_currency_mismatches(self):
+        refundable = _candidate(currency="USD")
+        not_refundable = _candidate(currency="USD", is_refundable=False)
+        wrong_room = _candidate(currency="USD", matches_room=False)
+
+        selection = select_offer(
+            [refundable, not_refundable, wrong_room], make_booking()
+        )
+
+        assert selection.currency_mismatches == (refundable,)
 
 
 class TestSelection:

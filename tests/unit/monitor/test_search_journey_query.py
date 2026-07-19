@@ -28,6 +28,7 @@ class TestTrustedSearchQuery:
         assert query["group_adults"] == ["3"]
         assert query["group_children"] == ["2"]
         assert query["no_rooms"] == ["2"]
+        assert query["selected_currency"] == ["EUR"]
 
     def test_optional_booking_destination_identity_is_preserved(self):
         query = parse_qs(

@@ -2,11 +2,11 @@
 id: 003-recover-currency-once
 unit: 001-currency-alignment-recovery
 intent: 008-currency-aligned-price-checks
-status: ready
+status: complete
 priority: must
-created: 2026-07-19T00:32:13Z
+created: 2026-07-19T00:32:13.000Z
 assigned_bolt: 020-currency-alignment-recovery
-implemented: false
+implemented: true
 ---
 
 # Story: Recover an Otherwise-Valid Currency Mismatch Once

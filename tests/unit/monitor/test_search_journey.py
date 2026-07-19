@@ -56,6 +56,7 @@ class TestHappyPath:
             "group_adults": ["2"],
             "group_children": ["0"],
             "no_rooms": ["1"],
+            "selected_currency": ["EUR"],
             "sb": ["1"],
             "src": ["searchresults"],
         }
@@ -88,6 +89,7 @@ class TestHappyPath:
         browser.property_url = (
             "https://www.booking.com/hotel/test.html?aid=304142&checkin=2020-01-01"
             "&group_adults=9"
+            "&selected_currency=USD"
         )
 
         result = SearchJourney(browser).run(make_booking())
@@ -101,6 +103,7 @@ class TestHappyPath:
         assert query["group_adults"] == ["2"]
         assert query["group_children"] == ["0"]
         assert query["no_rooms"] == ["1"]
+        assert query["selected_currency"] == ["EUR"]
 
     def test_fresh_property_href_preserves_duplicate_non_context_parameters(self):
         browser = _happy_browser()
@@ -116,6 +119,38 @@ class TestHappyPath:
         query = parse_qs(urlparse(property_url).query)
         assert query["label"] == ["one", "two"]
         assert query["checkin"] == ["2026-09-01"]
+
+    def test_deterministic_currency_control_selects_and_verifies_baseline(self):
+        browser = _happy_browser(currency_label="USD")
+        journey = SearchJourney(browser)
+
+        detail = journey.align_currency(make_booking())
+
+        assert browser.currency_label == "EUR"
+        assert "requested=EUR" in detail
+        assert "header preference verified" in detail
+
+    def test_currency_control_must_confirm_requested_currency(self):
+        browser = _happy_browser(currency_label="USD")
+
+        def _ignore_currency_click(b: FakeInteractiveBrowser, selector: str) -> None:
+            if ':has-text("EUR")' in selector:
+                b.currency_label = "USD"
+
+        original_click = browser.click
+
+        def click(selector: str) -> None:
+            original_click(selector)
+            _ignore_currency_click(browser, selector)
+
+        browser.click = click  # type: ignore[method-assign]
+
+        try:
+            SearchJourney(browser).align_currency(make_booking())
+        except RuntimeError as exc:
+            assert "did not confirm EUR" in str(exc)
+        else:
+            raise AssertionError("unverified currency preference must fail")
 
     def test_consent_panel_is_declined_after_navigation(self):
         selector = 'button:text-is("Decline")'

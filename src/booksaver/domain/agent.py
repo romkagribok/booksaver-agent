@@ -167,6 +167,7 @@ class EscalationResult:
 
 class TraceKind(Enum):
     JOURNEY_STEP = "journey_step"
+    CURRENCY_ALIGNMENT = "currency_alignment"
     ESCALATION_STARTED = "escalation_started"
     AGENT_ACTION = "agent_action"
     AGENT_BLOCKED = "agent_blocked"
