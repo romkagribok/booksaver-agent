@@ -190,6 +190,22 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-055` | Share daily check and LLM budgets | On-Demand Check | Complete | `001-on-demand-check-orchestration/stories/004-share-daily-check-and-llm-budgets.md` |
 | `US-056` | Reuse the normal monitoring pipeline | On-Demand Check | Complete | `001-on-demand-check-orchestration/stories/005-reuse-normal-monitoring-pipeline.md` |
 
+## 008-currency-aligned-price-checks
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-currency-alignment-recovery` | 5 stories | Inception complete; bolt 020 planned |
+
+### 001-currency-alignment-recovery: Currency Alignment Recovery
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-057` | Propagate baseline currency through trusted navigation | Currency Alignment | ✅ GENERATED | `001-currency-alignment-recovery/stories/001-propagate-baseline-currency.md` |
+| `US-058` | Verify rendered candidate currencies | Currency Alignment | ✅ GENERATED | `001-currency-alignment-recovery/stories/002-verify-rendered-currency.md` |
+| `US-059` | Recover an otherwise-valid currency mismatch once | Currency Alignment | ✅ GENERATED | `001-currency-alignment-recovery/stories/003-recover-currency-once.md` |
+| `US-060` | Report unresolved currency alignment safely | Currency Alignment | ✅ GENERATED | `001-currency-alignment-recovery/stories/004-report-unresolved-currency.md` |
+| `US-061` | Preserve the shared check pipeline and safety gates | Currency Alignment | ✅ GENERATED | `001-currency-alignment-recovery/stories/005-preserve-shared-check-pipeline.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -201,5 +217,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `005-telegram-command-navigation` | 1 | 5 | Complete (bolts 016 and 018; 668 tests) |
 | `006-telegram-booking-management` | 1 | 4 | Complete (bolt 017; 696 tests) |
 | `007-telegram-on-demand-checks` | 1 | 5 | Complete (bolt 019; 713 tests) |
+| `008-currency-aligned-price-checks` | 1 | 5 | Inception complete; bolt 020 planned |
 
-All 56 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management + 5 on-demand-check) are assigned exactly once.
+All 61 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management + 5 on-demand-check + 5 currency-alignment) are assigned exactly once.
