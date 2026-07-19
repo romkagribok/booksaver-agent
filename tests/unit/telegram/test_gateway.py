@@ -144,7 +144,10 @@ def test_unknown_callback_is_acknowledged_as_expired(tmp_path: Path) -> None:
                     "callback_query": {
                         "id": "cb-stale",
                         "from": {"id": owner_chat_id},
-                        "message": {"chat": {"id": owner_chat_id}, "message_id": 3},
+                        "message": {
+                            "chat": {"id": owner_chat_id, "type": "private"},
+                            "message_id": 3,
+                        },
                         "data": "stale:anything",
                     },
                 }
@@ -210,7 +213,10 @@ def test_unauthorized_callback_is_acknowledged_without_dispatch(tmp_path: Path) 
                                 "callback_query": {
                                     "id": "cb-forged",
                                     "from": {"id": stranger},
-                                    "message": {"chat": {"id": stranger}, "message_id": 2},
+                                    "message": {
+                                        "chat": {"id": stranger, "type": "private"},
+                                        "message_id": 2,
+                                    },
                                     "data": "admin:users",
                                 },
                             }
@@ -236,6 +242,81 @@ def test_unauthorized_callback_is_acknowledged_without_dispatch(tmp_path: Path) 
     ]
 
 
+def test_group_callback_is_generically_acknowledged_before_mutation(tmp_path: Path) -> None:
+    from booksaver.infrastructure.persistence.sqlite_store import SqliteBookingRepository
+    from tests.unit.monitor.fakes import make_booking
+
+    owner_chat_id = 555
+    telegram_user_id = 777
+    booking_id = "group-private-boundary"
+    db_path = tmp_path / "booksaver.db"
+    with SqliteStore(db_path) as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(telegram_user_id)
+        SqliteBookingRepository(store).add(make_booking(booking_id), user_id=user.user_id)
+
+    stop_event = threading.Event()
+    updates_sent = False
+    answers: list[dict] = []
+    edits: list[dict] = []
+
+    class _Transport:
+        def __call__(self, url: str, data: bytes, timeout: float) -> bytes:
+            nonlocal updates_sent
+            body = json.loads(data.decode())
+            if url.endswith("/setMyCommands"):
+                return json.dumps({"ok": True, "result": True}).encode()
+            if url.endswith("/answerCallbackQuery"):
+                answers.append(body)
+                return json.dumps({"ok": True, "result": True}).encode()
+            if url.endswith("/editMessageText"):
+                edits.append(body)
+                return json.dumps({"ok": True, "result": True}).encode()
+            if not updates_sent:
+                updates_sent = True
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "result": [
+                            {
+                                "update_id": 1,
+                                "callback_query": {
+                                    "id": "cb-group-delete",
+                                    "from": {"id": telegram_user_id},
+                                    "message": {
+                                        "chat": {"id": -100, "type": "supergroup"},
+                                        "message_id": 2,
+                                    },
+                                    "data": f"bdel:{booking_id}:confirm",
+                                },
+                            }
+                        ],
+                    }
+                ).encode()
+            stop_event.set()
+            return json.dumps({"ok": True, "result": []}).encode()
+
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
+    runner = build_bot_runner(
+        cfg,
+        db_path,
+        Scheduler(),
+        client=TelegramBotClient("fake-token", transport=_Transport()),
+    )
+    assert runner is not None
+
+    runner(stop_event)
+
+    assert answers == [
+        {
+            "callback_query_id": "cb-group-delete",
+            "text": "Open a private chat with BookSaver to use this action.",
+        }
+    ]
+    assert edits == []
+    with SqliteStore(db_path) as store:
+        assert SqliteBookingRepository(store).get_by_id(booking_id) is not None
+
+
 def test_end_to_end_owner_status_command_and_stranger_refusal(tmp_path: Path) -> None:
     owner_chat_id = 555
     stranger_chat_id = 777
@@ -246,7 +327,7 @@ def test_end_to_end_owner_status_command_and_stranger_refusal(tmp_path: Path) ->
                 {
                     "update_id": 1,
                     "message": {
-                        "chat": {"id": owner_chat_id},
+                        "chat": {"id": owner_chat_id, "type": "private"},
                         "from": {"id": owner_chat_id},
                         "text": "/status",
                     },
@@ -254,7 +335,7 @@ def test_end_to_end_owner_status_command_and_stranger_refusal(tmp_path: Path) ->
                 {
                     "update_id": 2,
                     "message": {
-                        "chat": {"id": stranger_chat_id},
+                        "chat": {"id": stranger_chat_id, "type": "private"},
                         "from": {"id": stranger_chat_id},
                         "text": "/status",
                     },
@@ -321,7 +402,7 @@ def test_cancelflow_reports_no_active_dialog(tmp_path: Path) -> None:
                             {
                                 "update_id": 1,
                                 "message": {
-                                    "chat": {"id": owner_chat_id},
+                                    "chat": {"id": owner_chat_id, "type": "private"},
                                     "from": {"id": owner_chat_id},
                                     "text": "/cancelflow",
                                 },
@@ -343,7 +424,14 @@ def test_cancelflow_reports_no_active_dialog(tmp_path: Path) -> None:
 
 
 def _run_single_message(
-    tmp_path: Path, cfg: Config, chat_id: int, user_id: int, text: str
+    tmp_path: Path,
+    cfg: Config,
+    chat_id: int,
+    user_id: int,
+    text: str,
+    *,
+    chat_type: str = "private",
+    username: str | None = None,
 ) -> list[tuple[int, str]]:
     """Wires build_bot_runner with a scripted transport that delivers one
     message then stops the loop, returning every sendMessage call."""
@@ -370,8 +458,11 @@ def _run_single_message(
                             {
                                 "update_id": 1,
                                 "message": {
-                                    "chat": {"id": chat_id},
-                                    "from": {"id": user_id},
+                                    "chat": {"id": chat_id, "type": chat_type},
+                                    "from": {
+                                        "id": user_id,
+                                        **({"username": username} if username else {}),
+                                    },
                                     "text": text,
                                     "message_id": 99,
                                 },
@@ -387,6 +478,62 @@ def _run_single_message(
     assert runner is not None
     runner(stop_event)
     return sent
+
+
+def test_group_invite_is_rejected_before_redemption(tmp_path: Path) -> None:
+    from booksaver.infrastructure.persistence.sqlite_store import (
+        SqliteInviteCodeRepository,
+    )
+
+    db_path = tmp_path / "booksaver.db"
+    with SqliteStore(db_path) as store:
+        owner = SqliteUserRepository(store).get_owner()
+        invite = SqliteInviteCodeRepository(store).issue(issued_by=owner.user_id)
+
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=555)
+    sent = _run_single_message(
+        tmp_path,
+        cfg,
+        chat_id=-100,
+        user_id=888,
+        text=f"/start {invite.code}",
+        chat_type="group",
+        username="GroupUser",
+    )
+
+    assert sent == [(-100, "BookSaver only works in a private chat with the bot.")]
+    with SqliteStore(db_path) as store:
+        assert SqliteUserRepository(store).get_by_telegram_id(888) is None
+        stored_invite = SqliteInviteCodeRepository(store).get(invite.code)
+        assert stored_invite is not None
+        assert stored_invite.is_used is False
+
+
+def test_group_command_does_not_refresh_active_users_identity_or_start_flow(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    with SqliteStore(db_path) as store:
+        users = SqliteUserRepository(store)
+        user = users.get_or_create_by_telegram_id(888)
+        users.set_telegram_username(user.user_id, "Before")
+
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=555)
+    sent = _run_single_message(
+        tmp_path,
+        cfg,
+        chat_id=-100,
+        user_id=888,
+        text="/register",
+        chat_type="supergroup",
+        username="After",
+    )
+
+    assert sent == [(-100, "BookSaver only works in a private chat with the bot.")]
+    with SqliteStore(db_path) as store:
+        unchanged = SqliteUserRepository(store).get_by_telegram_id(888)
+        assert unchanged is not None
+        assert unchanged.telegram_username == "Before"
 
 
 def test_admin_users_command_works_for_owner(tmp_path: Path) -> None:
@@ -468,7 +615,7 @@ def _scripted_conversation_transport(
                             {
                                 "update_id": self._sent_count,
                                 "message": {
-                                    "chat": {"id": chat_id},
+                                    "chat": {"id": chat_id, "type": "private"},
                                     "from": {"id": chat_id},
                                     "text": text,
                                 },

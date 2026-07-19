@@ -17,6 +17,13 @@ class IncomingCommand:
     # chat message containing a pasted API key). Defaults to 0 so existing
     # test/call sites that don't care about it keep working unchanged.
     message_id: int = 0
+    # Telegram usernames are display metadata only; authorization continues to
+    # use Telegram's stable numeric user id. ``None`` also represents a user
+    # who has removed their username.
+    username: str | None = None
+    # Privacy enforcement is performed by the gateway. Defaulting to private
+    # preserves compatibility for internal/test-created envelopes.
+    chat_type: str = "private"
 
 
 CommandHandler = Callable[[IncomingCommand], None]
@@ -31,6 +38,8 @@ class IncomingCallback:
     callback_query_id: str
     message_id: int
     data: str
+    username: str | None = None
+    chat_type: str = "private"
 
 
 CallbackHandler = Callable[[IncomingCallback], None]

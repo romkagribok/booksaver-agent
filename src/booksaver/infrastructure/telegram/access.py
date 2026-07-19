@@ -5,11 +5,23 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 
 from booksaver.domain.user import UserAccessState
 
 logger = logging.getLogger(__name__)
+
+
+class AccessRefusalReason(Enum):
+    """Internal refusal classification.
+
+    Callers may use this to give a revoked user the required explanation while
+    keeping every unknown/invalid-invite refusal deliberately indistinguishable.
+    """
+
+    UNKNOWN = "unknown"
+    REVOKED = "revoked"
 
 
 class RateLimiter:
@@ -61,7 +73,7 @@ class OwnerGuard:
 
 
 class AccessControl:
-    """Real multi-user access control for a discoverable bot (US-026).
+    """Invite-only multi-user access control for a discoverable bot.
 
     Supersedes `OwnerGuard` for production wiring (kept above for its
     existing unit tests / bolt-008 compatibility). Every update is resolved
@@ -70,59 +82,52 @@ class AccessControl:
     - The owner (`owner_chat_id`) is always allowed — this is a chat-id
       check, not a `User` lookup, since the laptop-mode owner has no
       Telegram identity at all.
-    - `owner` mode: anyone else is refused.
-    - `invite` mode: a known, active user is allowed; a revoked user is
-      refused; a stranger may redeem a single-use invite code via
+    - A known, active user is allowed; a revoked user is refused.
+    - A stranger may redeem a single-use invite code via
       `/start <code>` (and only that one command/argument combination) to
-      become an active user — everyone else is refused identically to
-      `owner` mode, so a stranger can never distinguish "wrong code" from
-      "invite mode is off" from probing.
+      become an active user. Everyone else is refused identically, so a
+      stranger cannot learn whether a supplied code was malformed, expired,
+      or already used.
 
     A `SqliteStore` is opened per `authorize()` call (mirroring
     `commands_readonly.py`'s per-command open/close pattern) rather than
-    held open for the gateway's lifetime — and only when a lookup is
-    actually needed: the owner fast-path and an `owner`-mode refusal never
-    touch the database at all.
+    held open for the gateway's lifetime. ``mode`` is accepted only as a
+    migration-safe constructor argument for older wiring; both legacy values
+    have the same invite-only behavior and there is no runtime mode mutator.
     """
 
     def __init__(
         self,
         owner_chat_id: int,
         db_path: Path,
-        mode: str = "owner",
+        mode: str | None = None,
         refusal_limiter: RateLimiter | None = None,
     ) -> None:
+        if mode not in (None, "owner", "invite"):
+            raise ValueError(f"Unknown legacy access mode {mode!r}")
         self._owner_chat_id = owner_chat_id
         self._db_path = db_path
-        self._mode = mode
         self._limiter = refusal_limiter or RateLimiter(max_events=1, window_seconds=3600.0)
         self._owner_linked = False
-
-    @property
-    def mode(self) -> str:
-        return self._mode
-
-    def set_mode(self, mode: str) -> None:
-        """Runtime switch (US-028 `/admin mode`). Not persisted to config —
-        reverts to the configured value on the next daemon restart."""
-        if mode not in ("owner", "invite"):
-            raise ValueError(f"Unknown access mode {mode!r}")
-        self._mode = mode
 
     def is_owner(self, chat_id: int) -> bool:
         return chat_id == self._owner_chat_id
 
-    def authorize(self, telegram_user_id: int, chat_id: int, command: str, args: str) -> bool:
+    def authorize(
+        self,
+        telegram_user_id: int,
+        chat_id: int,
+        command: str,
+        args: str,
+        username: str | None = None,
+    ) -> bool:
         """Whether this sender may proceed. Never raises; never touches the
         database unless a stranger/known-user lookup is actually required."""
         if self.is_owner(chat_id):
             self._ensure_owner_linked(telegram_user_id)
+            self._refresh_authorized_username(telegram_user_id, username)
             return True
 
-        if self._mode == "owner":
-            return False
-
-        # invite mode
         from booksaver.infrastructure.persistence.sqlite_store import (
             SqliteStore,
             SqliteUserRepository,
@@ -132,7 +137,10 @@ class AccessControl:
             users = SqliteUserRepository(store)
             user = users.get_by_telegram_id(telegram_user_id)
             if user is not None:
-                return user.access_state is UserAccessState.ACTIVE
+                if user.access_state is not UserAccessState.ACTIVE:
+                    return False
+                _set_username_best_effort(users, user.user_id, username)
+                return True
 
             if command == "/start" and args.strip():
                 from booksaver.infrastructure.persistence.sqlite_store import (
@@ -150,6 +158,7 @@ class AccessControl:
                     new_user = users.get_or_create_by_telegram_id(telegram_user_id)
                     redeemed = invites.redeem(code, used_by=new_user.user_id, now=now)
                     if redeemed is not None:
+                        _set_username_best_effort(users, new_user.user_id, username)
                         return True
 
             return False
@@ -181,6 +190,57 @@ class AccessControl:
             return
         self._owner_linked = True
 
+    def _refresh_authorized_username(
+        self, telegram_user_id: int, username: str | None
+    ) -> None:
+        """Refresh mutable display metadata only after authorization succeeds."""
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteStore,
+            SqliteUserRepository,
+        )
+
+        try:
+            with SqliteStore(self._db_path) as store:
+                users = SqliteUserRepository(store)
+                user = users.get_by_telegram_id(telegram_user_id)
+                if user is not None:
+                    _set_username_best_effort(users, user.user_id, username)
+        except Exception:  # noqa: BLE001 - display metadata must not block access
+            logger.warning("Could not refresh Telegram username", exc_info=True)
+
+    def refusal_reason(self, telegram_user_id: int) -> AccessRefusalReason:
+        """Classify a refused sender without exposing invite validity details."""
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteStore,
+            SqliteUserRepository,
+        )
+
+        try:
+            with SqliteStore(self._db_path) as store:
+                user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
+                if user is not None and user.access_state is UserAccessState.REVOKED:
+                    return AccessRefusalReason.REVOKED
+        except Exception:  # noqa: BLE001 - refusal remains fail-closed
+            logger.warning("Could not classify Telegram access refusal", exc_info=True)
+        return AccessRefusalReason.UNKNOWN
+
+    def is_active_telegram_user(self, telegram_user_id: int) -> bool:
+        """Re-authorize queued work without consuming an invite or updating metadata."""
+        if telegram_user_id == self._owner_chat_id:
+            return True
+        from booksaver.infrastructure.persistence.sqlite_store import (
+            SqliteStore,
+            SqliteUserRepository,
+        )
+
+        try:
+            with SqliteStore(self._db_path) as store:
+                user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
+                return user is not None and user.access_state is UserAccessState.ACTIVE
+        except Exception:  # noqa: BLE001 - authorization failures are fail-closed
+            logger.warning("Could not re-authorize Telegram user", exc_info=True)
+            return False
+
     def should_send_refusal(self, chat_id: int) -> bool:
         return self._limiter.allow(chat_id)
 
@@ -188,3 +248,19 @@ class AccessControl:
         """US-026: refused interactions are logged (user id + command),
         never message bodies."""
         logger.info("Access refused: user_id=%s command=%s", telegram_user_id, command)
+
+
+def _normalize_username(username: str | None) -> str | None:
+    if username is None:
+        return None
+    normalized = username.strip().lstrip("@").strip()
+    return normalized or None
+
+
+def _set_username_best_effort(users: object, user_id: int, username: str | None) -> None:
+    """Username projection failure must never invalidate successful admission."""
+    try:
+        setter = getattr(users, "set_telegram_username")
+        setter(user_id, _normalize_username(username))
+    except Exception:  # noqa: BLE001 - mutable display metadata is non-authoritative
+        logger.warning("Could not refresh Telegram username", exc_info=True)

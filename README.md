@@ -35,8 +35,9 @@ check with `BUDGET_EXCEEDED` and the daemon moves on.
 ## Telegram bot
 
 The primary interface is a Telegram bot you run yourself alongside the daemon (long-polling, no
-inbound port needed). Access is **owner/invite only** — there is no public bot mode; strangers
-self-host the repo instead of using yours. The owner registers bookings and gets alerts by default;
+inbound port needed). Access is **invite-only for non-owners** — there is no public bot mode or
+runtime access-mode switch; strangers self-host the repo instead of using yours. The owner remains
+the sole administrator, creates single-use invites, registers bookings, and gets alerts by default;
 `/register` lets invited users add their own bookings from chat, each getting their own alert
 routing and per-user daily check/LLM-call limits. LLM calls default to the owner's Anthropic key
 (hybrid billing with per-user daily caps); `/setkey` lets a user opt into their own key instead

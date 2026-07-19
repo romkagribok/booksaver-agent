@@ -146,21 +146,24 @@ def test_help_lists_all_commands(tmp_path: Path) -> None:
         assert cmd in text
 
 
-def test_status_with_no_database_reports_no_bookings(tmp_path: Path) -> None:
+def test_status_with_no_database_refuses_unrecognized_sender(tmp_path: Path) -> None:
     _db, router, sent, _sched = _setup(tmp_path)
     router.dispatch(_cmd("/status"))
-    text = sent[0][1]
-    assert "No bookings registered yet." in text
-    assert "Next scheduled run: pending first tick" in text
+    assert sent[0][1] == "You're not recognized by this bot."
 
 
-def test_status_reports_bookings_and_recent_check(tmp_path: Path) -> None:
+def test_status_reports_only_callers_booking_count_without_exact_records(tmp_path: Path) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
+    caller_id = _register_caller(db_path, telegram_id=1)
+    foreign_id = _register_caller(db_path, telegram_id=2)
     with SqliteStore(db_path) as store:
-        SqliteBookingRepository(store).add(_booking())
+        repo = SqliteBookingRepository(store)
+        repo.add(_booking("caller-booking"), user_id=caller_id)
+        repo.add(_booking("foreign-one"), user_id=foreign_id)
+        repo.add(_booking("foreign-two"), user_id=foreign_id)
         SqliteCheckHistoryRepository(store).add(
             CheckResult.success(
-                booking_id="b-1",
+                booking_id="caller-booking",
                 checked_at=datetime.now(UTC),
                 live_price=Money(amount=Decimal("350.00"), currency="EUR"),
                 extraction_method=ExtractionMethod.DOM,
@@ -169,14 +172,30 @@ def test_status_reports_bookings_and_recent_check(tmp_path: Path) -> None:
 
     router.dispatch(_cmd("/status"))
     text = sent[0][1]
-    assert "Bookings monitored: 1" in text
-    assert "success" in text
+    assert "Your active bookings: 1" in text
+    assert "Bookings monitored" not in text
+    assert "Hotel Test" not in text
+    assert "caller-booking" not in text
+    assert "foreign" not in text
+    assert "success" not in text
 
 
 def test_status_reports_logged_out_session_mode_by_default(tmp_path: Path) -> None:
-    _db, router, sent, _sched = _setup(tmp_path)
+    db_path, router, sent, _sched = _setup(tmp_path)
+    _register_caller(db_path, telegram_id=1)
     router.dispatch(_cmd("/status"))
     assert "Session: logged out (public rates" in sent[0][1]
+
+
+def test_status_refuses_unrecognized_sender_even_when_other_users_exist(
+    tmp_path: Path,
+) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    _register_caller(db_path, telegram_id=1)
+
+    router.dispatch(_cmd("/status", chat_id=999))
+
+    assert sent[0][1] == "You're not recognized by this bot."
 
 
 def test_bookings_lists_active_bookings(tmp_path: Path) -> None:

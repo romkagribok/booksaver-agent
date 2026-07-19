@@ -96,7 +96,12 @@ class BotLoop:
         chat = message.get("chat") or {}
         sender = message.get("from") or {}
         chat_id = chat.get("id")
+        # Telegram normally supplies this field. Treat malformed/partial
+        # updates as unknown so the gateway's private-chat boundary fails
+        # closed rather than silently upgrading them to private.
+        chat_type = str(chat.get("type") or "unknown")
         user_id = sender.get("id")
+        username = sender.get("username")
         message_id = message.get("message_id", 0)
         text = message.get("text")
         if chat_id is None or user_id is None or not text:
@@ -110,6 +115,8 @@ class BotLoop:
             args=args,
             raw_text=text,
             message_id=message_id,
+            username=str(username) if username is not None else None,
+            chat_type=chat_type,
         )
 
         if not self._access_guard(incoming):
@@ -134,7 +141,9 @@ class BotLoop:
         chat = message.get("chat") or {}
         sender = callback_query.get("from") or {}
         chat_id = chat.get("id")
+        chat_type = str(chat.get("type") or "unknown")
         user_id = sender.get("id")
+        username = sender.get("username")
         callback_query_id = callback_query.get("id")
         message_id = message.get("message_id", 0)
         data = callback_query.get("data")
@@ -148,5 +157,7 @@ class BotLoop:
                 callback_query_id=callback_query_id,
                 message_id=message_id,
                 data=data,
+                username=str(username) if username is not None else None,
+                chat_type=chat_type,
             )
         )

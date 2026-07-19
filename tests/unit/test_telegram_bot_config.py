@@ -72,9 +72,15 @@ class TestTelegramBotConfig:
         assert cfg.telegram_bot_settings.enabled is False
         assert cfg.telegram_bot_settings.owner_chat_id is None
 
-    def test_access_mode_defaults_to_owner(self):
+    def test_access_mode_defaults_to_fixed_invite(self):
         cfg = load_config(DictSource(_base()))
-        assert cfg.telegram_bot_settings.access_mode == "owner"
+        assert cfg.telegram_bot_settings.access_mode == "invite"
+
+    def test_legacy_owner_access_mode_normalizes_to_invite(self):
+        cfg = load_config(
+            DictSource(_base({"enabled": True, "owner_chat_id": 1, "access_mode": "owner"}))
+        )
+        assert cfg.telegram_bot_settings.access_mode == "invite"
 
     def test_access_mode_invite_accepted(self):
         cfg = load_config(
@@ -151,7 +157,10 @@ class TestTelegramBotSettingsValueObject:
         settings = TelegramBotSettings()
         assert settings.enabled is False
         assert settings.poll_timeout_seconds == 30
-        assert settings.access_mode == "owner"
+        assert settings.access_mode == "invite"
+
+    def test_legacy_owner_value_normalizes_on_direct_construction(self):
+        assert TelegramBotSettings(access_mode="owner").access_mode == "invite"
 
     def test_open_access_mode_rejected_by_direct_construction(self):
         with pytest.raises(ValueError, match="no public/open mode"):

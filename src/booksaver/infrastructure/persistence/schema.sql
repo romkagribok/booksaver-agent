@@ -7,9 +7,13 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 -- foundation. Exactly one 'owner' row exists at all times (partial unique
 -- index below). encrypted_key is an opaque, nullable blob reserved for the
 -- later personal-key intake slice (US-027); nothing reads/writes it yet.
+-- v9: telegram_username is optional, mutable display metadata (US-063). It is
+-- deliberately nullable and non-unique; authorization continues to use only
+-- telegram_user_id.
 CREATE TABLE IF NOT EXISTS users (
     user_id          INTEGER PRIMARY KEY AUTOINCREMENT,
     telegram_user_id INTEGER UNIQUE,
+    telegram_username TEXT,
     role             TEXT    NOT NULL CHECK(role IN ('owner', 'user')),
     access_state     TEXT    NOT NULL DEFAULT 'active'
         CHECK(access_state IN ('active', 'revoked')),

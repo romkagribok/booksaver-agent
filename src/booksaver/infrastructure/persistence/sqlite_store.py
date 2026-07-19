@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -44,8 +45,19 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
+
+
+@dataclass(frozen=True, slots=True)
+class AdminUserAggregate:
+    """Allowlisted admin projection; contains no Telegram id or booking data."""
+
+    user_id: int
+    telegram_username: str | None
+    role: UserRole
+    access_state: UserAccessState
+    active_booking_count: int
 
 # Columns shared by the v2/v4 and v5 check_history definitions (v5 only relaxes
 # the extraction_method CHECK to include 'agent'); used to copy data across the
@@ -266,6 +278,25 @@ def _migrate_v7(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
 
 
+def _migrate_v9(conn: sqlite3.Connection) -> None:
+    """Add optional Telegram username display metadata (US-063).
+
+    Guard both the table and the column so reopening a database after a
+    partially applied migration is safe. Fresh databases already receive the
+    v9 shape from ``schema.sql``.
+    """
+    tables = {
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if "users" not in tables:
+        return
+
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+    if "telegram_username" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN telegram_username TEXT")
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -273,10 +304,12 @@ def _migrate_v7(conn: sqlite3.Connection) -> None:
 # v7 -> v8: invite_codes table, also purely additive (US-026) — no migrate
 # function needed; schema.sql's CREATE TABLE IF NOT EXISTS covers it, same as
 # v3/v4/v6.
+# v8 -> v9: users.telegram_username optional display metadata (US-063).
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
     7: _migrate_v7,
+    9: _migrate_v9,
 }
 
 
@@ -926,7 +959,7 @@ class SqliteCheckTraceRepository:
 
 
 class SqliteUserRepository:
-    """Schema v7 (US-029). Exactly one 'owner' row is guaranteed to exist by
+    """Schema v9 (US-029/US-063). Exactly one owner row is guaranteed by
     `_ensure_owner_user` (called on every connect) and the DB-level partial
     unique index on `users(role) WHERE role = 'owner'`.
     """
@@ -984,6 +1017,42 @@ class SqliteUserRepository:
         ).fetchall()
         return [self._row_to_user(r) for r in rows]
 
+    def list_admin_aggregates(self) -> list[AdminUserAggregate]:
+        """Return only the fields allowlisted for aggregate admin usage.
+
+        Active booking totals are calculated in SQL. No ``Booking`` domain
+        objects or exact booking/check/savings/rebook records are loaded.
+        """
+        rows = self._store.conn.execute(
+            """
+            SELECT
+                u.user_id,
+                u.telegram_username,
+                u.role,
+                u.access_state,
+                COUNT(CASE WHEN b.status = 'active' THEN 1 END) AS active_booking_count
+            FROM users AS u
+            LEFT JOIN bookings AS b ON b.user_id = u.user_id
+            GROUP BY
+                u.user_id,
+                u.telegram_username,
+                u.role,
+                u.access_state,
+                u.created_at
+            ORDER BY u.created_at
+            """
+        ).fetchall()
+        return [
+            AdminUserAggregate(
+                user_id=int(row["user_id"]),
+                telegram_username=row["telegram_username"],
+                role=UserRole(row["role"]),
+                access_state=UserAccessState(row["access_state"]),
+                active_booking_count=int(row["active_booking_count"]),
+            )
+            for row in rows
+        ]
+
     def set_access_state(self, user_id: int, access_state: UserAccessState) -> None:
         cursor = self._store.conn.execute(
             "UPDATE users SET access_state = ? WHERE user_id = ?",
@@ -1003,6 +1072,33 @@ class SqliteUserRepository:
             (telegram_user_id, user_id),
         )
         self._store.conn.commit()
+
+    def set_telegram_username(
+        self, user_id: int, telegram_username: str | None
+    ) -> bool:
+        """Store current optional Telegram username display metadata.
+
+        Usernames are normalized without leading ``@`` characters. Whitespace
+        and an empty username normalize to ``None``. The current value is read
+        first so an unchanged username issues no UPDATE. Returns whether the
+        stored value changed.
+        """
+        normalized = None
+        if telegram_username is not None:
+            normalized = telegram_username.strip().lstrip("@") or None
+
+        user = self.get_by_id(user_id)
+        if user is None:
+            raise KeyError(f"No user with id '{user_id}'")
+        if user.telegram_username == normalized:
+            return False
+
+        self._store.conn.execute(
+            "UPDATE users SET telegram_username = ? WHERE user_id = ?",
+            (normalized, user_id),
+        )
+        self._store.conn.commit()
+        return True
 
     def get_owner_of_booking(self, booking_id: str) -> User | None:
         """US-027: resolve a booking's owning user, for per-booking LLM key
@@ -1061,12 +1157,16 @@ class SqliteUserRepository:
             access_state=UserAccessState(row["access_state"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             encrypted_key=row["encrypted_key"],
+            telegram_username=row["telegram_username"],
         )
 
 
 class SqliteInviteCodeRepository:
-    """Schema v8 (US-026). Single-use, owner-issued invite codes for
-    `access_mode = "invite"`."""
+    """Schema v8 (US-026/US-064) single-use owner-issued invite codes.
+
+    These are the fixed non-owner admission path; there is no runtime access
+    mode switch.
+    """
 
     def __init__(self, store: SqliteStore) -> None:
         self._store = store

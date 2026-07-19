@@ -17,7 +17,7 @@ class UserAccessState(Enum):
 
 @dataclass
 class User:
-    """A BookSaver user (schema v7, US-029).
+    """A BookSaver user (schema v9, US-029/US-063).
 
     The laptop-mode owner has no Telegram identity (``telegram_user_id`` is
     ``None``); a VPS-deployed owner and every invited user have one. Exactly
@@ -36,6 +36,7 @@ class User:
     access_state: UserAccessState
     created_at: datetime
     encrypted_key: bytes | None = None
+    telegram_username: str | None = None
 
     @property
     def is_owner(self) -> bool:

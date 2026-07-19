@@ -300,11 +300,38 @@ def test_confirmation_edit_rejects_another_bookings_confirmation(tmp_path: Path)
     _callback(callbacks, 101, f"bedit:{booking_id}:confirmation")
     response = dialogs.handle_message(101, 101, "TWO")
 
-    assert "already registered" in response
+    assert "one of your bookings" in response
+    assert "TWO" not in response
     with SqliteStore(db_path) as store:
         unchanged = SqliteBookingRepository(store).get_by_id(booking_id)
         assert unchanged is not None
         assert unchanged.confirmation_id.value == "ONE"
+
+
+def test_confirmation_edit_does_not_disclose_foreign_confirmation(
+    tmp_path: Path,
+) -> None:
+    db_path, _router, callbacks, dialogs, _client, _sent = _setup(tmp_path)
+    local_user_id = _user(db_path, 101)
+    foreign_user_id = _user(db_path, 202)
+    booking_id = "11111111-1111-4111-8111-111111111111"
+    _add(db_path, _booking(booking_id, "OWN"), local_user_id)
+    _add(
+        db_path,
+        _booking("22222222-2222-4222-8222-222222222222", "FOREIGN-SECRET"),
+        foreign_user_id,
+    )
+
+    _callback(callbacks, 101, f"bedit:{booking_id}:confirmation")
+    response = dialogs.handle_message(101, 101, "FOREIGN-SECRET")
+
+    assert response == "Booking was not updated. Check the booking details and try again."
+    assert "FOREIGN-SECRET" not in response
+    assert "already registered" not in response
+    with SqliteStore(db_path) as store:
+        unchanged = SqliteBookingRepository(store).get_by_id(booking_id)
+        assert unchanged is not None
+        assert unchanged.confirmation_id.value == "OWN"
 
 
 def test_delete_cancel_preserves_booking_and_confirm_deletes_it(tmp_path: Path) -> None:

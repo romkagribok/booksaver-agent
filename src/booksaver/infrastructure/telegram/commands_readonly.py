@@ -66,7 +66,8 @@ def register_readonly_commands(
     user's data. An unresolved or revoked sender gets a polite refusal;
     admission (who is even allowed to reach a command handler) is the
     parallel bolt-009 worker's access-control layer, not this module.
-    `/status` stays daemon-wide (aggregate health, not per-user data).
+    `/status` combines daemon health with only the caller's active-booking
+    count. It never enumerates exact records or includes another user's count.
     """
 
     def _resolve_active_user(store: SqliteStore, telegram_user_id: int) -> User | None:
@@ -85,6 +86,18 @@ def register_readonly_commands(
         reply(cmd.chat_id, help_text(include_owner_only=include_admin))
 
     def _status(cmd: IncomingCommand) -> None:
+        if not db_path.exists():
+            reply(cmd.chat_id, _NOT_RECOGNIZED)
+            return
+        with SqliteStore(db_path) as store:
+            user = _resolve_active_user(store, cmd.user_id)
+            if user is None:
+                reply(cmd.chat_id, _NOT_RECOGNIZED)
+                return
+            active_booking_count = len(
+                SqliteBookingRepository(store).list_active_for_user(user.user_id)
+            )
+
         lines = ["BookSaver status"]
         started = scheduler.started_at
         if started is not None:
@@ -114,28 +127,7 @@ def register_readonly_commands(
             else "Session: logged out (public rates; `booksaver auth import` for member rates)"
         )
 
-        if not db_path.exists():
-            lines.append("No bookings registered yet.")
-            reply(cmd.chat_id, "\n".join(lines))
-            return
-
-        with SqliteStore(db_path) as store:
-            bookings = SqliteBookingRepository(store).list_active()
-            history = SqliteCheckHistoryRepository(store)
-            lines.append(f"Bookings monitored: {len(bookings)}")
-            for booking in bookings:
-                recent = history.get_recent(booking.booking_id, limit=1)
-                if recent:
-                    result = recent[0]
-                    lines.append(
-                        f"  {booking.property.name[:24]} ({booking.booking_id[:8]}): "
-                        f"{result.outcome.value} at {result.checked_at.isoformat()[:19]}"
-                    )
-                else:
-                    lines.append(
-                        f"  {booking.property.name[:24]} ({booking.booking_id[:8]}): "
-                        "no checks yet"
-                    )
+        lines.append(f"Your active bookings: {active_booking_count}")
         reply(cmd.chat_id, "\n".join(lines))
 
     def _bookings(cmd: IncomingCommand) -> None:

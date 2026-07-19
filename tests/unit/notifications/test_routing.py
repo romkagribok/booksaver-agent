@@ -60,6 +60,24 @@ def test_owner_owned_booking_uses_the_static_owner_notifiers() -> None:
     assert notifiers == [owner_notifier]
 
 
+def test_revoked_owner_booking_gets_no_notifiers() -> None:
+    booking = make_booking("b-revoked-owner")
+    booking_repo = FakeBookingRepository([booking])
+    booking_repo.owners[booking.booking_id] = 1
+    owner = _owner_user()
+    owner.access_state = UserAccessState.REVOKED
+
+    resolver = OwnerBookingNotifierResolver(
+        booking_repo=booking_repo,
+        user_repo=FakeUserRepo([owner]),
+        owner_notifiers=[FakeNotifier("email")],
+        telegram_bot_settings=TelegramBotSettings(),
+        telegram_bot_token=None,
+    )
+
+    assert resolver(booking) == []
+
+
 def test_invited_user_booking_routes_to_their_own_telegram_chat() -> None:
     booking = make_booking("b-invited")
     booking_repo = FakeBookingRepository([booking])

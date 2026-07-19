@@ -93,6 +93,15 @@ data_directory = "/data"
 [agent]
 # max_steps = 15
 # max_llm_calls = 20
+
+[telegram_bot]
+enabled = true
+owner_chat_id = 123456789
+poll_timeout_seconds = 30
+
+# Non-owners are always admitted through owner-issued, single-use invites.
+# Historical access_mode = "owner" or "invite" values are accepted during
+# upgrade but both now normalize to the same fixed invite-only policy.
 # check_timeout_seconds = 180
 ```
 

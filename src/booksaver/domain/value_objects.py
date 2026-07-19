@@ -180,7 +180,7 @@ class NotificationSettings:
     smtp_username: str | None = None
 
 
-_VALID_ACCESS_MODES = ("owner", "invite")
+_LEGACY_ACCESS_MODES = ("owner", "invite")
 
 
 @dataclass(frozen=True)
@@ -213,17 +213,16 @@ class TelegramBotSettings:
     """`[telegram_bot]` config (US-023). The bot token stays in the
     ``BOOKSAVER_TELEGRAM_BOT_TOKEN`` env var (ADR-002) — never here.
 
-    ``access_mode`` (US-026, Checkpoint 1): only ``owner`` and ``invite`` are
-    valid — there is deliberately no ``open``/public mode (ToS exposure of
-    operating a public scraping service, IP concentration). Unknown values
-    (including ``"open"``) are rejected here so the daemon refuses to start
-    misconfigured rather than silently running owner-only.
+    ``access_mode`` is retained as a migration-safe config projection. Legacy
+    ``owner`` and ``invite`` values both normalize to the fixed invite-only
+    posture. There is deliberately no ``open``/public mode (ToS exposure of
+    operating a public scraping service, IP concentration).
     """
 
     enabled: bool = False
     owner_chat_id: int | None = None
     poll_timeout_seconds: int = 30
-    access_mode: str = "owner"
+    access_mode: str = "invite"
     # bolt 011 (US-032): how long an inline-keyboard rebook confirmation waits
     # for a tap before the gate fail-safe declines (mirrors TerminalConfirmationGate's
     # EOF-declines behaviour). Additive key inside the existing [telegram_bot] table.
@@ -239,11 +238,13 @@ class TelegramBotSettings:
                 "telegram_bot.poll_timeout_seconds must be between 25 and 50, "
                 f"got {self.poll_timeout_seconds}"
             )
-        if self.access_mode not in _VALID_ACCESS_MODES:
+        if self.access_mode not in _LEGACY_ACCESS_MODES:
             raise ValueError(
-                "telegram_bot.access_mode must be one of "
-                f"{_VALID_ACCESS_MODES!r} (no public/open mode), got {self.access_mode!r}"
+                "telegram_bot.access_mode is fixed to invite; legacy values "
+                f"{_LEGACY_ACCESS_MODES!r} are accepted (no public/open mode), "
+                f"got {self.access_mode!r}"
             )
+        object.__setattr__(self, "access_mode", "invite")
         if self.rebook_confirm_timeout_seconds < 30:
             raise ValueError(
                 "telegram_bot.rebook_confirm_timeout_seconds must be >= 30, "

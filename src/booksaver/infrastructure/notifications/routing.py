@@ -78,9 +78,6 @@ class OwnerBookingNotifierResolver:
             )
             return []
 
-        if user.is_owner:
-            return self._owner_notifiers
-
         if not user.is_active:
             logger.warning(
                 "Booking %s owner user %s is revoked; alert dropped",
@@ -88,6 +85,9 @@ class OwnerBookingNotifierResolver:
                 user.user_id,
             )
             return []
+
+        if user.is_owner:
+            return self._owner_notifiers
 
         chat_id = resolve_telegram_chat_id(user, self._telegram_bot_settings)
         if chat_id is None:

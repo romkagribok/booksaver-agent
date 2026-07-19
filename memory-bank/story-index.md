@@ -206,6 +206,38 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-060` | Report unresolved currency alignment safely | Currency Alignment | Complete | `001-currency-alignment-recovery/stories/004-report-unresolved-currency.md` |
 | `US-061` | Preserve the shared check pipeline and safety gates | Currency Alignment | Complete | `001-currency-alignment-recovery/stories/005-preserve-shared-check-pipeline.md` |
 
+## 009-invite-first-sharing
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-invite-first-access` | 5 stories | Complete (bolt 021; 763 tests at final verification) |
+
+### 001-invite-first-access: Invite-First Access
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-062` | Deliver a copyable invite command | Invite-First Sharing | Complete | `001-invite-first-access/stories/001-deliver-copyable-invite-command.md` |
+| `US-063` | Maintain recognizable Telegram usernames | Invite-First Sharing | Complete | `001-invite-first-access/stories/002-maintain-recognizable-usernames.md` |
+| `US-064` | Enforce invite-only non-owner admission | Invite-First Sharing | Complete | `001-invite-first-access/stories/003-enforce-invite-only-admission.md` |
+| `US-065` | Explain revoked access | Invite-First Sharing | Complete | `001-invite-first-access/stories/004-explain-revoked-access.md` |
+| `US-066` | Preserve sharing safety | Invite-First Sharing | Complete | `001-invite-first-access/stories/005-preserve-sharing-safety.md` |
+
+## 010-telegram-privacy-boundaries
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-telegram-privacy-boundaries` | 5 stories | Complete (bolt 022; 763 tests at final verification) |
+
+### 001-telegram-privacy-boundaries: Telegram Privacy Boundaries
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-067` | Restrict interaction to private chats | Telegram Privacy | Complete | `001-telegram-privacy-boundaries/stories/001-restrict-interaction-to-private-chats.md` |
+| `US-068` | Scope status and selectors | Telegram Privacy | Complete | `001-telegram-privacy-boundaries/stories/002-scope-status-and-selectors.md` |
+| `US-069` | Show aggregate admin usage | Telegram Privacy | Complete | `001-telegram-privacy-boundaries/stories/003-show-aggregate-admin-usage.md` |
+| `US-070` | Stop work after revocation | Telegram Privacy | Complete | `001-telegram-privacy-boundaries/stories/004-stop-work-after-revocation.md` |
+| `US-071` | Prove cross-user isolation | Telegram Privacy | Complete | `001-telegram-privacy-boundaries/stories/005-prove-cross-user-isolation.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -218,5 +250,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `006-telegram-booking-management` | 1 | 4 | Complete (bolt 017; 696 tests) |
 | `007-telegram-on-demand-checks` | 1 | 5 | Complete (bolt 019; 713 tests) |
 | `008-currency-aligned-price-checks` | 1 | 5 | Complete (bolt 020; 721 tests) |
+| `009-invite-first-sharing` | 1 | 5 | Complete (bolt 021; 763 tests) |
+| `010-telegram-privacy-boundaries` | 1 | 5 | Complete (bolt 022; 763 tests) |
 
-All 61 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management + 5 on-demand-check + 5 currency-alignment) are assigned exactly once.
+All 71 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management + 5 on-demand-check + 5 currency-alignment + 5 invite-first-sharing + 5 Telegram-privacy) are assigned exactly once.

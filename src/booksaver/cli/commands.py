@@ -65,9 +65,9 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # check_timeout_seconds = 180 # wall-clock limit per booking check
 
 [telegram_bot]
-# Owner-only Telegram bot gateway (US-023). Token: export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
+# Private invite-only Telegram bot gateway. Token: export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
 # enabled = false
-# owner_chat_id = 123456789   # required when enabled; only this chat may use the bot
+# owner_chat_id = 123456789   # required when enabled; owner/admin Telegram chat
 # poll_timeout_seconds = 30   # long-poll timeout, clamped to 25-50
 
 [limits]
@@ -392,7 +392,12 @@ def _notify_invalid_user_keys(user_repo: Any, results: list[Any]) -> None:
     notified_users: set[int] = set()
     for result in invalid:
         owner = user_repo.get_owner_of_booking(result.booking_id)
-        if owner is None or owner.telegram_user_id is None or owner.user_id in notified_users:
+        if (
+            owner is None
+            or not owner.is_active
+            or owner.telegram_user_id is None
+            or owner.user_id in notified_users
+        ):
             continue
         notified_users.add(owner.user_id)
         try:

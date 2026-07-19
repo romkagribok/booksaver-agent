@@ -11,8 +11,9 @@ from booksaver.daemon.check_coordinator import CheckCoordinator
 from booksaver.daemon.scheduler import Scheduler
 from booksaver.domain.models import Config
 
-from .access import AccessControl, RateLimiter
-from .admin_commands import register_admin_commands
+from .access import AccessControl, AccessRefusalReason, RateLimiter
+from .admin_commands import ACCESS_LOSS_MESSAGE, register_admin_commands
+from .admin_usage import AdminUsageSnapshot
 from .booking_management import register_booking_management_commands
 from .bot_loop import BotLoop
 from .check_now import register_check_now_command
@@ -73,7 +74,6 @@ def build_bot_runner(
     access_control = AccessControl(
         owner_chat_id=settings.owner_chat_id,
         db_path=db_path,
-        mode=settings.access_mode,
         refusal_limiter=RateLimiter(max_events=1, window_seconds=3600.0),
     )
     offset_store = TelegramOffsetStore(config.data_directory)
@@ -129,6 +129,17 @@ def build_bot_runner(
     router.register("/setkey", _setkey)
     router.register("/deletekey", _deletekey)
 
+    def _notify_access_loss(chat_id: int, text: str) -> None:
+        client.send_message(chat_id, text)
+
+    def _admin_usage(user_id: int) -> AdminUsageSnapshot | None:
+        if check_coordinator is None:
+            return None
+        return AdminUsageSnapshot(
+            checks_today=check_coordinator.checks_today.get(user_id, 0),
+            llm_calls_today=check_coordinator.llm_calls_today.get(user_id, 0),
+        )
+
     register_admin_commands(
         router=router,
         reply=_reply,
@@ -137,6 +148,11 @@ def build_bot_runner(
         callback_router=callback_router,
         client=client,
         send=_send,
+        # A one-time security-state notification must not be silently dropped
+        # by the ordinary per-chat reply limiter. Telegram delivery errors are
+        # still caught by the admin command after revocation has committed.
+        notify_access_loss=_notify_access_loss,
+        usage_provider=_admin_usage,
     )
     # ── end US-026/US-027/US-028 wiring ────────────────────────────────────────
 
@@ -206,20 +222,56 @@ def build_bot_runner(
         return True
 
     def _access_guard(cmd: IncomingCommand) -> bool:
-        return access_control.authorize(cmd.user_id, cmd.chat_id, cmd.command, cmd.args)
+        if cmd.chat_type != "private":
+            return False
+        return access_control.authorize(
+            cmd.user_id,
+            cmd.chat_id,
+            cmd.command,
+            cmd.args,
+            username=cmd.username,
+        )
 
     def _on_refused(cmd: IncomingCommand) -> None:
         access_control.log_refusal(cmd.user_id, cmd.command)
         if access_control.should_send_refusal(cmd.chat_id):
-            _reply(cmd.chat_id, "This bot is private and only available to invited users.")
+            if cmd.chat_type != "private":
+                _reply(cmd.chat_id, "BookSaver only works in a private chat with the bot.")
+                return
+            message = (
+                ACCESS_LOSS_MESSAGE
+                if access_control.refusal_reason(cmd.user_id)
+                is AccessRefusalReason.REVOKED
+                else "This bot is private and only available to invited users."
+            )
+            _reply(cmd.chat_id, message)
 
     def _callback_handler(callback: IncomingCallback) -> None:
-        if not access_control.authorize(
-            callback.user_id, callback.chat_id, "/callback", ""
-        ):
+        if callback.chat_type != "private":
             try:
                 client.answer_callback_query(
-                    callback.callback_query_id, text="This action is not available."
+                    callback.callback_query_id,
+                    text="Open a private chat with BookSaver to use this action.",
+                )
+            except Exception:
+                logger.warning("Could not answer non-private Telegram callback")
+            return
+        if not access_control.authorize(
+            callback.user_id,
+            callback.chat_id,
+            "/callback",
+            "",
+            username=callback.username,
+        ):
+            try:
+                refusal = (
+                    ACCESS_LOSS_MESSAGE
+                    if access_control.refusal_reason(callback.user_id)
+                    is AccessRefusalReason.REVOKED
+                    else "This action is not available."
+                )
+                client.answer_callback_query(
+                    callback.callback_query_id, text=refusal
                 )
             except Exception:
                 logger.warning("Could not answer refused Telegram callback")

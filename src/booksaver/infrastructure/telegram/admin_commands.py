@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
-from booksaver.domain.user import User, UserAccessState
+from booksaver.domain.user import User, UserAccessState, UserRole
 
 from .access import AccessControl
+from .admin_usage import AdminUsageProvider
 from .client import TelegramBotClient
 from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCommand
 
@@ -18,29 +19,42 @@ logger = logging.getLogger(__name__)
 
 Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
+NotifyAccessLoss = Callable[[int, str], None]
+
+ACCESS_LOSS_MESSAGE = "You no longer have access to this bot."
 
 USAGE = (
     "Usage:\n"
     "/admin users\n"
-    "/admin revoke <user_id|telegram_id>\n"
-    "/admin purge <user_id|telegram_id> [confirm]\n"
-    "/admin invite\n"
-    "/admin mode <owner|invite> [confirm]"
+    "/admin revoke <user_id>\n"
+    "/admin purge <user_id> [confirm]\n"
+    "/admin invite"
 )
 
 
 def _resolve_user(users: SqliteUserRepository, token: str) -> User | None:
-    """Accepts either a BookSaver `user_id` or a Telegram user id and
-    resolves whichever one matches — the owner types whatever `/admin users`
-    printed, which shows both."""
+    """Resolve only the internal BookSaver id shown by owner admin controls."""
     try:
         as_int = int(token)
     except ValueError:
         return None
-    user = users.get_by_id(as_int)
-    if user is not None:
-        return user
-    return users.get_by_telegram_id(as_int)
+    return users.get_by_id(as_int)
+
+
+class _UserLabelFields(Protocol):
+    @property
+    def user_id(self) -> int: ...
+
+    @property
+    def telegram_username(self) -> str | None: ...
+
+
+def _user_label(user: _UserLabelFields) -> str:
+    """Human-safe admin label; Telegram numeric identities are never exposed."""
+    username = user.telegram_username
+    if username:
+        return f"@{username.lstrip('@')}"
+    return f"User #{user.user_id} (no @username)"
 
 
 def register_admin_commands(
@@ -52,6 +66,8 @@ def register_admin_commands(
     callback_router: CallbackRouter | None = None,
     client: TelegramBotClient | None = None,
     send: Send | None = None,
+    notify_access_loss: NotifyAccessLoss | None = None,
+    usage_provider: AdminUsageProvider | None = None,
 ) -> None:
     """`/admin ...` (US-028): owner-only. Every branch re-checks
     `access_control.is_owner` (never trusts having reached the handler alone)
@@ -70,7 +86,6 @@ def register_admin_commands(
                     {"text": "Revoke user", "callback_data": "admin:revoke"},
                     {"text": "Purge user", "callback_data": "admin:purge"},
                 ],
-                [{"text": "Access mode", "callback_data": "admin:mode"}],
             ]
         }
 
@@ -94,15 +109,19 @@ def register_admin_commands(
         logger.info("Admin command: user_id=%s command=/admin %s", cmd.user_id, sub)
 
         if sub == "users":
-            _handle_users(cmd, reply, db_path)
+            _handle_users(cmd, reply, db_path, usage_provider=usage_provider)
         elif sub == "revoke":
-            _handle_revoke(cmd, reply, db_path, rest)
+            _handle_revoke(
+                cmd,
+                reply,
+                db_path,
+                rest,
+                notify_access_loss=notify_access_loss,
+            )
         elif sub == "purge":
             _handle_purge(cmd, reply, db_path, rest)
         elif sub == "invite":
-            _handle_invite(cmd, reply, db_path)
-        elif sub == "mode":
-            _handle_mode(cmd, reply, access_control, rest)
+            _handle_invite(cmd, reply, db_path, send=send)
         else:
             reply(cmd.chat_id, USAGE)
 
@@ -154,8 +173,8 @@ def register_admin_commands(
             with SqliteStore(db_path) as store:
                 users = [
                     user
-                    for user in SqliteUserRepository(store).list_all()
-                    if not user.is_owner
+                    for user in SqliteUserRepository(store).list_admin_aggregates()
+                    if user.role is not UserRole.OWNER
                 ]
             if not users:
                 return (
@@ -170,8 +189,7 @@ def register_admin_commands(
                 [
                     {
                         "text": (
-                            f"#{user.user_id} · tg {user.telegram_user_id} · "
-                            f"{user.access_state.value}"
+                            f"{_user_label(user)} · {user.access_state.value}"
                         ),
                         "callback_data": f"admin:{action}:{user.user_id}",
                     }
@@ -212,12 +230,18 @@ def register_admin_commands(
                 return
             if action == "users":
                 _handle_users(
-                    _synthetic(callback, "users"), _reply_via_edit(callback), db_path
+                    _synthetic(callback, "users"),
+                    _reply_via_edit(callback),
+                    db_path,
+                    usage_provider=usage_provider,
                 )
                 return
             if action == "invite":
                 _handle_invite(
-                    _synthetic(callback, "invite"), _reply_via_edit(callback), db_path
+                    _synthetic(callback, "invite"),
+                    _reply_via_edit(callback),
+                    db_path,
+                    send=send,
                 )
                 return
             if action in ("revoke", "purge"):
@@ -227,8 +251,23 @@ def register_admin_commands(
                     return
                 user_token = parts[2]
                 if len(parts) == 3:
+                    from booksaver.infrastructure.persistence.sqlite_store import (
+                        SqliteStore,
+                        SqliteUserRepository,
+                    )
+
+                    try:
+                        selected_id = int(user_token)
+                    except ValueError:
+                        _edit(callback, "That admin choice has expired.", _menu_markup())
+                        return
+                    with SqliteStore(db_path) as store:
+                        selected = SqliteUserRepository(store).get_by_id(selected_id)
+                    selected_label = (
+                        _user_label(selected) if selected is not None else "selected user"
+                    )
                     text, markup = _confirmation(
-                        action, user_token, f"{action} user #{user_token}"
+                        action, user_token, f"{action} {selected_label}"
                     )
                     _edit(callback, text, markup)
                     return
@@ -239,7 +278,13 @@ def register_admin_commands(
                         + (" confirm" if action == "purge" else ""),
                     )
                     if action == "revoke":
-                        _handle_revoke(cmd, _reply_via_edit(callback), db_path, [user_token])
+                        _handle_revoke(
+                            cmd,
+                            _reply_via_edit(callback),
+                            db_path,
+                            [user_token],
+                            notify_access_loss=notify_access_loss,
+                        )
                     else:
                         _handle_purge(
                             cmd,
@@ -248,67 +293,60 @@ def register_admin_commands(
                             [user_token, "confirm"],
                         )
                     return
-            if action == "mode":
-                if len(parts) == 2:
-                    _edit(
-                        callback,
-                        f"Current access mode: {access_control.mode}. Choose a mode:",
-                        {
-                            "inline_keyboard": [
-                                [
-                                    {"text": "Owner only", "callback_data": "admin:mode:owner"},
-                                    {"text": "Invite", "callback_data": "admin:mode:invite"},
-                                ],
-                                [{"text": "Back", "callback_data": "admin:menu"}],
-                            ]
-                        },
-                    )
-                    return
-                mode = parts[2]
-                if mode not in ("owner", "invite"):
-                    _edit(callback, "That admin choice has expired.", _menu_markup())
-                    return
-                if len(parts) == 3:
-                    text, markup = _confirmation("mode", mode, f"switch access mode to {mode}")
-                    _edit(callback, text, markup)
-                    return
-                if len(parts) == 4 and parts[3] == "confirm":
-                    _handle_mode(
-                        _synthetic(callback, f"mode {mode} confirm"),
-                        _reply_via_edit(callback),
-                        access_control,
-                        [mode, "confirm"],
-                    )
-                    return
             _edit(callback, "That admin choice has expired.", _menu_markup())
 
         callback_router.register("admin:", _admin_callback)
 
 
-def _handle_users(cmd: IncomingCommand, reply: Reply, db_path: Path) -> None:
+def _handle_users(
+    cmd: IncomingCommand,
+    reply: Reply,
+    db_path: Path,
+    *,
+    usage_provider: AdminUsageProvider | None = None,
+) -> None:
     from booksaver.infrastructure.persistence.sqlite_store import (
-        SqliteBookingRepository,
         SqliteStore,
         SqliteUserRepository,
     )
 
     with SqliteStore(db_path) as store:
-        users = SqliteUserRepository(store).list_all()
-        bookings = SqliteBookingRepository(store)
-        lines = ["Users:"]
-        for user in users:
-            count = len(bookings.list_all_for_user(user.user_id))
+        users = SqliteUserRepository(store).list_admin_aggregates()
+
+    lines = ["Users:"]
+    for user in users:
+        lines.append(
+            f"{_user_label(user)} · role={user.role.value} · "
+            f"access={user.access_state.value} · "
+            f"active bookings={user.active_booking_count}"
+        )
+        usage = None
+        if usage_provider is not None:
+            try:
+                usage = usage_provider(user.user_id)
+            except Exception:
+                logger.warning("Could not read runtime usage for BookSaver user #%s", user.user_id)
+        usage_label = "Usage today (resets at UTC midnight and daemon restart)"
+        if usage is None:
+            lines.append(f"  {usage_label}: unavailable")
+        else:
             lines.append(
-                f"#{user.user_id} tg={user.telegram_user_id} {user.role.value} "
-                f"{user.access_state.value} key={'yes' if user.encrypted_key else 'no'} "
-                f"bookings={count}"
+                f"  {usage_label}: checks={usage.checks_today}, "
+                f"LLM calls={usage.llm_calls_today}"
             )
     reply(cmd.chat_id, "\n".join(lines))
 
 
-def _handle_revoke(cmd: IncomingCommand, reply: Reply, db_path: Path, rest: list[str]) -> None:
+def _handle_revoke(
+    cmd: IncomingCommand,
+    reply: Reply,
+    db_path: Path,
+    rest: list[str],
+    *,
+    notify_access_loss: NotifyAccessLoss | None = None,
+) -> None:
     if not rest:
-        reply(cmd.chat_id, "Usage: /admin revoke <user_id|telegram_id>")
+        reply(cmd.chat_id, "Usage: /admin revoke <user_id>")
         return
     from booksaver.infrastructure.persistence.sqlite_store import (
         SqliteStore,
@@ -319,18 +357,30 @@ def _handle_revoke(cmd: IncomingCommand, reply: Reply, db_path: Path, rest: list
         users = SqliteUserRepository(store)
         user = _resolve_user(users, rest[0])
         if user is None:
-            reply(cmd.chat_id, f"No user matching '{rest[0]}'.")
+            reply(cmd.chat_id, "No matching user.")
             return
         if user.is_owner:
             reply(cmd.chat_id, "The owner cannot be revoked.")
             return
         users.set_access_state(user.user_id, UserAccessState.REVOKED)
-    reply(cmd.chat_id, f"User #{user.user_id} revoked. Their checks stop; data retained.")
+    delivery = "unavailable"
+    if notify_access_loss is not None and user.telegram_user_id is not None:
+        try:
+            notify_access_loss(user.telegram_user_id, ACCESS_LOSS_MESSAGE)
+            delivery = "delivered"
+        except Exception:
+            delivery = "failed"
+            logger.warning("Could not deliver a revoked-user access-loss notice")
+    reply(
+        cmd.chat_id,
+        f"{_user_label(user)} revoked. Their checks stop; data retained. "
+        f"Access-loss notice {delivery}.",
+    )
 
 
 def _handle_purge(cmd: IncomingCommand, reply: Reply, db_path: Path, rest: list[str]) -> None:
     if not rest:
-        reply(cmd.chat_id, "Usage: /admin purge <user_id|telegram_id> [confirm]")
+        reply(cmd.chat_id, "Usage: /admin purge <user_id> [confirm]")
         return
     from booksaver.infrastructure.persistence.sqlite_store import (
         SqliteStore,
@@ -341,7 +391,7 @@ def _handle_purge(cmd: IncomingCommand, reply: Reply, db_path: Path, rest: list[
         users = SqliteUserRepository(store)
         user = _resolve_user(users, rest[0])
         if user is None:
-            reply(cmd.chat_id, f"No user matching '{rest[0]}'.")
+            reply(cmd.chat_id, "No matching user.")
             return
         if user.is_owner:
             reply(cmd.chat_id, "The owner cannot be purged.")
@@ -349,16 +399,22 @@ def _handle_purge(cmd: IncomingCommand, reply: Reply, db_path: Path, rest: list[
         if len(rest) < 2 or rest[1] != "confirm":
             reply(
                 cmd.chat_id,
-                f"This permanently deletes user #{user.user_id} and all their "
+                f"This permanently deletes {_user_label(user)} and all their "
                 f"bookings/checks/savings. Resend as "
-                f"'/admin purge {rest[0]} confirm' to proceed.",
+                f"'/admin purge {user.user_id} confirm' to proceed.",
             )
             return
         users.purge(user.user_id)
-    reply(cmd.chat_id, f"User #{user.user_id} and all their data were purged.")
+    reply(cmd.chat_id, f"{_user_label(user)} and all their data were purged.")
 
 
-def _handle_invite(cmd: IncomingCommand, reply: Reply, db_path: Path) -> None:
+def _handle_invite(
+    cmd: IncomingCommand,
+    reply: Reply,
+    db_path: Path,
+    *,
+    send: Send | None = None,
+) -> None:
     from booksaver.infrastructure.persistence.sqlite_store import (
         SqliteInviteCodeRepository,
         SqliteStore,
@@ -368,26 +424,14 @@ def _handle_invite(cmd: IncomingCommand, reply: Reply, db_path: Path) -> None:
     with SqliteStore(db_path) as store:
         owner = SqliteUserRepository(store).get_owner()
         invite = SqliteInviteCodeRepository(store).issue(issued_by=owner.user_id)
-    reply(
-        cmd.chat_id,
-        f"Invite code: {invite.code}\nHave them send: /start {invite.code}",
-    )
-
-
-def _handle_mode(
-    cmd: IncomingCommand, reply: Reply, access_control: AccessControl, rest: list[str]
-) -> None:
-    if not rest or rest[0] not in ("owner", "invite"):
-        reply(cmd.chat_id, "Usage: /admin mode <owner|invite> [confirm]")
+    reply(cmd.chat_id, "Invite created. Forward the next message to the person you are inviting.")
+    command = f"/start {invite.code}"
+    if send is None:
+        reply(cmd.chat_id, command)
         return
-    new_mode = rest[0]
-    if len(rest) < 2 or rest[1] != "confirm":
-        reply(
-            cmd.chat_id,
-            f"This switches access mode to '{new_mode}' for this running daemon "
-            f"(reverts to config on restart). Resend as '/admin mode {new_mode} "
-            "confirm' to proceed.",
-        )
-        return
-    access_control.set_mode(new_mode)
-    reply(cmd.chat_id, f"Access mode switched to '{new_mode}'.")
+    try:
+        send(cmd.chat_id, command, None)
+    except Exception:
+        # The invite is already committed. Do not issue another code implicitly,
+        # and never put the secret code in logs.
+        logger.warning("Could not send the newly-created invite command")

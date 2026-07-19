@@ -16,7 +16,7 @@ from booksaver.daemon.check_coordinator import (
 from booksaver.domain.agent import AgentSettings
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
 from booksaver.domain.models import Config
-from booksaver.domain.user import UserRole
+from booksaver.domain.user import UserAccessState, UserRole
 from booksaver.domain.value_objects import (
     CheckInterval,
     DataDirectory,
@@ -31,7 +31,7 @@ from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteStore,
     SqliteUserRepository,
 )
-from booksaver.monitor.user_limits import DailyCounter
+from booksaver.monitor.user_limits import DailyCounter, build_check_plan
 from tests.unit.monitor.fakes import FakeInteractiveBrowser, make_booking
 
 
@@ -235,6 +235,165 @@ def test_scheduled_plan_honors_remaining_quota_and_records_only_skipped(
         history = SqliteCheckHistoryRepository(store)
         skipped = sum(len(history.get_recent(booking.booking_id)) for booking in bookings)
     assert skipped == 2
+
+
+def test_scheduled_queue_skips_user_revoked_after_plan_without_cap_result(
+    tmp_path: Path,
+) -> None:
+    coordinator = _coordinator(tmp_path, checks=3)
+    user_id, bookings = _add(tmp_path, 101, count=2)
+    ran: list[str] = []
+
+    def revoke_after_first(
+        self: Any, store: SqliteStore, browser: Any, owner: int, booking: Any
+    ) -> CheckResult:
+        ran.append(booking.booking_id)
+        SqliteUserRepository(store).set_access_state(
+            user_id, UserAccessState.REVOKED
+        )
+        return _failure(booking.booking_id)
+
+    coordinator._run_booking = MethodType(  # type: ignore[method-assign]
+        revoke_after_first, coordinator
+    )
+    coordinator.run_scheduled()
+
+    assert len(ran) == 1
+    assert coordinator.checks_today == {user_id: 1}
+    unrun = next(booking for booking in bookings if booking.booking_id not in ran)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        second_history = SqliteCheckHistoryRepository(store).get_recent(
+            unrun.booking_id
+        )
+    assert second_history == []
+
+
+def test_revoked_plan_snapshot_never_starts_browser(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    user_id, _bookings = _add(tmp_path, 101)
+    planned = threading.Event()
+    browser_entered = threading.Event()
+
+    def revoke_after_plan(**kwargs: Any) -> Any:
+        plan = build_check_plan(**kwargs)
+        with SqliteStore(tmp_path / "booksaver.db") as store:
+            SqliteUserRepository(store).set_access_state(
+                user_id, UserAccessState.REVOKED
+            )
+        planned.set()
+        return plan
+
+    class ObservedBrowser(AbstractContextManager[object]):
+        def __enter__(self) -> object:
+            browser_entered.set()
+            return object()
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.build_check_plan", revoke_after_plan
+    )
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=ObservedBrowser,
+    )
+
+    coordinator.run_scheduled()
+
+    assert planned.is_set()
+    assert not browser_entered.is_set()
+    assert coordinator.checks_today == {}
+
+
+def test_midflight_revocation_keeps_history_but_suppresses_post_check_effects(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    user_id, bookings = _add(tmp_path, 101)
+    history_written = threading.Event()
+    revoked = threading.Event()
+    pipeline_calls: list[list[CheckResult]] = []
+    invalid_key_calls: list[list[CheckResult]] = []
+
+    class RevocationMonitor:
+        def __init__(self, **kwargs: Any) -> None:
+            self.history = kwargs["check_history"]
+            self.last_llm_calls_used = 0
+
+        def set_llm_enabled(self, enabled: bool) -> None:
+            return None
+
+        def run_all_active(self, bookings: list[Any]) -> list[CheckResult]:
+            result = _failure(bookings[0].booking_id)
+            self.history.add(result)
+            history_written.set()
+            assert revoked.wait(2)
+            return [result]
+
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.BookingComSearchMonitor",
+        RevocationMonitor,
+    )
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.SavingsPipeline.process",
+        lambda _self, results: pipeline_calls.append(results),
+    )
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, results: invalid_key_calls.append(results),
+        browser_factory=BrowserContext,
+    )
+
+    def revoke_after_history() -> None:
+        assert history_written.wait(2)
+        with SqliteStore(tmp_path / "booksaver.db") as store:
+            SqliteUserRepository(store).set_access_state(
+                user_id, UserAccessState.REVOKED
+            )
+        revoked.set()
+
+    revoker = threading.Thread(target=revoke_after_history)
+    revoker.start()
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        result = coordinator._run_booking(store, object(), user_id, bookings[0])
+    revoker.join(timeout=2)
+
+    assert result.failure_reason is not None
+    assert not revoker.is_alive()
+    assert pipeline_calls == []
+    assert invalid_key_calls == []
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        history = SqliteCheckHistoryRepository(store).get_recent(bookings[0].booking_id)
+    assert len(history) == 1
+
+
+def test_capped_notice_is_suppressed_for_revoked_user(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    user_id, _bookings = _add(tmp_path, 101)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        users = SqliteUserRepository(store)
+        users.set_access_state(user_id, UserAccessState.REVOKED)
+        monkeypatch.setenv("BOOKSAVER_TELEGRAM_BOT_TOKEN", "unused-token")
+
+        class UnexpectedNotifier:
+            def __init__(self, **kwargs: Any) -> None:
+                raise AssertionError("revoked user notifier must not be created")
+
+        monkeypatch.setattr(
+            "booksaver.daemon.check_coordinator.TelegramNotifier",
+            UnexpectedNotifier,
+        )
+        coordinator._send_capped_notice(store, user_id)
 
 
 def test_llm_allowance_caps_monitor_then_disables_llm(

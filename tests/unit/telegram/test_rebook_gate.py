@@ -8,6 +8,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from booksaver.domain.rebook import (
     ConfirmationPrompt,
     EventType,
@@ -28,6 +30,7 @@ from booksaver.infrastructure.telegram.rebook_gate import (
     TelegramConfirmationGate,
     TelegramNavigator,
     _PendingPrompt,
+    _RebookAccessLost,
     answer_callback,
     build_deep_link_url,
     register_rebook_command,
@@ -52,6 +55,7 @@ class FakeClient:
         self.sent: list[dict[str, Any]] = []
         self.edits: list[dict[str, Any]] = []
         self.answered_callbacks: list[str] = []
+        self.message_sent = threading.Event()
         self.fail_answer = fail_answer
         self.fail_edit = fail_edit
 
@@ -65,6 +69,7 @@ class FakeClient:
                 {"chat_id": chat_id, "text": text, "reply_markup": reply_markup,
                  "message_id": message_id}
             )
+            self.message_sent.set()
             return {"message_id": message_id}
 
     def edit_message_text(
@@ -260,6 +265,7 @@ def _make_gate(
     session_id_box: dict[str, str],
     timeout_seconds: float = 5.0,
     stop_event: threading.Event | None = None,
+    is_active=lambda: True,
 ) -> TelegramConfirmationGate:
     return TelegramConfirmationGate(
         client=client,  # type: ignore[arg-type]
@@ -270,6 +276,7 @@ def _make_gate(
         stop_event=stop_event or threading.Event(),
         event_repo=events,  # type: ignore[arg-type]
         session_id_box=session_id_box,
+        is_active=is_active,
     )
 
 
@@ -353,6 +360,54 @@ def test_gate_declines_promptly_on_daemon_shutdown_while_parked() -> None:
     assert "shutting down" in client.edits[0]["text"]
 
 
+def test_gate_sends_nothing_when_user_is_already_revoked() -> None:
+    client = FakeClient()
+    gate = _make_gate(
+        client,
+        PendingPromptRegistry(),
+        FakeEventRepo(),
+        {"session_id": "sess-1"},
+        is_active=lambda: False,
+    )
+
+    answer = gate.ask(_prompt())
+
+    assert answer.approved is False
+    assert client.sent == []
+
+
+def test_gate_revocation_while_parked_declines_without_waiting_full_timeout() -> None:
+    client = FakeClient()
+    access = threading.Event()
+    access.set()
+    events = FakeEventRepo()
+    gate = _make_gate(
+        client,
+        PendingPromptRegistry(),
+        events,
+        {"session_id": "sess-1"},
+        timeout_seconds=600,
+        is_active=access.is_set,
+    )
+
+    def revoke_after_prompt() -> None:
+        assert client.message_sent.wait(2)
+        access.clear()
+
+    revoker = threading.Thread(target=revoke_after_prompt)
+    revoker.start()
+    started = time.monotonic()
+    answer = gate.ask(_prompt())
+    elapsed = time.monotonic() - started
+    revoker.join(timeout=2)
+
+    assert answer.approved is False
+    assert elapsed < 2.0
+    assert client.edits == []
+    assert not revoker.is_alive()
+    assert any(event.event_type is EventType.DECLINED for event in events.events)
+
+
 def test_gate_answer_from_wrong_chat_is_ignored_original_prompt_still_pending() -> None:
     client = FakeClient()
     registry = PendingPromptRegistry()
@@ -402,6 +457,23 @@ def test_navigator_relays_cancel_url_then_builds_own_deep_link_for_book_step() -
     assert len(handoffs) == 2
     assert "kind=cancel" in handoffs[0].detail
     assert "kind=book" in handoffs[1].detail
+
+
+def test_navigator_blocks_handoff_after_revocation() -> None:
+    client = FakeClient()
+    navigator = TelegramNavigator(
+        client=client,  # type: ignore[arg-type]
+        chat_id=10,
+        booking=make_booking(),
+        event_repo=FakeEventRepo(),  # type: ignore[arg-type]
+        session_id_box={"session_id": "sess-1"},
+        is_active=lambda: False,
+    )
+
+    with pytest.raises(_RebookAccessLost):
+        navigator("https://example.invalid", "cancellation page")
+
+    assert client.sent == []
 
 
 # ── run_outcome_followup ─────────────────────────────────────────────────────

@@ -14,24 +14,40 @@ from booksaver.infrastructure.telegram.router import (
 )
 
 
-def _message_update(update_id: int, chat_id: int, user_id: int, text: str) -> dict:
+def _message_update(
+    update_id: int,
+    chat_id: int,
+    user_id: int,
+    text: str,
+    *,
+    username: str | None = None,
+    chat_type: str = "private",
+) -> dict:
     return {
         "update_id": update_id,
         "message": {
-            "chat": {"id": chat_id},
-            "from": {"id": user_id},
+            "chat": {"id": chat_id, "type": chat_type},
+            "from": {"id": user_id, **({"username": username} if username else {})},
             "text": text,
         },
     }
 
 
-def _callback_update(update_id: int, chat_id: int, user_id: int, data: str) -> dict:
+def _callback_update(
+    update_id: int,
+    chat_id: int,
+    user_id: int,
+    data: str,
+    *,
+    username: str | None = None,
+    chat_type: str = "private",
+) -> dict:
     return {
         "update_id": update_id,
         "callback_query": {
             "id": f"cbq-{update_id}",
-            "from": {"id": user_id},
-            "message": {"chat": {"id": chat_id}, "message_id": 42},
+            "from": {"id": user_id, **({"username": username} if username else {})},
+            "message": {"chat": {"id": chat_id, "type": chat_type}, "message_id": 42},
             "data": data,
         },
     }
@@ -108,6 +124,36 @@ def test_dispatches_known_command_to_registered_handler(tmp_path: Path) -> None:
     assert len(seen) == 1
     assert seen[0].command == "/status"
     assert seen[0].chat_id == 10
+
+
+def test_command_envelope_carries_username_and_chat_type(tmp_path: Path) -> None:
+    stop_event = threading.Event()
+    update = _message_update(
+        1, chat_id=-10, user_id=20, text="/status", username="Alice", chat_type="group"
+    )
+    client = FakeClient([[update]], stop_event)
+    loop, router, _ = _make_loop(client, tmp_path)
+    seen: list[IncomingCommand] = []
+    router.register("/status", seen.append)
+
+    loop.run(stop_event)
+
+    assert seen[0].username == "Alice"
+    assert seen[0].chat_type == "group"
+
+
+def test_missing_chat_type_is_unknown_not_private(tmp_path: Path) -> None:
+    stop_event = threading.Event()
+    update = _message_update(1, chat_id=10, user_id=20, text="/status")
+    del update["message"]["chat"]["type"]
+    client = FakeClient([[update]], stop_event)
+    loop, router, _ = _make_loop(client, tmp_path)
+    seen: list[IncomingCommand] = []
+    router.register("/status", seen.append)
+
+    loop.run(stop_event)
+
+    assert seen[0].chat_type == "unknown"
 
 
 def test_unknown_command_gets_a_polite_reply(tmp_path: Path) -> None:
@@ -252,6 +298,55 @@ def test_callback_query_routed_to_callback_handler(tmp_path: Path) -> None:
     assert seen[0].user_id == 20
     assert seen[0].message_id == 42
     assert seen[0].data == "rebook:abc123:yes"
+
+
+def test_callback_envelope_carries_username_and_chat_type(tmp_path: Path) -> None:
+    stop_event = threading.Event()
+    update = _callback_update(
+        1,
+        chat_id=-10,
+        user_id=20,
+        data="rebook:abc123:yes",
+        username="Alice",
+        chat_type="supergroup",
+    )
+    client = FakeClient([[update]], stop_event)
+    seen: list[IncomingCallback] = []
+    loop = BotLoop(
+        client=client,  # type: ignore[arg-type]
+        router=CommandRouter(),
+        offset_store=TelegramOffsetStore(_data_dir(tmp_path)),
+        poll_timeout_seconds=30,
+        access_guard=lambda cmd: True,
+        on_refused=lambda cmd: None,
+        callback_handler=seen.append,
+    )
+
+    loop.run(stop_event)
+
+    assert seen[0].username == "Alice"
+    assert seen[0].chat_type == "supergroup"
+
+
+def test_callback_missing_chat_type_is_unknown(tmp_path: Path) -> None:
+    stop_event = threading.Event()
+    update = _callback_update(1, chat_id=10, user_id=20, data="rebook:x:yes")
+    del update["callback_query"]["message"]["chat"]["type"]
+    client = FakeClient([[update]], stop_event)
+    seen: list[IncomingCallback] = []
+    loop = BotLoop(
+        client=client,  # type: ignore[arg-type]
+        router=CommandRouter(),
+        offset_store=TelegramOffsetStore(_data_dir(tmp_path)),
+        poll_timeout_seconds=30,
+        access_guard=lambda cmd: True,
+        on_refused=lambda cmd: None,
+        callback_handler=seen.append,
+    )
+
+    loop.run(stop_event)
+
+    assert seen[0].chat_type == "unknown"
 
 
 def test_callback_query_without_handler_is_ignored_not_crashed(tmp_path: Path) -> None:

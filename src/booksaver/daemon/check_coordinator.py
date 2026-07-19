@@ -4,7 +4,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
@@ -254,7 +254,9 @@ class CheckCoordinator:
                 ),
             )
             history = SqliteCheckHistoryRepository(store)
-            for _user_id, booking in plan.skipped:
+            for user_id, booking in plan.skipped:
+                if not self._is_active_user(store, user_id):
+                    continue
                 history.add(self._limit_result(booking, "Scheduled check skipped"))
             for user_id in users_needing_capped_notice(
                 plan.capped_user_ids, self._capped_notice_sent_today
@@ -263,16 +265,24 @@ class CheckCoordinator:
 
             if not plan.ordered or self._stop_event.is_set():
                 return
-            with self._browser_factory() as browser:
+            with ExitStack() as stack:
+                browser: Any | None = None
                 for user_id, booking in plan.ordered:
                     if self._stop_event.is_set():
                         break
+                    # The plan is a snapshot. Re-read access immediately before
+                    # reserving allowance or opening browser work so revocation
+                    # while an earlier queued booking runs takes effect now.
+                    if not self._is_active_user(store, user_id):
+                        continue
                     if not self._checks_today.try_increment(
                         user_id,
                         self._config.limits_settings.max_checks_per_user_per_day,
                     ):
                         history.add(self._limit_result(booking, "Scheduled check skipped"))
                         continue
+                    if browser is None:
+                        browser = stack.enter_context(self._browser_factory())
                     self._run_booking(store, browser, user_id, booking)
 
     def _run_booking(
@@ -322,6 +332,12 @@ class CheckCoordinator:
             )
             history.add(result)
 
+        # The browser monitor owns durable check-history persistence. Re-read
+        # access after that potentially long operation and suppress every
+        # user-visible post-check effect if the booking owner was revoked.
+        if not self._is_active_user(store, user_id):
+            return result
+
         resolver = OwnerBookingNotifierResolver(
             booking_repo=SqliteBookingRepository(store),
             user_repo=SqliteUserRepository(store),
@@ -338,6 +354,11 @@ class CheckCoordinator:
         return result
 
     @staticmethod
+    def _is_active_user(store: SqliteStore, user_id: int) -> bool:
+        user = SqliteUserRepository(store).get_by_id(user_id)
+        return user is not None and user.is_active
+
+    @staticmethod
     def _limit_result(booking: Booking, prefix: str) -> CheckResult:
         return CheckResult.failure(
             booking.booking_id,
@@ -351,15 +372,15 @@ class CheckCoordinator:
     def _send_capped_notice(
         self, store: SqliteStore, user_id: int, *, already_marked: bool = False
     ) -> None:
+        user = SqliteUserRepository(store).get_by_id(user_id)
+        if user is None or not user.is_active:
+            return
         if not already_marked:
             due = users_needing_capped_notice(
                 [user_id], self._capped_notice_sent_today
             )
             if not due:
                 return
-        user = SqliteUserRepository(store).get_by_id(user_id)
-        if user is None:
-            return
         chat_id = resolve_telegram_chat_id(user, self._config.telegram_bot_settings)
         token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
         if chat_id is None or not token:

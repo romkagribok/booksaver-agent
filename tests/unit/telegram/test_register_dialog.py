@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 from booksaver.domain.user import UserRole
-from booksaver.domain.value_objects import LimitsSettings
+from booksaver.domain.value_objects import ConfirmationId, LimitsSettings
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
     SqliteStore,
@@ -147,6 +148,56 @@ def test_confirm_no_aborts_without_saving(tmp_path: Path) -> None:
     with SqliteStore(db_path) as store:
         bookings = SqliteBookingRepository(store).list_active_for_user(user_id)
     assert bookings == []
+
+
+def test_foreign_confirmation_conflict_is_generic_and_non_enumerating(
+    tmp_path: Path,
+) -> None:
+    db_path, router, dialog_manager, sent = _setup(tmp_path)
+    caller_telegram_id = 111
+    _register_user(db_path, caller_telegram_id)
+    foreign_user_id = _register_user(db_path, 222)
+    with SqliteStore(db_path) as store:
+        from tests.unit.monitor.fakes import make_booking
+
+        foreign = replace(
+            make_booking("foreign-existing"),
+            confirmation_id=ConfirmationId.of("CONF123"),
+        )
+        SqliteBookingRepository(store).add(foreign, user_id=foreign_user_id)
+
+    _send_command(router, caller_telegram_id, caller_telegram_id, "/register")
+    _drive_to_confirm(dialog_manager, sent, caller_telegram_id, caller_telegram_id)
+    final_reply = _send_text(
+        dialog_manager, sent, caller_telegram_id, caller_telegram_id, "yes"
+    )
+
+    assert final_reply == (
+        "Registration could not be completed. Check the booking details and try again."
+    )
+    assert "CONF123" not in final_reply
+    assert "already registered" not in final_reply
+
+
+def test_own_confirmation_conflict_may_identify_own_duplicate(tmp_path: Path) -> None:
+    db_path, router, dialog_manager, sent = _setup(tmp_path)
+    telegram_id = 111
+    local_user_id = _register_user(db_path, telegram_id)
+    with SqliteStore(db_path) as store:
+        from tests.unit.monitor.fakes import make_booking
+
+        own = replace(
+            make_booking("own-existing"),
+            confirmation_id=ConfirmationId.of("CONF123"),
+        )
+        SqliteBookingRepository(store).add(own, user_id=local_user_id)
+
+    _send_command(router, telegram_id, telegram_id, "/register")
+    _drive_to_confirm(dialog_manager, sent, telegram_id, telegram_id)
+    final_reply = _send_text(dialog_manager, sent, telegram_id, telegram_id, "yes")
+
+    assert "one of your bookings" in final_reply
+    assert "CONF123" not in final_reply
 
 
 def test_non_refundable_answer_aborts_with_cli_identical_message(tmp_path: Path) -> None:

@@ -64,7 +64,9 @@ def load_config(source: ConfigSource) -> Config:
         owner_chat_id = int(owner_chat_id_raw) if owner_chat_id_raw is not None else None
         poll_timeout_raw = int(telegram_raw.get("poll_timeout_seconds", 30))
         poll_timeout_seconds = min(max(poll_timeout_raw, 25), 50)  # clamp per US-023
-        access_mode = str(telegram_raw.get("access_mode", "owner"))
+        # `owner` is accepted only so existing VPS config files keep starting;
+        # TelegramBotSettings normalizes it to the fixed invite-only posture.
+        access_mode = str(telegram_raw.get("access_mode", "invite"))
         rebook_timeout_defaults = TelegramBotSettings()
         rebook_confirm_timeout_seconds = int(
             telegram_raw.get(

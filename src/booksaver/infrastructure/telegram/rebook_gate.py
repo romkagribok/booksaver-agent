@@ -41,6 +41,7 @@ from .router import CommandRouter, IncomingCallback, IncomingCommand
 logger = logging.getLogger(__name__)
 
 Reply = Callable[[int, str], None]
+ActiveUserPredicate = Callable[[], bool]
 
 _ACTION_LABELS = {
     RebookAction.CANCEL_EXISTING: "CANCEL your existing reservation",
@@ -128,12 +129,17 @@ class PendingPromptRegistry:
 
 
 def wait_with_shutdown(
-    event: threading.Event, stop_event: threading.Event, timeout_seconds: float
+    event: threading.Event,
+    stop_event: threading.Event,
+    timeout_seconds: float,
+    is_active: ActiveUserPredicate = lambda: True,
 ) -> bool:
-    """Block on `event` up to `timeout_seconds`, polling `stop_event` too so a
-    daemon shutdown parked on a rebook confirmation aborts promptly rather
-    than waiting out the full (possibly 10-minute) timeout. Returns True only
-    if `event` itself was set (an answer arrived)."""
+    """Wait for an answer while polling shutdown and current user access.
+
+    Returns true only for an answer received while the user is still active.
+    The bounded poll prevents a revoked worker from holding its session guard
+    for the remainder of a long confirmation timeout.
+    """
     deadline = time.monotonic() + timeout_seconds
     while True:
         remaining = deadline - time.monotonic()
@@ -141,8 +147,10 @@ def wait_with_shutdown(
             return False
         if stop_event.is_set():
             return False
+        if not is_active():
+            return False
         if event.wait(timeout=min(remaining, _POLL_INTERVAL_SECONDS)):
-            return True
+            return is_active()
 
 
 def _make_keyboard(nonce: str) -> dict[str, Any]:
@@ -198,6 +206,7 @@ class TelegramConfirmationGate:
         stop_event: threading.Event,
         event_repo: RebookEventRepository,
         session_id_box: dict[str, str],
+        is_active: ActiveUserPredicate = lambda: True,
     ) -> None:
         self._client = client
         self._registry = registry
@@ -207,12 +216,16 @@ class TelegramConfirmationGate:
         self._stop_event = stop_event
         self._events = event_repo
         self._session_id_box = session_id_box
+        self._is_active = is_active
 
     @property
     def channel_name(self) -> str:
         return "telegram"
 
     def ask(self, prompt: ConfirmationPrompt) -> ConfirmationAnswer:
+        if not self._is_active():
+            return ConfirmationAnswer(approved=False, answered_at=datetime.now(UTC))
+
         nonce = uuid.uuid4().hex
         text = (
             f"CONFIRMATION REQUIRED: {_ACTION_LABELS[prompt.action]}\n\n"
@@ -231,7 +244,12 @@ class TelegramConfirmationGate:
         )
         self._registry.register(nonce, pending)
         try:
-            answered = wait_with_shutdown(pending.event, self._stop_event, self._timeout_seconds)
+            answered = wait_with_shutdown(
+                pending.event,
+                self._stop_event,
+                self._timeout_seconds,
+                self._is_active,
+            )
         finally:
             self._registry.discard(nonce)
 
@@ -246,12 +264,13 @@ class TelegramConfirmationGate:
             approved = bool(pending.approved)
             outcome_label = "You tapped: Yes" if approved else "You tapped: No"
 
-        try:
-            self._client.edit_message_text(
-                self._chat_id, message_id, f"{text}\n\n{outcome_label}"
-            )
-        except Exception:
-            logger.warning("Could not edit rebook confirmation message %s", message_id)
+        if self._is_active():
+            try:
+                self._client.edit_message_text(
+                    self._chat_id, message_id, f"{text}\n\n{outcome_label}"
+                )
+            except Exception:
+                logger.warning("Could not edit rebook confirmation message %s", message_id)
 
         self._record_audit(prompt.action, approved, message_id, now)
         return ConfirmationAnswer(approved=approved, answered_at=now)
@@ -328,16 +347,21 @@ class TelegramNavigator:
         booking: Booking,
         event_repo: RebookEventRepository,
         session_id_box: dict[str, str],
+        is_active: ActiveUserPredicate = lambda: True,
     ) -> None:
         self._client = client
         self._chat_id = chat_id
         self._booking = booking
         self._events = event_repo
         self._session_id_box = session_id_box
+        self._is_active = is_active
         self.cancel_handoff_sent = False
         self.book_handoff_sent = False
 
     def __call__(self, url: str, description: str) -> None:
+        if not self._is_active():
+            raise _RebookAccessLost
+
         is_book_step = self.cancel_handoff_sent  # cancel step always comes first
         if is_book_step:
             link = build_deep_link_url(self._booking)
@@ -376,9 +400,13 @@ def _ask_outcome(
     question: str,
     timeout_seconds: float,
     stop_event: threading.Event,
+    is_active: ActiveUserPredicate = lambda: True,
 ) -> bool | None:
     """One inline-keyboard "did you complete it?" question. Returns True
     (completed), False (abandoned), or None (no answer — timeout/shutdown)."""
+    if not is_active():
+        return None
+
     nonce = uuid.uuid4().hex
     keyboard = {
         "inline_keyboard": [
@@ -393,7 +421,9 @@ def _ask_outcome(
     pending = _PendingPrompt(chat_id=chat_id, user_id=telegram_user_id, message_id=message_id)
     registry.register(nonce, pending)
     try:
-        answered = wait_with_shutdown(pending.event, stop_event, timeout_seconds)
+        answered = wait_with_shutdown(
+            pending.event, stop_event, timeout_seconds, is_active
+        )
     finally:
         registry.discard(nonce)
     if not answered:
@@ -411,6 +441,7 @@ def run_outcome_followup(
     session_id: str,
     timeout_seconds: float,
     stop_event: threading.Event,
+    is_active: ActiveUserPredicate = lambda: True,
 ) -> None:
     """US-033: after the guided session ends, ask (separately) whether the
     cancellation and/or the new booking were actually completed on the user's
@@ -426,9 +457,20 @@ def run_outcome_followup(
         steps.append(("booking", "Did you complete booking the new offer?"))
 
     for kind, question in steps:
+        if not is_active():
+            break
         outcome = _ask_outcome(
-            client, registry, chat_id, telegram_user_id, question, timeout_seconds, stop_event
+            client,
+            registry,
+            chat_id,
+            telegram_user_id,
+            question,
+            timeout_seconds,
+            stop_event,
+            is_active,
         )
+        if not is_active():
+            break
         if outcome is None:
             detail = f"telegram_outcome kind={kind} status=unreported"
         else:
@@ -457,6 +499,10 @@ class _ActiveSessionGuard:
     def release(self, user_id: int) -> None:
         with self._lock:
             self._active.discard(user_id)
+
+
+class _RebookAccessLost(Exception):
+    """Internal control flow: stop a worker after revocation without replying."""
 
 
 def register_rebook_command(
@@ -533,6 +579,19 @@ def register_rebook_command(
     ) -> None:
         try:
             with SqliteStore(db_path) as store:
+                users = SqliteUserRepository(store)
+
+                def is_active() -> bool:
+                    current = users.get_by_telegram_id(telegram_user_id)
+                    return (
+                        current is not None
+                        and current.user_id == local_user_id
+                        and current.is_active
+                    )
+
+                if not is_active():
+                    return
+
                 session_id_box: dict[str, str] = {}
                 event_repo = SqliteRebookEventRepository(store)
                 session_repo: RebookSessionRepository = _SessionIdCapturingRepo(
@@ -543,11 +602,16 @@ def register_rebook_command(
 
                 opportunity = savings_repo.get(opportunity_id)
                 if opportunity is None:
-                    reply(chat_id, f"No savings opportunity found with id '{opportunity_id}'.")
+                    if is_active():
+                        reply(
+                            chat_id,
+                            f"No savings opportunity found with id '{opportunity_id}'.",
+                        )
                     return
                 booking = booking_repo.get_by_id(opportunity.booking_id)
                 if booking is None:
-                    reply(chat_id, "That opportunity's booking no longer exists.")
+                    if is_active():
+                        reply(chat_id, "That opportunity's booking no longer exists.")
                     return
 
                 gate: ConfirmationGate = TelegramConfirmationGate(
@@ -559,6 +623,7 @@ def register_rebook_command(
                     stop_event=stop_event,
                     event_repo=event_repo,
                     session_id_box=session_id_box,
+                    is_active=is_active,
                 )
                 navigator = TelegramNavigator(
                     client=client,
@@ -566,6 +631,7 @@ def register_rebook_command(
                     booking=booking,
                     event_repo=event_repo,
                     session_id_box=session_id_box,
+                    is_active=is_active,
                 )
                 service = RebookSessionService(
                     savings_repo=savings_repo,
@@ -577,18 +643,21 @@ def register_rebook_command(
                 )
                 try:
                     session = service.run(opportunity_id)
+                except _RebookAccessLost:
+                    return
                 except UnknownOpportunityError as e:
-                    reply(chat_id, f"Error: {e}")
+                    if is_active():
+                        reply(chat_id, f"Error: {e}")
                     return
                 except Exception as e:
                     logger.exception("Telegram rebook session failed")
-                    reply(chat_id, f"Rebook session failed: {e}")
+                    if is_active():
+                        reply(chat_id, f"Rebook session failed: {e}")
                     return
 
-                reply(
-                    chat_id,
-                    f"Rebook session {session.session_id} ended: {session.state.value}.",
-                )
+                if not is_active():
+                    return
+                reply(chat_id, f"Rebook session {session.session_id} ended: {session.state.value}.")
 
                 if navigator.cancel_handoff_sent or navigator.book_handoff_sent:
                     run_outcome_followup(
@@ -601,6 +670,7 @@ def register_rebook_command(
                         session_id=session.session_id,
                         timeout_seconds=confirm_timeout_seconds,
                         stop_event=stop_event,
+                        is_active=is_active,
                     )
         finally:
             session_guard.release(local_user_id)

@@ -31,6 +31,9 @@ from .router import CommandRouter, IncomingCommand
 Reply = Callable[[int, str], None]
 
 _SKIP_TOKENS = {"-", "skip", "none", ""}
+_GENERIC_REGISTRATION_CONFLICT = (
+    "Registration could not be completed. Check the booking details and try again."
+)
 
 
 def _is_skip(text: str) -> bool:
@@ -293,6 +296,20 @@ def register_booking_dialog(
                     user_id=user.user_id,
                 )
             except BookingRejectedError as e:
+                conflict = booking_repo.get_by_confirmation(
+                    ConfirmationId.of(answers["confirmation_id"])
+                )
+                if conflict is not None:
+                    conflict_owner = booking_repo.get_owner_user_id(conflict.booking_id)
+                    if conflict_owner == user.user_id:
+                        return (
+                            "Registration rejected: That confirmation is already used "
+                            "by one of your bookings."
+                        )
+                    # Global confirmation uniqueness is preserved, but a user
+                    # cannot use the error text as an existence oracle for a
+                    # different user's reservation.
+                    return _GENERIC_REGISTRATION_CONFLICT
                 return f"Registration rejected: {e}"
 
         return (

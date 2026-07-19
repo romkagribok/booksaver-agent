@@ -32,6 +32,9 @@ Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
 
 _NOT_FOUND = "Booking not found."
+_GENERIC_EDIT_CONFLICT = (
+    "Booking was not updated. Check the booking details and try again."
+)
 _EDIT_FIELDS = (
     ("property", "Property / Booking.com reference"),
     ("dates", "Stay dates"),
@@ -360,7 +363,22 @@ def register_booking_management_commands(
                     )
                 with SqliteStore(db_path) as store:
                     update_booking(SqliteBookingRepository(store), updated)
-            except (BookingRejectedError, ValueError) as exc:
+            except BookingRejectedError as exc:
+                if field == "confirmation":
+                    with SqliteStore(db_path) as store:
+                        repo = SqliteBookingRepository(store)
+                        conflict = repo.get_by_confirmation(updated.confirmation_id)
+                        if conflict is not None and conflict.booking_id != current.booking_id:
+                            current_owner = repo.get_owner_user_id(current.booking_id)
+                            conflict_owner = repo.get_owner_user_id(conflict.booking_id)
+                            if conflict_owner == current_owner:
+                                return (
+                                    "Booking was not updated: that confirmation is already "
+                                    "used by one of your bookings."
+                                )
+                            return _GENERIC_EDIT_CONFLICT
+                return f"Booking was not updated: {exc}"
+            except ValueError as exc:
                 return f"Booking was not updated: {exc}"
             except KeyError:
                 return _NOT_FOUND

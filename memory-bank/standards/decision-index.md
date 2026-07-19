@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-18T23:57:35Z
-total_decisions: 21
+last_updated: 2026-07-19T02:39:40Z
+total_decisions: 22
 ---
 
 # Decision Index
@@ -17,6 +17,19 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-022: Fixed invite-first admission for non-owner Telegram users
+- **Status**: accepted
+- **Date**: 2026-07-19T02:39:40Z
+- **Bolt**: 021-invite-first-access (invite-first-access)
+- **Path**: `bolts/021-invite-first-access/adr-022-fixed-invite-first-admission.md`
+- **Summary**: The owner remains the sole administrator, while every non-owner is admitted only as an
+  active known user or by redeeming one single-use invite. Runtime mode controls are removed; absent
+  and legacy `owner`/`invite` config values normalize to fixed invite-first behavior, while
+  public/open/unknown values remain invalid. Numeric Telegram IDs remain authoritative and optional
+  usernames are display-only.
+- **Read when**: Changing Telegram admission, invite redemption, access configuration, admin controls,
+  username identity metadata, or revoked-user refusal behavior.
 
 ### ADR-021: One coordinator serializes scheduled and on-demand checks
 - **Status**: accepted
