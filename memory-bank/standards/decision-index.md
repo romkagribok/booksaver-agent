@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-19T19:55:13Z
-total_decisions: 23
+last_updated: 2026-07-20T02:45:00Z
+total_decisions: 26
 ---
 
 # Decision Index
@@ -17,6 +17,39 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-026: Telegram-bound HTTPS remote browser login
+- **Status**: accepted
+- **Date**: 2026-07-20
+- **Bolt**: 026-remote-authentication-gateway (remote-authentication-gateway)
+- **Path**: `bolts/026-remote-authentication-gateway/adr-026-telegram-bound-remote-browser-login.md`
+- **Summary**: `/connect` uses a Telegram-signed, short-lived HTTPS Mini App to control one temporary
+  VPS mobile Chromium through noVNC. Positive Booking.com authentication is captured into the encrypted
+  per-user vault, and all transient resources are torn down; the trusted-VPS compromise boundary remains explicit.
+- **Read when**: Working on Booking.com login/session intake, Telegram Mini Apps, inbound HTTPS,
+  noVNC/websockify, remote browser isolation, reconnect prompts, or VPS credential threat models.
+
+### ADR-025: Authenticated mobile web is the primary price context
+- **Status**: accepted
+- **Date**: 2026-07-19
+- **Bolt**: 025-authenticated-mobile-web-monitoring (authenticated-mobile-web-monitoring)
+- **Path**: `bolts/025-authenticated-mobile-web-monitoring/adr-025-authenticated-mobile-web-price-source.md`
+- **Summary**: Telegram-owned checks use an allowlisted Android-like Chromium mobile profile and the
+  booking owner's validated session. A price is accepted only with complete redacted provenance;
+  native-app/app-only promotions remain outside Playwright's guaranteed scope.
+- **Read when**: Changing browser contexts, mobile profiles, authentication/Genius evidence,
+  check provenance, search extraction, or final phone handoff behavior.
+
+### ADR-024: Encrypted per-user Booking.com sessions
+- **Status**: accepted
+- **Date**: 2026-07-19
+- **Bolt**: 024-per-user-booking-sessions (per-user-booking-sessions)
+- **Path**: `bolts/024-per-user-booking-sessions/adr-024-encrypted-per-user-booking-sessions.md`
+- **Summary**: ADR-010's global JSON/base64 state is replaced by one Fernet-encrypted session bundle
+  per stable local user, resolved only after ownership/access checks and restored into a clean context.
+  Telegram-owned checks fail closed instead of using owner/global/public fallback.
+- **Read when**: Working on cookie import, session persistence/encryption, user isolation, browser
+  context lifecycle, authentication failures, or legacy session migration.
 
 ### ADR-023: Stable-ID atomic post-rebook propagation
 - **Status**: accepted

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from booksaver.domain.agent import AgentSettings
 from booksaver.domain.errors import ConfigValidationError
+from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.models import Config
+from booksaver.domain.remote_auth import RemoteAuthSettings
 from booksaver.domain.value_objects import (
     CheckInterval,
     DataDirectory,
@@ -116,6 +119,68 @@ def load_config(source: ConfigSource) -> Config:
         errors.append(f"limits: {e}")
     # ── end [limits] ────────────────────────────────────────────────────────
 
+    mobile_web_settings: MobileWebSettings | None = None
+    browser_raw = raw.get("browser", {})
+    try:
+        browser_defaults = MobileWebSettings()
+        mobile_web_settings = MobileWebSettings.from_values(
+            profile_id=str(
+                browser_raw.get("device_profile", browser_defaults.profile_id.value)
+            ),
+            locale=str(browser_raw.get("locale", browser_defaults.locale)),
+            timezone_id=str(
+                browser_raw.get("timezone_id", browser_defaults.timezone_id)
+            ),
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"browser: {e}")
+
+    remote_auth_settings: RemoteAuthSettings | None = None
+    remote_auth_raw = raw.get("remote_auth", {})
+    try:
+        remote_auth_defaults = RemoteAuthSettings()
+        remote_auth_settings = RemoteAuthSettings(
+            enabled=bool(remote_auth_raw.get("enabled", False)),
+            public_url=(
+                str(remote_auth_raw["public_url"])
+                if remote_auth_raw.get("public_url") is not None
+                else None
+            ),
+            listen_host=str(
+                remote_auth_raw.get("listen_host", remote_auth_defaults.listen_host)
+            ),
+            listen_port=int(
+                remote_auth_raw.get("listen_port", remote_auth_defaults.listen_port)
+            ),
+            websocket_port=int(
+                remote_auth_raw.get(
+                    "websocket_port", remote_auth_defaults.websocket_port
+                )
+            ),
+            session_timeout_seconds=int(
+                remote_auth_raw.get(
+                    "session_timeout_seconds",
+                    remote_auth_defaults.session_timeout_seconds,
+                )
+            ),
+            telegram_init_max_age_seconds=int(
+                remote_auth_raw.get(
+                    "telegram_init_max_age_seconds",
+                    remote_auth_defaults.telegram_init_max_age_seconds,
+                )
+            ),
+            novnc_root=Path(
+                str(remote_auth_raw.get("novnc_root", remote_auth_defaults.novnc_root))
+            ),
+            display=str(remote_auth_raw.get("display", remote_auth_defaults.display)),
+        )
+        if remote_auth_settings.enabled and (
+            telegram_bot_settings is None or not telegram_bot_settings.enabled
+        ):
+            raise ValueError("remote authentication requires telegram_bot.enabled=true")
+    except (ValueError, TypeError) as e:
+        errors.append(f"remote_auth: {e}")
+
     if errors:
         raise ConfigValidationError(errors)
 
@@ -124,6 +189,8 @@ def load_config(source: ConfigSource) -> Config:
     assert agent_settings is not None
     assert telegram_bot_settings is not None
     assert limits_settings is not None
+    assert mobile_web_settings is not None
+    assert remote_auth_settings is not None
 
     notifications_raw = raw.get("notifications", {})
     notification_settings = NotificationSettings(
@@ -151,4 +218,6 @@ def load_config(source: ConfigSource) -> Config:
         agent_settings=agent_settings,
         telegram_bot_settings=telegram_bot_settings,
         limits_settings=limits_settings,
+        mobile_web_settings=mobile_web_settings,
+        remote_auth_settings=remote_auth_settings,
     )

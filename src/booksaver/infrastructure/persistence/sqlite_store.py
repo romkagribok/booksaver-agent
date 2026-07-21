@@ -21,6 +21,13 @@ from booksaver.domain.check_result import (
     RefundIndicators,
 )
 from booksaver.domain.errors import BookingRejectedError
+from booksaver.domain.mobile_web import (
+    AuthenticationEvidence,
+    GeniusEvidence,
+    MobileProfileId,
+    PriceSourceChannel,
+    PriceSourceProvenance,
+)
 from booksaver.domain.models import Booking, BookingStatus
 from booksaver.domain.post_rebook import (
     MonitoringDisposition,
@@ -54,7 +61,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 
@@ -306,6 +313,28 @@ def _migrate_v9(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN telegram_username TEXT")
 
 
+def _migrate_v10(conn: sqlite3.Connection) -> None:
+    """Add durable, non-secret authenticated mobile price provenance."""
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if "check_history" not in tables:
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(check_history)")}
+    additions = {
+        "source_channel": "TEXT",
+        "source_device_profile": "TEXT",
+        "source_session_revision": "TEXT",
+        "source_authentication": "TEXT",
+        "source_genius_evidence": "TEXT",
+        "source_observed_at": "TEXT",
+    }
+    for name, column_type in additions.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE check_history ADD COLUMN {name} {column_type}")
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -314,11 +343,13 @@ def _migrate_v9(conn: sqlite3.Connection) -> None:
 # function needed; schema.sql's CREATE TABLE IF NOT EXISTS covers it, same as
 # v3/v4/v6.
 # v8 -> v9: users.telegram_username optional display metadata (US-063).
+# v9 -> v10: durable authenticated-mobile price provenance (US-087).
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
     7: _migrate_v7,
     9: _migrate_v9,
+    10: _migrate_v10,
 }
 
 
@@ -815,8 +846,10 @@ class SqliteCheckHistoryRepository:
                 check_id, booking_id, checked_at, outcome, extraction_method,
                 live_amount, live_currency, refundable, cancellation_deadline,
                 refund_raw_text, extracted_property, extracted_room,
-                extracted_check_in, extracted_check_out, failure_code, failure_detail
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                extracted_check_in, extracted_check_out, failure_code, failure_detail,
+                source_channel, source_device_profile, source_session_revision,
+                source_authentication, source_genius_evidence, source_observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 result.check_id,
@@ -839,6 +872,12 @@ class SqliteCheckHistoryRepository:
                 ef.check_out.isoformat() if ef and ef.check_out else None,
                 result.failure_reason.code.value if result.failure_reason else None,
                 result.failure_reason.detail if result.failure_reason else None,
+                result.price_source.channel.value if result.price_source else None,
+                result.price_source.profile_id.value if result.price_source else None,
+                result.price_source.session_revision_id if result.price_source else None,
+                result.price_source.authentication.value if result.price_source else None,
+                result.price_source.genius_evidence.value if result.price_source else None,
+                result.price_source.observed_at.isoformat() if result.price_source else None,
             ),
         )
         self._store.conn.commit()
@@ -906,6 +945,16 @@ class SqliteCheckHistoryRepository:
             if row["failure_code"]
             else None
         )
+        price_source = None
+        if row["source_channel"]:
+            price_source = PriceSourceProvenance(
+                channel=PriceSourceChannel(row["source_channel"]),
+                profile_id=MobileProfileId(row["source_device_profile"]),
+                session_revision_id=row["source_session_revision"],
+                authentication=AuthenticationEvidence(row["source_authentication"]),
+                genius_evidence=GeniusEvidence(row["source_genius_evidence"]),
+                observed_at=datetime.fromisoformat(row["source_observed_at"]),
+            )
         return CheckResult(
             check_id=row["check_id"],
             booking_id=row["booking_id"],
@@ -916,6 +965,7 @@ class SqliteCheckHistoryRepository:
             refund_indicators=refund_indicators,
             extracted_fields=extracted_fields,
             failure_reason=failure_reason,
+            price_source=price_source,
         )
 
 

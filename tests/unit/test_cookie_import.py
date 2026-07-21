@@ -191,8 +191,10 @@ def test_partial_expiry_is_accepted_when_at_least_one_cookie_is_valid() -> None:
         ]
     )
     session, summary = import_cookies(raw, now=NOW)
-    assert summary.count == 2  # both are stored; only the earliest expiry drives session expiry
-    assert session.expires_at == datetime.fromtimestamp(_past_epoch(), tz=UTC)
+    assert summary.count == 1
+    assert session.expires_at == datetime.fromtimestamp(_future_epoch(), tz=UTC)
+    stored = json.loads(session.cookies.decode("utf-8"))
+    assert [cookie["name"] for cookie in stored] == ["fresh"]
 
 
 def test_rejects_empty_array() -> None:

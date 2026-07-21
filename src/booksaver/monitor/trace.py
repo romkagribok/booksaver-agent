@@ -91,6 +91,12 @@ class TraceRecorder:
         self._add(TraceKind.AGENT_RESULT, f"{step.value}: {detail}")
 
     def finish(self, result: CheckResult) -> CheckTrace:
+        if result.price_source is not None:
+            source = result.price_source.as_redacted_dict()
+            self._add(
+                TraceKind.PRICE_SOURCE,
+                "; ".join(f"{key}={value}" for key, value in source.items()),
+            )
         if result.failure_reason is not None:
             detail = f"failure: {result.failure_reason.code.value} — " \
                      f"{result.failure_reason.detail}"

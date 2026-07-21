@@ -138,6 +138,10 @@ def import_cookies(
             "booking.com in your browser again, re-export, and re-import"
         )
 
+    # Never restore already-expired cookies beside a usable session. Keeping one
+    # stale cookie used to make the aggregate's earliest expiry land in the past,
+    # so an otherwise-valid import immediately became unusable.
+    booking_cookies = still_valid
     domains = tuple(sorted({c["domain"].lstrip(".") for c in booking_cookies}))
     explicit_expiries = [c["expires"] for c in booking_cookies if c["expires"] > 0]
     earliest_expiry = (

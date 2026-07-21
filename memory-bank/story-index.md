@@ -254,6 +254,52 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-075` | Preserve audit and invalidate stale savings | Post-Rebook Monitoring | Complete | `001-post-rebook-monitoring/stories/004-preserve-audit-and-invalidate-stale-savings.md` |
 | `US-076` | Preserve access and visible completion | Post-Rebook Monitoring | Complete | `001-post-rebook-monitoring/stories/005-preserve-access-and-visible-completion.md` |
 
+## 012-per-user-booking-sessions
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-per-user-booking-sessions` | 6 stories | Complete (bolt 024) |
+| `002-remote-authentication-gateway` | 6 stories | Complete (bolt 026) |
+
+### 001-per-user-booking-sessions: Per-User Booking.com Sessions
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-077` | Isolate Booking.com sessions by user | Authenticated Sessions | Complete | `001-per-user-booking-sessions/stories/001-isolate-booking-sessions-by-user.md` |
+| `US-078` | Import a user session securely | Authenticated Sessions | Complete | `001-per-user-booking-sessions/stories/002-import-user-session-securely.md` |
+| `US-079` | Protect user session at rest | Authenticated Sessions | Complete | `001-per-user-booking-sessions/stories/003-protect-user-session-at-rest.md` |
+| `US-080` | Inspect session health safely | Authenticated Sessions | Complete | `001-per-user-booking-sessions/stories/004-inspect-session-health-safely.md` |
+| `US-081` | Enforce authenticated check policy | Authenticated Sessions | Complete | `001-per-user-booking-sessions/stories/005-enforce-authenticated-check-policy.md` |
+| `US-082` | Preserve session safety and lifecycle | Authenticated Sessions | Complete | `001-per-user-booking-sessions/stories/006-preserve-session-safety-and-lifecycle.md` |
+
+### 002-remote-authentication-gateway: Remote Authentication Gateway
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-089` | Request a user-bound login | Remote Authentication | Complete | `002-remote-authentication-gateway/stories/001-request-user-bound-login.md` |
+| `US-090` | Verify Mini App identity and prevent replay | Remote Authentication | Complete | `002-remote-authentication-gateway/stories/002-verify-mini-app-identity.md` |
+| `US-091` | Operate a transient remote mobile browser | Remote Authentication | Complete | `002-remote-authentication-gateway/stories/003-operate-transient-remote-browser.md` |
+| `US-092` | Capture authenticated state and tear down | Remote Authentication | Complete | `002-remote-authentication-gateway/stories/004-capture-and-teardown-session.md` |
+| `US-093` | Report outcomes and request reconnect | Remote Authentication | Complete | `002-remote-authentication-gateway/stories/005-report-and-reconnect.md` |
+| `US-094` | Deploy the gateway behind HTTPS | Remote Authentication | Complete | `002-remote-authentication-gateway/stories/006-deploy-gateway-behind-https.md` |
+
+## 013-authenticated-mobile-web-monitoring
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-authenticated-mobile-web-monitoring` | 6 stories | Complete (bolt 025) |
+
+### 001-authenticated-mobile-web-monitoring: Authenticated Mobile-Web Monitoring
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-083` | Run every check in a configured mobile-web profile | Authenticated Mobile Web | Complete | `001-authenticated-mobile-web-monitoring/stories/001-run-checks-in-mobile-profile.md` |
+| `US-084` | Bind each check to its owner's authenticated session | Authenticated Mobile Web | Complete | `001-authenticated-mobile-web-monitoring/stories/002-bind-owner-authenticated-session.md` |
+| `US-085` | Fail closed when authenticated context is unverified | Authenticated Mobile Web | Complete | `001-authenticated-mobile-web-monitoring/stories/003-fail-closed-unverified-auth.md` |
+| `US-086` | Preserve scripted search and bounded LLM escalation | Authenticated Mobile Web | Complete | `001-authenticated-mobile-web-monitoring/stories/004-preserve-scripted-and-llm-journey.md` |
+| `US-087` | Explain every authenticated mobile-web price source | Authenticated Mobile Web | Complete | `001-authenticated-mobile-web-monitoring/stories/005-explain-price-source.md` |
+| `US-088` | Keep final booking action on the user's real phone | Authenticated Mobile Web | Complete | `001-authenticated-mobile-web-monitoring/stories/006-keep-final-action-on-phone.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -269,5 +315,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `009-invite-first-sharing` | 1 | 5 | Complete (bolt 021; 763 tests) |
 | `010-telegram-privacy-boundaries` | 1 | 5 | Complete (bolt 022; 763 tests) |
 | `011-post-rebook-monitoring` | 1 | 5 | Complete (bolt 023; 788 tests) |
+| `012-per-user-booking-sessions` | 2 | 12 | Complete (bolts 024 and 026; 867 tests) |
+| `013-authenticated-mobile-web-monitoring` | 1 | 6 | Complete (bolt 025; 867 tests) |
 
-All 76 stories (16 original + 6 Phase 2 + 14 Phase 3 + 6 production-hardening + 5 command-navigation + 4 booking-management + 5 on-demand-check + 5 currency-alignment + 5 invite-first-sharing + 5 Telegram-privacy + 5 post-rebook-monitoring) are assigned exactly once.
+All 94 stories (92 complete in-scope stories plus 2 post-MVP extensibility stories) are assigned exactly once.

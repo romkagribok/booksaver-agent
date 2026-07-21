@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from booksaver.domain.agent import AgentAction, AgentActionType, ElementInfo
 from booksaver.domain.check_result import CheckOutcome, ExtractionMethod, FailureCode
 from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.savings import SavingsOpportunity, detect_savings
-from booksaver.domain.value_objects import Money
+from booksaver.domain.user_session import UserSessionMetadata, UserSessionSnapshot
+from booksaver.domain.value_objects import Money, Platform
 from booksaver.monitor.failure_tracker import FailureTracker
 from booksaver.monitor.search_check_job import BookingComSearchMonitor
 from booksaver.monitor.session_manager import SessionManager
@@ -41,6 +43,18 @@ def _happy_browser() -> FakeInteractiveBrowser:
     browser = FakeInteractiveBrowser(titles=["Hotel Test"], page_text=_ROOM_TABLE)
     browser.property_url = _PROPERTY_URL
     return browser
+
+
+def _user_snapshot(cookies: bytes = b'[{"name":"session"}]') -> UserSessionSnapshot:
+    return UserSessionSnapshot(
+        metadata=UserSessionMetadata.imported(
+            owner_user_id=7,
+            platform=Platform.BOOKING_COM,
+            imported_at=datetime.now(UTC),
+            expires_at=None,
+        ),
+        cookies=cookies,
+    )
 
 
 def _monitor(
@@ -100,6 +114,62 @@ class TestScriptedHappyPath:
         assert fields.check_in == booking.stay_dates.check_in
         assert fields.check_out == booking.stay_dates.check_out
         assert fields.room_label == "Standard Double"  # exact match is echoed
+
+
+class TestAuthenticatedMobileWeb:
+    def test_authenticated_check_restores_owner_cookies_and_records_genius_source(self):
+        browser = _happy_browser()
+        browser.page_text += "\nGenius Level 2 discount applied"
+        monitor, history = _monitor(browser)
+        snapshot = _user_snapshot()
+
+        result = monitor.run_authenticated(make_booking(), snapshot)
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert browser.restored_cookies == [snapshot.cookies]
+        assert history.results == [result]
+        assert result.price_source is not None
+        assert result.price_source.session_revision_id == snapshot.metadata.revision_id
+        assert result.price_source.genius_evidence.value == "applied_or_present"
+        assert result.price_source.profile_id.value == "android-chromium"
+
+    def test_authenticated_check_accepts_rate_when_genius_is_not_observed(self):
+        monitor, _ = _monitor(_happy_browser())
+
+        result = monitor.run_authenticated(make_booking(), _user_snapshot())
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert result.price_source is not None
+        assert result.price_source.genius_evidence.value == "not_observed"
+
+    def test_signed_out_render_fails_closed_without_an_accepted_price(self):
+        browser = _happy_browser()
+        browser.authenticated = False
+        monitor, history = _monitor(browser)
+
+        result = monitor.run_authenticated(make_booking(), _user_snapshot())
+
+        assert result.failure_reason is not None
+        assert result.failure_reason.code is FailureCode.AUTH_REQUIRED
+        assert result.live_price is None
+        assert result.price_source is None
+        assert history.results == [result]
+        assert "No public-price fallback" in result.failure_reason.detail
+
+    def test_cookie_restore_error_is_redacted_and_recorded(self):
+        class RestoreFailureBrowser(FakeInteractiveBrowser):
+            def restore_cookies(self, data: bytes) -> None:
+                raise RuntimeError(f"secret-cookie={data!r}")
+
+        browser = RestoreFailureBrowser(titles=["Hotel Test"], page_text=_ROOM_TABLE)
+        monitor, history = _monitor(browser)
+
+        result = monitor.run_authenticated(make_booking(), _user_snapshot(b"secret"))
+
+        assert result.failure_reason is not None
+        assert result.failure_reason.code is FailureCode.AUTH_REQUIRED
+        assert "secret" not in result.failure_reason.detail
+        assert history.results == [result]
 
 
 class TestLLMFallback:

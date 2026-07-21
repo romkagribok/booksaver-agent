@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,12 @@ check_interval = "6h"            # How often to check for price drops (e.g. "30m
 [storage]
 data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local only
 
+[browser]
+# Authenticated monitoring always uses an allowlisted mobile Chromium profile.
+# device_profile = "android-chromium"
+# locale = "en-US"
+# timezone_id = "UTC"
+
 [notifications]
 # Non-secret identifiers go here. Secrets come from environment variables.
 # email = "your@email.com"           # alert recipient
@@ -69,6 +76,13 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # enabled = false
 # owner_chat_id = 123456789   # required when enabled; owner/admin Telegram chat
 # poll_timeout_seconds = 30   # long-poll timeout, clamped to 25-50
+
+[remote_auth]
+# Phone-first Booking.com login through a Telegram Mini App and temporary VPS browser.
+# Requires a public DNS name pointing at Caddy on this VPS.
+# enabled = false
+# public_url = "https://connect.example.com"
+# session_timeout_seconds = 600
 
 [limits]
 # Per-user abuse/fairness limits for multi-user Telegram deployments (US-031).
@@ -163,6 +177,8 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     ns = cfg.notification_settings
     tb = cfg.telegram_bot_settings
     lim = cfg.limits_settings
+    mobile = cfg.mobile_web_settings
+    remote_auth = cfg.remote_auth_settings
     print(f"check_interval               : {cfg.check_interval}")
     print(f"data_directory               : {cfg.data_directory.path}")
     print(f"notifications.email          : {ns.email or '(not set)'}")
@@ -174,6 +190,11 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"limits.max_checks_per_user/day: {lim.max_checks_per_user_per_day}")
     print(f"limits.max_llm_calls_per_user/day: {lim.max_llm_calls_per_user_per_day}")
     print(f"limits.messages_per_min/chat : {lim.messages_per_minute_per_chat}")
+    print(f"browser.device_profile       : {mobile.profile_id.value}")
+    print(f"browser.locale               : {mobile.locale}")
+    print(f"browser.timezone_id          : {mobile.timezone_id}")
+    print(f"remote_auth.enabled          : {remote_auth.enabled}")
+    print(f"remote_auth.public_url       : {remote_auth.public_url or '(not set)'}")
     smtp = "(set)" if os.environ.get("BOOKSAVER_SMTP_PASSWORD") else "(not set)"
     tg = "(set)" if os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN") else "(not set)"
     llm = "(set)" if os.environ.get("BOOKSAVER_LLM_API_KEY") else "(not set)"
@@ -331,24 +352,86 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     sched = scheduler_mod.Scheduler()
-    coordinator = _make_check_coordinator(cfg, sched.stop_event)
+    browser_gate = threading.Lock()
+    db_path = cfg.data_directory.path / "booksaver.db"
+    telegram_client = None
+    remote_auth_runtime = None
+    telegram_token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
+    if cfg.telegram_bot_settings.enabled and telegram_token:
+        from booksaver.infrastructure.telegram.client import TelegramBotClient
+
+        telegram_client = TelegramBotClient(bot_token=telegram_token)
+    if cfg.remote_auth_settings.enabled:
+        if telegram_client is None or telegram_token is None:
+            print(
+                "Error: remote_auth.enabled requires BOOKSAVER_TELEGRAM_BOT_TOKEN.",
+                file=sys.stderr,
+            )
+            return 2
+        from booksaver.infrastructure.remote_auth.runtime import (
+            build_remote_auth_runtime,
+        )
+
+        remote_auth_runtime = build_remote_auth_runtime(
+            cfg,
+            db_path,
+            sched.stop_event,
+            telegram_token,
+            telegram_client,
+            browser_gate,
+        )
+
+    coordinator = _make_check_coordinator(
+        cfg,
+        sched.stop_event,
+        auth_required_notifier=(
+            remote_auth_runtime.reconnect_notifier.notify
+            if remote_auth_runtime is not None
+            else None
+        ),
+        execution_gate=browser_gate,
+    )
     sched.register("booking_com_check", coordinator.run_scheduled)
 
     bot_runner = None
     if cfg.telegram_bot_settings.enabled:
         from booksaver.infrastructure.telegram.gateway import build_bot_runner
 
-        db_path = cfg.data_directory.path / "booksaver.db"
-        bot_runner = build_bot_runner(cfg, db_path, sched, check_coordinator=coordinator)
+        bot_runner = build_bot_runner(
+            cfg,
+            db_path,
+            sched,
+            client=telegram_client,
+            check_coordinator=coordinator,
+            remote_auth_manager=(
+                remote_auth_runtime.manager if remote_auth_runtime is not None else None
+            ),
+        )
         print("Telegram bot gateway: " + ("enabled" if bot_runner else "disabled (see logs)"))
+    if remote_auth_runtime is not None:
+        print(f"Remote authentication gateway: {cfg.remote_auth_settings.public_url}")
 
     print(f"BookSaver daemon starting (interval={cfg.check_interval}, data={cfg.data_directory.path})")  # noqa: E501
     print("Press Ctrl-C or send SIGTERM to stop cleanly.")
-    lifecycle.start(cfg, sched, bot_runner=bot_runner)
+    lifecycle.start(
+        cfg,
+        sched,
+        bot_runner=bot_runner,
+        service_runners=(
+            {"remote-auth": remote_auth_runtime.run}
+            if remote_auth_runtime is not None
+            else None
+        ),
+    )
     return 0
 
 
-def _make_check_coordinator(cfg: Config, stop_event: Any) -> Any:
+def _make_check_coordinator(
+    cfg: Config,
+    stop_event: Any,
+    auth_required_notifier: Any = None,
+    execution_gate: threading.Lock | None = None,
+) -> Any:
     """Build the one daemon-lifetime boundary shared by scheduler and Telegram."""
     from booksaver.daemon.check_coordinator import CheckCoordinator
 
@@ -360,6 +443,8 @@ def _make_check_coordinator(cfg: Config, stop_event: Any) -> Any:
         ),
         notifier_builder=_make_notifiers,
         invalid_key_notifier=_notify_invalid_user_keys,
+        auth_required_notifier=auth_required_notifier,
+        execution_gate=execution_gate,
     )
 
 
@@ -529,37 +614,32 @@ def cmd_auth(args: argparse.Namespace) -> int:
         authenticated_at=datetime.now(UTC),
     )
     LocalSessionRepository(cfg.data_directory).save(session)
-    print(f"Session saved to {cfg.data_directory.path}/session_booking_com.json")
-    print("Scheduled checks will now reuse this session until it expires.")
+    print(f"Legacy session saved to {cfg.data_directory.path}/session_booking_com.json")
+    print(
+        "For Telegram monitoring, migrate it explicitly with `booksaver auth "
+        "migrate-legacy --telegram-user-id <OWNER_ID>`; it is never shared or used "
+        "as a daemon fallback."
+    )
     return 0
 
 
 # ── auth import ──────────────────────────────────────────────────────────────
 
 def cmd_auth_import(args: argparse.Namespace) -> int:
-    """US-035: load Booking.com cookies exported from the user's own browser.
+    """US-078: import Booking.com cookies for one admitted Telegram user.
 
     The VPS-compatible alternative to `booksaver auth` (which needs a display
     for the headed login browser). See the runbook's "cookie-import" section
     for how to export cookies and the security caution around them.
     """
-    source = TomlEnvConfigSource(_config_path(args))
-    try:
-        cfg = load_config(source)
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 2
-    except ConfigValidationError as e:
-        print("Config validation failed:", file=sys.stderr)
-        for err in e.errors:
-            print(f"  - {err}", file=sys.stderr)
-        return 2
+    cfg, db_path = _db_path_for(args)
 
-    from booksaver.infrastructure.persistence.cookie_import import (
-        CookieImportError,
-        import_cookies,
+    from booksaver.application.user_sessions import SessionTargetError, UserSessionService
+    from booksaver.domain.errors import SecretKeyError
+    from booksaver.infrastructure.persistence.cookie_import import CookieImportError
+    from booksaver.infrastructure.persistence.encrypted_session_store import (
+        EncryptedUserSessionRepository,
     )
-    from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
 
     path = Path(args.file)
     try:
@@ -569,7 +649,12 @@ def cmd_auth_import(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        session, summary = import_cookies(raw_text)
+        with SqliteStore(db_path) as store:
+            service = UserSessionService(
+                SqliteUserRepository(store),
+                EncryptedUserSessionRepository(cfg.data_directory),
+            )
+            result = service.import_cookies(args.telegram_user_id, raw_text)
     except CookieImportError as e:
         print(f"Cookie import failed: {e}", file=sys.stderr)
         print(
@@ -579,16 +664,21 @@ def cmd_auth_import(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    except (SessionTargetError, SecretKeyError) as e:
+        print(f"Session import failed: {e}", file=sys.stderr)
+        return 2
 
-    ensure_data_dir(cfg.data_directory)
-    LocalSessionRepository(cfg.data_directory).save(session)
-
-    print(f"Imported {summary.count} cookie(s) for domain(s): {', '.join(summary.domains)}")
+    summary = result.summary
+    print(
+        f"Imported {summary.count} cookie(s) for Telegram user "
+        f"{result.telegram_user_id}."
+    )
+    print(f"Domain(s): {', '.join(summary.domains)}")
     if summary.earliest_expiry is not None:
         print(f"Earliest expiry: {summary.earliest_expiry.isoformat()}")
     else:
         print("Earliest expiry: none of the imported cookies carry an explicit expiry")
-    print(f"Session saved to {cfg.data_directory.path}/session_booking_com.json")
+    print("Encrypted per-user session saved successfully.")
     print(
         "Scheduled checks will now run authenticated until this session expires or "
         "is flagged for re-auth — at which point re-run this import with a fresh export."
@@ -596,6 +686,97 @@ def cmd_auth_import(args: argparse.Namespace) -> int:
     print(
         "Security note: these cookies grant account access — treat the export file "
         "like a password and delete it now that it's imported."
+    )
+    return 0
+
+
+def _user_session_service(cfg: Config, store: SqliteStore) -> Any:
+    from booksaver.application.user_sessions import UserSessionService
+    from booksaver.infrastructure.persistence.encrypted_session_store import (
+        EncryptedUserSessionRepository,
+    )
+
+    return UserSessionService(
+        SqliteUserRepository(store),
+        EncryptedUserSessionRepository(cfg.data_directory),
+    )
+
+
+def cmd_auth_status(args: argparse.Namespace) -> int:
+    from booksaver.application.user_sessions import SessionTargetError
+
+    cfg, db_path = _db_path_for(args)
+    try:
+        with SqliteStore(db_path) as store:
+            status = _user_session_service(cfg, store).status(args.telegram_user_id)
+    except SessionTargetError as e:
+        print(f"Session status failed: {e}", file=sys.stderr)
+        return 2
+
+    print(f"Telegram user : {args.telegram_user_id}")
+    print(f"Session health: {status.health.value}")
+    print(f"Imported      : {status.imported_at.isoformat() if status.imported_at else '-'}")
+    print(f"Last validated: {status.validated_at.isoformat() if status.validated_at else '-'}")
+    print(f"Expires       : {status.expires_at.isoformat() if status.expires_at else '-'}")
+    if status.health.value != "ready":
+        print(
+            "Re-import with: booksaver auth import <file> --telegram-user-id "
+            f"{args.telegram_user_id}"
+        )
+    return 0
+
+
+def cmd_auth_delete(args: argparse.Namespace) -> int:
+    from booksaver.application.user_sessions import SessionTargetError
+
+    cfg, db_path = _db_path_for(args)
+    try:
+        with SqliteStore(db_path) as store:
+            deleted = _user_session_service(cfg, store).delete(args.telegram_user_id)
+    except SessionTargetError as e:
+        print(f"Session delete failed: {e}", file=sys.stderr)
+        return 2
+    if deleted:
+        print(f"Deleted encrypted session for Telegram user {args.telegram_user_id}.")
+    else:
+        print(f"No encrypted session exists for Telegram user {args.telegram_user_id}.")
+    return 0
+
+
+def cmd_auth_migrate_legacy(args: argparse.Namespace) -> int:
+    from booksaver.application.user_sessions import SessionTargetError
+    from booksaver.domain.errors import SecretKeyError
+    from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
+
+    cfg, db_path = _db_path_for(args)
+    legacy_repo = LocalSessionRepository(cfg.data_directory)
+    legacy = legacy_repo.load(Platform.BOOKING_COM)
+    legacy_path = cfg.data_directory.path / "session_booking_com.json"
+    if legacy is None:
+        print("No readable legacy global Booking.com session exists.", file=sys.stderr)
+        return 2
+
+    try:
+        with SqliteStore(db_path) as store:
+            _user_session_service(cfg, store).migrate_legacy_owner(
+                args.telegram_user_id, legacy
+            )
+    except (SessionTargetError, SecretKeyError) as e:
+        print(f"Legacy session migration failed: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        legacy_path.unlink()
+    except OSError as e:
+        print(
+            "Encrypted owner session was saved, but the legacy file could not be "
+            f"removed: {e}. Delete {legacy_path} manually.",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        "Migrated the legacy global session to the encrypted per-user owner "
+        f"session for Telegram user {args.telegram_user_id}."
     )
     return 0
 
@@ -886,7 +1067,30 @@ def create_parser() -> argparse.ArgumentParser:
     p_auth_import.add_argument(
         "file", metavar="FILE", help="Path to a cookies JSON file exported from your browser"
     )
+    p_auth_import.add_argument(
+        "--telegram-user-id",
+        required=True,
+        type=int,
+        metavar="ID",
+        help="Already-admitted Telegram numeric user ID that owns this session",
+    )
     p_auth_import.set_defaults(func=cmd_auth_import)
+    p_auth_status = auth_sub.add_parser(
+        "status", help="Show redacted per-user Booking.com session health"
+    )
+    p_auth_status.add_argument("--telegram-user-id", required=True, type=int, metavar="ID")
+    p_auth_status.set_defaults(func=cmd_auth_status)
+    p_auth_delete = auth_sub.add_parser(
+        "delete", help="Delete one Telegram user's encrypted Booking.com session"
+    )
+    p_auth_delete.add_argument("--telegram-user-id", required=True, type=int, metavar="ID")
+    p_auth_delete.set_defaults(func=cmd_auth_delete)
+    p_auth_migrate = auth_sub.add_parser(
+        "migrate-legacy",
+        help="Explicitly migrate the legacy global session to the admitted owner",
+    )
+    p_auth_migrate.add_argument("--telegram-user-id", required=True, type=int, metavar="ID")
+    p_auth_migrate.set_defaults(func=cmd_auth_migrate_legacy)
 
     # stop
     p_stop = sub.add_parser("stop", help="Stop the running daemon gracefully")

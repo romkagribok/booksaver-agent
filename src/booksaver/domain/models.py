@@ -6,6 +6,8 @@ from datetime import datetime
 from enum import Enum
 
 from .agent import AgentSettings
+from .mobile_web import MobileWebSettings
+from .remote_auth import RemoteAuthSettings
 from .value_objects import (
     CheckInterval,
     ConfirmationId,
@@ -85,3 +87,5 @@ class Config:
     agent_settings: AgentSettings = field(default_factory=AgentSettings)
     telegram_bot_settings: TelegramBotSettings = field(default_factory=TelegramBotSettings)
     limits_settings: LimitsSettings = field(default_factory=LimitsSettings)
+    mobile_web_settings: MobileWebSettings = field(default_factory=MobileWebSettings)
+    remote_auth_settings: RemoteAuthSettings = field(default_factory=RemoteAuthSettings)

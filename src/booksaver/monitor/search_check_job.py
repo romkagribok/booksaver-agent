@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -25,9 +26,15 @@ from booksaver.domain.check_result import (
 )
 from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.journey import JourneyResult, JourneyStep
+from booksaver.domain.mobile_web import (
+    GeniusEvidence,
+    MobileProfileId,
+    PriceSourceProvenance,
+)
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate, OfferSelection, select_offer
 from booksaver.domain.session import SessionMode
+from booksaver.domain.user_session import UserSessionSnapshot
 from booksaver.monitor import room_table
 from booksaver.monitor.browser_agent import BrowserAgent
 from booksaver.monitor.failure_tracker import FailureTracker
@@ -36,6 +43,8 @@ from booksaver.monitor.session_manager import SessionManager
 from booksaver.monitor.trace import SnapshotWriter, TraceRecorder
 
 logger = logging.getLogger(__name__)
+
+_GENIUS_EVIDENCE = re.compile(r"\bGenius(?:\s+(?:Level|discount|deal|rate))?\b", re.I)
 
 
 class BookingComSearchMonitor:
@@ -58,6 +67,7 @@ class BookingComSearchMonitor:
         trace_repo: CheckTraceRepository | None = None,
         snapshot_writer: SnapshotWriter | None = None,
         clock: Callable[[], float] = time.monotonic,
+        mobile_profile_id: MobileProfileId = MobileProfileId.ANDROID_CHROMIUM,
     ) -> None:
         self._browser = browser
         self._sessions = session_manager
@@ -81,6 +91,7 @@ class BookingComSearchMonitor:
         self._active_budget: AgentBudget | None = None
         self._last_llm_calls_used = 0
         self._llm_enabled = True
+        self._mobile_profile_id = mobile_profile_id
 
     @property
     def last_llm_calls_used(self) -> int:
@@ -149,8 +160,47 @@ class BookingComSearchMonitor:
 
         return results
 
+    def run_authenticated(
+        self, booking: Booking, snapshot: UserSessionSnapshot
+    ) -> CheckResult:
+        """Run one fail-closed owner-bound check and persist its result."""
+        try:
+            self._browser.restore_cookies(snapshot.cookies)
+        except Exception:
+            logger.warning(
+                "Could not restore encrypted Booking.com session for user %s",
+                snapshot.metadata.owner_user_id,
+                exc_info=True,
+            )
+            result = CheckResult.failure(
+                booking.booking_id,
+                datetime.now(UTC),
+                FailureReason(
+                    code=FailureCode.AUTH_REQUIRED,
+                    detail=(
+                        "Could not restore this user's encrypted Booking.com session. "
+                        "Import fresh cookies; no public-price fallback was used."
+                    ),
+                ),
+            )
+            recorder = TraceRecorder(booking.booking_id)
+            self._persist_trace(recorder, result, None)
+            self._record(result)
+            return result
+
+        result = self.run_check(
+            booking,
+            session_mode=SessionMode.AUTHENTICATED,
+            session_revision_id=snapshot.metadata.revision_id,
+        )
+        self._record(result)
+        return result
+
     def run_check(
-        self, booking: Booking, session_mode: SessionMode = SessionMode.AUTHENTICATED
+        self,
+        booking: Booking,
+        session_mode: SessionMode = SessionMode.AUTHENTICATED,
+        session_revision_id: str | None = None,
     ) -> CheckResult:
         """Check one booking via the search journey. Always returns; never raises."""
         recorder = TraceRecorder(booking.booking_id)
@@ -158,7 +208,9 @@ class BookingComSearchMonitor:
         self._active_budget = None
         self._last_llm_calls_used = 0
         try:
-            result = self._run_check_inner(booking, recorder, session_mode)
+            result = self._run_check_inner(
+                booking, recorder, session_mode, session_revision_id
+            )
         except Exception as exc:  # belt and braces: the never-raise contract
             logger.exception("Unexpected error checking booking %s", booking.booking_id)
             result = CheckResult.failure(
@@ -174,7 +226,11 @@ class BookingComSearchMonitor:
         return result
 
     def _run_check_inner(
-        self, booking: Booking, recorder: TraceRecorder, session_mode: SessionMode
+        self,
+        booking: Booking,
+        recorder: TraceRecorder,
+        session_mode: SessionMode,
+        session_revision_id: str | None,
     ) -> CheckResult:
         now = datetime.now(UTC)
         self._last_escalator = None
@@ -222,6 +278,22 @@ class BookingComSearchMonitor:
         )
         journey = search_journey.run(booking)
 
+        if (
+            session_revision_id is not None
+            and not self._browser.is_authenticated()
+        ):
+            return CheckResult.failure(
+                booking.booking_id,
+                now,
+                FailureReason(
+                    code=FailureCode.AUTH_REQUIRED,
+                    detail=(
+                        "Booking.com did not render a verifiable signed-in account context; "
+                        "re-import this user's cookies. No public-price fallback was used."
+                    ),
+                ),
+            )
+
         if not journey.ok:
             return self._journey_failure(booking, journey, now)
 
@@ -268,6 +340,7 @@ class BookingComSearchMonitor:
                 now=now,
                 session_mode=session_mode,
                 initial_agent_assisted=journey.agent_assisted,
+                session_revision_id=session_revision_id,
             )
         if selection.chosen is None:
             return self._no_equivalent_failure(booking, candidates, selection, now)
@@ -281,7 +354,15 @@ class BookingComSearchMonitor:
                 "Check for booking %s used a public (logged-out) rate.",
                 booking.booking_id,
             )
-        return self._to_success(booking, selection.chosen, method, now, session_mode)
+        return self._to_success(
+            booking,
+            selection.chosen,
+            method,
+            now,
+            session_mode,
+            session_revision_id,
+            page_text,
+        )
 
     def _recover_currency(
         self,
@@ -295,6 +376,7 @@ class BookingComSearchMonitor:
         now: datetime,
         session_mode: SessionMode,
         initial_agent_assisted: bool,
+        session_revision_id: str | None,
     ) -> CheckResult:
         desired = booking.baseline_price.currency
         observed = self._observed_currencies(initial_selection)
@@ -409,7 +491,13 @@ class BookingComSearchMonitor:
                 f"recovery={recovery_detail}"
             )
             return self._to_success(
-                booking, selection.chosen, method, now, session_mode
+                booking,
+                selection.chosen,
+                method,
+                now,
+                session_mode,
+                session_revision_id,
+                page_text,
             )
         if selection.currency_mismatches:
             final_observed = self._observed_currencies(selection)
@@ -527,6 +615,8 @@ class BookingComSearchMonitor:
         method: ExtractionMethod,
         now: datetime,
         session_mode: SessionMode = SessionMode.AUTHENTICATED,
+        session_revision_id: str | None = None,
+        page_text: str = "",
     ) -> CheckResult:
         """Map the chosen candidate to the downstream CheckResult contract.
 
@@ -541,6 +631,19 @@ class BookingComSearchMonitor:
                 chosen.match_confidence,
                 booking.room_type.label,
                 chosen.room_label,
+            )
+        price_source = None
+        if session_revision_id is not None:
+            genius = (
+                GeniusEvidence.APPLIED_OR_PRESENT
+                if _GENIUS_EVIDENCE.search(page_text)
+                else GeniusEvidence.NOT_OBSERVED
+            )
+            price_source = PriceSourceProvenance(
+                profile_id=self._mobile_profile_id,
+                session_revision_id=session_revision_id,
+                genius_evidence=genius,
+                observed_at=now,
             )
         return CheckResult.success(
             booking_id=booking.booking_id,
@@ -558,6 +661,7 @@ class BookingComSearchMonitor:
                 check_out=booking.stay_dates.check_out,
             ),
             session_mode=session_mode,
+            price_source=price_source,
         )
 
     def _try_llm_offers(

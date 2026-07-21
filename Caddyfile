@@ -1,0 +1,16 @@
+{$BOOKSAVER_AUTH_DOMAIN} {
+	# Do not enable access logging: /connect paths and WebSocket queries carry
+	# short-lived authentication capabilities.
+	@websockify path /websockify
+	handle @websockify {
+		reverse_proxy booksaver:6080
+	}
+
+	handle {
+		reverse_proxy booksaver:8080
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+}

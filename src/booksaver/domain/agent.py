@@ -174,6 +174,7 @@ class TraceKind(Enum):
     SCREENSHOT_TIER = "screenshot_tier"
     AGENT_RESULT = "agent_result"
     CHECK_RESULT = "check_result"
+    PRICE_SOURCE = "price_source"
 
 
 @dataclass(frozen=True)

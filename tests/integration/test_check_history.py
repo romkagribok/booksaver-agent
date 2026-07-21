@@ -14,6 +14,13 @@ from booksaver.domain.check_result import (
     FailureReason,
     RefundIndicators,
 )
+from booksaver.domain.mobile_web import (
+    AuthenticationEvidence,
+    GeniusEvidence,
+    MobileProfileId,
+    PriceSourceChannel,
+    PriceSourceProvenance,
+)
 from booksaver.domain.models import Booking
 from booksaver.domain.session import SessionState, SessionStatus
 from booksaver.domain.value_objects import (
@@ -73,6 +80,17 @@ def _success_result(booking_id: str) -> CheckResult:
     )
 
 
+def _price_source() -> PriceSourceProvenance:
+    return PriceSourceProvenance(
+        channel=PriceSourceChannel.AUTHENTICATED_MOBILE_WEB,
+        profile_id=MobileProfileId.ANDROID_CHROMIUM_COMPACT,
+        session_revision_id="session-revision-42",
+        authentication=AuthenticationEvidence.VALIDATED,
+        genius_evidence=GeniusEvidence.APPLIED_OR_PRESENT,
+        observed_at=datetime(2026, 9, 1, 14, 30, 45, tzinfo=UTC),
+    )
+
+
 def _failure_result(booking_id: str) -> CheckResult:
     return CheckResult.failure(
         booking_id,
@@ -98,6 +116,41 @@ class TestSqliteCheckHistoryRepository:
         assert loaded.refund_indicators == original.refund_indicators
         assert loaded.extracted_fields == original.extracted_fields
         assert loaded.failure_reason is None
+
+    def test_price_source_provenance_round_trip_preserves_all_six_fields(
+        self, tmp_path: Path
+    ) -> None:
+        provenance = _price_source()
+        with SqliteStore(tmp_path / "t.db") as store:
+            _register_booking(store)
+            repo = SqliteCheckHistoryRepository(store)
+            original = CheckResult.success(
+                booking_id="b-1",
+                checked_at=datetime.now(UTC),
+                live_price=Money(amount=Decimal("379.00"), currency="EUR"),
+                extraction_method=ExtractionMethod.DOM,
+                price_source=provenance,
+            )
+            repo.add(original)
+
+            row = store.conn.execute(
+                "SELECT source_channel, source_device_profile, "
+                "source_session_revision, source_authentication, "
+                "source_genius_evidence, source_observed_at "
+                "FROM check_history WHERE check_id = ?",
+                (original.check_id,),
+            ).fetchone()
+            [loaded] = repo.get_recent("b-1")
+
+        assert tuple(row) == (
+            provenance.channel.value,
+            provenance.profile_id.value,
+            provenance.session_revision_id,
+            provenance.authentication.value,
+            provenance.genius_evidence.value,
+            provenance.observed_at.isoformat(),
+        )
+        assert loaded.price_source == provenance
 
     def test_failure_round_trip(self, tmp_path: Path) -> None:
         with SqliteStore(tmp_path / "t.db") as store:
@@ -196,6 +249,118 @@ class TestSchemaMigration:
         with SqliteStore(tmp_path / "new.db") as store:
             row = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
         assert row[0] == SCHEMA_VERSION
+
+    def test_v9_database_adds_price_source_columns_without_losing_legacy_rows(
+        self, tmp_path: Path
+    ) -> None:
+        db_path = tmp_path / "v9.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(
+            """
+            CREATE TABLE schema_meta (version INTEGER NOT NULL, applied_at TEXT NOT NULL);
+            INSERT INTO schema_meta VALUES (9, '2026-07-11T00:00:00+00:00');
+
+            CREATE TABLE users (
+                user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id INTEGER UNIQUE,
+                telegram_username TEXT,
+                role TEXT NOT NULL,
+                access_state TEXT NOT NULL,
+                encrypted_key BLOB,
+                created_at TEXT NOT NULL
+            );
+            INSERT INTO users VALUES (
+                1, 555, 'owner', 'owner', 'active', NULL,
+                '2026-07-11T00:00:00+00:00'
+            );
+
+            CREATE TABLE bookings (
+                booking_id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL,
+                product_type TEXT NOT NULL,
+                confirmation_id TEXT NOT NULL UNIQUE,
+                property_name TEXT NOT NULL,
+                property_ref TEXT NOT NULL,
+                check_in TEXT NOT NULL,
+                check_out TEXT NOT NULL,
+                room_type TEXT NOT NULL,
+                baseline_amount TEXT NOT NULL,
+                baseline_currency TEXT NOT NULL,
+                refundable INTEGER NOT NULL,
+                refund_note TEXT NOT NULL,
+                refund_deadline TEXT,
+                registered_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                occ_adults INTEGER,
+                occ_children INTEGER,
+                occ_rooms INTEGER,
+                user_id INTEGER NOT NULL
+            );
+            INSERT INTO bookings VALUES (
+                'legacy-booking', 'booking_com', 'hotel', 'LEGACY-CONF',
+                'Legacy Hotel', 'legacy-ref', '2026-09-01', '2026-09-05',
+                'Double', '400.00', 'EUR', 1, 'Free cancellation', NULL,
+                '2026-07-11T00:00:00+00:00', 'active', 2, 0, 1, 1
+            );
+
+            CREATE TABLE check_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                check_id TEXT NOT NULL UNIQUE,
+                booking_id TEXT NOT NULL,
+                checked_at TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                extraction_method TEXT NOT NULL,
+                live_amount TEXT,
+                live_currency TEXT,
+                refundable INTEGER,
+                cancellation_deadline TEXT,
+                refund_raw_text TEXT,
+                extracted_property TEXT,
+                extracted_room TEXT,
+                extracted_check_in TEXT,
+                extracted_check_out TEXT,
+                failure_code TEXT,
+                failure_detail TEXT
+            );
+            INSERT INTO check_history (
+                check_id, booking_id, checked_at, outcome, extraction_method,
+                live_amount, live_currency, refundable, refund_raw_text
+            ) VALUES (
+                'legacy-check', 'legacy-booking', '2026-07-12T12:00:00+00:00',
+                'success', 'dom', '380.50', 'EUR', 1, 'Free cancellation'
+            );
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        expected_columns = {
+            "source_channel",
+            "source_device_profile",
+            "source_session_revision",
+            "source_authentication",
+            "source_genius_evidence",
+            "source_observed_at",
+        }
+        with SqliteStore(db_path) as store:
+            columns = {
+                row[1] for row in store.conn.execute("PRAGMA table_info(check_history)")
+            }
+            legacy_rows = store.conn.execute(
+                "SELECT check_id, booking_id, live_amount, live_currency "
+                "FROM check_history"
+            ).fetchall()
+            [loaded] = SqliteCheckHistoryRepository(store).get_recent("legacy-booking")
+            version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
+
+        assert expected_columns <= columns
+        assert [tuple(row) for row in legacy_rows] == [
+            ("legacy-check", "legacy-booking", "380.50", "EUR")
+        ]
+        assert loaded.check_id == "legacy-check"
+        assert loaded.live_price == Money(amount=Decimal("380.50"), currency="EUR")
+        assert loaded.price_source is None
+        assert version == SCHEMA_VERSION == 10
 
 
 class TestLocalSessionRepository:

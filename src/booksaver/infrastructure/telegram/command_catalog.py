@@ -19,6 +19,7 @@ COMMANDS = (
     CommandDefinition("start", "Welcome and show available commands"),
     CommandDefinition("help", "Show available commands"),
     CommandDefinition("status", "Show daemon and booking status"),
+    CommandDefinition("connect", "Connect your Booking.com account"),
     CommandDefinition("register", "Add a refundable Booking.com hotel"),
     CommandDefinition("editbooking", "Edit one of your monitored bookings"),
     CommandDefinition("deletebooking", "Delete one of your monitored bookings"),

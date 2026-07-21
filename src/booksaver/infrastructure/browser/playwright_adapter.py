@@ -7,21 +7,28 @@ from typing import Any
 
 from booksaver.application.ports import PageContent, PageSnapshot
 from booksaver.domain.agent import AgentAction, AgentActionType, ElementInfo, Observation
+from booksaver.domain.mobile_web import MobileWebSettings
 
 logger = logging.getLogger(__name__)
 
-_SIGN_IN_MARKERS = re.compile(r"(sign in to manage|log in to your account|create an account)", re.I)
+_SIGN_IN_MARKERS = re.compile(
+    r"(sign in to manage|log in to your account|create an account|sign in or register)",
+    re.I,
+)
+_SIGNED_IN_MARKERS = re.compile(
+    r"(Genius\s+(?:Level|discount|deal|rate)|Bookings\s*(?:&|and)\s*Trips|"
+    r"Manage account|My account|Sign out)",
+    re.I,
+)
+_SIGNED_IN_SELECTORS = (
+    '[data-testid="header-profile"]',
+    '[data-testid="header-profile-menu"]',
+    '[data-testid="header-bookings-link"]',
+    'a[href*="myreservations"]',
+)
 
 _PAGE_TIMEOUT_MS = 45_000
 _ACTION_TIMEOUT_MS = 15_000
-# Booking.com strips searchresults query params for Playwright's default headless
-# UA (empty results shell). A normal Chrome UA keeps dates/destination + cards.
-_BROWSER_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/122.0.0.0 Safari/537.36"
-)
-
 # Include Booking.com calendar day cells (role=checkbox + data-date) so the agent
 # can click check-in/out dates — they are not <button>s.
 _INTERACTIVE_SELECTOR = (
@@ -32,6 +39,32 @@ _MAX_ELEMENTS = 120
 _OBSERVATION_TEXT_CHARS = 30_000
 
 
+def has_authenticated_account_context(page: Any, text: str) -> bool:
+    """Require positive rendered account evidence; absence of a login CTA is insufficient."""
+    if _SIGN_IN_MARKERS.search(text):
+        return False
+    if _SIGNED_IN_MARKERS.search(text):
+        return True
+    for selector in _SIGNED_IN_SELECTORS:
+        try:
+            locator = page.locator(selector)
+            for index in range(locator.count()):
+                if locator.nth(index).is_visible():
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def new_mobile_context(
+    browser: Any,
+    settings: MobileWebSettings,
+    device_descriptor: dict[str, Any],
+) -> Any:
+    """Create a fresh, version-matched mobile context without session fallback."""
+    return browser.new_context(**settings.context_options(device_descriptor))
+
+
 class PlaywrightBrowserSession:
     """BrowserSession adapter over Playwright's sync API (ADR-007/008).
 
@@ -39,8 +72,13 @@ class PlaywrightBrowserSession:
     work without the package installed; only actually opening a browser needs it.
     """
 
-    def __init__(self, headless: bool = True) -> None:
+    def __init__(
+        self,
+        headless: bool = True,
+        mobile_settings: MobileWebSettings | None = None,
+    ) -> None:
         self._headless = headless
+        self._mobile_settings = mobile_settings or MobileWebSettings()
         self._playwright: Any = None
         self._browser: Any = None
         self._context: Any = None
@@ -53,9 +91,11 @@ class PlaywrightBrowserSession:
 
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=self._headless)
-        self._context = self._browser.new_context(
-            user_agent=_BROWSER_USER_AGENT,
-            locale="en-US",
+        descriptor = self._playwright.devices[
+            self._mobile_settings.profile.playwright_device_name
+        ]
+        self._context = new_mobile_context(
+            self._browser, self._mobile_settings, descriptor
         )
         return self._context
 
@@ -67,7 +107,7 @@ class PlaywrightBrowserSession:
             page.wait_for_load_state("networkidle", timeout=_PAGE_TIMEOUT_MS)
             html = page.content()
             text = page.inner_text("body")
-            self._authenticated = not _SIGN_IN_MARKERS.search(text)
+            self._authenticated = has_authenticated_account_context(page, text)
             return PageContent(url=page.url, html=html, text=text)
         finally:
             page.close()
@@ -109,8 +149,13 @@ class PlaywrightInteractiveBrowser:
     persistent page whose state accumulates across steps.
     """
 
-    def __init__(self, headless: bool = True) -> None:
+    def __init__(
+        self,
+        headless: bool = True,
+        mobile_settings: MobileWebSettings | None = None,
+    ) -> None:
         self._headless = headless
+        self._mobile_settings = mobile_settings or MobileWebSettings()
         self._playwright: Any = None
         self._browser: Any = None
         self._context: Any = None
@@ -123,9 +168,11 @@ class PlaywrightInteractiveBrowser:
 
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=self._headless)
-        self._context = self._browser.new_context(
-            user_agent=_BROWSER_USER_AGENT,
-            locale="en-US",
+        descriptor = self._playwright.devices[
+            self._mobile_settings.profile.playwright_device_name
+        ]
+        self._context = new_mobile_context(
+            self._browser, self._mobile_settings, descriptor
         )
         self._page = self._context.new_page()
         self._page.set_default_timeout(_ACTION_TIMEOUT_MS)
@@ -270,7 +317,10 @@ class PlaywrightInteractiveBrowser:
 
     def is_authenticated(self) -> bool:
         try:
-            return not _SIGN_IN_MARKERS.search(self.snapshot().text)
+            page = self._ensure_page()
+            return has_authenticated_account_context(
+                page, page.inner_text("body")
+            )
         except Exception:
             return False
 

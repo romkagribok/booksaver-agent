@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from booksaver.domain.check_result import CheckOutcome, CheckResult
+from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.models import Booking
 from booksaver.domain.savings import RejectionReason, SavingsOpportunity, detect_savings
 from booksaver.domain.session import SessionMode
@@ -30,6 +31,7 @@ def render_alert(
     opportunity: SavingsOpportunity,
     booking: Booking,
     session_mode: SessionMode | None = None,
+    price_source: PriceSourceProvenance | None = None,
 ) -> tuple[str, str]:
     """Subject + body shared by all channels (US-009 core facts + rebook pointer).
 
@@ -47,6 +49,18 @@ def render_alert(
     live_price_line = f"Live price   : {opportunity.live_price.amount} {opportunity.live_price.currency}"  # noqa: E501
     if session_mode is SessionMode.LOGGED_OUT:
         live_price_line += "  (public rate — member deals may be cheaper)"
+    source_lines = ""
+    if price_source is not None:
+        genius = (
+            "evidence observed/present on the rendered page"
+            if price_source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT
+            else "not observed on the rendered page"
+        )
+        source_lines = (
+            "\nPrice source : authenticated mobile web "
+            f"({price_source.profile_id.value})\n"
+            f"Genius       : {genius}"
+        )
     body = (
         f"Savings opportunity found for your Booking.com reservation.\n"
         f"\n"
@@ -57,7 +71,7 @@ def render_alert(
         f"\n"
         f"You paid     : {opportunity.baseline_price.amount} "
         f"{opportunity.baseline_price.currency}\n"
-        f"{live_price_line}\n"
+        f"{live_price_line}{source_lines}\n"
         f"You save     : {saved.amount} {saved.currency} ({opportunity.percent_saved}%)\n"
         f"\n"
         f"The cheaper offer is confirmed refundable and matches your stay and room.\n"
@@ -93,6 +107,7 @@ class NotificationDispatcher:
         opportunity: SavingsOpportunity,
         booking: Booking,
         session_mode: SessionMode | None = None,
+        price_source: PriceSourceProvenance | None = None,
     ) -> list[ChannelOutcome]:
         notifiers = self._resolver(booking) if self._resolver is not None else self._notifiers
         if not notifiers:
@@ -102,7 +117,9 @@ class NotificationDispatcher:
             )
             return []
 
-        subject, body = render_alert(opportunity, booking, session_mode)
+        subject, body = render_alert(
+            opportunity, booking, session_mode, price_source
+        )
         outcomes: list[ChannelOutcome] = []
         for notifier in notifiers:
             try:
@@ -156,7 +173,12 @@ class SavingsPipeline:
                 detection.percent_saved,
             )
 
-            outcomes = self._dispatcher.dispatch(detection, booking, result.session_mode)
+            outcomes = self._dispatcher.dispatch(
+                detection,
+                booking,
+                result.session_mode,
+                result.price_source,
+            )
             if any(o.ok for o in outcomes):
                 self._savings.mark_notified(detection.opportunity_id, datetime.now(UTC))
 

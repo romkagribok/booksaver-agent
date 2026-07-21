@@ -218,6 +218,33 @@ def test_start_without_bot_runner_does_not_start_a_bot_thread(tmp_path: Path) ->
     assert "telegram-bot" not in (thread_names_after - thread_names_before)
 
 
+def test_start_runs_and_stops_named_service_runner(tmp_path: Path) -> None:
+    data_dir = _make_data_dir(tmp_path)
+    sched = Scheduler()
+    states: list[str] = []
+
+    def _service(stop_event: threading.Event) -> None:
+        states.append("started")
+        stop_event.wait(1)
+        states.append("stopped")
+
+    def _job() -> None:
+        deadline = time.monotonic() + 1
+        while "started" not in states and time.monotonic() < deadline:
+            time.sleep(0.01)
+        sched.request_stop()
+
+    sched.register("stop_after_service_start", _job)
+    with patch("signal.signal"):
+        lifecycle.start(
+            _make_config(data_dir),
+            sched,
+            service_runners={"remote-auth": _service},
+        )
+
+    assert states == ["started", "stopped"]
+
+
 def test_start_exits_nonzero_when_bot_runner_crashes(tmp_path: Path) -> None:
     data_dir = _make_data_dir(tmp_path)
     sched = Scheduler()

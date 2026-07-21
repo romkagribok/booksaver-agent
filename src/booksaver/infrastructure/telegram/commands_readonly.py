@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from booksaver.daemon.scheduler import Scheduler
+from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.user import User
+from booksaver.domain.user_session import UserSessionHealth, UserSessionStatusView
+from booksaver.domain.value_objects import DataDirectory
+from booksaver.infrastructure.persistence.encrypted_session_store import (
+    EncryptedUserSessionRepository,
+)
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
@@ -41,6 +47,36 @@ def _format_timedelta(delta: timedelta) -> str:
 
 
 _NOT_RECOGNIZED = "You're not recognized by this bot."
+
+
+def _format_session_status(
+    status: UserSessionStatusView, telegram_user_id: int
+) -> list[str]:
+    health = status.health.value.replace("_", " ")
+    lines = [f"Session: {health} (encrypted, per-user Booking.com session)"]
+    if status.health is UserSessionHealth.READY:
+        lines.append(
+            "Last validated: "
+            f"{status.validated_at.isoformat() if status.validated_at else 'not yet'}"
+        )
+        expires = status.expires_at.isoformat() if status.expires_at else "not reported"
+        lines.append(
+            f"Session expires: {expires}"
+        )
+    else:
+        lines.append("Action: send /connect to sign in to Booking.com securely.")
+    return lines
+
+
+def _format_price_source(source: PriceSourceProvenance) -> str:
+    genius = (
+        "Genius observed/present"
+        if source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT
+        else "Genius not observed"
+    )
+    return (
+        f"source=authenticated mobile web ({source.profile_id.value}); {genius}"
+    )
 
 
 def register_readonly_commands(
@@ -97,6 +133,9 @@ def register_readonly_commands(
             active_booking_count = len(
                 SqliteBookingRepository(store).list_active_for_user(user.user_id)
             )
+            session_status = EncryptedUserSessionRepository(
+                DataDirectory(path=db_path.parent)
+            ).status(user.user_id)
 
         lines = ["BookSaver status"]
         started = scheduler.started_at
@@ -111,21 +150,7 @@ def register_readonly_commands(
             f"Next scheduled run: {next_run.isoformat() if next_run else 'pending first tick'}"
         )
 
-        # US-035: session mode is explicit per deployment — logged-out checks
-        # see public rates only; imported cookies unlock member rates.
-        from booksaver.domain.session import SessionMode
-        from booksaver.domain.value_objects import DataDirectory
-        from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
-        from booksaver.monitor.session_manager import SessionManager
-
-        mode = SessionManager(
-            LocalSessionRepository(DataDirectory(path=db_path.parent))
-        ).current_mode()
-        lines.append(
-            "Session: authenticated (member rates)"
-            if mode is SessionMode.AUTHENTICATED
-            else "Session: logged out (public rates; `booksaver auth import` for member rates)"
-        )
+        lines.extend(_format_session_status(session_status, cmd.user_id))
 
         lines.append(f"Your active bookings: {active_booking_count}")
         reply(cmd.chat_id, "\n".join(lines))
@@ -215,6 +240,8 @@ def register_readonly_commands(
                 detail = f"{result.live_price.amount} {result.live_price.currency}"
             else:
                 detail = "ok"
+            if result.price_source is not None:
+                detail += f"  {_format_price_source(result.price_source)}"
             lines.append(f"{result.checked_at.isoformat()[:19]}  {result.outcome.value}  {detail}")
         return "\n".join(lines)
 

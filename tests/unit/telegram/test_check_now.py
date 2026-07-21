@@ -16,6 +16,11 @@ from booksaver.domain.check_result import (
     FailureCode,
     FailureReason,
 )
+from booksaver.domain.mobile_web import (
+    GeniusEvidence,
+    MobileProfileId,
+    PriceSourceProvenance,
+)
 from booksaver.domain.models import Booking
 from booksaver.domain.user import UserRole
 from booksaver.domain.value_objects import (
@@ -112,6 +117,15 @@ def _add_user_booking(db_path: Path, telegram_id: int, booking: Booking) -> None
             telegram_id, UserRole.USER
         )
         SqliteBookingRepository(store).add(booking, user_id=user.user_id)
+
+
+def _price_source(genius: GeniusEvidence) -> PriceSourceProvenance:
+    return PriceSourceProvenance(
+        profile_id=MobileProfileId.ANDROID_CHROMIUM,
+        session_revision_id="revision-7",
+        genius_evidence=genius,
+        observed_at=datetime.now(UTC),
+    )
 
 
 def test_no_arg_picker_is_scoped_and_callback_payload_is_safe(tmp_path: Path) -> None:
@@ -211,6 +225,60 @@ def test_success_completion_names_property_price_and_check(tmp_path: Path) -> No
     assert "Own Hotel" in sent[-1][1]
     assert "315.50 EUR" in sent[-1][1]
     assert result.check_id[:8] in sent[-1][1]
+
+
+def test_success_completion_reports_authenticated_mobile_and_genius_observed(
+    tmp_path: Path,
+) -> None:
+    coordinator = FakeCoordinator()
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+    booking = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
+    _add_user_booking(db_path, 101, booking)
+    router.dispatch(IncomingCommand(101, 101, "/checknow", booking.booking_id, "raw"))
+    result = CheckResult.success(
+        booking.booking_id,
+        datetime.now(UTC),
+        Money(Decimal("315.50"), "EUR"),
+        ExtractionMethod.DOM,
+        price_source=_price_source(GeniusEvidence.APPLIED_OR_PRESENT),
+    )
+
+    coordinator.completions[0](
+        ImmediateCompletion(
+            ImmediateCompletionKind.RESULT,
+            result=result,
+            property_name="Own Hotel",
+        )
+    )
+
+    assert "Source: authenticated mobile web (android-chromium)" in sent[-1][1]
+    assert "Genius observed/present" in sent[-1][1]
+
+
+def test_success_completion_reports_when_genius_not_observed(tmp_path: Path) -> None:
+    coordinator = FakeCoordinator()
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+    booking = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
+    _add_user_booking(db_path, 101, booking)
+    router.dispatch(IncomingCommand(101, 101, "/checknow", booking.booking_id, "raw"))
+    result = CheckResult.success(
+        booking.booking_id,
+        datetime.now(UTC),
+        Money(Decimal("315.50"), "EUR"),
+        ExtractionMethod.DOM,
+        price_source=_price_source(GeniusEvidence.NOT_OBSERVED),
+    )
+
+    coordinator.completions[0](
+        ImmediateCompletion(
+            ImmediateCompletionKind.RESULT,
+            result=result,
+            property_name="Own Hotel",
+        )
+    )
+
+    assert "Source: authenticated mobile web (android-chromium)" in sent[-1][1]
+    assert "Genius not observed" in sent[-1][1]
 
 
 def test_currency_failure_is_actionable_in_completion(tmp_path: Path) -> None:

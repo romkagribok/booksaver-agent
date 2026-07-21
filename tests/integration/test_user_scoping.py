@@ -163,7 +163,7 @@ class TestV7Migration:
                 users[0].user_id
             )
 
-        assert versions[-1] == SCHEMA_VERSION == 9
+        assert versions[-1] == SCHEMA_VERSION == 10
         assert len(users) == 1
         assert users[0].role is UserRole.OWNER
         assert users[0].access_state is UserAccessState.ACTIVE
@@ -186,7 +186,7 @@ class TestV7Migration:
         with SqliteStore(tmp_path / "fresh.db") as store:
             row = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
             users = SqliteUserRepository(store).list_all()
-        assert row[0] == SCHEMA_VERSION == 9
+        assert row[0] == SCHEMA_VERSION == 10
         assert len(users) == 1
         assert users[0].role is UserRole.OWNER
 

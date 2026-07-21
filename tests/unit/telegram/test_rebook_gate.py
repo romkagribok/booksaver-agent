@@ -452,6 +452,12 @@ def test_navigator_relays_cancel_url_then_builds_own_deep_link_for_book_step() -
     assert "myreservations.html" in client.sent[0]["text"]
     assert "group_adults=3" in client.sent[1]["text"]
     assert "checkin=2026-09-01" in client.sent[1]["text"]
+    for message in client.sent[:2]:
+        text = message["text"]
+        assert "real phone" in text
+        assert "same Booking.com account" in text
+        assert "final all-in total" in text
+        assert "still refundable" in text
 
     handoffs = [e for e in events.events if "telegram_handoff" in e.detail]
     assert len(handoffs) == 2

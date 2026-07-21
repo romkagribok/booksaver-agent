@@ -9,7 +9,12 @@ flowchart TB
     Config["LocalConfig (+ agent caps)"] --> Coordinator["CheckCoordinator"]
     Scheduler["Scheduler"] --> Coordinator
     Telegram["Telegram /checknow"] --> Coordinator
+    Telegram --> Connect["Telegram /connect"]
+    Connect --> AuthGateway["HTTPS Mini App gateway"]
+    AuthGateway --> LoginBrowser["Transient headed mobile browser"]
+    LoginBrowser --> SessionVault["Encrypted per-user session vault"]
     Coordinator --> Monitor["BookingComSearchMonitor"]
+    SessionVault --> Monitor
     Monitor --> Journey["SearchJourney (trusted results query → verified property)"]
     Journey --> Browser["BrowserAutomation"]
     Journey -- "step failed" --> Agent["BrowserAgent (LLM, guarded)"]
@@ -37,6 +42,17 @@ flowchart TB
 - Scheduled and Telegram-triggered live checks enter one daemon-lifetime coordinator. It serializes
   Playwright work, shares per-user daily check/actual-LLM counters, and reuses the complete monitor,
   trace, savings, and notification pipeline (ADR-021); do not add a second scheduler or browser path.
+- Telegram-owned checks resolve the booking owner's encrypted session and create a fresh Android
+  Chromium mobile-web context; missing, stale, rendered-signed-out, or mismatched state fails closed
+  as `auth_required` (ADRs 024–025). Never substitute a global, public, or another user's session.
+- The opt-in `/connect` adapter is the narrow exception to outbound-only operation (ADR-026). A
+  signed Telegram Mini App reaches a stdlib HTTP gateway behind Caddy TLS, drives one transient
+  headed mobile browser through token-gated noVNC/websockify, captures cookies only after positive
+  account evidence, and tears down. It shares the same global browser lease as checks. No endpoint
+  accepts credentials, cookie JSON, arbitrary URLs, uploads, or free-form browser actions.
+- The remote login browser runs on the trusted self-hosted VPS. HTTPS and encryption do not protect
+  keystrokes against compromised VPS root; stronger disposable/device-local isolation is future
+  hardening, not a security property of the current design.
 - Notification adapters send directly through the user's configured services.
 - Guided rebook must never execute cancel or purchase actions without explicit local confirmation.
 - All secrets, sessions, booking data, logs, and check history remain on the user's machine.

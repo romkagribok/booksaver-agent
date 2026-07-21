@@ -19,11 +19,18 @@ services:
       - booksaver-data:/data
     # Chromium is the memory-hungry part of this container: a single headless
     # tab routinely spikes to 300-500MB RSS during a check, on top of the
-    # ~100-150MB Python/Playwright baseline. 1GB is a floor for one booking
-    # checked at a time; size up if you register many bookings or see OOM
-    # kills in `docker inspect booksaver` (look for OOMKilled: true).
-    mem_limit: 1g
-    memswap_limit: 2g
+    # ~100-150MB Python/Playwright baseline. The optional headed authentication
+    # stack overlaps briefly with the daemon and display processes, so 2GB is
+    # the supported floor; size up if you see OOMKilled in `docker inspect`.
+    mem_limit: 2g
+    memswap_limit: 3g
+    shm_size: 1g
+    expose:
+      # Compose-internal only. Caddy publishes HTTPS when the remote-auth
+      # profile is explicitly enabled; raw gateway/VNC proxy ports never bind
+      # to the host.
+      - "8080"
+      - "6080"
     # Stop is honored between scheduler jobs (ADR-006): an in-flight browser
     # check finishes first (bounded by [agent] check_timeout_seconds, default
     # 180s). Give SIGTERM that long before Docker escalates to SIGKILL.
@@ -40,5 +47,25 @@ services:
       retries: 3
       start_period: 30s
 
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: booksaver-caddy
+    profiles: ["remote-auth"]
+    restart: unless-stopped
+    depends_on:
+      booksaver:
+        condition: service_healthy
+    environment:
+      - BOOKSAVER_AUTH_DOMAIN=${BOOKSAVER_AUTH_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
   booksaver-data:
+  caddy-data:
+  caddy-config:

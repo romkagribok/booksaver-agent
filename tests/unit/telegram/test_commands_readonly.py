@@ -1,14 +1,23 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from cryptography.fernet import Fernet
+
 from booksaver.daemon.scheduler import Scheduler
 from booksaver.domain.check_result import CheckResult, ExtractionMethod, FailureCode, FailureReason
+from booksaver.domain.mobile_web import (
+    GeniusEvidence,
+    MobileProfileId,
+    PriceSourceProvenance,
+)
 from booksaver.domain.models import Booking
+from booksaver.domain.user_session import UserSessionMetadata, UserSessionSnapshot
 from booksaver.domain.value_objects import (
     ConfirmationId,
+    DataDirectory,
     Money,
     Platform,
     ProductType,
@@ -16,6 +25,9 @@ from booksaver.domain.value_objects import (
     RefundabilityPolicy,
     RoomType,
     StayDates,
+)
+from booksaver.infrastructure.persistence.encrypted_session_store import (
+    EncryptedUserSessionRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
@@ -180,11 +192,47 @@ def test_status_reports_only_callers_booking_count_without_exact_records(tmp_pat
     assert "success" not in text
 
 
-def test_status_reports_logged_out_session_mode_by_default(tmp_path: Path) -> None:
+def test_status_reports_missing_caller_session_with_connect_action(
+    tmp_path: Path,
+) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
     _register_caller(db_path, telegram_id=1)
     router.dispatch(_cmd("/status"))
-    assert "Session: logged out (public rates" in sent[0][1]
+    text = sent[0][1]
+    assert "Session: missing (encrypted, per-user Booking.com session)" in text
+    assert "Action: send /connect to sign in to Booking.com securely." in text
+    assert "public rates" not in text
+    assert "global" not in text
+
+
+def test_status_reports_ready_caller_session_without_import_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    local_user_id = _register_caller(db_path, telegram_id=1)
+    secret = Fernet.generate_key().decode("ascii")
+    monkeypatch.setenv("BOOKSAVER_SECRET_KEY", secret)
+    now = datetime.now(UTC)
+    EncryptedUserSessionRepository(
+        DataDirectory(path=tmp_path)
+    ).save(
+        UserSessionSnapshot(
+            metadata=UserSessionMetadata.imported(
+                owner_user_id=local_user_id,
+                platform=Platform.BOOKING_COM,
+                imported_at=now,
+                expires_at=now + timedelta(days=1),
+            ),
+            cookies=b"[]",
+        )
+    )
+
+    router.dispatch(_cmd("/status"))
+
+    text = sent[0][1]
+    assert "Session: ready (encrypted, per-user Booking.com session)" in text
+    assert "Last validated: not yet" in text
+    assert "booksaver auth import" not in text
 
 
 def test_status_refuses_unrecognized_sender_even_when_other_users_exist(
@@ -404,6 +452,35 @@ def test_checks_reports_recent_history_including_failures(tmp_path: Path) -> Non
     router.dispatch(_cmd("/checks", args="b-1", chat_id=1))
     text = sent[0][1]
     assert "timeout" in text
+
+
+def test_checks_reports_authenticated_mobile_provenance_when_present(
+    tmp_path: Path,
+) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    with SqliteStore(db_path) as store:
+        SqliteBookingRepository(store).add(_booking(), user_id=user_id)
+        SqliteCheckHistoryRepository(store).add(
+            CheckResult.success(
+                "b-1",
+                datetime.now(UTC),
+                Money(Decimal("350.00"), "EUR"),
+                ExtractionMethod.DOM,
+                price_source=PriceSourceProvenance(
+                    profile_id=MobileProfileId.ANDROID_CHROMIUM,
+                    session_revision_id="revision-7",
+                    genius_evidence=GeniusEvidence.NOT_OBSERVED,
+                    observed_at=datetime.now(UTC),
+                ),
+            )
+        )
+
+    router.dispatch(_cmd("/checks", args="b-1", chat_id=1))
+
+    text = sent[0][1]
+    assert "source=authenticated mobile web (android-chromium)" in text
+    assert "Genius not observed" in text
 
 
 def test_checks_accepts_unique_displayed_booking_id_prefix(tmp_path: Path) -> None:

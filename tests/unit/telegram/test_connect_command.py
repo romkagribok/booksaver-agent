@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from booksaver.domain.remote_auth import AttemptLaunch
+from booksaver.domain.user import UserRole
+from booksaver.domain.value_objects import TelegramBotSettings
+from booksaver.infrastructure.persistence.sqlite_store import SqliteStore, SqliteUserRepository
+from booksaver.infrastructure.telegram.connect_command import (
+    ReconnectNotifier,
+    register_connect_command,
+)
+from booksaver.infrastructure.telegram.router import (
+    CallbackRouter,
+    CommandRouter,
+    IncomingCallback,
+    IncomingCommand,
+)
+
+
+class StubManager:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.created: list[tuple[int, int]] = []
+
+    def create(self, user_id: int, chat_id: int) -> AttemptLaunch:
+        self.created.append((user_id, chat_id))
+        return AttemptLaunch(
+            "https://connect.example.test/connect/one-time-token",
+            datetime.now(UTC) + timedelta(minutes=10),
+        )
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.answers: list[str] = []
+        self.edits: list[tuple[int, int, str, dict[str, Any] | None]] = []
+        self.sent: list[tuple[int, str, dict[str, Any] | None]] = []
+
+    def answer_callback_query(self, callback_id: str) -> None:
+        self.answers.append(callback_id)
+
+    def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        self.edits.append((chat_id, message_id, text, reply_markup))
+
+    def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        self.sent.append((chat_id, text, reply_markup))
+
+
+def _register(
+    manager: StubManager | None,
+) -> tuple[CommandRouter, CallbackRouter, FakeClient, list[tuple[int, str, object]]]:
+    router = CommandRouter()
+    callbacks = CallbackRouter()
+    client = FakeClient()
+    sent: list[tuple[int, str, object]] = []
+    register_connect_command(
+        router=router,
+        callback_router=callbacks,
+        reply=lambda chat_id, text: sent.append((chat_id, text, None)),
+        send=lambda chat_id, text, markup: sent.append((chat_id, text, markup)),
+        client=client,  # type: ignore[arg-type]
+        manager=manager,  # type: ignore[arg-type]
+    )
+    return router, callbacks, client, sent
+
+
+def test_connect_uses_telegram_web_app_button_without_chat_credentials() -> None:
+    manager = StubManager()
+    router, _callbacks, _client, sent = _register(manager)
+
+    router.dispatch(IncomingCommand(123, 123, "/connect", "", "/connect"))
+
+    assert manager.created == [(123, 123)]
+    text = sent[0][1]
+    assert "never asks for your password in chat" in text
+    assert "password=" not in text
+    markup = sent[0][2]
+    assert isinstance(markup, dict)
+    button = markup["inline_keyboard"][0][0]
+    assert button == {
+        "text": "Open secure Booking.com login",
+        "web_app": {"url": "https://connect.example.test/connect/one-time-token"},
+    }
+
+
+def test_reconnect_callback_is_acknowledged_and_replaces_prompt() -> None:
+    manager = StubManager()
+    _router, callbacks, client, _sent = _register(manager)
+
+    callbacks.dispatch(IncomingCallback(123, 123, "callback-1", 8, "connect:start"))
+
+    assert manager.created == [(123, 123)]
+    assert client.answers == ["callback-1"]
+    assert client.edits[0][:3] == (
+        123,
+        8,
+        "Open the secure login below and complete Booking.com sign-in. "
+        "The link expires shortly; BookSaver never asks for your password in chat.",
+    )
+
+
+def test_connect_explains_when_operator_has_not_enabled_gateway() -> None:
+    router, _callbacks, _client, sent = _register(None)
+    router.dispatch(IncomingCommand(123, 123, "/connect", "", "/connect"))
+    assert sent == [
+        (
+            123,
+            "Secure Booking.com connection is not configured on this BookSaver server yet.",
+            None,
+        )
+    ]
+
+
+def test_reconnect_notifier_scopes_delivery_and_applies_cooldown(tmp_path: Path) -> None:
+    db_path = tmp_path / "booksaver.db"
+    with SqliteStore(db_path) as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
+            222,
+            UserRole.USER,
+        )
+    client = FakeClient()
+    notifier = ReconnectNotifier(
+        db_path,
+        client,  # type: ignore[arg-type]
+        TelegramBotSettings(enabled=True, owner_chat_id=111, access_mode="invite"),
+    )
+
+    notifier.notify(user.user_id)
+    notifier.notify(user.user_id)
+
+    assert len(client.sent) == 1
+    chat_id, text, markup = client.sent[0]
+    assert chat_id == 222
+    assert "missing or expired" in text
+    assert markup == {
+        "inline_keyboard": [
+            [{"text": "Reconnect Booking.com", "callback_data": "connect:start"}]
+        ]
+    }

@@ -10,8 +10,8 @@ interpretation**, notifies the user (email/Telegram), and offers a **guided rebo
 confirmation**. It is explicitly *not* a web app, hosted service, or multi-tenant SaaS, uses *no* official
 Booking.com API, and keeps all credentials, sessions, and data on the user's machine.
 
-**Current state: all 71 in-scope stories across intents 001–010 are complete —
-763 tests.** Daemon + scheduler, savings detection with email/Telegram
+**Current state: all 92 in-scope stories across intents 001–013 are complete —
+867 tests.** Daemon + scheduler, savings detection with email/Telegram
 alerts, and the guided-rebook confirmation state machine are implemented. **Phase 2
 replaced the manage-page price check**: live prices come from a scripted full search
 journey (search → results → verified property page → room table, using the booking's
@@ -19,10 +19,11 @@ required occupancy), with an LLM browser agent that takes over failed journey st
 (tiered text→screenshot observations, bounded action vocabulary, adapter-level guard
 against reserve/checkout/cancel, hard cost caps, per-check traces). **Phase 3 made a
 Telegram bot the primary UI**: long-poll gateway thread in the daemon, owner/invite
-access, multi-user scoping (schema v9), hybrid LLM billing with Fernet-encrypted
+access, multi-user scoping (schema v10), hybrid LLM billing with Fernet-encrypted
 optional personal keys, `/register` dialog, per-user alerts + limits, inline-keyboard
-rebook confirmations with device-handoff deep links, Docker/systemd VPS deployment with
-logged-out checks + cookie import (`memory-bank/operations/vps-deployment-runbook.md`).
+rebook confirmations with device-handoff deep links, encrypted per-user Booking.com sessions,
+authenticated Android mobile-web checks, and phone-first `/connect` through an opt-in HTTPS remote
+browser (`memory-bank/operations/vps-deployment-runbook.md`).
 Unit 005-extensibility-future is post-MVP. `project_type` is `cli-tool`
 (`memory-bank/project.yaml`).
 
@@ -53,17 +54,17 @@ booksaver <command>
 
 CLI commands: `init`, `config validate|show`, `register` (requires `--adults`; `--children`,
 `--rooms` optional), `bookings list`, `bookings set-occupancy <booking-id>` (backfill for
-pre-v5 bookings), `run`, `stop`, `auth` (headed Booking.com login), `auth import <file>` (cookie import
-for headless VPS deployments), `checks list <booking-id>`,
+pre-v5 bookings), `run`, `stop`, `auth` (headed Booking.com login), scoped `auth import|status|delete`
+and `auth migrate-legacy` recovery commands, `checks list <booking-id>`,
 `checks trace <check-id>` (step/agent trace), `savings list`, `rebook <opportunity-id>`,
 `rebook-log <session-id>`.
 
-**Python 3.11+ required** (uses stdlib `tomllib`). Runtime deps are **playwright** (ADR-007)
-and **anthropic** (ADR-009) only; everything else is stdlib-first (ADR-003) — notifications
+**Python 3.11+ required** (uses stdlib `tomllib`). Runtime deps are **playwright** (ADR-007),
+**anthropic** (ADR-009), and **cryptography** (ADR-019); everything else is stdlib-first (ADR-003) — notifications
 use stdlib smtplib/urllib (ADR-011), and the browser agent is a plain anthropic tool-use
 loop, no agent frameworks (ADR-016). Secrets come only from env vars:
-`BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN` (ADR-002).
-See `memory-bank/standards/decision-index.md` for all 22 ADRs.
+`BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN`, and
+`BOOKSAVER_SECRET_KEY` (ADR-002). See `memory-bank/standards/decision-index.md` for all 26 ADRs.
 
 ## This repo is driven by the specs.md AI-DLC flow
 
@@ -102,7 +103,7 @@ artifacts. Key paths:
 Hard conventions enforced by the schema: **3-digit zero-padded prefixes** on intents/units/stories/bolts,
 **kebab-case** names derived from folder/file names (no frontmatter name prefixes), and **ISO-8601
 timestamps with time + timezone** (`YYYY-MM-DDTHH:MM:SSZ`) on every date field — never date-only. Keep
-`story-index.md` consistent when stories change; it asserts all 71 stories are assigned exactly once.
+`story-index.md` consistent when stories change; it asserts all 94 stories are assigned exactly once.
 
 ## Standards are the source of truth for product + tech constraints
 
@@ -147,14 +148,14 @@ Telegram bot as the primary UI on an owner-operated VPS. Checkpoint 1 decisions 
 access modes `owner`/`invite` only (no public mode); hybrid LLM billing (owner key + per-user
 daily caps by default, optional encrypted personal key via `/setkey`, Fernet/`cryptography`
 approved); VPS-first deployment with an early Booking.com-journey smoke test from the VPS IP;
-logged-out checks by default (headed auth impossible on a VPS); rebook confirmations via inline
+logged-out checks were the original VPS fallback (superseded by intents 012–013); rebook confirmations via inline
 keyboards with the final booking click handed off to the user's device via deep link.
 
 1. `001-telegram-bot-gateway` — ✅ complete (bolt 008): long-poll update loop thread + router + dialogs, read-only commands, ADR-018
 2. `002-user-access-and-keys` — ✅ complete (bolt 009): schema v7 users table + scoping, owner/invite access, v8 invite codes, Fernet key store (ADR-019)
 3. `003-conversational-booking-ops` — ✅ complete (bolt 010): `/register` dialog, per-user alert routing, `[limits]` + fair scheduling
 4. `004-telegram-rebook-gate` — ✅ complete (bolt 011): inline-keyboard `ConfirmationGate` (blocking bridge, state machine frozen) + device-handoff deep link
-5. `005-vps-deployment` — ✅ complete (bolt 012): Dockerfile/systemd, ops runbook, logged-out sessions + `auth import` cookie import
+5. `005-vps-deployment` — ✅ complete (bolt 012): Dockerfile/systemd, ops runbook, and recovery cookie import
 
 ### Subsequent completed intents
 
@@ -165,6 +166,9 @@ keyboards with the final booking click handed off to the user's device via deep 
 - `008-currency-aligned-price-checks` — ✅ complete (bolt 020): baseline-currency propagation, verification, and bounded recovery.
 - `009-invite-first-sharing` — ✅ complete (bolt 021): fixed invite-first admission, copyable invite handoff, username labels, and explicit revocation.
 - `010-telegram-privacy-boundaries` — ✅ complete (bolt 022): private-chat admission, caller-only exact data, aggregate-only admin usage, and revocation barriers.
+- `011-post-rebook-monitoring` — ✅ complete (bolt 023): replacement facts atomically update monitoring and invalidate stale savings.
+- `012-per-user-booking-sessions` — ✅ complete (bolts 024 and 026): encrypted user-scoped Booking.com state and Telegram-bound HTTPS `/connect` login.
+- `013-authenticated-mobile-web-monitoring` — ✅ complete (bolt 025): authenticated Android mobile-web checks with session/Genius provenance and fail-closed renewal.
 
 ## Product constraints to preserve in every design and code change
 

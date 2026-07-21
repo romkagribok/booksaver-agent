@@ -15,6 +15,11 @@ from booksaver.domain.check_result import (
     FailureReason,
     RefundIndicators,
 )
+from booksaver.domain.mobile_web import (
+    GeniusEvidence,
+    MobileProfileId,
+    PriceSourceProvenance,
+)
 from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.session import SessionMode
 from booksaver.domain.value_objects import Money
@@ -66,6 +71,7 @@ def _success_check(
     booking_id: str = "b-1",
     amount: str = "350.00",
     session_mode: SessionMode | None = None,
+    price_source: PriceSourceProvenance | None = None,
 ) -> CheckResult:
     return CheckResult.success(
         booking_id=booking_id,
@@ -74,6 +80,16 @@ def _success_check(
         extraction_method=ExtractionMethod.DOM,
         refund_indicators=RefundIndicators(is_refundable=True),
         session_mode=session_mode,
+        price_source=price_source,
+    )
+
+
+def _price_source(genius: GeniusEvidence) -> PriceSourceProvenance:
+    return PriceSourceProvenance(
+        profile_id=MobileProfileId.ANDROID_CHROMIUM,
+        session_revision_id="revision-7",
+        genius_evidence=genius,
+        observed_at=datetime.now(UTC),
     )
 
 
@@ -224,6 +240,32 @@ def test_pipeline_dispatches_public_rate_label_through_end_to_end() -> None:
 
     _, body = email.sent[0]
     assert "public rate" in body
+
+
+def test_pipeline_alert_identifies_authenticated_mobile_genius_observed() -> None:
+    email = FakeNotifier("email")
+    pipeline, _ = _make_pipeline([email])
+
+    pipeline.process(
+        [_success_check(price_source=_price_source(GeniusEvidence.APPLIED_OR_PRESENT))]
+    )
+
+    _, body = email.sent[0]
+    assert "authenticated mobile web (android-chromium)" in body
+    assert "Genius       : evidence observed/present on the rendered page" in body
+
+
+def test_pipeline_alert_identifies_authenticated_mobile_without_genius() -> None:
+    email = FakeNotifier("email")
+    pipeline, _ = _make_pipeline([email])
+
+    pipeline.process(
+        [_success_check(price_source=_price_source(GeniusEvidence.NOT_OBSERVED))]
+    )
+
+    _, body = email.sent[0]
+    assert "authenticated mobile web (android-chromium)" in body
+    assert "Genius       : not observed on the rendered page" in body
 
 
 # ── pipeline flow ─────────────────────────────────────────────────────────────

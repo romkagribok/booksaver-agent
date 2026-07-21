@@ -1,7 +1,7 @@
 # VPS Deployment Runbook
 
-**Unit:** `005-vps-deployment` (`003-telegram-interface`, bolt 012) · **Stories:** US-034 (done),
-US-035 (done — logged-out core + cookie import)
+**Units:** `005-vps-deployment` (`003-telegram-interface`, bolt 012), plus authenticated
+per-user mobile-web operations from intents 012 and 013.
 
 Fresh VPS to a running BookSaver bot, in one documented command path, plus the operational
 procedures you'll need afterwards.
@@ -22,9 +22,9 @@ procedures you'll need afterwards.
   ```
 - **OS:** any recent Debian/Ubuntu LTS is assumed below; adjust package manager commands for other
   distros.
-- **Networking:** open only what you need — SSH in, and outbound HTTPS to `booking.com`,
-  `api.telegram.org`, and `api.anthropic.com`. BookSaver never needs an inbound port open (the
-  Telegram bot uses long-polling, not webhooks).
+- **Networking:** open SSH, outbound HTTPS to `booking.com`, `api.telegram.org`, and your configured
+  LLM provider. The Telegram bot itself uses long-polling. When remote authentication is enabled,
+  also open inbound TCP 80/443 for Caddy; never open 8080, 5900, or 6080 on the host/firewall.
 
 ## 2. Install Docker
 
@@ -54,11 +54,12 @@ covered** — verify with `git check-ignore .env`):
 BOOKSAVER_TELEGRAM_BOT_TOKEN=123456:AAcalculatedFromBotFather
 BOOKSAVER_LLM_API_KEY=sk-ant-...          # owner's Anthropic key
 BOOKSAVER_SECRET_KEY=<output of the command below>
+BOOKSAVER_AUTH_DOMAIN=connect.example.com # DNS A/AAAA record must point to this VPS
 # BOOKSAVER_SMTP_PASSWORD=...             # optional, only if email alerts are also configured
 ```
 
-Generate `BOOKSAVER_SECRET_KEY` (a Fernet key — used to encrypt per-user LLM keys at rest, see
-ADR in `memory-bank/intents/003-telegram-interface/requirements.md`):
+Generate `BOOKSAVER_SECRET_KEY` (a Fernet key used to encrypt both personal LLM keys and each
+user's Booking.com session at rest):
 
 ```bash
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -80,6 +81,11 @@ check_interval = "6h"
 
 [storage]
 data_directory = "/data"
+
+[browser]
+device_profile = "android-chromium"
+locale = "en-US"
+timezone_id = "America/Indiana/Indianapolis" # choose the operator/user context
 
 [notifications]
 # telegram_chat_id = "123456789"   # legacy alert channel; superseded by the
@@ -103,6 +109,11 @@ poll_timeout_seconds = 30
 # Historical access_mode = "owner" or "invite" values are accepted during
 # upgrade but both now normalize to the same fixed invite-only policy.
 # check_timeout_seconds = 180
+
+[remote_auth]
+enabled = true
+public_url = "https://connect.example.com" # must match BOOKSAVER_AUTH_DOMAIN
+session_timeout_seconds = 600
 ```
 
 Place it at `/data/config.toml` inside the volume (matches `BOOKSAVER_CONFIG=/data/config.toml`,
@@ -122,22 +133,26 @@ docker compose run --rm booksaver booksaver register --adults 2 ...        # you
 
 ## 5. First `docker compose up -d`
 
+Before starting, create the DNS A/AAAA record for `BOOKSAVER_AUTH_DOMAIN` and allow TCP 80/443 in
+both the VPS provider firewall and the OS firewall. Caddy obtains and renews the TLS certificate.
+
 ```bash
-docker compose up -d --build
+docker compose --profile remote-auth up -d --build
 docker compose ps                 # should show "healthy" after ~30-60s (start_period)
 docker compose logs -f booksaver  # watch the first scheduler tick
+curl --fail "https://${BOOKSAVER_AUTH_DOMAIN}/healthz"
 ```
 
-At this point the daemon is running unattended and (per §8) checks are logged-out by default —
-no headed `booksaver auth` is possible on a display-less VPS, so don't try to run `auth` here; see
-§8's fallback ladder if logged-out prices turn out to be unreliable from your VPS's IP.
+At this point the bot is running, but price checks intentionally fail with `auth_required` until
+each user completes `/connect` as described in §11. Headed `booksaver auth` needs a local display
+and is not the phone/VPS path.
 
 ## 6. Upgrade procedure
 
 ```bash
 git pull
 docker compose build
-docker compose up -d              # recreates the container; the named volume (all data) persists
+docker compose --profile remote-auth up -d # recreate app + TLS sidecar; data persists
 docker compose logs -f booksaver  # confirm it comes back up cleanly
 ```
 
@@ -187,18 +202,14 @@ sequence (venv setup, `playwright install --with-deps chromium`, env file, `syst
 --now`). It provides the same `Restart=on-failure` guarantee as `restart: unless-stopped` above;
 substitute `journalctl -u booksaver -f` for `docker compose logs -f` throughout this runbook.
 
-## 10. Logged-out checks and the VPS-IP validation smoke test
+## 10. Authenticated mobile-web and VPS-IP validation smoke test
 
 Headed `booksaver auth` needs a display, which a VPS doesn't have. BookSaver's search-journey
-checks therefore default to **logged-out mode**: when no session file exists at
-`{data_directory}/session_booking_com.json` (or an existing one is expired/flagged for re-auth),
-the scheduled check runs the same search → results → property → room-table journey with no
-cookies restored, and reports real public bookable totals. `AUTH_REQUIRED`-class failures cannot
-occur in this mode (`SearchJourney`'s failure classifier is gated on session mode — see
-`src/booksaver/monitor/search_journey.py` and `src/booksaver/domain/session.py`'s `SessionMode`).
-Public prices may miss member/Genius rates and are labeled "(public rate — member deals may be
-cheaper)" in savings alerts; §11 below covers the optional cookie-import path that unlocks
-member-rate checks on a VPS.
+checks now require **authenticated mobile web** for every Telegram user. Before a check navigates,
+the coordinator resolves exactly the booking owner's encrypted session revision and restores it
+into a fresh allowlisted Android Chromium context. Missing, expired, invalid, or rendered-signed-out
+state becomes `auth_required`; BookSaver never substitutes public, owner, or another user's rates.
+Complete `/connect` from §11 for each admitted user before this smoke test.
 
 By the time you run this smoke test, the Telegram bot gateway (Units 001–004) is also live: use
 `/status` from the owner chat instead of/alongside `docker compose exec booksaver booksaver
@@ -230,16 +241,18 @@ after step 5:
    docker compose exec booksaver booksaver checks list <booking-id>
    ```
 4. **Interpret the outcome:**
-   - `success` with a live price → the VPS IP works logged-out. You're done; restore your normal
-     `check_interval` if you lowered it for the test.
+   - `success` with a live price and `authenticated mobile web` source provenance → the VPS IP,
+     mobile profile, and imported session all work. `Genius observed/present` means Booking.com
+     rendered Genius evidence; `Genius not observed` is still valid because not every offer
+     participates. Restore your normal `check_interval` if you lowered it.
    - `failure` with code `bot_wall` → Booking.com's interstitial (captcha/"unusual traffic") is
      blocking this IP. Pull the trace for confirmation: `booksaver checks trace <check-id>`.
      Proceed to the fallback ladder below.
    - `failure` with code `step_failed` / `property_not_found` / `no_equivalent_offer` on the first
      attempt → more likely a config/selector issue than an IP block; re-check your booking's
      property name and occupancy (`booksaver bookings set-occupancy`) before assuming a wall.
-   - `failure` with code `auth_required` → should not happen in logged-out mode; if you see this,
-     it's a bug — file an issue with the trace attached.
+   - `failure` with code `auth_required` → inspect `/status`, then have that exact user send
+     `/connect`. The scheduled notifier also sends a user-scoped reconnect button with a cooldown.
 
 **Fallback ladder if the datacenter IP is walled**, in order of effort:
 
@@ -271,64 +284,79 @@ See also `docs/DISCLAIMER.md` (linked from the README) — automated access to B
 any of the above may violate their Terms of Service; that risk is the operator's, not this
 project's, to accept.
 
-## 11. Cookie import for member/Genius rates (optional)
+## 11. Phone-first `/connect` authentication
 
-Logged-out mode (§10) already produces real, bookable public prices — cookie import is optional,
-only needed if you want checks to see member/Genius discounts too. It never touches your
-Booking.com password: you export cookies from a browser where you're already logged in, and load
-them locally.
+This is the normal onboarding and renewal flow. No operator handles JSON cookies and no password,
+MFA code, or Booking.com session is sent in Telegram messages.
 
-**Security caution, read before you do this:** a Booking.com session cookie grants the same
-account access as your password would — anyone with the exported file can act as your logged-in
-session until it expires. Treat the export file exactly like a password:
+1. In a **private chat** with the admitted BookSaver bot, send `/connect`.
+2. Tap **Open secure Booking.com login**. The button opens a Telegram Mini App at your configured
+   HTTPS domain. Do not copy or share this short-lived, single-use link.
+3. Sign in on the real Booking.com page shown inside the temporary mobile browser. Google and Apple
+   identity-provider top-level navigation is allowed; unrelated destinations and downloads are
+   blocked. Complete MFA/passkey prompts if Booking.com requests them.
+4. Wait for **Connected** and return to Telegram. BookSaver saves only normalized Booking.com
+   cookies after positive rendered account evidence, encrypts them with `BOOKSAVER_SECRET_KEY`, and
+   destroys the temporary Chromium/Xvfb/VNC processes and all viewer capabilities.
+5. Send `/status`, then `/checknow` for one booking. Confirm the result reports authenticated mobile
+   web. `Genius observed` is evidence the page rendered Genius state; `Genius not observed` does not
+   mean authentication failed because not every stay/offer has a Genius discount.
 
-- Only export it on a device you control, never over a shared/public network.
-- Import it, confirm success, then **delete the export file immediately**
-  (`rm cookies.json` or your OS equivalent) — don't leave it sitting in a Downloads folder.
-- Never commit it to git, paste it into a chat, or attach it to an issue/ticket.
-- If you ever suspect it leaked, sign out of Booking.com everywhere (account settings) to
-  invalidate the session, then re-export a fresh one.
+The launch capability is bound to the Telegram numeric user ID from signed, fresh Mini App
+`initData`; it is exchanged once for an HttpOnly viewer session. Only one check/login can own the
+browser lease, so a busy response is normal during another live check. Attempts expire after the
+configured timeout and can be cancelled safely. An `auth_required` scheduled result prompts only
+the affected user to reconnect and suppresses duplicate prompts for 24 hours.
 
-**Exporting cookies from your browser** — any extension that exports cookies as JSON works; two
-common ones, both free:
+### Trust boundary
 
-- **Cookie-Editor** (Chrome/Firefox/Edge): open booking.com while logged in, click the extension
-  icon, "Export" → "Export as JSON", save the file.
-- **EditThisCookie** (Chrome): same flow, "Export" copies JSON to your clipboard — paste it into a
-  new file and save as `cookies.json`.
+TLS protects the phone-to-VPS connection and BookSaver never receives credentials through its own
+form, but the sign-in browser still executes on the VPS. A fully compromised VPS/root account could
+instrument that browser or display and observe input. Use this only on a VPS you administer, keep
+the OS/Docker patched, restrict SSH, and protect `.env`, `/data`, and backups. The follow-up security
+issue linked from Bolt 026 tracks stronger disposable isolation and device-local alternatives.
+That follow-up is [GitHub issue #6](https://github.com/roman-marchuk/booksaver-agent/issues/6).
 
-Either extension's export shape is accepted directly, as is Playwright's own native
-`context.cookies()` shape (what `booksaver auth` itself produces) — `booksaver auth import`
-detects and normalizes both. It also accepts a `{"cookies": [...]}` wrapper some tools use.
-
-**Importing:**
+The raw gateway, VNC, and websockify ports must remain private. Verify the deployment exposes only
+SSH and Caddy:
 
 ```bash
-# on the VPS (copy the file up first, e.g. scp cookies.json vps:/tmp/, then):
-docker compose exec booksaver booksaver auth import /path/to/cookies.json
-# or, non-Docker / systemd install:
-booksaver auth import /path/to/cookies.json
-
-rm /path/to/cookies.json   # delete the export now that it's imported
+docker compose --profile remote-auth ps
+sudo ss -lntp
+curl --fail "https://${BOOKSAVER_AUTH_DOMAIN}/healthz"
 ```
 
-On success it prints how many cookies were imported, for which domain(s), and the earliest
-expiry among them — **never the cookie values themselves**. The session is stored the same way
-`booksaver auth`'s headed login stores one (`{data_directory}/session_booking_com.json`, 0600,
-base64-encoded), and checks switch to authenticated mode immediately — confirm with `/status` (or
-`booksaver checks list <booking-id>` after the next tick).
+If the button cannot open, check DNS, Caddy certificate logs, `public_url`, and the BotFather Mini
+App domain configuration. If Telegram asks for a domain, configure the exact HTTPS host from
+`public_url`; never substitute an IP address or HTTP URL.
 
-**Validation before anything is stored:** the file must be parseable JSON containing at least one
-cookie for a `booking.com` domain, and not every one of those cookies can already be expired.
-Anything else is rejected with an actionable error and nothing is written to disk.
+## 12. Break-glass scoped cookie import
 
-**Expiry:** the stored session expires when the earliest-expiring imported cookie does (a
-deliberately conservative choice — some cookies in a real export last much longer than others).
-Once that happens, checks fall back to logged-out mode automatically (never silently serving a
-stale/degraded price as if it were still a member rate) and the check-failure detail / logs
-mention `booksaver auth import` as the fix. Re-export and re-import when that happens; there's no
-notification for this yet beyond the failure detail and log lines — polling `/status` or `checks
-list` periodically is the only way to notice today.
+CLI import remains available for recovery when the remote browser cannot complete a provider login.
+It is not the normal multi-user flow. Treat an exported cookie file like a password: transfer it only
+over SSH, import it for the exact admitted Telegram ID, and delete both plaintext copies immediately.
+
+```bash
+scp cookies.json root@YOUR_VPS:/tmp/booksaver-cookies.json
+cd /opt/booksaver-agent
+docker compose cp /tmp/booksaver-cookies.json booksaver:/tmp/booksaver-cookies.json
+docker compose exec booksaver booksaver auth import \
+  /tmp/booksaver-cookies.json --telegram-user-id TELEGRAM_USER_ID
+docker compose exec booksaver rm /tmp/booksaver-cookies.json
+rm /tmp/booksaver-cookies.json
+```
+
+Inspect or revoke only that user's redacted session state with:
+
+```bash
+docker compose exec booksaver booksaver auth status \
+  --telegram-user-id TELEGRAM_USER_ID
+docker compose exec booksaver booksaver auth delete \
+  --telegram-user-id TELEGRAM_USER_ID
+```
+
+Legacy owner state can be migrated explicitly with `booksaver auth migrate-legacy
+--telegram-user-id OWNER_TELEGRAM_USER_ID`; it is never used as an implicit Telegram fallback.
 
 ---
 
@@ -343,10 +371,11 @@ list` periodically is the only way to notice today.
   thread dies).
 - **`/status` over Telegram** (US-036) shipped in the same merge — §10's smoke test can use
   `/status` from the owner chat alongside `checks list`.
-- ~~**Cookie import**~~ — RESOLVED: `booksaver auth import <file>` (§11) parses/validates/stores
-  cookies exported from the user's own browser (Playwright-native or common browser-extension
-  export shapes), flips session mode to authenticated, and expiry falls back to logged-out with a
-  `booksaver auth import` re-import hint in the check-failure detail and session-manager logs —
-  never silent price degradation. A Telegram file-upload path (bot-side, with immediate message
-  deletion) is a possible future enhancement but is not needed for the CLI path to be fully usable
-  on a VPS today; not tracked as an open item since the CLI path fully satisfies US-035.
+- ~~**Cookie import**~~ — RESOLVED: the scoped
+  `booksaver auth import <file> --telegram-user-id <id>` flow (§12) parses and validates exports,
+  encrypts each admitted user's state separately, and fails closed on missing/expired/invalid state.
+  Cookie files are deliberately never accepted through Telegram; SSH/SCP is the break-glass intake.
+- ~~**Phone authentication**~~ — RESOLVED by Bolt 026: `/connect` launches a Telegram-bound,
+  HTTPS-only temporary mobile browser, captures a user-scoped session after positive account
+  evidence, and tears the browser down. A real-phone/VPS smoke test remains mandatory before relying
+  on it in production.

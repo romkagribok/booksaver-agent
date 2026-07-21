@@ -17,7 +17,11 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        novnc \
         procps \
+        websockify \
+        x11vnc \
+        xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user the daemon runs as. Chromium refuses to run as root without

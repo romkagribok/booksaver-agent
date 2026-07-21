@@ -12,6 +12,7 @@ from booksaver.daemon.check_coordinator import (
     ImmediateCompletionKind,
 )
 from booksaver.domain.check_result import CheckOutcome
+from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.models import Booking
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
@@ -28,6 +29,18 @@ Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
 
 _UNAVAILABLE = "That booking is not available. Choose one of your active bookings."
+
+
+def _format_price_source(source: PriceSourceProvenance) -> str:
+    genius = (
+        "Genius observed/present"
+        if source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT
+        else "Genius not observed"
+    )
+    return (
+        f" Source: authenticated mobile web ({source.profile_id.value}); "
+        f"{genius}."
+    )
 
 
 def register_check_now_command(
@@ -70,10 +83,15 @@ def register_check_now_command(
         prefix = result.check_id[:8]
         property_name = completion.property_name or "booking"
         if result.outcome is CheckOutcome.SUCCESS and result.live_price is not None:
+            source = (
+                _format_price_source(result.price_source)
+                if result.price_source is not None
+                else ""
+            )
             return (
                 f"Live check complete for {property_name}: "
                 f"{result.live_price.amount} {result.live_price.currency} "
-                f"(check {prefix})."
+                f"(check {prefix}).{source}"
             )
         reason = result.failure_reason
         if reason is None:

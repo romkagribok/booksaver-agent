@@ -23,8 +23,14 @@ class FernetKeyStore:
     ``BOOKSAVER_SECRET_KEY`` and never receives a `/setkey` still runs fine.
     """
 
-    def __init__(self, secret_key: str | None = None) -> None:
+    def __init__(
+        self,
+        secret_key: str | None = None,
+        *,
+        purpose: str = "personal API key",
+    ) -> None:
         self._explicit_secret_key = secret_key
+        self._purpose = purpose
 
     def _fernet(self) -> Fernet:
         from cryptography.fernet import Fernet
@@ -32,8 +38,8 @@ class FernetKeyStore:
         secret = self._explicit_secret_key or os.environ.get(_SECRET_ENV_VAR)
         if not secret:
             raise SecretKeyError(
-                f"{_SECRET_ENV_VAR} is not set — cannot encrypt/decrypt a personal "
-                "API key. Generate one with `python -c \"from cryptography.fernet "
+                f"{_SECRET_ENV_VAR} is not set — cannot encrypt/decrypt {self._purpose}. "
+                "Generate one with `python -c \"from cryptography.fernet "
                 "import Fernet; print(Fernet.generate_key().decode())\"` and set it "
                 "as an env var on the VPS before using /setkey."
             )
@@ -55,6 +61,7 @@ class FernetKeyStore:
             return self._fernet().decrypt(ciphertext).decode("utf-8")
         except InvalidToken as exc:
             raise SecretKeyError(
-                "Stored key could not be decrypted — BOOKSAVER_SECRET_KEY may have "
+                f"Stored {self._purpose} could not be decrypted — "
+                "BOOKSAVER_SECRET_KEY may have "
                 "changed since it was encrypted, or the ciphertext is corrupt."
             ) from exc

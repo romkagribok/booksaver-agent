@@ -378,9 +378,10 @@ class TelegramNavigator:
         self._client.send_message(
             self._chat_id,
             f">>> {description}:\n{link}\n\n"
-            "Open this on YOUR OWN device to finish — this bot never books or "
-            "cancels for you. Before paying, double-check the new rate is still "
-            "shown as refundable at checkout.",
+            "Finish this on a real phone, signed into the same Booking.com account "
+            "used by BookSaver. This bot never books or cancels for you. Before "
+            "you confirm, verify the final all-in total and that the offer is still "
+            "refundable.",
         )
         self._record_handoff(kind, link)
 

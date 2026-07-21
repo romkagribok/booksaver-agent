@@ -50,6 +50,7 @@ def start(
     config: Config,
     scheduler: Scheduler,
     bot_runner: Callable[[threading.Event], None] | None = None,
+    service_runners: dict[str, Callable[[threading.Event], None]] | None = None,
 ) -> None:
     """Start the daemon: check for existing instance, write PID file, run scheduler
     (and, if `bot_runner` is given, the Telegram bot update loop beside it — US-023).
@@ -108,6 +109,21 @@ def start(
                 scheduler.request_stop()
 
         threads.append(threading.Thread(target=_run_bot, name="telegram-bot"))
+
+    for service_name, service_runner in (service_runners or {}).items():
+
+        def _run_service(
+            runner: Callable[[threading.Event], None] = service_runner,
+            name: str = service_name,
+        ) -> None:
+            try:
+                runner(scheduler.stop_event)
+            except BaseException as exc:  # noqa: BLE001 - watchdog owns all services
+                logger.error("%s thread crashed: %s", name, exc, exc_info=True)
+                failures.append(exc)
+                scheduler.request_stop()
+
+        threads.append(threading.Thread(target=_run_service, name=service_name))
 
     for t in threads:
         t.start()

@@ -85,7 +85,13 @@ CREATE TABLE IF NOT EXISTS check_history (
     extracted_check_in    TEXT,
     extracted_check_out   TEXT,
     failure_code          TEXT,
-    failure_detail        TEXT
+    failure_detail        TEXT,
+    source_channel        TEXT,
+    source_device_profile TEXT,
+    source_session_revision TEXT,
+    source_authentication TEXT,
+    source_genius_evidence TEXT,
+    source_observed_at    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_check_history_booking

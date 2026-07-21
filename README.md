@@ -50,22 +50,31 @@ cancel/booking click is always handed off to your own device via a deep link —
 completes it. See `memory-bank/intents/003-telegram-interface/requirements.md` for the full
 requirements and `docs/DISCLAIMER.md` for what "no public bot mode" means in practice.
 
+Telegram-owned checks are authenticated and user-scoped. Each admitted user sends `/connect`, opens
+the Telegram Mini App button, and signs in directly inside a short-lived mobile Booking.com browser
+on the trusted self-hosted VPS. Passwords and MFA codes are never sent through Telegram or handled by
+a BookSaver form. After positive account evidence, BookSaver captures only the browser cookies,
+encrypts each user's session separately, tears the remote browser down, and restores that state only
+into the same user's fresh Android Chromium contexts. Checks fail with `auth_required` instead of
+substituting public or another user's rates. Successful checks and alerts record whether Genius
+evidence was observed; native Booking.com app-only discounts are not claimed.
+
 ## Safety posture
 
 - No autonomous cancel or purchase — guided rebook always stops for explicit local confirmation, and the browser agent is guarded away from reservation-mutating pages.
 - Local-only: config, SQLite data, session cookies, traces, and failure snapshots stay on your machine; LLM API calls carry page content only, never cookies or credentials.
-- Secrets come exclusively from environment variables (`BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN`).
+- Secrets come exclusively from environment variables (`BOOKSAVER_LLM_API_KEY`,
+  `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN`, `BOOKSAVER_SECRET_KEY`).
 
 ## Deployment
 
 BookSaver can run on your laptop or on a VPS you operate (Docker or systemd) — see the
 [VPS deployment runbook](memory-bank/operations/vps-deployment-runbook.md), the [`Dockerfile`](Dockerfile) /
 [`docker-compose.yml`](docker-compose.yml), and [`deploy/booksaver.service`](deploy/booksaver.service).
-On a display-less VPS, headed `booksaver auth` isn't possible, so scheduled checks default to
-**logged-out mode** (public Booking.com prices, no saved session — labeled as such in savings
-alerts) — see the runbook's "Logged-out checks" section for the VPS-IP validation smoke test and
-fallback options. An optional `booksaver auth import <file>` loads cookies exported from your own
-browser to unlock member/Genius-rate checks instead; see the runbook's "Cookie import" section.
+For a phone-first deployment, enable the runbook's HTTPS remote-auth profile and have every user run
+`/connect`; scoped CLI cookie import remains a break-glass recovery path. Missing or stale state
+fails closed and prompts the affected user to reconnect—it never silently downgrades to public
+pricing.
 
 ## Disclaimer
 
