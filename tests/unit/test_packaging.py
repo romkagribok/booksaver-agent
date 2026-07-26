@@ -21,4 +21,4 @@ def test_publication_metadata_points_to_repository_files() -> None:
     assert project["readme"] == "README.md"
     assert project["license"] == "MIT"
     assert project["license-files"] == ["LICENSE"]
-    assert project["urls"]["Repository"].endswith("roman-marchuk/booksaver-agent")
+    assert project["urls"]["Repository"].endswith("romkagribok/booksaver-agent")

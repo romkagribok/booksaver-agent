@@ -15,7 +15,7 @@ bolt completion has occurred.
 ## Automated Evidence
 
 | Verification | Result |
-|--------------|--------|
+| -------------- | -------- |
 | Full Python suite: `python3 -m pytest` | 867 passed |
 | Ruff: `python3 -m ruff check src/ tests/` | Clean |
 | mypy: `python3 -m mypy src/` | Clean across 93 source files |
@@ -35,7 +35,7 @@ and Docker/Caddy internal-port/static topology.
 ## Acceptance Evidence
 
 | Story | Evidence | Result |
-|-------|----------|--------|
+| ------- | ---------- | -------- |
 | US-089 | Caller-bound `/connect`, opaque capabilities, one global browser lease, disabled/busy handling | Pass locally |
 | US-090 | Signed/fresh/exact Telegram identity, replay cache, single-use exchange, hardened viewer cookie | Pass locally |
 | US-091 | Fresh headed mobile context, Xvfb/x11vnc/websockify process design, allowlisted navigation, downloads/recordings/LLM absent | Pass by unit/static inspection; real display pending |
@@ -76,7 +76,7 @@ feature in production:
 ## Known Boundary and Follow-up
 
 The approved MVP trusts the self-hosted VPS execution host. Root compromise can still instrument the
-remote browser/display and observe login input. [GitHub issue #6](https://github.com/roman-marchuk/booksaver-agent/issues/6)
+remote browser/display and observe login input. [GitHub issue #6](https://github.com/romkagribok/booksaver-agent/issues/6)
 tracks disposable/microVM isolation and practical device-local alternatives before broader or
 untrusted-user deployment.
 

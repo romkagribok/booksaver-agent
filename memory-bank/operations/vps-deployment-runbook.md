@@ -40,7 +40,7 @@ and the systemd env file for the `.env` file below.)
 ## 3. Secrets — env file, never in git
 
 ```bash
-git clone https://github.com/roman-marchuk/booksaver-agent.git
+git clone https://github.com/romkagribok/booksaver-agent.git
 cd booksaver-agent
 cp .env.example .env
 chmod 600 .env
@@ -289,7 +289,7 @@ form, but the sign-in browser still executes on the VPS. A fully compromised VPS
 instrument that browser or display and observe input. Use this only on a VPS you administer, keep
 the OS/Docker patched, restrict SSH, and protect `.env`, `/data`, and backups. The follow-up security
 issue linked from Bolt 026 tracks stronger disposable isolation and device-local alternatives.
-That follow-up is [GitHub issue #6](https://github.com/roman-marchuk/booksaver-agent/issues/6).
+That follow-up is [GitHub issue #6](https://github.com/romkagribok/booksaver-agent/issues/6).
 
 The raw gateway, VNC, and websockify ports must remain private. Verify the deployment exposes only
 SSH and Caddy:

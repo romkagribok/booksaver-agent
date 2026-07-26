@@ -26,9 +26,9 @@ and 870 automated tests**. The current release includes:
 - Docker/systemd deployment and an opt-in HTTPS `/connect` login flow for a trusted VPS.
 
 It is ready for technical review and controlled self-hosting, not broad or untrusted-user
-deployment. Open hardening work includes [journey verification](https://github.com/roman-marchuk/booksaver-agent/issues/4),
-[failure alerts](https://github.com/roman-marchuk/booksaver-agent/issues/5), and stronger
-[remote-login isolation](https://github.com/roman-marchuk/booksaver-agent/issues/6). Other open
+deployment. Open hardening work includes [journey verification](https://github.com/romkagribok/booksaver-agent/issues/4),
+[failure alerts](https://github.com/romkagribok/booksaver-agent/issues/5), and stronger
+[remote-login isolation](https://github.com/romkagribok/booksaver-agent/issues/6). Other open
 issues are exploratory future capabilities, not missing parts of the current hotel-monitoring scope.
 
 ## How it works
@@ -58,7 +58,7 @@ Every check is locally traceable with `booksaver checks trace <CHECK_ID>`.
 ### Install
 
 ```bash
-git clone https://github.com/roman-marchuk/booksaver-agent.git
+git clone https://github.com/romkagribok/booksaver-agent.git
 cd booksaver-agent
 
 cp .env.example .env

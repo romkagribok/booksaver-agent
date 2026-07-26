@@ -30,8 +30,8 @@ dev = ["ruff", "pytest", "mypy"]
 booksaver = "booksaver.cli.__main__:main"
 
 [project.urls]
-Repository = "https://github.com/roman-marchuk/booksaver-agent"
-Issues = "https://github.com/roman-marchuk/booksaver-agent/issues"
+Repository = "https://github.com/romkagribok/booksaver-agent"
+Issues = "https://github.com/romkagribok/booksaver-agent/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -54,7 +54,7 @@ does not convert BookSaver into a public bot or hosted credential service.
 - Password-manager autofill and passkeys may be awkward through a remote canvas; MFA remains interactive.
 - HTTPS protects transit and Fernet protects captured state at rest, but neither protects input from a
   fully compromised VPS root account. This is acceptable only for the current trusted invite model.
-- [GitHub issue #6](https://github.com/roman-marchuk/booksaver-agent/issues/6) tracks stronger
+- [GitHub issue #6](https://github.com/romkagribok/booksaver-agent/issues/6) tracks stronger
   disposable isolation and device-local alternatives before any broader/untrusted-user deployment.
 - Native Booking.com app-only prices remain outside scope; the captured session powers authenticated
   mobile-web checks under ADR-025.
