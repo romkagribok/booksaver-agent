@@ -1,5 +1,5 @@
 ---
-id: US-017
+id: 001-capture-occupancy-at-registration
 status: complete
 implemented: true
 ---

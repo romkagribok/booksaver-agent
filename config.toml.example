@@ -1,0 +1,36 @@
+[schedule]
+check_interval = "6h"
+
+[storage]
+# Docker Compose persists this directory in the booksaver-data volume.
+data_directory = "/data"
+
+[browser]
+device_profile = "android-chromium"
+locale = "en-US"
+timezone_id = "UTC"
+
+[extraction]
+# model = "claude-sonnet-4-6"
+
+[agent]
+# model = "claude-sonnet-4-6"
+max_steps = 15
+max_llm_calls = 20
+check_timeout_seconds = 180
+
+[telegram_bot]
+enabled = true
+owner_chat_id = 123456789 # Replace with your numeric private-chat ID.
+poll_timeout_seconds = 30
+
+[remote_auth]
+enabled = true
+public_url = "https://connect.example.com" # Must match BOOKSAVER_AUTH_DOMAIN.
+session_timeout_seconds = 600
+
+[limits]
+max_bookings_per_user = 3
+max_checks_per_user_per_day = 48
+max_llm_calls_per_user_per_day = 200
+messages_per_minute_per_chat = 20

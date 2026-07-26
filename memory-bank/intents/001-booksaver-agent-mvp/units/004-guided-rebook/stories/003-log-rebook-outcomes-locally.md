@@ -1,5 +1,5 @@
 ---
-id: US-012
+id: 003-log-rebook-outcomes-locally
 status: complete
 implemented: true
 ---

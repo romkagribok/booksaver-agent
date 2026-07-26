@@ -5,13 +5,15 @@
 #   sudo useradd --system --create-home --home-dir /opt/booksaver booksaver
 #   sudo -u booksaver -H bash -c 'cd /opt/booksaver && python3.11 -m venv .venv \
 #       && .venv/bin/pip install -e ".[dev]" && .venv/bin/playwright install --with-deps chromium'
-#   sudo mkdir -p /etc/booksaver && sudo cp config.toml.example /etc/booksaver/config.toml
+#   sudo mkdir -p /etc/booksaver /opt/booksaver/data
+#   sudo cp config.toml.example /etc/booksaver/config.toml
+#   sudo $EDITOR /etc/booksaver/config.toml  # set data_directory = "/opt/booksaver/data"
 #   sudo $EDITOR /etc/booksaver/booksaver.env   # BOOKSAVER_* secrets, see runbook
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now booksaver
 #
 # See memory-bank/operations/vps-deployment-runbook.md for the full walkthrough
-# (provisioning, secrets, upgrade, backup, and the logged-out-checks smoke test).
+# (provisioning, secrets, upgrade, backup, and authenticated smoke test).
 
 [Unit]
 Description=BookSaver Agent daemon + Telegram bot

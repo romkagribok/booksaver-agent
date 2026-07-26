@@ -5,7 +5,7 @@ sponsored by Booking.com** or Booking Holdings Inc. "Booking.com" is a trademark
 owner, referenced here only to describe interoperability.
 
 BookSaver automates browsing Booking.com (search, page navigation, and price reading) on your
-behalf, using your own account/session or logged-out public pages. **Automated access to a
+behalf, using your own account/session. **Automated access to a
 website may violate that website's Terms of Service.** Whether and how you run this tool — on
 your laptop or on a VPS you operate — is entirely **your responsibility**. This project provides
 no warranty, takes no responsibility for account restrictions, IP blocks, or other consequences

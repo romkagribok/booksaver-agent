@@ -1,84 +1,140 @@
 # BookSaver Agent
 
-BookSaver Agent is a local-first Python daemon that monitors refundable Booking.com hotel bookings, detects price drops with browser automation and LLM-assisted page interpretation, notifies the user, and guides rebooking only with explicit human confirmation.
+![BookSaver Agent logo](assets/booksaver-logo.png)
 
-This project uses the official specs.md AI-DLC flow. Planning artifacts live in [`memory-bank/`](memory-bank/), and the installed specs.md agent definitions live in [`.specsmd/`](.specsmd/).
+BookSaver is a self-hosted Python agent that watches refundable Booking.com hotel
+reservations for a cheaper equivalent room. It re-runs the search with the original dates and
+occupancy, alerts the right user, and guides a rebook while leaving every cancellation, payment,
+and final booking action to the human.
 
-## How price checks work (Phase 2)
+> [!WARNING]
+> BookSaver is experimental personal-use software, not a hosted service. Booking.com UI changes,
+> account state, and datacenter-IP controls can break live checks even when the test suite passes.
+> Automated access may violate Booking.com's terms. Read the [full disclaimer](docs/DISCLAIMER.md)
+> and validate the tool with your own refundable booking before relying on it.
 
-Booking.com never re-quotes an existing reservation on the My Bookings page, so BookSaver
-finds savings the way a human would: on every scheduled check it **re-searches** the
-registered property and dates (with your real party size) using your saved session,
-opens the property page, and extracts the cheapest **equivalent, still-refundable** offer's
-all-in bookable total. That total feeds the savings → notification → guided-rebook pipeline.
+## Current state
 
-The search journey is scripted-first (deterministic Playwright). When Booking.com's UI
-drifts and a scripted step fails, an **LLM browser agent** takes over just that step: it
-sees a text/DOM observation (screenshot only when text isn't enough), acts through a
-bounded action vocabulary (click / fill / select / scroll / give-up), and is hard-blocked
-at the adapter level from ever touching reserve, checkout, payment, or cancellation flows.
-Every check leaves a local step trace (`booksaver checks trace <check-id>`).
+The implemented hotel-monitoring scope is complete: **92 in-scope stories, 26 construction bolts,
+and 870 automated tests**. The current release includes:
 
-### Cost caps (deliberately simple — for now)
+- scripted Playwright searches with bounded LLM recovery when a page step changes;
+- same-property, dates, occupancy, room-type, currency, and refundability checks;
+- local SQLite history, redacted traces, savings alerts, and guided rebooking;
+- a private Telegram interface with owner-issued, single-use invites and per-user isolation;
+- encrypted, user-scoped Booking.com sessions and optional personal Anthropic keys;
+- Docker/systemd deployment and an opt-in HTTPS `/connect` login flow for a trusted VPS.
 
-Each check runs under **hard caps** from `config.toml` `[agent]`: `max_steps` (default 15,
-screenshot turns count double), `max_llm_calls` (default 20, shared between the agent and
-offer extraction), and `check_timeout_seconds` (default 180). Breaching a cap fails the
-check with `BUDGET_EXCEEDED` and the daemon moves on.
+It is ready for technical review and controlled self-hosting, not broad or untrusted-user
+deployment. Open hardening work includes [journey verification](https://github.com/roman-marchuk/booksaver-agent/issues/4),
+[failure alerts](https://github.com/roman-marchuk/booksaver-agent/issues/5), and stronger
+[remote-login isolation](https://github.com/roman-marchuk/booksaver-agent/issues/6). Other open
+issues are exploratory future capabilities, not missing parts of the current hotel-monitoring scope.
 
-> **Note:** hard caps are the intentionally simple first version of cost control. If they
-> prove too blunt in practice (checks failing on cap while making progress), the planned
-> follow-up is *adaptive budgeting* — per-day token budgets across checks, backoff for
-> bookings that repeatedly need escalation, and cheaper-model downshift for easy turns.
-> See ADR-017 in `memory-bank/standards/decision-index.md`.
+## How it works
 
-## Telegram bot
+1. You register a refundable hotel booking and its all-in baseline price.
+2. On schedule or via `/checknow`, BookSaver opens a fresh authenticated mobile Chromium context
+   and repeats the Booking.com search for the same stay and party.
+3. Deterministic code drives the normal journey. If one step fails, an LLM browser agent may use a
+   limited click/fill/select/scroll vocabulary. An adapter-level guard blocks reservation,
+   checkout, payment, and cancellation destinations.
+4. Only a cheaper, currency-aligned, still-refundable equivalent offer becomes a savings result.
+5. Telegram or email reports the result. Rebooking uses explicit confirmations and hands the final
+   action to the user's own device.
 
-The primary interface is a Telegram bot you run yourself alongside the daemon (long-polling, no
-inbound port needed). Access is **invite-only for non-owners** — there is no public bot mode or
-runtime access-mode switch; strangers self-host the repo instead of using yours. The owner remains
-the sole administrator, creates single-use invites, registers bookings, and gets alerts by default;
-`/register` lets invited users add their own bookings from chat, each getting their own alert
-routing and per-user daily check/LLM-call limits. LLM calls default to the owner's Anthropic key
-(hybrid billing with per-user daily caps); `/setkey` lets a user opt into their own key instead
-(encrypted at rest). `/checknow` offers the caller's active bookings as buttons and runs the selected
-booking through the same live monitor, trace, savings, and alert pipeline immediately; scheduled and
-manual checks share one browser gate and the same daily limits. A detected savings opportunity drives
-the same guided-rebook flow as the CLI,
-but over Telegram: inline-keyboard confirmations at every step, and the final Booking.com
-cancel/booking click is always handed off to your own device via a deep link — the bot itself never
-completes it. See `memory-bank/intents/003-telegram-interface/requirements.md` for the full
-requirements and `docs/DISCLAIMER.md` for what "no public bot mode" means in practice.
+Every check is locally traceable with `booksaver checks trace <CHECK_ID>`.
 
-Telegram-owned checks are authenticated and user-scoped. Each admitted user sends `/connect`, opens
-the Telegram Mini App button, and signs in directly inside a short-lived mobile Booking.com browser
-on the trusted self-hosted VPS. Passwords and MFA codes are never sent through Telegram or handled by
-a BookSaver form. After positive account evidence, BookSaver captures only the browser cookies,
-encrypts each user's session separately, tears the remote browser down, and restores that state only
-into the same user's fresh Android Chromium contexts. Checks fail with `auth_required` instead of
-substituting public or another user's rates. Successful checks and alerts record whether Genius
-evidence was observed; native Booking.com app-only discounts are not claimed.
+## Recommended setup: private Telegram bot on your VPS
 
-## Safety posture
+### Prerequisites
 
-- No autonomous cancel or purchase — guided rebook always stops for explicit local confirmation, and the browser agent is guarded away from reservation-mutating pages.
-- Local-only: config, SQLite data, session cookies, traces, and failure snapshots stay on your machine; LLM API calls carry page content only, never cookies or credentials.
-- Secrets come exclusively from environment variables (`BOOKSAVER_LLM_API_KEY`,
-  `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN`, `BOOKSAVER_SECRET_KEY`).
+- a Linux host with Docker Compose v2, 2 GB RAM minimum, and a DNS name if `/connect` is enabled;
+- a private Telegram bot token from BotFather and your numeric Telegram chat ID;
+- an Anthropic API key for LLM extraction/recovery (without one, checks are scripted/DOM-only);
+- acceptance of the trust boundary: the VPS runs the temporary login browser and must be under
+  your control.
 
-## Deployment
+### Install
 
-BookSaver can run on your laptop or on a VPS you operate (Docker or systemd) — see the
-[VPS deployment runbook](memory-bank/operations/vps-deployment-runbook.md), the [`Dockerfile`](Dockerfile) /
-[`docker-compose.yml`](docker-compose.yml), and [`deploy/booksaver.service`](deploy/booksaver.service).
-For a phone-first deployment, enable the runbook's HTTPS remote-auth profile and have every user run
-`/connect`; scoped CLI cookie import remains a break-glass recovery path. Missing or stale state
-fails closed and prompts the affected user to reconnect—it never silently downgrades to public
-pricing.
+```bash
+git clone https://github.com/roman-marchuk/booksaver-agent.git
+cd booksaver-agent
 
-## Disclaimer
+cp .env.example .env
+cp config.toml.example config.toml
+chmod 600 .env config.toml
+```
 
-This is an open-source, personal-use tool, **not affiliated with Booking.com**. Automated access to
-Booking.com may violate its Terms of Service; running this tool (and how you run it) is entirely
-your own responsibility. There is no public/multi-tenant bot mode by design. See
-[`docs/DISCLAIMER.md`](docs/DISCLAIMER.md) for the full statement.
+Fill in `.env`, set `owner_chat_id` in `config.toml`, and set the same HTTPS hostname in
+`BOOKSAVER_AUTH_DOMAIN` and `remote_auth.public_url`. Then start and verify the stack:
+
+```bash
+docker compose --profile remote-auth up -d --build
+docker compose ps
+docker compose logs -f booksaver
+```
+
+In a private chat with the bot, send `/start`, then `/connect`, `/register`, and `/checknow`.
+The first real Booking.com check is a required deployment test; VPS IPs can encounter bot walls.
+
+The [VPS deployment runbook](memory-bank/operations/vps-deployment-runbook.md) covers DNS/TLS,
+backups, upgrades, smoke testing, recovery cookie import, and the non-Docker systemd alternative.
+
+## Local development and desktop operation
+
+Python 3.11+ is required.
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+playwright install chromium
+
+booksaver init
+booksaver config validate
+booksaver --help
+```
+
+`booksaver init` creates `~/.booksaver/config.toml` with mode `0600`. For a desktop operator,
+enable the Telegram bot in that file, export the required `BOOKSAVER_*` values, and run
+`booksaver run`. A headed `booksaver auth` login can be migrated to the Telegram-linked owner with
+`booksaver auth migrate-legacy --telegram-user-id <ID>`. The normal VPS path is `/connect`.
+
+Useful CLI commands include `bookings list`, `checks list`, `checks trace`, `savings list`,
+`auth status|delete|import`, `rebook`, and `rebook-log`. Run any command with `--help` for its full
+arguments.
+
+## Data, LLM, and security boundaries
+
+- Configuration, SQLite data, encrypted sessions, traces, and snapshots stay in the configured
+  local data directory. Backups contain sensitive booking data and must be protected.
+- Secrets are read from environment variables, never from committed configuration:
+  `BOOKSAVER_TELEGRAM_BOT_TOKEN`, `BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SECRET_KEY`, and optional
+  `BOOKSAVER_SMTP_PASSWORD`.
+- BookSaver does not intentionally send cookies, passwords, MFA codes, or raw API keys to the LLM.
+  When LLM features are enabled, it may send bounded rendered page text and, during escalation,
+  screenshots to the configured Anthropic model. Rendered content can include account or booking
+  details; use a provider/data policy you accept.
+- `/connect` keeps credentials out of Telegram and BookSaver forms, but the browser executes on the
+  VPS. A compromised root account could still observe login input. This is the known hardening
+  boundary tracked in issue #6.
+- Telegram access is owner/invite only. There is no public-bot mode and no BookSaver-operated
+  backend.
+
+## Development
+
+```bash
+python3 -m ruff check src tests
+python3 -m mypy src
+python3 -m pytest
+```
+
+Accepted requirements, decisions, and delivery history live in [`memory-bank/`](memory-bank/).
+The installed specs.md AI-DLC framework lives in [`.specsmd/aidlc/`](.specsmd/aidlc/). Tool-specific
+agent files are discovery adapters; the framework and memory bank are the authoritative sources.
+
+## License and disclaimer
+
+Released under the [MIT License](LICENSE). BookSaver is not affiliated with, endorsed by, or
+sponsored by Booking.com or Booking Holdings Inc. See [`docs/DISCLAIMER.md`](docs/DISCLAIMER.md).

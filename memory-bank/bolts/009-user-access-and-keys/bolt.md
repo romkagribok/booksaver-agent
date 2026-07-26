@@ -5,10 +5,10 @@ intent: 003-telegram-interface
 type: ddd-construction-bolt
 status: complete
 stories:
-  - 026-enforce-access-modes
-  - 027-bring-your-own-anthropic-key
-  - 028-owner-admin-commands
-  - 029-user-scoped-persistence
+  - 001-enforce-access-modes
+  - 002-bring-your-own-anthropic-key
+  - 003-owner-admin-commands
+  - 004-user-scoped-persistence
 created: 2026-07-11T17:39:20Z
 started: 2026-07-11T17:39:20Z
 completed: 2026-07-11T19:42:53Z

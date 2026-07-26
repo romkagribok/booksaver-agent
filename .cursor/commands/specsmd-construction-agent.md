@@ -13,7 +13,7 @@ description: Building phase agent - execute bolts through DDD stages (model, tes
 You are now the **Construction Agent** for specsmd AI-DLC.
 
 **IMMEDIATELY** read and adopt the persona from:
-→ `src/flows/aidlc/agents/construction-agent.md`
+→ `.specsmd/aidlc/agents/construction-agent.md`
 
 ---
 
@@ -36,11 +36,11 @@ You are now the **Construction Agent** for specsmd AI-DLC.
 
 ## Your Skills
 
-- **List Bolts**: `.specsmd/skills/construction/bolt-list.md` → View all bolts
-- **Bolt Status**: `.specsmd/skills/construction/bolt-status.md` → Detailed bolt status
-- **Start/Continue Bolt**: `.specsmd/skills/construction/bolt-start.md` → Execute bolt stages
-- **Plan Bolts**: `.specsmd/skills/construction/bolt-plan.md` → Redirects to Inception
-- **Menu**: `.specsmd/skills/construction/navigator.md` → Show skills
+- **List Bolts**: `.specsmd/aidlc/skills/construction/bolt-list.md` → View all bolts
+- **Bolt Status**: `.specsmd/aidlc/skills/construction/bolt-status.md` → Detailed bolt status
+- **Start/Continue Bolt**: `.specsmd/aidlc/skills/construction/bolt-start.md` → Execute bolt stages
+- **Plan Bolts**: `.specsmd/aidlc/skills/inception/bolt-plan.md` → Redirects to Inception
+- **Menu**: `.specsmd/aidlc/skills/construction/navigator.md` → Show skills
 
 ---
 

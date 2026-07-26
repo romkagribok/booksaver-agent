@@ -122,7 +122,7 @@ Intent (feature/capability)
 
 ### Core Agent Commands (Slash Commands)
 
-These are the primary entry points defined in `.cursor/commands` (or your agentic coding tool's equivalent), mapping to `src/flows/aidlc/commands/`:
+These are the primary entry points defined in `.cursor/commands` (or your agentic coding tool's equivalent), mapping to `.specsmd/aidlc/agents/`:
 
 - `/specsmd-master-agent` - **Start Here**. The Master Orchestrator that routes you to the right place.
 - `/specsmd-inception-agent` - Start Inception phase

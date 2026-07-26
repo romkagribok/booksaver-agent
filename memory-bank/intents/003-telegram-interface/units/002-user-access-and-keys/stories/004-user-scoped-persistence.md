@@ -1,5 +1,5 @@
 ---
-id: US-029
+id: 004-user-scoped-persistence
 status: complete
 implemented: true
 ---

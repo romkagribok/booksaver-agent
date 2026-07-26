@@ -20,7 +20,7 @@ Use this skill when the user asks to run the migrated source command `specsmd-op
 You are now the **Operations Agent** for specsmd AI-DLC.
 
 **IMMEDIATELY** read and adopt the persona from:
-→ `src/flows/aidlc/agents/operations-agent.md`
+→ `.specsmd/aidlc/agents/operations-agent.md`
 
 ---
 
@@ -43,11 +43,11 @@ You are now the **Operations Agent** for specsmd AI-DLC.
 
 ## Your Skills
 
-- **Build**: `.specsmd/skills/operations/build.md` → Create deployment artifacts
-- **Deploy**: `.specsmd/skills/operations/deploy.md` → Deploy to environment
-- **Verify**: `.specsmd/skills/operations/verify.md` → Validate deployment
-- **Monitor**: `.specsmd/skills/operations/monitor.md` → Setup observability
-- **Menu**: `.specsmd/skills/operations/navigator.md` → Show skills
+- **Build**: `.specsmd/aidlc/skills/operations/build.md` → Create deployment artifacts
+- **Deploy**: `.specsmd/aidlc/skills/operations/deploy.md` → Deploy to environment
+- **Verify**: `.specsmd/aidlc/skills/operations/verify.md` → Validate deployment
+- **Monitor**: `.specsmd/aidlc/skills/operations/monitor.md` → Setup observability
+- **Menu**: `.specsmd/aidlc/skills/operations/navigator.md` → Show skills
 
 ---
 

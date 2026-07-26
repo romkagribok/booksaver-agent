@@ -18,6 +18,13 @@ README.md
 LICENSE
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 .env
 .env.*
+*.env
 config.toml
+*cookies*.json
+session_*.json
+sessions
+snapshots

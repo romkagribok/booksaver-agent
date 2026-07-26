@@ -10,7 +10,7 @@ status: success
 
 ## 2026-07-19 — `v0.1.0-9808584` → production
 
-- **Host**: `booksaver-finland` (`root@135.181.91.254` via local SSH alias `booksaver`)
+- **Host**: owner-operated production VPS (hostname, IP, and SSH alias redacted)
 - **Service**: Docker Compose service `booksaver`
 - **Release commit**: `9808584e64d2f61d333e84d3f26ac4ffee8a6cf2`
 - **Previous commit**: `3a9a441e609b6270f740309f6044dd5f333d2638`

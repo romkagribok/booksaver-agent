@@ -1,5 +1,5 @@
 ---
-id: US-036
+id: 003-inspect-daemon-from-chat
 status: complete
 implemented: true
 ---

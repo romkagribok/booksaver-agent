@@ -1,5 +1,5 @@
 ---
-id: US-026
+id: 001-enforce-access-modes
 status: complete
 implemented: true
 ---

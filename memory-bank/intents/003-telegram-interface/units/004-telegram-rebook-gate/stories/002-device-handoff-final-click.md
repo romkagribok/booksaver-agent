@@ -1,5 +1,5 @@
 ---
-id: US-033
+id: 002-device-handoff-final-click
 status: complete
 implemented: true
 ---

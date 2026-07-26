@@ -1,190 +1,74 @@
-# AGENTS.md
+# BookSaver repository guidance
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+## Product and current state
 
-## What this repository is
+BookSaver Agent is a self-hosted Python daemon/CLI and private Telegram bot. It monitors refundable
+Booking.com hotel reservations, detects cheaper equivalent offers through scripted browser
+automation with bounded LLM assistance, and guides rebooking with mandatory human confirmation.
 
-BookSaver Agent is a planned **local-first Python daemon / CLI tool** that monitors a user's refundable
-Booking.com hotel reservation, detects price drops via **browser automation + LLM-assisted page
-interpretation**, notifies the user (email/Telegram), and offers a **guided rebook with mandatory human
-confirmation**. It is explicitly *not* a web app, hosted service, or multi-tenant SaaS, uses *no* official
-Booking.com API, and keeps all credentials, sessions, and data on the user's machine.
+The implemented scope is 92 in-scope stories across intents 001-013, 26 completed bolts, schema
+v10, 26 ADRs, and 870 tests. Two assigned extensibility stories remain explicitly post-MVP. See
+`memory-bank/story-index.md` for status and `memory-bank/standards/decision-index.md` for decisions.
 
-**Current state: all 92 in-scope stories across intents 001–013 are complete —
-867 tests.** Daemon + scheduler, savings detection with email/Telegram
-alerts, and the guided-rebook confirmation state machine are implemented. **Phase 2
-replaced the manage-page price check**: live prices come from a scripted full search
-journey (search → results → verified property page → room table, using the booking's
-required occupancy), with an LLM browser agent that takes over failed journey steps
-(tiered text→screenshot observations, bounded action vocabulary, adapter-level guard
-against reserve/checkout/cancel, hard cost caps, per-check traces). **Phase 3 made a
-Telegram bot the primary UI**: long-poll gateway thread in the daemon, owner/invite
-access, multi-user scoping (schema v10), hybrid LLM billing with Fernet-encrypted
-optional personal keys, `/register` dialog, per-user alerts + limits, inline-keyboard
-rebook confirmations with device-handoff deep links, encrypted per-user Booking.com sessions,
-authenticated Android mobile-web checks, and phone-first `/connect` through an opt-in HTTPS remote
-browser (`memory-bank/operations/vps-deployment-runbook.md`).
-Unit 005-extensibility-future is post-MVP. `project_type` is `cli-tool`
-(`memory-bank/project.yaml`).
-
-## Build / Lint / Test Commands
+## Commands
 
 ```bash
-# Install (editable, includes dev tools)
 pip install -e ".[dev]"
-
-# Lint + auto-fix
-python3 -m ruff check src/ --fix
-python3 -m ruff check src/         # must be clean before committing
-
-# Type-check
-python3 -m mypy src/
-
-# Tests
-python3 -m pytest
-
-# One-time: install the browser Playwright drives
 playwright install chromium
-
-# Run CLI
-python3 -m booksaver.cli <command>
-# or, after pip install -e .:
-booksaver <command>
+python3 -m ruff check src tests
+python3 -m mypy src
+python3 -m pytest
+python3 -m booksaver.cli --help
 ```
 
-CLI commands: `init`, `config validate|show`, `register` (requires `--adults`; `--children`,
-`--rooms` optional), `bookings list`, `bookings set-occupancy <booking-id>` (backfill for
-pre-v5 bookings), `run`, `stop`, `auth` (headed Booking.com login), scoped `auth import|status|delete`
-and `auth migrate-legacy` recovery commands, `checks list <booking-id>`,
-`checks trace <check-id>` (step/agent trace), `savings list`, `rebook <opportunity-id>`,
-`rebook-log <session-id>`.
+Python 3.11+ is required. Runtime dependencies are Playwright, Anthropic, and cryptography.
 
-**Python 3.11+ required** (uses stdlib `tomllib`). Runtime deps are **playwright** (ADR-007),
-**anthropic** (ADR-009), and **cryptography** (ADR-019); everything else is stdlib-first (ADR-003) — notifications
-use stdlib smtplib/urllib (ADR-011), and the browser agent is a plain anthropic tool-use
-loop, no agent frameworks (ADR-016). Secrets come only from env vars:
-`BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`, `BOOKSAVER_TELEGRAM_BOT_TOKEN`, and
-`BOOKSAVER_SECRET_KEY` (ADR-002). See `memory-bank/standards/decision-index.md` for all 26 ADRs.
+## Non-negotiable boundaries
 
-## This repo is driven by the specs.md AI-DLC flow
+- Booking.com hotels only; registered and candidate offers must be refundable.
+- Equivalence requires the same property, stay dates, room type, and occupancy.
+- Compare currency-aligned, all-in bookable totals; fail closed on ambiguity.
+- Never autonomously cancel, reserve, purchase, pay, or submit a final booking action.
+- The final rebook action stays on the user's device after explicit confirmation.
+- Self-hosted owner/invite access only; no public bot or BookSaver-operated backend.
+- Keep config, SQLite, cookies, encrypted keys, traces, and snapshots locally controlled.
+- Secrets come only from `BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`,
+  `BOOKSAVER_TELEGRAM_BOT_TOKEN`, and `BOOKSAVER_SECRET_KEY`.
+- Preserve per-user booking, session, alert, usage, and admin-visibility boundaries.
+- Browser-agent actions remain bounded and adapter-guarded; provider output is untrusted.
 
-All planning happens through the **specs.md AI-DLC** framework (an AWS-derived, three-phase,
-Domain-Driven methodology). The framework itself is installed under `.specsmd/aidlc/` (agents, skills,
-templates, schema) and project artifacts live under `memory-bank/`. Work is done by invoking specialized
-agents as slash commands, not by editing artifacts ad hoc:
+## Architecture
 
-| Command | Phase | Role |
-|---------|-------|------|
-| `/specsmd-master-agent` | — | **Start here.** Orchestrator: routes requests, analyzes state, answers methodology questions |
-| `/specsmd-inception-agent` | Inception | Requirements, stories, system context, unit decomposition, bolt planning |
-| `/specsmd-construction-agent` | Construction | Execute bolts through DDD stages (domain → technical design → implement → test) |
-| `/specsmd-operations-agent` | Operations | Build, deploy, verify, monitor |
+Keep the single-process, stdlib-first architecture and explicit domain types. Browser automation,
+LLM interpretation, persistence, savings evaluation, notifications, access control, and rebook
+confirmation must stay behind separate module boundaries. Binding architecture and technology
+constraints are in:
 
-Source-command wrappers are checked into `.agents/skills/` for Codex discovery. The framework is also
-duplicated into `.Codex/commands/`, `.Codex/agents/`, and `.cursor/commands/` by the installer — edit
-agent behavior in `.specsmd/aidlc/`, not generated copies.
+- `memory-bank/standards/system-architecture.md`
+- `memory-bank/standards/tech-stack.md`
+- `memory-bank/standards/coding-standards.md`
+- `memory-bank/standards/decision-index.md`
 
-**Hierarchy:** Intent (a capability) → Unit (independently buildable component) → Story. A **Bolt** is a
-time-boxed execution session scoped to a Unit. Agents are **stateless** — they read context fresh from
-`memory-bank/` each invocation, so artifacts must be saved after each step. Humans validate at every
-checkpoint (after requirements, decomposition, each bolt stage, before deploy).
+## specs.md AI-DLC
 
-## Memory bank layout and conventions
+The project uses specs.md AI-DLC for accepted requirements and consequential changes:
 
-`.specsmd/aidlc/memory-bank.yaml` is the **authoritative schema** — read it before placing or renaming
-artifacts. Key paths:
+- `.specsmd/aidlc/` is the installed framework source.
+- `.specsmd/aidlc/memory-bank.yaml` is the artifact schema.
+- `memory-bank/` is the project source of truth.
+- `.agents/skills/`, `.claude/`, and `.cursor/` are tool discovery adapters, not authority.
 
-- `memory-bank/intents/{NNN}-{intent}/` — `requirements.md`, `system-context.md`, `units.md`
-- `.../units/{UUU}-{unit}/` — `unit-brief.md`, `construction-log.md`, `stories/{SSS}-{slug}.md`
-- `memory-bank/bolts/{BBB}-{unit}/` — `bolt.md` + DDD stage artifacts
-- `memory-bank/standards/` — project standards (see below)
-- `memory-bank/story-index.md` — single-file global index of all stories
+Start methodology work with the specsmd master agent. Use inception for requirements/design,
+construction for approved bolts, and operations for build/deploy/verification. Preserve human
+checkpoints and keep `memory-bank/story-index.md` consistent with story changes.
 
-Hard conventions enforced by the schema: **3-digit zero-padded prefixes** on intents/units/stories/bolts,
-**kebab-case** names derived from folder/file names (no frontmatter name prefixes), and **ISO-8601
-timestamps with time + timezone** (`YYYY-MM-DDTHH:MM:SSZ`) on every date field — never date-only. Keep
-`story-index.md` consistent when stories change; it asserts all 94 stories are assigned exactly once.
+## Working agreement
 
-## Standards are the source of truth for product + tech constraints
-
-`memory-bank/standards/` files are loaded as context by every agent — treat them as binding when
-designing or coding:
-
-- `system-architecture.md` — single-process local daemon; modular components
-  (`LocalConfig → Scheduler → BookingComMonitor → {BrowserAutomation, LLMClient, LocalPersistence} →
-  SavingsDetection → {Notifications, GuidedRebook}`), not distributed services.
-- `tech-stack.md` — Python 3.11+ stdlib-first; SQLite persistence; Playwright (sync) browser
-  automation; anthropic SDK for extraction; stdlib smtplib/urllib notifications. All decided —
-  see the ADRs in `standards/decision-index.md`.
-- `coding-standards.md` — explicit domain types for bookings/prices/check-results/savings/rebook events;
-  keep browser automation, LLM extraction, savings evaluation, notification, and rebook-confirmation
-  logic in separate module boundaries; first test coverage targets config validation, persistence
-  invariants, savings equivalence rules, and confirmation gates.
-
-## Intents
-
-### `001-booksaver-agent-mvp` — complete (except post-MVP unit 5)
-
-1. `001-core-local-data` — ✅ complete (bolts 001+002): config, registration, SQLite, daemon/scheduler
-2. `002-booking-com-price-monitor` — ✅ complete (bolt 003): session, browser checks, LLM extraction, failure handling. **Superseded as price source by intent 002** (manage page kept for session validation only, ADR-013)
-3. `003-savings-detection-notifications` — ✅ complete (bolt 004): equivalence gate, price rule, email + Telegram
-4. `004-guided-rebook` — ✅ complete (bolt 005): explicit intent, confirmation state machine, audit trail
-5. `005-extensibility-future` — pluggable second platform / non-hotel types (post-MVP only)
-
-### `002-agentic-search-monitor` — complete
-
-1. `001-search-journey-monitor` — ✅ complete (bolt 006): required `Occupancy` at registration
-   (ADR-014, schema v5 migration + CLI backfill), scripted full search journey with named
-   `JourneyStep` seams (ADR-013), equivalent-offer extraction (DOM heuristics + LLM
-   `extract_offers`), `select_offer` exclusion rules, new failure codes
-2. `002-agentic-escalation` — ✅ complete (bolt 007): `BrowserAgent` loop with tiered
-   observations (ADR-015), bounded tool-use action vocabulary + adapter-level `ActionGuard`
-   (ADR-016), hard `[agent]` config caps (ADR-017), `check_traces` (schema v6), rotated
-   redacted failure snapshots, `checks list|trace` CLI
-
-### `003-telegram-interface` — complete (bolts 008–012)
-
-Telegram bot as the primary UI on an owner-operated VPS. Checkpoint 1 decisions (2026-07-11):
-access modes `owner`/`invite` only (no public mode); hybrid LLM billing (owner key + per-user
-daily caps by default, optional encrypted personal key via `/setkey`, Fernet/`cryptography`
-approved); VPS-first deployment with an early Booking.com-journey smoke test from the VPS IP;
-logged-out checks were the original VPS fallback (superseded by intents 012–013); rebook confirmations via inline
-keyboards with the final booking click handed off to the user's device via deep link.
-
-1. `001-telegram-bot-gateway` — ✅ complete (bolt 008): long-poll update loop thread + router + dialogs, read-only commands, ADR-018
-2. `002-user-access-and-keys` — ✅ complete (bolt 009): schema v7 users table + scoping, owner/invite access, v8 invite codes, Fernet key store (ADR-019)
-3. `003-conversational-booking-ops` — ✅ complete (bolt 010): `/register` dialog, per-user alert routing, `[limits]` + fair scheduling
-4. `004-telegram-rebook-gate` — ✅ complete (bolt 011): inline-keyboard `ConfirmationGate` (blocking bridge, state machine frozen) + device-handoff deep link
-5. `005-vps-deployment` — ✅ complete (bolt 012): Dockerfile/systemd, ops runbook, and recovery cookie import
-
-### Subsequent completed intents
-
-- `004-production-hardening` — ✅ complete (bolts 013–015): robust production property navigation and availability handling.
-- `005-telegram-command-navigation` — ✅ complete (bolts 016 and 018): Telegram command menus and reliable inline callback selections.
-- `006-telegram-booking-management` — ✅ complete (bolt 017): conversational edit and delete booking flows.
-- `007-telegram-on-demand-checks` — ✅ complete (bolt 019): `/checknow` through the shared check coordinator.
-- `008-currency-aligned-price-checks` — ✅ complete (bolt 020): baseline-currency propagation, verification, and bounded recovery.
-- `009-invite-first-sharing` — ✅ complete (bolt 021): fixed invite-first admission, copyable invite handoff, username labels, and explicit revocation.
-- `010-telegram-privacy-boundaries` — ✅ complete (bolt 022): private-chat admission, caller-only exact data, aggregate-only admin usage, and revocation barriers.
-- `011-post-rebook-monitoring` — ✅ complete (bolt 023): replacement facts atomically update monitoring and invalidate stale savings.
-- `012-per-user-booking-sessions` — ✅ complete (bolts 024 and 026): encrypted user-scoped Booking.com state and Telegram-bound HTTPS `/connect` login.
-- `013-authenticated-mobile-web-monitoring` — ✅ complete (bolt 025): authenticated Android mobile-web checks with session/Genius provenance and fail-closed renewal.
-
-## Product constraints to preserve in every design and code change
-
-- **Booking.com hotels only** in MVP; reject other booking types with a clear message.
-- **Refundable bookings only**; a cheaper offer must itself still be refundable to count as savings.
-- **Equivalence = same property, same check-in/out dates, same room type**, still refundable.
-- **No autonomous cancel or purchase** — guided rebook always requires an explicit local confirmation step.
-- **Self-hosted only** (ADR-018 amends the MVP "local-only" wording): runs on the user's laptop or an
-  owner-operated VPS; no outbound calls to any BookSaver-hosted backend; secrets never committed to git.
-- **No public bot mode** — Telegram access is `owner`/`invite` only; strangers self-host the repo.
-
-# Orchestration rules
-
-- When you decompose a task into subtasks:
-  - If a subtask has clear inputs and outputs and does not require global architectural changes, treat it as an **execution** task.
-  - Execution tasks must be handled by Sonnet-backed subagents (e.g. `sonnet-worker`), not additional Fable instances.
-- When you identify multiple independent execution tasks, spawn **multiple Sonnet subagents in parallel** rather than doing them sequentially.
-- Keep all reasoning, plan updates, and cross-subtask coordination in this main Fable session.
-- Do not spawn Fable subagents. Parallel work must use Sonnet workers.
+- Inspect narrowly and preserve unrelated user work.
+- Discuss consequential design and security tradeoffs before implementation.
+- Use parallel execution workers for independent, bounded work when the environment supports the
+  repository's configured worker model; the main agent owns integration and verification.
+- Run targeted checks while editing and the full relevant quality gate before handoff.
+- After starting or deploying a service, verify process state, logs, health, ports, and dependencies.
+- Do not commit, push, merge, deploy, or change external state without the user's explicit approval.
+- Use Conventional Commits with a concise single-line subject when approval is given.

@@ -1,5 +1,5 @@
 ---
-id: US-008
+id: 002-enforce-pragmatic-equivalence-and-refundability
 status: complete
 implemented: true
 ---

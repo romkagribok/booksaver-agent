@@ -1,6 +1,8 @@
 {
+  "name": "booksaver-agent-tooling",
+  "private": true,
   "dependencies": {
     "fs-extra": "^11.3.5",
-    "js-yaml": "^4.2.0"
+    "js-yaml": "^4.3.0"
   }
 }

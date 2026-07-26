@@ -1,12 +1,22 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "booksaver-agent"
 version = "0.1.0"
 description = "Local daemon that monitors Booking.com hotel prices for refundable reservations"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["booking", "browser-automation", "price-monitoring", "telegram"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "playwright>=1.40",   # browser automation (ADR-007); run `playwright install chromium`
     "anthropic>=0.40",    # LLM extraction fallback (ADR-009)
@@ -18,6 +28,10 @@ dev = ["ruff", "pytest", "mypy"]
 
 [project.scripts]
 booksaver = "booksaver.cli.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/roman-marchuk/booksaver-agent"
+Issues = "https://github.com/roman-marchuk/booksaver-agent/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

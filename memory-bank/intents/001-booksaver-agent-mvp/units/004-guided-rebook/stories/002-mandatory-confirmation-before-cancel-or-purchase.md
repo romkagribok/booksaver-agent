@@ -1,5 +1,5 @@
 ---
-id: US-011
+id: 002-mandatory-confirmation-before-cancel-or-purchase
 status: complete
 implemented: true
 ---

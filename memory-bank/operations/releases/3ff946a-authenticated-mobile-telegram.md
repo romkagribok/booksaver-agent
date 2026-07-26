@@ -3,7 +3,7 @@
 ## Release identity
 
 - Released at: `2026-07-21T00:32:35Z`
-- Environment: owner-operated production VPS `booksaver-finland`
+- Environment: owner-operated production VPS (hostname redacted)
 - Source: `main` at `3ff946ac6a47f5b297b780350547d50707bfd9aa`
 - Previous deployed source: `98505271624b204916edc6f7e0ea4cddc0f13aa5`
 - Release scope: invite/privacy hardening, post-rebook monitoring propagation, per-user
@@ -26,7 +26,7 @@ browser and remote-auth configuration was installed in the persistent `/data/con
 - browser profile: `android-chromium`
 - locale: `en-US`
 - timezone: `America/Indiana/Indianapolis`
-- remote-auth public origin: `https://static.254.91.181.135.clients.your-server.de`
+- remote-auth public origin: redacted
 - login attempt timeout: 600 seconds
 
 The staging image was promoted to `booksaver-agent:latest`, and the production stack was

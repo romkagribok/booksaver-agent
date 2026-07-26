@@ -1,5 +1,5 @@
 ---
-id: US-025
+id: 001-register-booking-via-chat
 status: complete
 implemented: true
 ---

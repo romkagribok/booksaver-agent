@@ -1,5 +1,5 @@
 ---
-id: US-009
+id: 003-notify-via-email-and-telegram
 status: complete
 implemented: true
 ---

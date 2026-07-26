@@ -22,6 +22,7 @@ def test_compose_publishes_only_caddy_for_opt_in_remote_auth_profile() -> None:
     assert '"6080"' in booksaver_block
     assert "    ports:" not in booksaver_block
     assert "shm_size: 1g" in booksaver_block
+    assert "./config.toml:/data/config.toml:ro" in booksaver_block
 
 
 def test_caddy_routes_websocket_without_access_log_configuration() -> None:

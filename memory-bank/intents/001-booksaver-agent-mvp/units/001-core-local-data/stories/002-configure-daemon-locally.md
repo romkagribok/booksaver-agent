@@ -1,5 +1,5 @@
 ---
-id: US-002
+id: 002-configure-daemon-locally
 status: complete
 implemented: true
 ---

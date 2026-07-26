@@ -1,5 +1,5 @@
 ---
-id: US-032
+id: 001-confirm-rebook-in-telegram
 status: complete
 implemented: true
 ---

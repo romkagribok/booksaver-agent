@@ -29,12 +29,11 @@ When user invokes `/specsmd-operations-agent --unit="{name}"`:
 
 | Command | Skill | Description |
 |---------|-------|-------------|
-| `menu` | `.specsmd/aidlc/skills/operations/menu.md` | Show deployment status and options |
+| `menu` | `.specsmd/aidlc/skills/operations/navigator.md` | Show deployment status and options |
 | `build` | `.specsmd/aidlc/skills/operations/build.md` | Build deployment artifacts |
 | `deploy` | `.specsmd/aidlc/skills/operations/deploy.md` | Deploy to environment |
 | `verify` | `.specsmd/aidlc/skills/operations/verify.md` | Verify deployment success |
 | `monitor` | `.specsmd/aidlc/skills/operations/monitor.md` | Setup monitoring and observability |
-| `rollback` | `.specsmd/aidlc/skills/operations/rollback.md` | Rollback to previous version |
 
 ---
 

@@ -94,6 +94,14 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 """
 
 
+def _sample_config(data_path: Path) -> str:
+    """Return the starter config bound to the directory requested by ``init``."""
+    encoded_path = json.dumps(str(data_path))
+    return _SAMPLE_CONFIG.replace(
+        'data_directory = "~/.booksaver"', f"data_directory = {encoded_path}"
+    )
+
+
 def _config_path(args: argparse.Namespace) -> Path:
     if getattr(args, "config", None):
         return Path(args.config)
@@ -129,7 +137,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if config_path.exists():
         print(f"Config exists  : {config_path}  (not overwritten)")
     else:
-        config_path.write_text(_SAMPLE_CONFIG)
+        config_path.write_text(_sample_config(data_path))
         config_path.chmod(0o600)
         print(f"Config created : {config_path}")
         print()

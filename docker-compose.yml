@@ -11,12 +11,13 @@ services:
       # memory-bank/operations/vps-deployment-runbook.md for the full list
       # and how to generate BOOKSAVER_SECRET_KEY.
       - BOOKSAVER_TELEGRAM_BOT_TOKEN=${BOOKSAVER_TELEGRAM_BOT_TOKEN:?set in .env}
-      - BOOKSAVER_LLM_API_KEY=${BOOKSAVER_LLM_API_KEY:?set in .env}
+      - BOOKSAVER_LLM_API_KEY=${BOOKSAVER_LLM_API_KEY:-}
       - BOOKSAVER_SECRET_KEY=${BOOKSAVER_SECRET_KEY:?set in .env}
       # Optional: email notifications alongside/instead of Telegram.
       - BOOKSAVER_SMTP_PASSWORD=${BOOKSAVER_SMTP_PASSWORD:-}
     volumes:
       - booksaver-data:/data
+      - ./config.toml:/data/config.toml:ro
     # Chromium is the memory-hungry part of this container: a single headless
     # tab routinely spikes to 300-500MB RSS during a check, on top of the
     # ~100-150MB Python/Playwright baseline. The optional headed authentication

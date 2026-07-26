@@ -1,5 +1,5 @@
 ---
-id: US-006
+id: 003-extract-booking-and-offer-data-with-llm
 status: complete
 implemented: true
 ---

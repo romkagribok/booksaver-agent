@@ -1,5 +1,5 @@
 ---
-id: US-010
+id: 001-start-guided-rebook-only-after-explicit-intent
 status: complete
 implemented: true
 ---

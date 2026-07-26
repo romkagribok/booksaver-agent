@@ -14,12 +14,12 @@ status: success
 - **Image ID**: `sha256:43d9b664f1f552751102a4df90e446023899273c62e5ce5764c67b71f8a91c91`
 - **Size**: 549,157,788 bytes
 - **Release commit**: `9808584e64d2f61d333e84d3f26ac4ffee8a6cf2`
-- **Artifact location**: Local Docker image store on `booksaver-finland`; no external registry is
+- **Artifact location**: Local Docker image store on the production VPS; no external registry is
   configured for this owner-operated Compose deployment.
 
 ## Build Environment
 
-- **Host**: `booksaver-finland` (Hetzner VPS)
+- **Host**: owner-operated production VPS (provider and hostname redacted)
 - **Builder**: Docker Compose / BuildKit
 - **Base**: `python:3.12-slim`
 - **Browser**: Playwright Chromium 149 (driver build 1228)

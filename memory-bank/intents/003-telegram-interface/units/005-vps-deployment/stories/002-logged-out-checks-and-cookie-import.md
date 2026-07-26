@@ -1,5 +1,5 @@
 ---
-id: US-035
+id: 002-logged-out-checks-and-cookie-import
 status: complete
 implemented: true
 ---

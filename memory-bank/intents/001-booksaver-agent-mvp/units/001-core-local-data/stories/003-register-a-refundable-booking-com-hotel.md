@@ -1,5 +1,5 @@
 ---
-id: US-003
+id: 003-register-a-refundable-booking-com-hotel
 status: complete
 implemented: true
 ---
