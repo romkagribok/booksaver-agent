@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -34,6 +35,49 @@ class ControlledRunner:
             if work.cancel_event.is_set() or daemon_stop_event.is_set():
                 return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
         return self.result
+
+
+@dataclass
+class RunnerCall:
+    work: RemoteBrowserWork
+    release: threading.Event = field(default_factory=threading.Event)
+
+
+class SequentialRunner:
+    def __init__(self, *, ignore_cancel_calls: set[int] | None = None) -> None:
+        self.ignore_cancel_calls = ignore_cancel_calls or set()
+        self.calls: list[RunnerCall] = []
+        self._condition = threading.Condition()
+
+    def run(
+        self,
+        work: RemoteBrowserWork,
+        daemon_stop_event: threading.Event,
+        on_ready: object,
+    ) -> RemoteBrowserResult:
+        call = RunnerCall(work)
+        with self._condition:
+            call_index = len(self.calls)
+            self.calls.append(call)
+            self._condition.notify_all()
+        assert callable(on_ready)
+        on_ready()
+        while not call.release.wait(0.005):
+            if daemon_stop_event.is_set():
+                return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
+            if (
+                work.cancel_event.is_set()
+                and call_index not in self.ignore_cancel_calls
+            ):
+                return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
+        if work.cancel_event.is_set():
+            return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
+        return RemoteBrowserResult(RemoteAuthStatus.FAILED)
+
+    def wait_for_call(self, index: int) -> RunnerCall:
+        with self._condition:
+            assert self._condition.wait_for(lambda: len(self.calls) > index, timeout=1)
+            return self.calls[index]
 
 
 def _settings(**overrides: object) -> RemoteAuthSettings:
@@ -160,6 +204,191 @@ def test_manager_cancellation_is_idempotent_and_never_captures() -> None:
     runner.release.set()
     manager.stop_all()
     assert captured == []
+
+
+def test_same_user_connect_immediately_replaces_active_attempt() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    gate = threading.Lock()
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, text: messages.append(text),
+        browser_gate=gate,
+    )
+    first = manager.create(123, 123)
+    runner.wait_for_call(0)
+    first_grant = manager.exchange(first.url.rsplit("/", 1)[-1], 123)
+
+    replacement = manager.create(123, 123)
+    runner.wait_for_call(1)
+
+    assert replacement.url != first.url
+    assert manager.viewer_state(first_grant.session_token).status is RemoteAuthStatus.CANCELLED
+    assert not manager.cancel(first_grant.session_token)
+    replacement_grant = manager.exchange(
+        replacement.url.rsplit("/", 1)[-1],
+        123,
+    )
+    assert (
+        manager.viewer_state(replacement_grant.session_token).status
+        is RemoteAuthStatus.CONNECTED
+    )
+    assert messages == []
+    assert gate.locked()
+    manager.stop_all()
+    assert not gate.locked()
+
+
+def test_same_user_replacement_reserves_gate_during_worker_teardown() -> None:
+    runner = SequentialRunner(ignore_cancel_calls={0})
+    gate = threading.Lock()
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+        browser_gate=gate,
+        replacement_join_timeout=1.0,
+    )
+    manager.create(123, 123)
+    first_call = runner.wait_for_call(0)
+    replacements: list[str] = []
+
+    thread = threading.Thread(
+        target=lambda: replacements.append(manager.create(123, 123).url)
+    )
+    thread.start()
+    assert first_call.work.cancel_event.wait(1)
+
+    assert not gate.acquire(blocking=False)
+    first_call.release.set()
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    runner.wait_for_call(1)
+    assert len(replacements) == 1
+    assert gate.locked()
+    manager.stop_all()
+
+
+def test_same_user_connect_replaces_pagehide_cancelled_worker() -> None:
+    runner = SequentialRunner(ignore_cancel_calls={0})
+    messages: list[str] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, text: messages.append(text),
+        replacement_join_timeout=1.0,
+    )
+    first = manager.create(123, 123)
+    first_call = runner.wait_for_call(0)
+    grant = manager.exchange(first.url.rsplit("/", 1)[-1], 123)
+    assert manager.cancel(grant.session_token)
+    replacements: list[str] = []
+    thread = threading.Thread(
+        target=lambda: replacements.append(manager.create(123, 123).url)
+    )
+    thread.start()
+    first_call.release.set()
+    thread.join(timeout=1)
+
+    assert len(replacements) == 1
+    runner.wait_for_call(1)
+    assert messages == []
+    manager.stop_all()
+
+
+def test_same_user_replacement_timeout_never_starts_second_browser() -> None:
+    runner = SequentialRunner(ignore_cancel_calls={0})
+    gate = threading.Lock()
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+        browser_gate=gate,
+        replacement_join_timeout=0.01,
+    )
+    manager.create(123, 123)
+    first_call = runner.wait_for_call(0)
+
+    with pytest.raises(RemoteAuthBusy, match="still closing"):
+        manager.create(123, 123)
+    assert len(runner.calls) == 1
+    assert gate.locked()
+
+    first_call.release.set()
+    for _ in range(100):
+        if not gate.locked():
+            break
+        threading.Event().wait(0.01)
+    assert not gate.locked()
+
+    manager.create(123, 123)
+    runner.wait_for_call(1)
+    manager.stop_all()
+
+
+def test_different_user_cannot_reclaim_active_attempt() -> None:
+    runner = SequentialRunner()
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+    )
+    manager.create(123, 123)
+    first_call = runner.wait_for_call(0)
+
+    with pytest.raises(RemoteAuthBusy, match="Another Booking.com login"):
+        manager.create(456, 456)
+
+    assert not first_call.work.cancel_event.is_set()
+    assert len(runner.calls) == 1
+    manager.stop_all()
+
+
+def test_two_racing_same_user_connects_leave_one_browser_active() -> None:
+    runner = SequentialRunner()
+    gate = threading.Lock()
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+        browser_gate=gate,
+    )
+    manager.create(123, 123)
+    runner.wait_for_call(0)
+    barrier = threading.Barrier(3)
+    launches: list[str] = []
+
+    def _replace() -> None:
+        barrier.wait()
+        launches.append(manager.create(123, 123).url)
+
+    threads = [threading.Thread(target=_replace) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    runner.wait_for_call(2)
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(launches) == 2
+    assert len(set(launches)) == 2
+    assert len(runner.calls) == 3
+    assert gate.locked()
+    manager.stop_all()
 
 
 def test_manager_target_cancellation_is_scoped_and_prevents_capture() -> None:

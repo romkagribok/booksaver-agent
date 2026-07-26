@@ -15,8 +15,8 @@ and final booking action to the human.
 
 ## Current state
 
-The implemented hotel-monitoring scope is complete: **98 in-scope stories, 29 construction bolts,
-and 883 automated tests**. The current release includes:
+The implemented hotel-monitoring scope is complete: **103 in-scope stories, 31 construction bolts,
+and 898 automated tests**. The current release includes:
 
 - scripted Playwright searches with bounded LLM recovery when a page step changes;
 - same-property, dates, occupancy, room-type, currency, and refundability checks;
@@ -24,7 +24,8 @@ and 883 automated tests**. The current release includes:
 - a private Telegram interface with owner-issued, single-use invites and per-user isolation;
 - encrypted, user-scoped Booking.com sessions and optional personal Anthropic keys;
 - Docker/systemd deployment and an opt-in HTTPS `/connect` login flow for a trusted VPS;
-- a noVNC-compatible, deny-by-default login viewer policy with visible connection failures.
+- a noVNC-compatible, deny-by-default login viewer with native mobile-keyboard controls;
+- immediate same-user `/connect` recovery after a viewer is closed or abandoned;
 - complete user purge across SQLite and encrypted sessions, plus Booking.com-only login navigation.
 
 It is ready for technical review and controlled self-hosting, not broad or untrusted-user

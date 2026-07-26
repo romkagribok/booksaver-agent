@@ -19,6 +19,7 @@ from booksaver.application.remote_auth import (
 from booksaver.domain.remote_auth import RemoteAuthSettings
 
 from .telegram_init_data import TelegramInitDataError, TelegramInitDataVerifier
+from .viewer import build_viewer_document
 
 _MAX_BODY_BYTES = 32_768
 _COOKIE_NAME = "booksaver_auth"
@@ -76,67 +77,7 @@ class RemoteAuthHttpApp:
 
     def _bootstrap(self, launch_token: str) -> HttpResponse:
         nonce = secrets.token_urlsafe(18)
-        token_json = json.dumps(launch_token)
-        html = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Connect Booking.com</title>
-<script src="https://telegram.org/js/telegram-web-app.js?63"></script>
-<style nonce="{nonce}">
-html,body{{margin:0;height:100%;background:#101820;color:#fff;font:16px system-ui,sans-serif}}
-body{{display:flex;flex-direction:column}}#status{{padding:12px 16px;background:#182633}}
-#screen{{flex:1;min-height:0;overflow:hidden;background:#000}}button{{margin:10px;padding:12px}}
-</style></head><body><div id="status">Authorizing this connection…</div>
-<div id="screen"></div><button id="cancel" type="button">Cancel</button>
-<script nonce="{nonce}">
-const launchToken={token_json}; let rfb=null; let terminalState=false; let viewerError=false;
-const terminalStatuses=new Set(['succeeded','failed','expired','cancelled']);
-const statusNode=document.getElementById('status');
-const tg=window.Telegram&&window.Telegram.WebApp; if(tg){{tg.ready();tg.expand();}}
-function setViewerError(message){{
- if(terminalState)return; viewerError=true; statusNode.textContent=message;
-}}
-async function jsonRequest(url,options={{}}){{
- const response=await fetch(url,{{credentials:'same-origin',...options}});
- const data=await response.json().catch(()=>({{message:'Connection unavailable.'}}));
- if(!response.ok) throw new Error(data.message||'Connection unavailable.'); return data;
-}}
-async function poll(){{
- try{{const state=await jsonRequest('/api/connect/session');
-  terminalState=terminalStatuses.has(state.status);
-  if(!viewerError||terminalState)statusNode.textContent=state.message;
-  if((state.status==='ready'||state.status==='connected')&&!rfb){{
-   const module=await import('/novnc/core/rfb.js');
-   const scheme=location.protocol==='https:'?'wss':'ws';
-   const ws=`${{scheme}}://${{location.host}}${{state.websocket_path}}?token=${{encodeURIComponent(state.websocket_token)}}`;
-   rfb=new module.default(document.getElementById('screen'),ws);
-   rfb.addEventListener('connect',()=>{{
-    if(!terminalState){{viewerError=false;statusNode.textContent='Remote browser connected.';}}
-   }});
-   rfb.addEventListener('securityfailure',()=>setViewerError(
-    'The remote browser connection failed. Return to Telegram and try /connect again.'));
-   rfb.addEventListener('disconnect',event=>{{
-    if(event.detail&&event.detail.clean===false)setViewerError(
-     'The remote browser connection was lost. Return to Telegram and try /connect again.');
-   }});
-   rfb.scaleViewport=true; rfb.resizeSession=false; rfb.showDotCursor=true;
-  }}
-  if(terminalState){{if(rfb)rfb.disconnect();return;}}
-  setTimeout(poll,1000);
- }}catch(error){{statusNode.textContent=error.message;}}
-}}
-async function start(){{
- if(!tg||!tg.initData)throw new Error(
-  'Open this page from the button in your private Telegram chat.');
- await jsonRequest('/api/connect/exchange',{{method:'POST',
-  headers:{{'Content-Type':'application/json'}},
-  body:JSON.stringify({{launch_token:launchToken,init_data:tg.initData}})}}); await poll();
-}}
-document.getElementById('cancel').addEventListener('click',async()=>{{
- try{{await jsonRequest('/api/connect/cancel',{{method:'POST'}});}}catch(_){{}} if(tg)tg.close();
-}});
-start().catch(error=>{{statusNode.textContent=error.message;}});
-</script></body></html>""".encode()
+        html = build_viewer_document(launch_token, nonce)
         websocket_origin = self._expected_origin.replace("https:", "wss:")
         csp = (
             "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "

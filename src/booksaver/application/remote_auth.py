@@ -89,6 +89,7 @@ class _Attempt:
     failure: RemoteAuthFailure | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
     worker: threading.Thread | None = None
+    suppress_cancel_notification: bool = False
 
 
 def _digest(token: str) -> bytes:
@@ -115,6 +116,7 @@ class RemoteAuthenticationManager:
         on_success: SuccessfulConnection | None = None,
         clock: Clock | None = None,
         browser_gate: threading.Lock | None = None,
+        replacement_join_timeout: float = 5.0,
     ) -> None:
         self._settings = settings
         self._runner = runner
@@ -124,11 +126,14 @@ class RemoteAuthenticationManager:
         self._on_success = on_success or (lambda _user_id: None)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._browser_gate = browser_gate or threading.Lock()
+        self._replacement_join_timeout = max(0.0, replacement_join_timeout)
+        self._create_lock = threading.Lock()
         self._lock = threading.RLock()
         self._attempts: dict[str, _Attempt] = {}
         self._launch_index: dict[bytes, str] = {}
         self._viewer_index: dict[bytes, str] = {}
         self._active_attempt_id: str | None = None
+        self._replacement_attempt_id: str | None = None
 
     @property
     def enabled(self) -> bool:
@@ -139,50 +144,111 @@ class RemoteAuthenticationManager:
             raise RemoteAuthUnavailable("Booking.com connection is not configured yet.")
         if self._daemon_stop_event.is_set():
             raise RemoteAuthUnavailable("BookSaver is shutting down; try again after restart.")
-        now = self._clock()
+        with self._create_lock:
+            return self._create_serialized(telegram_user_id, chat_id)
+
+    def _create_serialized(self, telegram_user_id: int, chat_id: int) -> AttemptLaunch:
+        replacement_id: str | None = None
+        replacement_worker: threading.Thread | None = None
         with self._lock:
+            if self._daemon_stop_event.is_set():
+                raise RemoteAuthUnavailable(
+                    "BookSaver is shutting down; try again after restart."
+                )
+            now = self._clock()
             self._expire_locked(now)
             if self._active_attempt_id is not None:
+                active = self._attempts[self._active_attempt_id]
+                if active.telegram_user_id != telegram_user_id:
+                    raise RemoteAuthBusy(
+                        "Another Booking.com login is currently active. "
+                        "Try again in a few minutes."
+                    )
+                replacement_id = active.attempt_id
+                replacement_worker = active.worker
+                self._replacement_attempt_id = active.attempt_id
+                active.suppress_cancel_notification = True
+                if not active.status.is_terminal:
+                    active.status = RemoteAuthStatus.CANCELLED
+                    active.cancel_event.set()
+            else:
+                return self._start_attempt_locked(telegram_user_id, chat_id, now)
+
+        if replacement_worker is not None:
+            replacement_worker.join(timeout=self._replacement_join_timeout)
+
+        with self._lock:
+            assert replacement_id is not None
+            if self._active_attempt_id == replacement_id:
+                if self._replacement_attempt_id == replacement_id:
+                    # The old worker still owns the gate and will release it.
+                    self._replacement_attempt_id = None
                 raise RemoteAuthBusy(
-                    "Another Booking.com login is currently active. Try again in a few minutes."
+                    "Your previous Booking.com login is still closing. "
+                    "Send /connect again in a few seconds."
                 )
-            if not self._browser_gate.acquire(blocking=False):
-                raise RemoteAuthBusy(
-                    "A price check or Booking.com login is already running. Try again shortly."
+
+            gate_reserved = self._replacement_attempt_id == replacement_id
+            if gate_reserved:
+                self._replacement_attempt_id = None
+            if self._daemon_stop_event.is_set():
+                if gate_reserved:
+                    self._browser_gate.release()
+                raise RemoteAuthUnavailable(
+                    "BookSaver is shutting down; try again after restart."
                 )
-            launch_token = secrets.token_urlsafe(32)
-            websocket_token = secrets.token_urlsafe(32)
-            attempt = _Attempt(
-                attempt_id=str(uuid.uuid4()),
-                telegram_user_id=telegram_user_id,
-                chat_id=chat_id,
-                launch_digest=_digest(launch_token),
-                websocket_token=websocket_token,
-                created_at=now,
-                expires_at=now + timedelta(seconds=self._settings.session_timeout_seconds),
+            return self._start_attempt_locked(
+                telegram_user_id,
+                chat_id,
+                self._clock(),
+                gate_already_acquired=gate_reserved,
             )
-            self._attempts[attempt.attempt_id] = attempt
-            self._launch_index[attempt.launch_digest] = attempt.attempt_id
-            self._active_attempt_id = attempt.attempt_id
-            worker = threading.Thread(
-                target=self._run_attempt,
-                args=(attempt.attempt_id,),
-                name=f"booksaver-auth-{attempt.attempt_id[:8]}",
-                daemon=True,
+
+    def _start_attempt_locked(
+        self,
+        telegram_user_id: int,
+        chat_id: int,
+        now: datetime,
+        *,
+        gate_already_acquired: bool = False,
+    ) -> AttemptLaunch:
+        if not gate_already_acquired and not self._browser_gate.acquire(blocking=False):
+            raise RemoteAuthBusy(
+                "A price check or Booking.com login is already running. Try again shortly."
             )
-            attempt.worker = worker
-            try:
-                worker.start()
-            except Exception:
-                self._active_attempt_id = None
-                self._attempts.pop(attempt.attempt_id, None)
-                self._launch_index.pop(attempt.launch_digest, None)
-                self._browser_gate.release()
-                raise
-            return AttemptLaunch(
-                url=f"{self._settings.base_url}/connect/{launch_token}",
-                expires_at=attempt.expires_at,
-            )
+        launch_token = secrets.token_urlsafe(32)
+        websocket_token = secrets.token_urlsafe(32)
+        attempt = _Attempt(
+            attempt_id=str(uuid.uuid4()),
+            telegram_user_id=telegram_user_id,
+            chat_id=chat_id,
+            launch_digest=_digest(launch_token),
+            websocket_token=websocket_token,
+            created_at=now,
+            expires_at=now + timedelta(seconds=self._settings.session_timeout_seconds),
+        )
+        self._attempts[attempt.attempt_id] = attempt
+        self._launch_index[attempt.launch_digest] = attempt.attempt_id
+        self._active_attempt_id = attempt.attempt_id
+        worker = threading.Thread(
+            target=self._run_attempt,
+            args=(attempt.attempt_id,),
+            name=f"booksaver-auth-{attempt.attempt_id[:8]}",
+            daemon=True,
+        )
+        attempt.worker = worker
+        try:
+            worker.start()
+        except Exception:
+            self._active_attempt_id = None
+            self._attempts.pop(attempt.attempt_id, None)
+            self._launch_index.pop(attempt.launch_digest, None)
+            self._browser_gate.release()
+            raise
+        return AttemptLaunch(
+            url=f"{self._settings.base_url}/connect/{launch_token}",
+            expires_at=attempt.expires_at,
+        )
 
     def expected_telegram_user(self, launch_token: str) -> int:
         now = self._clock()
@@ -253,16 +319,17 @@ class RemoteAuthenticationManager:
             return cancelled
 
     def stop_all(self, join_timeout: float = 10.0) -> None:
-        with self._lock:
-            workers = []
-            for attempt in self._attempts.values():
-                if not attempt.status.is_terminal:
-                    attempt.status = RemoteAuthStatus.CANCELLED
-                    attempt.cancel_event.set()
-                if attempt.worker is not None and attempt.worker.is_alive():
-                    workers.append(attempt.worker)
-        for worker in workers:
-            worker.join(timeout=join_timeout)
+        with self._create_lock:
+            with self._lock:
+                workers = []
+                for attempt in self._attempts.values():
+                    if not attempt.status.is_terminal:
+                        attempt.status = RemoteAuthStatus.CANCELLED
+                        attempt.cancel_event.set()
+                    if attempt.worker is not None and attempt.worker.is_alive():
+                        workers.append(attempt.worker)
+            for worker in workers:
+                worker.join(timeout=join_timeout)
 
     def _run_attempt(self, attempt_id: str) -> None:
         with self._lock:
@@ -331,7 +398,11 @@ class RemoteAuthenticationManager:
                 chat_id,
                 "Booking.com connection failed and no session was saved. Send /connect to retry.",
             )
-        elif status is RemoteAuthStatus.CANCELLED and not self._daemon_stop_event.is_set():
+        elif (
+            status is RemoteAuthStatus.CANCELLED
+            and not attempt.suppress_cancel_notification
+            and not self._daemon_stop_event.is_set()
+        ):
             self._safe_notify(chat_id, "Booking.com connection cancelled.")
 
     def _attempt_for_launch_locked(self, token: str, now: datetime) -> _Attempt:
@@ -379,7 +450,8 @@ class RemoteAuthenticationManager:
     def _release_active_locked(self, attempt: _Attempt) -> None:
         if self._active_attempt_id == attempt.attempt_id:
             self._active_attempt_id = None
-            self._browser_gate.release()
+            if self._replacement_attempt_id != attempt.attempt_id:
+                self._browser_gate.release()
         if attempt.status.is_terminal:
             attempt.websocket_token = ""
             self._launch_index.pop(attempt.launch_digest, None)

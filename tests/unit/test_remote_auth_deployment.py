@@ -9,6 +9,10 @@ def test_image_contains_transient_remote_browser_dependencies() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text()
     for package in ("novnc", "websockify", "x11vnc", "xvfb"):
         assert package in dockerfile
+    for module in ("rfb.js", "keyboard.js", "keysym.js", "keysymdef.js"):
+        assert f"test -f /usr/share/novnc/core/{module}" in dockerfile or (
+            f"test -f /usr/share/novnc/core/input/{module}" in dockerfile
+        )
 
 
 def test_compose_publishes_only_caddy_for_opt_in_remote_auth_profile() -> None:

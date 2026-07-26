@@ -22,6 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         websockify \
         x11vnc \
         xvfb \
+    && test -f /usr/share/novnc/core/rfb.js \
+    && test -f /usr/share/novnc/core/input/keyboard.js \
+    && test -f /usr/share/novnc/core/input/keysym.js \
+    && test -f /usr/share/novnc/core/input/keysymdef.js \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user the daemon runs as. Chromium refuses to run as root without

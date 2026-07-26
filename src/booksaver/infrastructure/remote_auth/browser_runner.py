@@ -123,13 +123,7 @@ class SystemRemoteBrowserRunner:
                 browser = playwright.chromium.launch(
                     headless=False,
                     env=browser_env,
-                    args=[
-                        "--window-position=0,0",
-                        "--window-size=480,960",
-                        "--disable-session-crashed-bubble",
-                        "--disable-features=Translate",
-                        "--no-first-run",
-                    ],
+                    args=self._chromium_args(),
                 )
                 descriptor = playwright.devices[
                     self._mobile_settings.profile.playwright_device_name
@@ -243,8 +237,29 @@ class SystemRemoteBrowserRunner:
                         pass
         processes.clear()
 
-    @staticmethod
-    def _require_tools() -> None:
+    def _require_tools(self) -> None:
         missing = [name for name in ("Xvfb", "x11vnc", "websockify") if shutil.which(name) is None]
         if missing:
             raise RuntimeError("Remote display components are unavailable")
+        self._require_viewer_modules()
+
+    def _require_viewer_modules(self) -> None:
+        required = (
+            "core/rfb.js",
+            "core/input/keyboard.js",
+            "core/input/keysym.js",
+            "core/input/keysymdef.js",
+        )
+        if any(not (self._settings.novnc_root / relative).is_file() for relative in required):
+            raise RuntimeError("Required noVNC viewer modules are unavailable")
+
+    @staticmethod
+    def _chromium_args() -> list[str]:
+        return [
+            "--kiosk",
+            "--window-position=0,0",
+            "--window-size=480,960",
+            "--disable-session-crashed-bubble",
+            "--disable-features=Translate",
+            "--no-first-run",
+        ]

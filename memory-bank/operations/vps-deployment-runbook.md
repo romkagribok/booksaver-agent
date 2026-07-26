@@ -266,11 +266,11 @@ MFA code, or Booking.com session is sent in Telegram messages.
 1. In a **private chat** with the admitted BookSaver bot, send `/connect`.
 2. Tap **Open secure Booking.com login**. The button opens a Telegram Mini App at your configured
    HTTPS domain. Do not copy or share this short-lived, single-use link.
-3. Sign in on the real Booking.com page shown inside the temporary mobile browser using your direct
-   Booking.com email and password. Google, Apple, and all other external identity-provider document
-   navigation is blocked in main pages, child frames, and popups; ordinary external resources
-   required by Booking.com remain available. Complete Booking-owned MFA/passkey prompts if
-   Booking.com requests them.
+3. The streamed browser should open without desktop tabs or an address bar. On a phone, tap the
+   remote Booking.com field, then tap **Keyboard** to open the device keyboard. Use **Next** for Tab,
+   **Enter** to submit/advance, and **Hide keyboard** to restore the full canvas. Sign in using your
+   direct Booking.com email and password. Google, Apple, and other external identity-provider
+   document navigation is blocked; complete Booking-owned MFA/passkey prompts if requested.
 4. Wait for **Connected** and return to Telegram. BookSaver saves only normalized Booking.com
    cookies after positive rendered account evidence, encrypts them with `BOOKSAVER_SECRET_KEY`, and
    destroys the temporary Chromium/Xvfb/VNC processes and all viewer capabilities.
@@ -278,11 +278,19 @@ MFA code, or Booking.com session is sent in Telegram messages.
    web. `Genius observed` is evidence the page rendered Genius state; `Genius not observed` does not
    mean authentication failed because not every stay/offer has a Genius discount.
 
+Before accepting a release, repeat this flow on Telegram Android, iOS/iPadOS, and Desktop. On each
+client, verify typing, Unicode/composition, Backspace, Next, Enter, Hide/Show, viewport resizing,
+terminal cleanup, and the absence of misleading desktop browser chrome. Then close the viewer
+without pressing Cancel and immediately send `/connect` again: the same user must receive a fresh,
+usable link without waiting for the full timeout.
+
 The launch capability is bound to the Telegram numeric user ID from signed, fresh Mini App
 `initData`; it is exchanged once for an HttpOnly viewer session. Only one check/login can own the
-browser lease, so a busy response is normal during another live check. Attempts expire after the
-configured timeout and can be cancelled safely. An `auth_required` scheduled result prompts only
-the affected user to reconnect and suppresses duplicate prompts for 24 hours.
+browser lease, so a busy response is normal during another user's login or a live check. A new
+same-user `/connect` cancels and replaces that user's current attempt after bounded cleanup; if
+cleanup is unusually slow, the bot gives a specific short retry instruction. Attempts also expire
+after the configured timeout and can be cancelled safely. An `auth_required` scheduled result
+prompts only the affected user to reconnect and suppresses duplicate prompts for 24 hours.
 
 ### Trust boundary
 

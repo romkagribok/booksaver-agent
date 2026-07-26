@@ -6,8 +6,8 @@ BookSaver Agent is a self-hosted Python daemon/CLI and private Telegram bot. It 
 Booking.com hotel reservations, detects cheaper equivalent offers through scripted browser
 automation with bounded LLM assistance, and guides rebooking with mandatory human confirmation.
 
-The implemented scope is 98 in-scope stories across intents 001-015, 29 completed bolts, schema
-v10, 26 ADRs, and 883 tests. Two assigned extensibility stories remain explicitly post-MVP. See
+The implemented scope is 103 in-scope stories across intents 001-016, 31 completed bolts, schema
+v10, 26 ADRs, and 898 tests. Two assigned extensibility stories remain explicitly post-MVP. See
 `memory-bank/story-index.md` for status and `memory-bank/standards/decision-index.md` for decisions.
 
 ## Commands

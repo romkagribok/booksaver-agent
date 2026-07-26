@@ -334,6 +334,22 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-099` | Block external identity-provider navigation | Authentication Boundary | Complete | `002-direct-booking-auth-only/stories/001-block-external-provider-navigation.md` |
 | `US-100` | Guide users to direct Booking.com login | Authentication Boundary | Complete | `002-direct-booking-auth-only/stories/002-guide-direct-booking-login.md` |
 
+## 016-device-aware-remote-auth-viewer
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-device-aware-remote-auth-viewer` | 5 stories | Complete (bolts 030–031) |
+
+### 001-device-aware-remote-auth-viewer: Device-Aware Remote Authentication Viewer
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-101` | Present a device-adaptive streamed viewer | Remote Auth Viewer | Complete | `001-device-aware-remote-auth-viewer/stories/001-present-device-adaptive-viewer.md` |
+| `US-102` | Type with the native mobile keyboard | Remote Auth Viewer | Complete | `001-device-aware-remote-auth-viewer/stories/002-type-with-native-mobile-keyboard.md` |
+| `US-103` | Preserve viewport and lifecycle usability | Remote Auth Viewer | Complete | `001-device-aware-remote-auth-viewer/stories/003-preserve-viewport-and-lifecycle-usability.md` |
+| `US-104` | Preserve credential and desktop safety | Remote Auth Viewer | Complete | `001-device-aware-remote-auth-viewer/stories/004-preserve-credential-and-desktop-safety.md` |
+| `US-105` | Recover from an abandoned viewer | Remote Auth Viewer | Complete | `001-device-aware-remote-auth-viewer/stories/005-recover-from-abandoned-viewer.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -353,6 +369,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `013-authenticated-mobile-web-monitoring` | 1 | 6 | Complete (bolt 025; 867 tests) |
 | `014-remote-auth-display-reliability` | 1 | 2 | Complete (bolt 027; 871 tests) |
 | `015-authentication-boundary-hardening` | 2 | 4 | Complete (bolts 028–029; 883 tests) |
+| `016-device-aware-remote-auth-viewer` | 1 | 5 | Complete (bolts 030–031; 898 tests) |
 
-All 100 stories (98 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
+All 105 stories (103 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
 exactly once.

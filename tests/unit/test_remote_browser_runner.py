@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from booksaver.domain.mobile_web import MobileWebSettings
+from booksaver.domain.remote_auth import RemoteAuthSettings
 from booksaver.infrastructure.remote_auth.browser_runner import SystemRemoteBrowserRunner
 
 
@@ -142,3 +144,41 @@ def test_remote_browser_cancels_downloads_on_every_page() -> None:
     context.page_handler(Page())
     handlers["download"](Download())
     assert cancelled == [True]
+
+
+def test_remote_browser_uses_chrome_free_kiosk_presentation() -> None:
+    args = SystemRemoteBrowserRunner._chromium_args()  # noqa: SLF001
+
+    assert "--kiosk" in args
+    assert "--window-position=0,0" in args
+    assert "--window-size=480,960" in args
+    assert not any(argument.startswith("--app=") for argument in args)
+
+
+def test_remote_browser_requires_all_viewer_modules(tmp_path: Any) -> None:
+    settings = RemoteAuthSettings(
+        enabled=True,
+        public_url="https://connect.example.test",
+        novnc_root=tmp_path,
+    )
+    runner = SystemRemoteBrowserRunner(settings, MobileWebSettings())
+    required = (
+        "core/rfb.js",
+        "core/input/keyboard.js",
+        "core/input/keysym.js",
+        "core/input/keysymdef.js",
+    )
+    for relative in required:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("export default {}")
+
+    runner._require_viewer_modules()  # noqa: SLF001
+    (tmp_path / "core/input/keyboard.js").unlink()
+
+    try:
+        runner._require_viewer_modules()  # noqa: SLF001
+    except RuntimeError as exc:
+        assert str(exc) == "Required noVNC viewer modules are unavailable"
+    else:
+        raise AssertionError("Missing noVNC input module was accepted")

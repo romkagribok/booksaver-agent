@@ -113,21 +113,62 @@ def test_bootstrap_reports_safe_viewer_connection_failures(tmp_path: Path) -> No
     response = app.handle("GET", "/connect/launch-secret", {})
     body = response.body.decode()
 
-    assert "rfb.addEventListener('connect'" in body
-    assert "rfb.addEventListener('securityfailure'" in body
-    assert "rfb.addEventListener('disconnect'" in body
-    assert (
-        "The remote browser connection failed. Return to Telegram and try /connect again."
-        in body
-    )
-    assert (
-        "The remote browser connection was lost. Return to Telegram and try /connect again."
-        in body
-    )
+    assert "current.addEventListener('connect'" in body
+    assert "current.addEventListener('securityfailure'" in body
+    assert "current.addEventListener('disconnect'" in body
+    assert "The remote browser connection failed." in body
+    assert "The remote browser connection was lost." in body
+    assert "Return to Telegram and try /connect again." in body
     assert "terminalState=terminalStatuses.has(state.status)" in body
-    assert "if(!viewerError||terminalState)statusNode.textContent=state.message" in body
-    assert "if(terminalState)return; viewerError=true" in body
+    assert "if(!viewerError||terminalState)setStatus(state.message)" in body
+    assert "if(terminalState)return;" in body
     assert "event.detail.reason" not in body
+
+
+def test_bootstrap_exposes_safe_touch_keyboard_and_viewport_controls(tmp_path: Path) -> None:
+    app, _manager, _verifier = _app(tmp_path)
+    body = app.handle("GET", "/connect/launch-secret", {}).body.decode()
+
+    assert 'id="capture" type="password"' in body
+    assert 'autocomplete="off"' in body
+    assert 'autocorrect="off"' in body
+    assert 'id="keyboard"' in body
+    assert 'id="next"' in body
+    assert 'id="enter"' in body
+    assert "navigator.maxTouchPoints>0" in body
+    assert "matchMedia('(pointer:coarse)')" in body
+    assert "tg.viewportStableHeight||tg.viewportHeight" in body
+    assert "window.visualViewport" in body
+    assert "KeyTable.XK_BackSpace" in body
+    assert "KeyTable.XK_Tab" in body
+    assert "KeyTable.XK_Return" in body
+    assert "keysyms.lookup" in body
+    assert "clipboard" not in body.lower()
+    assert "<textarea" not in body.lower()
+
+
+def test_bootstrap_cancels_on_pagehide_but_not_visibility_change(tmp_path: Path) -> None:
+    app, _manager, _verifier = _app(tmp_path)
+    body = app.handle("GET", "/connect/launch-secret", {}).body.decode()
+
+    assert "window.addEventListener('pagehide',cancelOnClose)" in body
+    assert "event&&event.persisted" in body
+    assert "keepalive:true" in body
+    assert "visibilitychange" not in body
+    assert "viewerAuthorized||terminalState||closeRequested" in body
+
+
+def test_bootstrap_uses_packaged_novnc_input_modules(tmp_path: Path) -> None:
+    app, _manager, _verifier = _app(tmp_path)
+    body = app.handle("GET", "/connect/launch-secret", {}).body.decode()
+
+    assert "import('/novnc/core/rfb.js')" in body
+    assert "import('/novnc/core/input/keyboard.js')" in body
+    assert "import('/novnc/core/input/keysym.js')" in body
+    assert "import('/novnc/core/input/keysymdef.js')" in body
+    assert "new modules.Keyboard(captureNode)" in body
+    assert "compositionstart" in body
+    assert "compositionend" in body
 
 
 def test_exchange_requires_exact_origin_and_sets_hardened_cookie(tmp_path: Path) -> None:
