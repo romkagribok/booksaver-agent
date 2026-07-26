@@ -15,15 +15,16 @@ and final booking action to the human.
 
 ## Current state
 
-The implemented hotel-monitoring scope is complete: **92 in-scope stories, 26 construction bolts,
-and 870 automated tests**. The current release includes:
+The implemented hotel-monitoring scope is complete: **94 in-scope stories, 27 construction bolts,
+and 871 automated tests**. The current release includes:
 
 - scripted Playwright searches with bounded LLM recovery when a page step changes;
 - same-property, dates, occupancy, room-type, currency, and refundability checks;
 - local SQLite history, redacted traces, savings alerts, and guided rebooking;
 - a private Telegram interface with owner-issued, single-use invites and per-user isolation;
 - encrypted, user-scoped Booking.com sessions and optional personal Anthropic keys;
-- Docker/systemd deployment and an opt-in HTTPS `/connect` login flow for a trusted VPS.
+- Docker/systemd deployment and an opt-in HTTPS `/connect` login flow for a trusted VPS;
+- a noVNC-compatible, deny-by-default login viewer policy with visible connection failures.
 
 It is ready for technical review and controlled self-hosting, not broad or untrusted-user
 deployment. Open hardening work includes [journey verification](https://github.com/romkagribok/booksaver-agent/issues/4),

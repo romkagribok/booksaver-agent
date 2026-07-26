@@ -89,24 +89,39 @@ body{{display:flex;flex-direction:column}}#status{{padding:12px 16px;background:
 </style></head><body><div id="status">Authorizing this connection…</div>
 <div id="screen"></div><button id="cancel" type="button">Cancel</button>
 <script nonce="{nonce}">
-const launchToken={token_json}; let rfb=null;
+const launchToken={token_json}; let rfb=null; let terminalState=false; let viewerError=false;
+const terminalStatuses=new Set(['succeeded','failed','expired','cancelled']);
 const statusNode=document.getElementById('status');
 const tg=window.Telegram&&window.Telegram.WebApp; if(tg){{tg.ready();tg.expand();}}
+function setViewerError(message){{
+ if(terminalState)return; viewerError=true; statusNode.textContent=message;
+}}
 async function jsonRequest(url,options={{}}){{
  const response=await fetch(url,{{credentials:'same-origin',...options}});
  const data=await response.json().catch(()=>({{message:'Connection unavailable.'}}));
  if(!response.ok) throw new Error(data.message||'Connection unavailable.'); return data;
 }}
 async function poll(){{
- try{{const state=await jsonRequest('/api/connect/session'); statusNode.textContent=state.message;
+ try{{const state=await jsonRequest('/api/connect/session');
+  terminalState=terminalStatuses.has(state.status);
+  if(!viewerError||terminalState)statusNode.textContent=state.message;
   if((state.status==='ready'||state.status==='connected')&&!rfb){{
    const module=await import('/novnc/core/rfb.js');
    const scheme=location.protocol==='https:'?'wss':'ws';
    const ws=`${{scheme}}://${{location.host}}${{state.websocket_path}}?token=${{encodeURIComponent(state.websocket_token)}}`;
    rfb=new module.default(document.getElementById('screen'),ws);
+   rfb.addEventListener('connect',()=>{{
+    if(!terminalState){{viewerError=false;statusNode.textContent='Remote browser connected.';}}
+   }});
+   rfb.addEventListener('securityfailure',()=>setViewerError(
+    'The remote browser connection failed. Return to Telegram and try /connect again.'));
+   rfb.addEventListener('disconnect',event=>{{
+    if(event.detail&&event.detail.clean===false)setViewerError(
+     'The remote browser connection was lost. Return to Telegram and try /connect again.');
+   }});
    rfb.scaleViewport=true; rfb.resizeSession=false; rfb.showDotCursor=true;
   }}
-  if(['succeeded','failed','expired','cancelled'].includes(state.status)){{if(rfb)rfb.disconnect();return;}}
+  if(terminalState){{if(rfb)rfb.disconnect();return;}}
   setTimeout(poll,1000);
  }}catch(error){{statusNode.textContent=error.message;}}
 }}
@@ -127,7 +142,7 @@ start().catch(error=>{{statusNode.textContent=error.message;}});
             "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
             f"script-src 'self' https://telegram.org 'nonce-{nonce}'; "
             f"style-src 'nonce-{nonce}'; connect-src 'self' {websocket_origin}; "
-            "img-src 'none'; font-src 'none'; form-action 'none'"
+            "img-src data:; font-src 'none'; form-action 'none'"
         )
         return self._response(
             HTTPStatus.OK,

@@ -84,6 +84,14 @@ def _headers(response: object) -> dict[str, list[str]]:
     return result
 
 
+def _csp_directive(csp: str, name: str) -> str:
+    return next(
+        directive.strip()
+        for directive in csp.split(";")
+        if directive.strip().startswith(f"{name} ")
+    )
+
+
 def test_bootstrap_is_locked_down_and_never_cacheable(tmp_path: Path) -> None:
     app, _manager, _verifier = _app(tmp_path)
     response = app.handle("GET", "/connect/launch-secret", {})
@@ -97,6 +105,29 @@ def test_bootstrap_is_locked_down_and_never_cacheable(tmp_path: Path) -> None:
     csp = headers["content-security-policy"][0]
     assert "default-src 'none'" in csp
     assert "connect-src 'self' wss://connect.example.test" in csp
+    assert _csp_directive(csp, "img-src") == "img-src data:"
+
+
+def test_bootstrap_reports_safe_viewer_connection_failures(tmp_path: Path) -> None:
+    app, _manager, _verifier = _app(tmp_path)
+    response = app.handle("GET", "/connect/launch-secret", {})
+    body = response.body.decode()
+
+    assert "rfb.addEventListener('connect'" in body
+    assert "rfb.addEventListener('securityfailure'" in body
+    assert "rfb.addEventListener('disconnect'" in body
+    assert (
+        "The remote browser connection failed. Return to Telegram and try /connect again."
+        in body
+    )
+    assert (
+        "The remote browser connection was lost. Return to Telegram and try /connect again."
+        in body
+    )
+    assert "terminalState=terminalStatuses.has(state.status)" in body
+    assert "if(!viewerError||terminalState)statusNode.textContent=state.message" in body
+    assert "if(terminalState)return; viewerError=true" in body
+    assert "event.detail.reason" not in body
 
 
 def test_exchange_requires_exact_origin_and_sets_hardened_cookie(tmp_path: Path) -> None:

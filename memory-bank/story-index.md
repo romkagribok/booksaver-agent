@@ -300,6 +300,19 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-087` | Explain every authenticated mobile-web price source | Authenticated Mobile Web | Complete | `001-authenticated-mobile-web-monitoring/stories/005-explain-price-source.md` |
 | `US-088` | Keep final booking action on the user's real phone | Authenticated Mobile Web | Complete | `001-authenticated-mobile-web-monitoring/stories/006-keep-final-action-on-phone.md` |
 
+## 014-remote-auth-display-reliability
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-remote-auth-display-reliability` | 2 stories | Complete (bolt 027; 871 tests) |
+
+### 001-remote-auth-display-reliability: Remote Authentication Display Reliability
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-095` | Render the remote mobile-browser framebuffer | Remote Auth Reliability | Complete | `001-remote-auth-display-reliability/stories/001-render-remote-browser-framebuffer.md` |
+| `US-096` | Explain remote viewer connection failures | Remote Auth Reliability | Complete | `001-remote-auth-display-reliability/stories/002-explain-viewer-connection-failures.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -317,5 +330,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `011-post-rebook-monitoring` | 1 | 5 | Complete (bolt 023; 788 tests) |
 | `012-per-user-booking-sessions` | 2 | 12 | Complete (bolts 024 and 026; 867 tests) |
 | `013-authenticated-mobile-web-monitoring` | 1 | 6 | Complete (bolt 025; 867 tests) |
+| `014-remote-auth-display-reliability` | 1 | 2 | Complete (bolt 027; 871 tests) |
 
-All 94 stories (92 complete in-scope stories plus 2 post-MVP extensibility stories) are assigned exactly once.
+All 96 stories (94 complete in-scope stories plus 2 post-MVP extensibility stories) are assigned
+exactly once.
