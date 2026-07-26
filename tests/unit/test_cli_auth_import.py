@@ -129,6 +129,19 @@ def test_auth_import_rejects_unknown_target_without_writing(tmp_path, capsys) ->
     assert not (data_dir / "booking_sessions").exists()
 
 
+def test_auth_import_rejects_permanently_revoked_session_owner(tmp_path, capsys) -> None:
+    config_path, data_dir = _write_config(tmp_path)
+    cookie_path = _write_cookie_file(tmp_path)
+    repo = EncryptedUserSessionRepository(DataDirectory.of(str(data_dir)))
+    assert not repo.revoke(1)
+
+    args = _import_args(config_path, cookie_path)
+    assert args.func(args) == 2
+
+    assert "permanently purged" in capsys.readouterr().err
+    assert not (data_dir / "booking_sessions" / "user-1-booking-com.session").exists()
+
+
 def test_auth_import_rejects_garbage_file(tmp_path, capsys) -> None:
     config_path, data_dir = _write_config(tmp_path)
     bad_file = tmp_path / "bad.json"

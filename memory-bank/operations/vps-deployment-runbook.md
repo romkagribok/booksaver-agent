@@ -266,9 +266,11 @@ MFA code, or Booking.com session is sent in Telegram messages.
 1. In a **private chat** with the admitted BookSaver bot, send `/connect`.
 2. Tap **Open secure Booking.com login**. The button opens a Telegram Mini App at your configured
    HTTPS domain. Do not copy or share this short-lived, single-use link.
-3. Sign in on the real Booking.com page shown inside the temporary mobile browser. Google and Apple
-   identity-provider top-level navigation is allowed; unrelated destinations and downloads are
-   blocked. Complete MFA/passkey prompts if Booking.com requests them.
+3. Sign in on the real Booking.com page shown inside the temporary mobile browser using your direct
+   Booking.com email and password. Google, Apple, and all other external identity-provider document
+   navigation is blocked in main pages, child frames, and popups; ordinary external resources
+   required by Booking.com remain available. Complete Booking-owned MFA/passkey prompts if
+   Booking.com requests them.
 4. Wait for **Connected** and return to Telegram. BookSaver saves only normalized Booking.com
    cookies after positive rendered account evidence, encrypts them with `BOOKSAVER_SECRET_KEY`, and
    destroys the temporary Chromium/Xvfb/VNC processes and all viewer capabilities.

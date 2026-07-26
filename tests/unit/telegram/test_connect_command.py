@@ -87,7 +87,9 @@ def test_connect_uses_telegram_web_app_button_without_chat_credentials() -> None
 
     assert manager.created == [(123, 123)]
     text = sent[0][1]
-    assert "never asks for your password in chat" in text
+    assert "Booking.com email and password" in text
+    assert "Google, Apple, or another external provider is disabled" in text
+    assert "never asks for your password in Telegram chat" in text
     assert "password=" not in text
     markup = sent[0][2]
     assert isinstance(markup, dict)
@@ -109,8 +111,9 @@ def test_reconnect_callback_is_acknowledged_and_replaces_prompt() -> None:
     assert client.edits[0][:3] == (
         123,
         8,
-        "Open the secure login below and complete Booking.com sign-in. "
-        "The link expires shortly; BookSaver never asks for your password in chat.",
+        "Open the secure login below and sign in with your Booking.com email and password. "
+        "Signing in with Google, Apple, or another external provider is disabled. "
+        "The link expires shortly; BookSaver never asks for your password in Telegram chat.",
     )
 
 

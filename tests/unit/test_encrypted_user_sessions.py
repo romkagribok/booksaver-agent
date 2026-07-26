@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import stat
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography.fernet import Fernet
 
-from booksaver.domain.errors import SecretKeyError
+from booksaver.domain.errors import SecretKeyError, SessionRevokedError
 from booksaver.domain.user_session import (
     SessionUnavailableReason,
     UserSessionMetadata,
@@ -112,4 +113,39 @@ def test_delete_affects_only_target_user(tmp_path) -> None:
 
     assert repo.delete(7)
     assert repo.resolve(7).unavailable_reason is SessionUnavailableReason.MISSING
+    assert repo.resolve(8).is_ready
+
+
+def test_delete_checks_for_session_only_after_owner_lock_is_acquired(tmp_path) -> None:
+    repo = _repo(tmp_path, _key())
+    path = tmp_path / "booking_sessions" / "user-7-booking-com.session"
+    deleted: list[bool] = []
+    finished = threading.Event()
+
+    def _delete() -> None:
+        deleted.append(repo.delete(7))
+        finished.set()
+
+    with repo._owner_lock(7):
+        thread = threading.Thread(target=_delete)
+        thread.start()
+        assert not finished.wait(0.05)
+        path.write_text("session-created-before-lock-release")
+
+    thread.join(timeout=1)
+    assert deleted == [True]
+    assert not path.exists()
+
+
+def test_revoke_blocks_future_session_writes_without_affecting_other_users(tmp_path) -> None:
+    repo = _repo(tmp_path, _key())
+    repo.save(_snapshot(7))
+    repo.save(_snapshot(8))
+
+    assert repo.revoke(7)
+    assert not repo.revoke(7)
+    assert not (tmp_path / "booking_sessions" / "user-7-booking-com.session").exists()
+    assert (tmp_path / "booking_sessions" / "user-7-booking-com.revoked").exists()
+    with pytest.raises(SessionRevokedError, match="permanently purged"):
+        repo.save(_snapshot(7))
     assert repo.resolve(8).is_ready

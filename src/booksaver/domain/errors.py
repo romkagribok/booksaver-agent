@@ -40,3 +40,7 @@ class SecretKeyError(BookSaverError):
     personal-key operation (encrypt/decrypt) is attempted. Owner-billed
     checks never construct a FernetKeyStore call, so this never blocks
     laptop/owner-only deployments (bolt 009, US-027)."""
+
+
+class SessionRevokedError(BookSaverError):
+    """Raised when authentication state is written for a permanently purged user."""

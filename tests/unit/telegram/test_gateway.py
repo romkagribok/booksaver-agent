@@ -432,6 +432,7 @@ def _run_single_message(
     *,
     chat_type: str = "private",
     username: str | None = None,
+    remote_auth_manager=None,
 ) -> list[tuple[int, str]]:
     """Wires build_bot_runner with a scripted transport that delivers one
     message then stops the loop, returning every sendMessage call."""
@@ -474,7 +475,13 @@ def _run_single_message(
             return json.dumps({"ok": True, "result": []}).encode("utf-8")
 
     client = TelegramBotClient("fake-token", transport=_Transport())
-    runner = build_bot_runner(cfg, tmp_path / "booksaver.db", Scheduler(), client=client)
+    runner = build_bot_runner(
+        cfg,
+        tmp_path / "booksaver.db",
+        Scheduler(),
+        client=client,
+        remote_auth_manager=remote_auth_manager,
+    )
     assert runner is not None
     runner(stop_event)
     return sent
@@ -543,6 +550,52 @@ def test_admin_users_command_works_for_owner(tmp_path: Path) -> None:
         tmp_path, cfg, chat_id=owner_chat_id, user_id=owner_chat_id, text="/admin users"
     )
     assert any("Users:" in text for _cid, text in sent)
+
+
+def test_admin_purge_wiring_cancels_remote_auth_and_deletes_session(
+    tmp_path: Path,
+) -> None:
+    owner_chat_id = 555
+    target_telegram_user_id = 777
+    db_path = tmp_path / "booksaver.db"
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
+    with SqliteStore(db_path) as store:
+        target = SqliteUserRepository(store).get_or_create_by_telegram_id(
+            target_telegram_user_id
+        )
+    session_directory = cfg.data_directory.path / "booking_sessions"
+    session_directory.mkdir()
+    session_path = (
+        session_directory / f"user-{target.user_id}-booking-com.session"
+    )
+    session_path.write_text("encrypted-session-sentinel")
+
+    class _RemoteAuthManager:
+        def __init__(self) -> None:
+            self.cancelled: list[int] = []
+
+        def cancel_for_telegram_user(self, telegram_user_id: int) -> bool:
+            self.cancelled.append(telegram_user_id)
+            return True
+
+    manager = _RemoteAuthManager()
+    sent = _run_single_message(
+        tmp_path,
+        cfg,
+        chat_id=owner_chat_id,
+        user_id=owner_chat_id,
+        text=f"/admin purge {target.user_id} confirm",
+        remote_auth_manager=manager,
+    )
+
+    assert manager.cancelled == [target_telegram_user_id]
+    assert not session_path.exists()
+    assert (
+        session_directory / f"user-{target.user_id}-booking-com.revoked"
+    ).exists()
+    with SqliteStore(db_path) as store:
+        assert SqliteUserRepository(store).get_by_id(target.user_id) is None
+    assert any("all their data were purged" in text for _chat_id, text in sent)
 
 
 def test_admin_command_refused_for_non_owner(tmp_path: Path) -> None:

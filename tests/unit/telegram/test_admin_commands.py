@@ -1,5 +1,6 @@
 """US-028: owner-only /admin commands."""
 
+import sqlite3
 from datetime import UTC, date, datetime
 
 from booksaver.domain.models import Booking, BookingStatus
@@ -42,7 +43,15 @@ def _cmd(chat_id: int, args: str, user_id: int | None = None) -> IncomingCommand
     )
 
 
-def _wire(tmp_path, notify_access_loss=None, *, send=None, usage_provider=None):
+def _wire(
+    tmp_path,
+    notify_access_loss=None,
+    *,
+    send=None,
+    usage_provider=None,
+    cancel_remote_authentication=None,
+    revoke_user_session=None,
+):
     db_path = tmp_path / "t.db"
     with SqliteStore(db_path):
         pass
@@ -55,6 +64,9 @@ def _wire(tmp_path, notify_access_loss=None, *, send=None, usage_provider=None):
         send=send,
         notify_access_loss=notify_access_loss,
         usage_provider=usage_provider,
+        cancel_remote_authentication=cancel_remote_authentication
+        or (lambda _telegram_user_id: False),
+        revoke_user_session=revoke_user_session or (lambda _user_id: False),
     )
     return router, sent, db_path, access_control
 
@@ -75,7 +87,14 @@ class _InteractiveClient:
         return {}
 
 
-def _interactive_wire(tmp_path, notify_access_loss=None, *, usage_provider=None):
+def _interactive_wire(
+    tmp_path,
+    notify_access_loss=None,
+    *,
+    usage_provider=None,
+    cancel_remote_authentication=None,
+    revoke_user_session=None,
+):
     db_path = tmp_path / "interactive.db"
     with SqliteStore(db_path):
         pass
@@ -96,6 +115,9 @@ def _interactive_wire(tmp_path, notify_access_loss=None, *, usage_provider=None)
         ),
         notify_access_loss=notify_access_loss,
         usage_provider=usage_provider,
+        cancel_remote_authentication=cancel_remote_authentication
+        or (lambda _telegram_user_id: False),
+        revoke_user_session=revoke_user_session or (lambda _user_id: False),
     )
     return router, callbacks, client, sent, db_path, access_control
 
@@ -348,19 +370,74 @@ class TestRevoke:
 
 class TestPurge:
     def test_purge_requires_explicit_confirmation(self, tmp_path):
-        router, sent, db_path, _ac = _wire(tmp_path)
+        cleanup_calls: list[tuple[str, int]] = []
+        router, sent, db_path, _ac = _wire(
+            tmp_path,
+            cancel_remote_authentication=lambda user_id: (
+                cleanup_calls.append(("cancel", user_id)) or True
+            ),
+            revoke_user_session=lambda user_id: (
+                cleanup_calls.append(("delete", user_id)) or True
+            ),
+        )
         with SqliteStore(db_path) as store:
             target = SqliteUserRepository(store).get_or_create_by_telegram_id(42)
 
         router.dispatch(_cmd(chat_id=OWNER_CHAT_ID, args=f"purge {target.user_id}"))
 
         assert "confirm" in sent[-1][1]
+        assert "encrypted Booking.com session" in sent[-1][1]
+        assert cleanup_calls == []
         with SqliteStore(db_path) as store:
             still_there = SqliteUserRepository(store).get_by_telegram_id(42)
         assert still_there is not None
 
-    def test_purge_with_confirm_deletes_the_user(self, tmp_path):
-        router, sent, db_path, _ac = _wire(tmp_path)
+    def test_purge_with_confirm_cancels_login_deletes_session_then_user(self, tmp_path):
+        cleanup_calls: list[tuple[str, int]] = []
+        sessions: set[int] = set()
+
+        def cancel(telegram_user_id: int) -> bool:
+            cleanup_calls.append(("cancel", telegram_user_id))
+            return True
+
+        def delete(user_id: int) -> bool:
+            cleanup_calls.append(("delete", user_id))
+            sessions.remove(user_id)
+            with SqliteStore(db_path) as store:
+                assert SqliteUserRepository(store).get_by_id(user_id) is not None
+            return True
+
+        router, sent, db_path, _ac = _wire(
+            tmp_path,
+            cancel_remote_authentication=cancel,
+            revoke_user_session=delete,
+        )
+        with SqliteStore(db_path) as store:
+            target = SqliteUserRepository(store).get_or_create_by_telegram_id(42)
+            other = SqliteUserRepository(store).get_or_create_by_telegram_id(43)
+        sessions.update((target.user_id, other.user_id))
+
+        router.dispatch(
+            _cmd(chat_id=OWNER_CHAT_ID, args=f"purge {target.user_id} confirm")
+        )
+
+        assert "purged" in sent[-1][1]
+        assert cleanup_calls == [
+            ("cancel", 42),
+            ("delete", target.user_id),
+        ]
+        assert sessions == {other.user_id}
+        with SqliteStore(db_path) as store:
+            gone = SqliteUserRepository(store).get_by_telegram_id(42)
+            remaining = SqliteUserRepository(store).get_by_telegram_id(43)
+        assert gone is None
+        assert remaining is not None
+
+    def test_purge_succeeds_when_target_session_is_already_missing(self, tmp_path):
+        router, sent, db_path, _ac = _wire(
+            tmp_path,
+            revoke_user_session=lambda _user_id: False,
+        )
         with SqliteStore(db_path) as store:
             target = SqliteUserRepository(store).get_or_create_by_telegram_id(42)
 
@@ -370,8 +447,79 @@ class TestPurge:
 
         assert "purged" in sent[-1][1]
         with SqliteStore(db_path) as store:
-            gone = SqliteUserRepository(store).get_by_telegram_id(42)
-        assert gone is None
+            assert SqliteUserRepository(store).get_by_id(target.user_id) is None
+
+    def test_session_deletion_failure_retains_database_user(self, tmp_path, caplog):
+        def fail_delete(_user_id: int) -> bool:
+            raise OSError("sensitive filesystem detail")
+
+        cancelled: list[int] = []
+        router, sent, db_path, _ac = _wire(
+            tmp_path,
+            cancel_remote_authentication=lambda telegram_user_id: (
+                cancelled.append(telegram_user_id) or True
+            ),
+            revoke_user_session=fail_delete,
+        )
+        with SqliteStore(db_path) as store:
+            target = SqliteUserRepository(store).get_or_create_by_telegram_id(42)
+
+        router.dispatch(
+            _cmd(chat_id=OWNER_CHAT_ID, args=f"purge {target.user_id} confirm")
+        )
+
+        assert cancelled == [42]
+        assert "No database data was deleted; try again." in sent[-1][1]
+        assert "purged" not in sent[-1][1]
+        assert "sensitive filesystem detail" not in caplog.text
+        with SqliteStore(db_path) as store:
+            assert SqliteUserRepository(store).get_by_id(target.user_id) is not None
+
+    def test_database_failure_reports_retryable_revoked_state(
+        self, tmp_path, caplog, monkeypatch
+    ):
+        revoked: list[int] = []
+        router, sent, db_path, _ac = _wire(
+            tmp_path,
+            revoke_user_session=lambda user_id: revoked.append(user_id) or False,
+        )
+        with SqliteStore(db_path) as store:
+            target = SqliteUserRepository(store).get_or_create_by_telegram_id(42)
+
+        def fail_purge(_repository, _user_id):
+            raise sqlite3.OperationalError("sensitive database detail")
+
+        monkeypatch.setattr(SqliteUserRepository, "purge", fail_purge)
+        router.dispatch(
+            _cmd(chat_id=OWNER_CHAT_ID, args=f"purge {target.user_id} confirm")
+        )
+
+        assert revoked == [target.user_id]
+        assert "Authentication" in sent[-1][1]
+        assert "database cleanup did not finish" in sent[-1][1]
+        assert "Retry the same confirmed purge" in sent[-1][1]
+        assert "sensitive database detail" not in caplog.text
+        with SqliteStore(db_path) as store:
+            assert SqliteUserRepository(store).get_by_id(target.user_id) is not None
+
+    def test_owner_guard_runs_before_authentication_cleanup(self, tmp_path):
+        cleanup_calls: list[int] = []
+        router, sent, db_path, _ac = _wire(
+            tmp_path,
+            cancel_remote_authentication=lambda user_id: (
+                cleanup_calls.append(user_id) or True
+            ),
+            revoke_user_session=lambda user_id: cleanup_calls.append(user_id) or True,
+        )
+        with SqliteStore(db_path) as store:
+            owner = SqliteUserRepository(store).get_owner()
+
+        router.dispatch(
+            _cmd(chat_id=OWNER_CHAT_ID, args=f"purge {owner.user_id} confirm")
+        )
+
+        assert "cannot be purged" in sent[-1][1]
+        assert cleanup_calls == []
 
 
 class TestInvite:
@@ -494,17 +642,31 @@ class TestInteractiveAdmin:
             assert not SqliteUserRepository(store).get_by_id(target.user_id).is_active
 
     def test_purge_picker_cancels_without_mutation_and_confirms_cascade(self, tmp_path):
-        _router, callbacks, client, _sent, db_path, _access = _interactive_wire(tmp_path)
+        cleanup_calls: list[tuple[str, int]] = []
+        _router, callbacks, client, _sent, db_path, _access = _interactive_wire(
+            tmp_path,
+            cancel_remote_authentication=lambda user_id: (
+                cleanup_calls.append(("cancel", user_id)) or True
+            ),
+            revoke_user_session=lambda user_id: (
+                cleanup_calls.append(("delete", user_id)) or True
+            ),
+        )
         with SqliteStore(db_path) as store:
             target = SqliteUserRepository(store).get_or_create_by_telegram_id(42)
 
         callbacks.dispatch(_callback(f"admin:purge:{target.user_id}"))
         cancel = client.edits[-1]["markup"]["inline_keyboard"][0][1]["callback_data"]
         callbacks.dispatch(_callback(cancel))
+        assert cleanup_calls == []
         with SqliteStore(db_path) as store:
             assert SqliteUserRepository(store).get_by_id(target.user_id) is not None
 
         callbacks.dispatch(_callback(f"admin:purge:{target.user_id}:confirm"))
+        assert cleanup_calls == [
+            ("cancel", 42),
+            ("delete", target.user_id),
+        ]
         with SqliteStore(db_path) as store:
             assert SqliteUserRepository(store).get_by_id(target.user_id) is None
 

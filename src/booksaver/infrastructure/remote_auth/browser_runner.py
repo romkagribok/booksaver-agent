@@ -24,19 +24,12 @@ from booksaver.infrastructure.browser.playwright_adapter import (
 logger = logging.getLogger(__name__)
 
 _LOGIN_URL = "https://account.booking.com/sign-in"
-_ALLOWED_TOP_LEVEL_HOSTS = (
-    "booking.com",
-    "accounts.google.com",
-    "appleid.apple.com",
-)
+_BOOKING_HOST = "booking.com"
 
 
-def _allowed_top_level(url: str) -> bool:
+def _is_booking_navigation_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
-    return any(
-        host == allowed or host.endswith(f".{allowed}")
-        for allowed in _ALLOWED_TOP_LEVEL_HOSTS
-    )
+    return host == _BOOKING_HOST or host.endswith(f".{_BOOKING_HOST}")
 
 
 class SystemRemoteBrowserRunner:
@@ -199,10 +192,10 @@ class SystemRemoteBrowserRunner:
         def _route(route: Any) -> None:
             request = route.request
             try:
-                top_level = request.is_navigation_request() and request.frame.parent_frame is None
+                navigation = request.is_navigation_request()
             except Exception:
-                top_level = request.resource_type == "document"
-            if top_level and not _allowed_top_level(request.url):
+                navigation = request.resource_type == "document"
+            if navigation and not _is_booking_navigation_url(request.url):
                 route.abort("blockedbyclient")
                 return
             route.continue_()

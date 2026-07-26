@@ -643,7 +643,7 @@ def cmd_auth_import(args: argparse.Namespace) -> int:
     cfg, db_path = _db_path_for(args)
 
     from booksaver.application.user_sessions import SessionTargetError, UserSessionService
-    from booksaver.domain.errors import SecretKeyError
+    from booksaver.domain.errors import SecretKeyError, SessionRevokedError
     from booksaver.infrastructure.persistence.cookie_import import CookieImportError
     from booksaver.infrastructure.persistence.encrypted_session_store import (
         EncryptedUserSessionRepository,
@@ -672,7 +672,7 @@ def cmd_auth_import(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    except (SessionTargetError, SecretKeyError) as e:
+    except (SessionTargetError, SecretKeyError, SessionRevokedError) as e:
         print(f"Session import failed: {e}", file=sys.stderr)
         return 2
 
@@ -753,7 +753,7 @@ def cmd_auth_delete(args: argparse.Namespace) -> int:
 
 def cmd_auth_migrate_legacy(args: argparse.Namespace) -> int:
     from booksaver.application.user_sessions import SessionTargetError
-    from booksaver.domain.errors import SecretKeyError
+    from booksaver.domain.errors import SecretKeyError, SessionRevokedError
     from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
 
     cfg, db_path = _db_path_for(args)
@@ -769,7 +769,7 @@ def cmd_auth_migrate_legacy(args: argparse.Namespace) -> int:
             _user_session_service(cfg, store).migrate_legacy_owner(
                 args.telegram_user_id, legacy
             )
-    except (SessionTargetError, SecretKeyError) as e:
+    except (SessionTargetError, SecretKeyError, SessionRevokedError) as e:
         print(f"Legacy session migration failed: {e}", file=sys.stderr)
         return 2
 

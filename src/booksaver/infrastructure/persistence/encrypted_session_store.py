@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from booksaver.domain.errors import SecretKeyError
+from booksaver.domain.errors import SecretKeyError, SessionRevokedError
 from booksaver.domain.session import SessionStatus
 from booksaver.domain.user_session import (
     SessionResolution,
@@ -44,12 +44,19 @@ class EncryptedUserSessionRepository:
             raise ValueError("Session owner user id must be positive")
         return self._directory / f"user-{owner_user_id}-booking-com.session"
 
+    def _revocation_path(self, owner_user_id: int) -> Path:
+        if owner_user_id <= 0:
+            raise ValueError("Session owner user id must be positive")
+        return self._directory / f"user-{owner_user_id}-booking-com.revoked"
+
     def save(self, snapshot: UserSessionSnapshot) -> None:
         with self._owner_lock(snapshot.metadata.owner_user_id):
             self._save_unlocked(snapshot)
 
     def _save_unlocked(self, snapshot: UserSessionSnapshot) -> None:
         path = self._path(snapshot.metadata.owner_user_id)
+        if self._revocation_path(snapshot.metadata.owner_user_id).exists():
+            raise SessionRevokedError("Session owner has been permanently purged")
         # A valid-looking but different Fernet key must not silently replace a
         # bundle encrypted with the operator's real key. Prove the current
         # bundle is readable before any replacement write begins.
@@ -133,14 +140,31 @@ class EncryptedUserSessionRepository:
 
     def delete(self, owner_user_id: int) -> bool:
         path = self._path(owner_user_id)
-        if not path.exists():
-            return False
         with self._owner_lock(owner_user_id):
+            if not path.exists():
+                return False
             try:
                 path.unlink()
             except FileNotFoundError:
                 return False
             return True
+
+    def revoke(self, owner_user_id: int) -> bool:
+        """Permanently prevent session recreation for a purged local user ID."""
+        path = self._path(owner_user_id)
+        revocation_path = self._revocation_path(owner_user_id)
+        with self._owner_lock(owner_user_id):
+            deleted = False
+            try:
+                path.unlink()
+                deleted = True
+            except FileNotFoundError:
+                pass
+            # The marker is written before releasing the same lock used by save.
+            # A cookie import that validated the user before purge can therefore
+            # never write authentication state after this revocation boundary.
+            self._atomic_write(revocation_path, "purged\n")
+            return deleted
 
     def _ready_snapshot_unlocked(self, owner_user_id: int) -> UserSessionSnapshot | None:
         path = self._path(owner_user_id)

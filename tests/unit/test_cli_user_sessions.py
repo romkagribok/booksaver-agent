@@ -66,7 +66,7 @@ def test_auth_status_is_redacted_and_delete_is_targeted(tmp_path, capsys) -> Non
     delete_args = _auth_args(config_path, "delete")
     assert delete_args.func(delete_args) == 0
     assert "No encrypted session exists" in capsys.readouterr().out
-    assert not (data_dir / "booking_sessions").exists()
+    assert not list((data_dir / "booking_sessions").glob("*.session"))
 
 
 def test_explicit_legacy_migration_moves_only_owner_session(tmp_path, capsys) -> None:

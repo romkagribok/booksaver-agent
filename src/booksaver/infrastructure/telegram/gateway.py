@@ -11,6 +11,9 @@ from booksaver.application.remote_auth import RemoteAuthenticationManager
 from booksaver.daemon.check_coordinator import CheckCoordinator
 from booksaver.daemon.scheduler import Scheduler
 from booksaver.domain.models import Config
+from booksaver.infrastructure.persistence.encrypted_session_store import (
+    EncryptedUserSessionRepository,
+)
 
 from .access import AccessControl, AccessRefusalReason, RateLimiter
 from .admin_commands import ACCESS_LOSS_MESSAGE, register_admin_commands
@@ -143,6 +146,8 @@ def build_bot_runner(
             llm_calls_today=check_coordinator.llm_calls_today.get(user_id, 0),
         )
 
+    user_sessions = EncryptedUserSessionRepository(config.data_directory)
+
     register_admin_commands(
         router=router,
         reply=_reply,
@@ -156,6 +161,12 @@ def build_bot_runner(
         # still caught by the admin command after revocation has committed.
         notify_access_loss=_notify_access_loss,
         usage_provider=_admin_usage,
+        cancel_remote_authentication=(
+            remote_auth_manager.cancel_for_telegram_user
+            if remote_auth_manager is not None
+            else lambda _telegram_user_id: False
+        ),
+        revoke_user_session=user_sessions.revoke,
     )
     # ── end US-026/US-027/US-028 wiring ────────────────────────────────────────
 

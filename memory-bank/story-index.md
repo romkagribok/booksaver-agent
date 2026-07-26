@@ -313,6 +313,27 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-095` | Render the remote mobile-browser framebuffer | Remote Auth Reliability | Complete | `001-remote-auth-display-reliability/stories/001-render-remote-browser-framebuffer.md` |
 | `US-096` | Explain remote viewer connection failures | Remote Auth Reliability | Complete | `001-remote-auth-display-reliability/stories/002-explain-viewer-connection-failures.md` |
 
+## 015-authentication-boundary-hardening
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-complete-user-purge` | 2 stories | Complete (bolt 028; 883 tests) |
+| `002-direct-booking-auth-only` | 2 stories | Complete (bolt 029; 883 tests) |
+
+### 001-complete-user-purge: Complete User Purge
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-097` | Remove encrypted authentication state during purge | Authentication Boundary | Complete | `001-complete-user-purge/stories/001-remove-encrypted-authentication-state.md` |
+| `US-098` | Prevent in-flight authentication from surviving purge | Authentication Boundary | Complete | `001-complete-user-purge/stories/002-prevent-inflight-authentication-survival.md` |
+
+### 002-direct-booking-auth-only: Direct Booking Authentication Only
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-099` | Block external identity-provider navigation | Authentication Boundary | Complete | `002-direct-booking-auth-only/stories/001-block-external-provider-navigation.md` |
+| `US-100` | Guide users to direct Booking.com login | Authentication Boundary | Complete | `002-direct-booking-auth-only/stories/002-guide-direct-booking-login.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -331,6 +352,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `012-per-user-booking-sessions` | 2 | 12 | Complete (bolts 024 and 026; 867 tests) |
 | `013-authenticated-mobile-web-monitoring` | 1 | 6 | Complete (bolt 025; 867 tests) |
 | `014-remote-auth-display-reliability` | 1 | 2 | Complete (bolt 027; 871 tests) |
+| `015-authentication-boundary-hardening` | 2 | 4 | Complete (bolts 028–029; 883 tests) |
 
-All 96 stories (94 complete in-scope stories plus 2 post-MVP extensibility stories) are assigned
+All 100 stories (98 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
 exactly once.

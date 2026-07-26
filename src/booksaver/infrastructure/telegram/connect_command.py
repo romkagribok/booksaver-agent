@@ -34,8 +34,9 @@ def _launch_message(
     except (RemoteAuthBusy, RemoteAuthUnavailable) as exc:
         return str(exc), None
     return (
-        "Open the secure login below and complete Booking.com sign-in. "
-        "The link expires shortly; BookSaver never asks for your password in chat.",
+        "Open the secure login below and sign in with your Booking.com email and password. "
+        "Signing in with Google, Apple, or another external provider is disabled. "
+        "The link expires shortly; BookSaver never asks for your password in Telegram chat.",
         {
             "inline_keyboard": [
                 [

@@ -87,6 +87,8 @@ def test_manager_binds_single_use_launch_to_user_and_captures_once() -> None:
     assert state.status is RemoteAuthStatus.CONNECTED
     assert state.websocket_path == "/websockify"
     assert state.websocket_token
+    assert "Booking.com email and password" in state.message
+    assert "Google, Apple, and other external providers are disabled" in state.message
 
     with pytest.raises(RemoteAuthBusy):
         manager.create(456, 456)
@@ -158,6 +160,73 @@ def test_manager_cancellation_is_idempotent_and_never_captures() -> None:
     runner.release.set()
     manager.stop_all()
     assert captured == []
+
+
+def test_manager_target_cancellation_is_scoped_and_prevents_capture() -> None:
+    runner = ControlledRunner(
+        RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
+    )
+    captured: list[tuple[int, str]] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda user_id, raw: captured.append((user_id, raw)),
+        lambda _chat_id, _text: None,
+    )
+
+    manager.create(123, 123)
+    assert runner.started.wait(1)
+
+    assert not manager.cancel_for_telegram_user(456)
+    assert manager.cancel_for_telegram_user(123)
+    assert not manager.cancel_for_telegram_user(123)
+    runner.release.set()
+    manager.stop_all()
+
+    assert captured == []
+
+
+def test_manager_target_cancellation_waits_for_completed_capture() -> None:
+    runner = ControlledRunner(
+        RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
+    )
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    captured: list[tuple[int, str]] = []
+
+    def _capture(user_id: int, raw: str) -> None:
+        capture_started.set()
+        assert release_capture.wait(1)
+        captured.append((user_id, raw))
+
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        _capture,
+        lambda _chat_id, _text: None,
+    )
+    manager.create(123, 123)
+    assert runner.started.wait(1)
+    runner.release.set()
+    assert capture_started.wait(1)
+
+    cancellation_result: list[bool] = []
+    cancellation_finished = threading.Event()
+
+    def _cancel() -> None:
+        cancellation_result.append(manager.cancel_for_telegram_user(123))
+        cancellation_finished.set()
+
+    cancellation_thread = threading.Thread(target=_cancel)
+    cancellation_thread.start()
+    assert not cancellation_finished.wait(0.05)
+    release_capture.set()
+    cancellation_thread.join(timeout=1)
+
+    assert cancellation_result == [False]
+    assert captured == [(123, "[]")]
 
 
 def test_manager_redacts_capture_failure_and_releases_browser_gate() -> None:

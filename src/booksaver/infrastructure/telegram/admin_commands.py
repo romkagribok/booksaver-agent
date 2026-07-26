@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -20,6 +21,8 @@ logger = logging.getLogger(__name__)
 Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
 NotifyAccessLoss = Callable[[int, str], None]
+CancelRemoteAuthentication = Callable[[int], bool]
+RevokeUserSession = Callable[[int], bool]
 
 ACCESS_LOSS_MESSAGE = "You no longer have access to this bot."
 
@@ -68,6 +71,8 @@ def register_admin_commands(
     send: Send | None = None,
     notify_access_loss: NotifyAccessLoss | None = None,
     usage_provider: AdminUsageProvider | None = None,
+    cancel_remote_authentication: CancelRemoteAuthentication,
+    revoke_user_session: RevokeUserSession,
 ) -> None:
     """`/admin ...` (US-028): owner-only. Every branch re-checks
     `access_control.is_owner` (never trusts having reached the handler alone)
@@ -119,7 +124,14 @@ def register_admin_commands(
                 notify_access_loss=notify_access_loss,
             )
         elif sub == "purge":
-            _handle_purge(cmd, reply, db_path, rest)
+            _handle_purge(
+                cmd,
+                reply,
+                db_path,
+                rest,
+                cancel_remote_authentication=cancel_remote_authentication,
+                revoke_user_session=revoke_user_session,
+            )
         elif sub == "invite":
             _handle_invite(cmd, reply, db_path, send=send)
         else:
@@ -291,6 +303,8 @@ def register_admin_commands(
                             _reply_via_edit(callback),
                             db_path,
                             [user_token, "confirm"],
+                            cancel_remote_authentication=cancel_remote_authentication,
+                            revoke_user_session=revoke_user_session,
                         )
                     return
             _edit(callback, "That admin choice has expired.", _menu_markup())
@@ -378,7 +392,15 @@ def _handle_revoke(
     )
 
 
-def _handle_purge(cmd: IncomingCommand, reply: Reply, db_path: Path, rest: list[str]) -> None:
+def _handle_purge(
+    cmd: IncomingCommand,
+    reply: Reply,
+    db_path: Path,
+    rest: list[str],
+    *,
+    cancel_remote_authentication: CancelRemoteAuthentication,
+    revoke_user_session: RevokeUserSession,
+) -> None:
     if not rest:
         reply(cmd.chat_id, "Usage: /admin purge <user_id> [confirm]")
         return
@@ -399,12 +421,41 @@ def _handle_purge(cmd: IncomingCommand, reply: Reply, db_path: Path, rest: list[
         if len(rest) < 2 or rest[1] != "confirm":
             reply(
                 cmd.chat_id,
-                f"This permanently deletes {_user_label(user)} and all their "
-                f"bookings/checks/savings. Resend as "
+                f"This permanently deletes {_user_label(user)}, their encrypted "
+                f"Booking.com session, and all bookings/checks/savings. Resend as "
                 f"'/admin purge {user.user_id} confirm' to proceed.",
             )
             return
-        users.purge(user.user_id)
+        if user.telegram_user_id is not None:
+            cancel_remote_authentication(user.telegram_user_id)
+        try:
+            revoke_user_session(user.user_id)
+        except OSError:
+            logger.warning(
+                "Could not remove encrypted session while purging BookSaver user #%s",
+                user.user_id,
+            )
+            reply(
+                cmd.chat_id,
+                f"Could not purge {_user_label(user)} because their encrypted "
+                "Booking.com session could not be removed. No database data was "
+                "deleted; try again.",
+            )
+            return
+        try:
+            users.purge(user.user_id)
+        except sqlite3.Error:
+            logger.warning(
+                "Database cleanup did not complete after revoking BookSaver user #%s",
+                user.user_id,
+            )
+            reply(
+                cmd.chat_id,
+                f"Authentication for {_user_label(user)} was revoked, but database "
+                "cleanup did not finish. Retry the same confirmed purge; do not "
+                "re-admit the user until it succeeds.",
+            )
+            return
     reply(cmd.chat_id, f"{_user_label(user)} and all their data were purged.")
 
 

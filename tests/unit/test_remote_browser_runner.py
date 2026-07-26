@@ -59,26 +59,51 @@ def _route(context: FakeContext, request: FakeRequest) -> str | None:
     return route.outcome
 
 
-def test_remote_browser_allows_booking_and_identity_provider_navigation_only() -> None:
+def test_remote_browser_allows_booking_owned_top_level_navigation() -> None:
     context = FakeContext()
     SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
 
     assert _route(context, FakeRequest("https://account.booking.com/sign-in")) == "continue"
     assert _route(context, FakeRequest("https://www.booking.com/index.html")) == "continue"
-    assert (
-        _route(context, FakeRequest("https://accounts.google.com/o/oauth2/v2/auth"))
-        == "continue"
+    assert _route(context, FakeRequest("https://BOOKING.COM/sign-in")) == "continue"
+
+
+def test_remote_browser_blocks_provider_arbitrary_and_lookalike_top_level_hosts() -> None:
+    context = FakeContext()
+    SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
+
+    blocked_urls = (
+        "https://accounts.google.com/o/oauth2/v2/auth",
+        "https://appleid.apple.com/auth/authorize",
+        "https://login.microsoftonline.com/common/oauth2/authorize",
+        "https://www.facebook.com/login.php",
+        "https://arbitrary.example/sign-in",
+        "https://booking.com.attacker.example/phish",
+        "https://evilbooking.com/phish",
+        "https://booking.com./sign-in",
     )
-    assert _route(context, FakeRequest("https://appleid.apple.com/auth/authorize")) == "continue"
+    for url in blocked_urls:
+        assert _route(context, FakeRequest(url)) == "abort:blockedbyclient"
+
+
+def test_remote_browser_context_policy_covers_popup_top_level_navigation() -> None:
+    context = FakeContext()
+    SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
+
+    # A popup has its own main frame, so its document navigation has no parent.
+    assert (
+        _route(
+            context,
+            FakeRequest("https://accounts.google.com/o/oauth2/v2/auth", parent=None),
+        )
+        == "abort:blockedbyclient"
+    )
     assert _route(context, FakeRequest("https://booking.com.attacker.example/phish")) == (
         "abort:blockedbyclient"
     )
-    assert _route(context, FakeRequest("https://evilbooking.com/phish")) == (
-        "abort:blockedbyclient"
-    )
 
 
-def test_remote_browser_allows_cross_origin_subresources_but_blocks_top_level_escape() -> None:
+def test_remote_browser_allows_subresources_but_blocks_external_frame_navigation() -> None:
     context = FakeContext()
     SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
 
@@ -89,6 +114,10 @@ def test_remote_browser_allows_cross_origin_subresources_but_blocks_top_level_es
     assert _route(
         context,
         FakeRequest("https://attacker.example/frame", parent=object()),
+    ) == "abort:blockedbyclient"
+    assert _route(
+        context,
+        FakeRequest("https://account.booking.com/frame", parent=object()),
     ) == "continue"
     assert _route(context, FakeRequest("https://attacker.example/top")) == (
         "abort:blockedbyclient"

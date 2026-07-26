@@ -232,6 +232,26 @@ class RemoteAuthenticationManager:
             attempt.cancel_event.set()
             return True
 
+    def cancel_for_telegram_user(self, telegram_user_id: int) -> bool:
+        """Cancel a user's active login without requiring its viewer capability.
+
+        The manager lock also guards successful session capture. A confirmed
+        purge can therefore establish cancellation before capture, or observe
+        that capture already completed and delete the resulting session next.
+        Browser teardown remains the worker's responsibility.
+        """
+        with self._lock:
+            cancelled = False
+            for attempt in self._attempts.values():
+                if (
+                    attempt.telegram_user_id == telegram_user_id
+                    and not attempt.status.is_terminal
+                ):
+                    attempt.status = RemoteAuthStatus.CANCELLED
+                    attempt.cancel_event.set()
+                    cancelled = True
+            return cancelled
+
     def stop_all(self, join_timeout: float = 10.0) -> None:
         with self._lock:
             workers = []
@@ -369,7 +389,11 @@ class RemoteAuthenticationManager:
         if attempt.status is RemoteAuthStatus.STARTING:
             return "Starting the secure Booking.com browser…"
         if attempt.status in {RemoteAuthStatus.READY, RemoteAuthStatus.CONNECTED}:
-            return "Log in on the Booking.com page below. This window closes after authentication."
+            return (
+                "Sign in below with your Booking.com email and password. Google, Apple, "
+                "and other external providers are disabled. This window closes after "
+                "authentication."
+            )
         if attempt.status is RemoteAuthStatus.SUCCEEDED:
             return "Connected. You can return to Telegram."
         if attempt.status is RemoteAuthStatus.EXPIRED:
