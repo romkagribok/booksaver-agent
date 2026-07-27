@@ -19,5 +19,7 @@ completed: 2026-07-27T17:00:55Z
   scope controls, redirected `/mytrips` rendering, JavaScript Active/Past/Canceled tabs, normalized
   Apollo cache references, formatted totals, booking-status-link disambiguation, and an empty
   upcoming scope without complete-inventory evidence.
-- Full repository gate shared at final construction verification: **962 passed in 13.07s**.
+- Full repository gate shared at final construction verification: **962 passed in 12.57s**.
 - Ruff and mypy: clean.
+- Isolated VPS acceptance against two authenticated account sessions: complete traversal for both;
+  one and three upcoming reservations respectively, with every eligibility fact present.

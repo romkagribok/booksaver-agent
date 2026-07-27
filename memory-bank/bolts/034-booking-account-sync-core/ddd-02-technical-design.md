@@ -146,6 +146,8 @@ The operations runbook requires an online SQLite backup before upgrade.
   follow allowlisted trip and confirmation detail links.
 - Parse scripted DOM, JSON-LD, generic embedded structured data, and Booking.com's normalized
   `PostBookingReservation` cache; resolve cache references with depth/cycle bounds.
+- Normalize translated property names and epoch stay dates, and use the single-reservation
+  confirmation summary as a bounded occupancy fallback when structured occupancy is absent.
 - Keep a visited set and hard page/item/action limits.
 - Report `complete` only when every pagination link terminates and either explicit all-scope
   evidence is rendered or upcoming, past, and cancelled scopes are each traversed successfully.
