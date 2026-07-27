@@ -262,10 +262,10 @@ def test_success_completion_reports_authenticated_mobile_and_genius_observed(
     )
 
     assert "Source: authenticated mobile web (android-chromium)" in sent[-1][1]
-    assert "Genius observed/present" in sent[-1][1]
+    assert "Genius evidence visible" in sent[-1][1]
 
 
-def test_success_completion_reports_when_genius_not_observed(tmp_path: Path) -> None:
+def test_success_completion_omits_unobserved_genius_status(tmp_path: Path) -> None:
     coordinator = FakeCoordinator()
     db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
     booking = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
@@ -288,7 +288,7 @@ def test_success_completion_reports_when_genius_not_observed(tmp_path: Path) -> 
     )
 
     assert "Source: authenticated mobile web (android-chromium)" in sent[-1][1]
-    assert "Genius not observed" in sent[-1][1]
+    assert "Genius" not in sent[-1][1]
 
 
 def test_currency_failure_is_actionable_in_completion(tmp_path: Path) -> None:

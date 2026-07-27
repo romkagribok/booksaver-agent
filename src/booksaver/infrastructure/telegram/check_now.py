@@ -34,15 +34,10 @@ _UNAVAILABLE = "That booking is not available. Choose one of your active booking
 
 
 def _format_price_source(source: PriceSourceProvenance) -> str:
-    genius = (
-        "Genius observed/present"
-        if source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT
-        else "Genius not observed"
-    )
-    return (
-        f" Source: authenticated mobile web ({source.profile_id.value}); "
-        f"{genius}."
-    )
+    detail = f" Source: authenticated mobile web ({source.profile_id.value})"
+    if source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT:
+        detail += "; Genius evidence visible"
+    return f"{detail}."
 
 
 def register_check_now_command(

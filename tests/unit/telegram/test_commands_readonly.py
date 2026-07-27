@@ -549,7 +549,7 @@ def test_checks_reports_recent_history_including_failures(tmp_path: Path) -> Non
     assert "timeout" in text
 
 
-def test_checks_reports_authenticated_mobile_provenance_when_present(
+def test_checks_reports_authenticated_mobile_source_without_unobserved_genius_status(
     tmp_path: Path,
 ) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
@@ -575,7 +575,7 @@ def test_checks_reports_authenticated_mobile_provenance_when_present(
 
     text = sent[0][1]
     assert "source=authenticated mobile web (android-chromium)" in text
-    assert "Genius not observed" in text
+    assert "Genius" not in text
 
 
 def test_checks_accepts_unique_displayed_booking_id_prefix(tmp_path: Path) -> None:
