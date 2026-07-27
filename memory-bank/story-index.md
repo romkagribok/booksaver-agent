@@ -399,7 +399,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-116` | Synchronize at every freshness boundary | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/001-synchronize-every-freshness-boundary.md` |
-| `US-117` | Show every reservation and eligibility reason | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/002-show-every-reservation-and-reason.md` |
+| `US-117` | Show future upcoming reservations and eligibility reasons | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/002-show-every-reservation-and-reason.md` |
 | `US-118` | Remove manual booking mutation and guided rebooking | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/003-remove-manual-mutation-and-rebook.md` |
 
 ## Summary

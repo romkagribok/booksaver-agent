@@ -8,5 +8,7 @@ completed: 2026-07-27T17:02:22Z
 
 Synchronization is a freshness boundary owned by the single browser gate. `/connect`, scheduled
 monitoring, `/checknow`, and `/bookings` identify the caller and trigger a caller-scoped run.
-`/bookings` renders every synchronized lifecycle, including cancelled, completed, ineligible, and
-absent records. The command surface contains no booking mutation or rebooking intent.
+`/bookings` renders only reservations whose synchronized lifecycle is upcoming and whose check-in
+date is later than the current UTC date. Completed, past, current-stay, cancelled, absent, and
+missing-date records remain synchronized internally. Future ineligible reservations remain visible
+with reasons. The command surface contains no booking mutation or rebooking intent.

@@ -6,7 +6,7 @@ status: complete
 unit_type: cli
 default_bolt_type: ddd-construction-bolt
 created: 2026-07-27T16:28:04.000Z
-updated: 2026-07-27T16:28:04.000Z
+updated: 2026-07-27T22:09:25.000Z
 ---
 
 # Unit Brief: Synchronized Booking Interface
@@ -21,7 +21,7 @@ booking mutation or guided-rebook path.
 ### In Scope
 
 - Synchronization after session intake, before checks, and for `/bookings`.
-- Caller-visible full inventory, freshness, lifecycle, and eligibility reasons.
+- Caller-visible future upcoming inventory, freshness, and eligibility reasons.
 - Immediate command/catalog/callback/dialog retirement.
 - Removal of normal CLI booking mutation and new rebook-session creation.
 - Documentation and operator guidance for the new monitor-and-notify product boundary.
@@ -54,7 +54,7 @@ booking mutation or guided-rebook path.
 | Story ID | Title | Priority | Status |
 |----------|-------|----------|--------|
 | US-116 | Synchronize at every freshness boundary | Must | Ready |
-| US-117 | Show every reservation and eligibility reason | Must | Ready |
+| US-117 | Show future upcoming reservations and eligibility reasons | Must | Ready |
 | US-118 | Remove manual booking mutation and guided rebooking | Must | Ready |
 
 ## Dependencies
@@ -66,7 +66,8 @@ booking mutation or guided-rebook path.
 ## Success Criteria
 
 - [ ] Every approved trigger requires a conclusive caller-scoped synchronization.
-- [ ] `/bookings` shows all synchronized reservations and precise reasons without mutation actions.
+- [ ] `/bookings` shows only future upcoming reservations and precise reasons without mutation
+  actions.
 - [ ] Retired commands are absent and immediately unknown.
 - [ ] Savings remain informational; no guided rebook session can start.
 - [ ] Existing access/revocation/resource controls remain intact.

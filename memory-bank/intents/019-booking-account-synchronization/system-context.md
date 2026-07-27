@@ -35,8 +35,9 @@ BookSaver persists read-only snapshots for eligibility, monitoring, current savi
 4. The reconciliation service validates remote identities and facts, atomically replaces the
    caller's synchronized snapshot set, derives eligibility reasons, and invalidates stale current
    savings.
-5. `/bookings` renders every synchronized reservation and its eligibility; scheduled or on-demand
-   monitoring sends only eligible snapshots through the existing customer-search price journey.
+5. `/bookings` renders only synchronized future upcoming reservations and their eligibility;
+   scheduled or on-demand monitoring sends only eligible snapshots through the existing
+   customer-search price journey. Historical and non-upcoming snapshots remain internal.
 
 ## Context Diagram
 
