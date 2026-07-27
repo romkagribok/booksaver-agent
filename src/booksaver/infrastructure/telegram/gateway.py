@@ -284,9 +284,15 @@ def build_bot_runner(
     )
 
     def _sync_commands() -> None:
+        ordinary_commands = api_commands(include_owner_only=False)
         publications = (
             (
-                api_commands(include_owner_only=False),
+                ordinary_commands,
+                {"type": "default"},
+                "default",
+            ),
+            (
+                ordinary_commands,
                 {"type": "all_private_chats"},
                 "private-chat",
             ),

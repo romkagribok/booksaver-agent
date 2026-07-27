@@ -96,13 +96,19 @@ def test_runner_publishes_default_and_owner_command_scopes(tmp_path: Path) -> No
     runner(stop_event)
 
     assert [entry["scope"] for entry in published] == [
+        {"type": "default"},
         {"type": "all_private_chats"},
         {"type": "chat", "chat_id": owner_chat_id},
     ]
     default_names = {entry["command"] for entry in published[0]["commands"]}
-    owner_names = {entry["command"] for entry in published[1]["commands"]}
+    private_names = {entry["command"] for entry in published[1]["commands"]}
+    owner_names = {entry["command"] for entry in published[2]["commands"]}
     assert "admin" not in default_names
+    assert private_names == default_names
     assert owner_names == default_names | {"admin"}
+    assert {"register", "editbooking", "deletebooking", "rebook"}.isdisjoint(
+        default_names
+    )
 
 
 def test_command_publication_failure_does_not_prevent_bot_loop(tmp_path: Path) -> None:
