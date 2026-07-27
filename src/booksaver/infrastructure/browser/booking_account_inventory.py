@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
 from typing import Any
@@ -203,7 +204,7 @@ class BookingComAccountInventorySource:
                 if _looks_like_empty_scope(page.text, scope):
                     parser.recognized_inventory = True
                     parser.recognized_empty = True
-                page_observations = _parse_page(parser, page.url)
+                page_observations = _parse_page(parser, page.url, page.text)
                 explicit_complete = explicit_complete or parser.explicit_complete
                 unidentified_cards = [
                     card
@@ -317,7 +318,7 @@ def _allowlisted(url: str) -> bool:
 
 
 def _parse_page(
-    parser: _InventoryParser, source_url: str
+    parser: _InventoryParser, source_url: str, page_text: str = ""
 ) -> list[ReservationObservation]:
     observations: dict[str, ReservationObservation] = {}
     for card in parser.cards:
@@ -342,7 +343,14 @@ def _parse_page(
                 if existing is None or _fact_count(observation) > _fact_count(existing):
                     observations[observation.remote_id] = observation
                 parser.recognized_inventory = True
-    return list(observations.values())
+    page_observations = list(observations.values())
+    if len(page_observations) == 1 and page_observations[0].occupancy is None:
+        occupancy = _occupancy_from_text(page_text)
+        if occupancy is not None:
+            page_observations[0] = replace(
+                page_observations[0], occupancy=occupancy
+            )
+    return page_observations
 
 
 def _observations_from_apollo_cache(
@@ -370,7 +378,7 @@ def _observations_from_apollo_cache(
         remote_id = _first_string(identity, "reservationId", "reservationNumber")
         if remote_id is None:
             continue
-        property_name = _first_string(property_data, "hotelName", "name")
+        property_name = _apollo_property_name(property_data)
         property_ref = _first_string(
             property_data, "url", "hotelId", "propertyId"
         )
@@ -406,8 +414,8 @@ def _observations_from_apollo_cache(
                 ),
                 property_name=property_name,
                 property_ref=property_ref,
-                check_in=_date(_first_string(check_in, "rawDate", "date")),
-                check_out=_date(_first_string(check_out, "rawDate", "date")),
+                check_in=_apollo_date(check_in),
+                check_out=_apollo_date(check_out),
                 room_type=room_type,
                 booked_total=_money(_amount_text(total_text), currency),
                 refundable=refundable,
@@ -479,6 +487,25 @@ def _apollo_room_type(cache: dict[str, Any], entity: dict[str, Any]) -> str | No
     return None
 
 
+def _apollo_property_name(property_data: dict[str, Any]) -> str | None:
+    name = property_data.get("hotelName") or property_data.get("name")
+    if isinstance(name, dict):
+        return _first_string(name, "translation", "rawValue", "value")
+    return _string(name)
+
+
+def _apollo_date(value: Any) -> date | None:
+    if not isinstance(value, dict):
+        return None
+    raw = value.get("rawDate") or value.get("date")
+    if isinstance(raw, (int, float)):
+        try:
+            return datetime.fromtimestamp(raw, UTC).date()
+        except (OverflowError, OSError, ValueError):
+            return None
+    return _date(_string(raw))
+
+
 def _deep_first_string(value: Any, *keys: str) -> str | None:
     if isinstance(value, dict):
         direct = _first_string(value, *keys)
@@ -531,6 +558,22 @@ def _occupancy_from_apollo(value: Any) -> Occupancy | None:
             )
             or 0,
             _deep_first_int(value, "rooms", "roomCount", "numberOfRooms") or 1,
+        )
+    except ValueError:
+        return None
+
+
+def _occupancy_from_text(text: str) -> Occupancy | None:
+    adults_match = re.search(r"\b(\d+)\s+adults?\b", text, re.I)
+    if adults_match is None:
+        return None
+    children_match = re.search(r"\b(\d+)\s+(?:children|child)\b", text, re.I)
+    rooms_match = re.search(r"\b(\d+)\s+rooms?\b", text, re.I)
+    try:
+        return Occupancy(
+            int(adults_match.group(1)),
+            int(children_match.group(1)) if children_match else 0,
+            int(rooms_match.group(1)) if rooms_match else 1,
         )
     except ValueError:
         return None

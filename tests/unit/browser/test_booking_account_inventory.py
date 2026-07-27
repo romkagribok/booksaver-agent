@@ -265,7 +265,11 @@ def test_traverses_current_mytrips_tabs_and_confirmation_cache() -> None:
           "PostBookingProperty:42": {
             "__typename": "PostBookingProperty",
             "hotelId": 42,
-            "hotelName": "Apollo Hotel",
+            "hotelName": {
+              "__typename": "Translation",
+              "rawValue": "Apollo Hotel",
+              "translation": "Apollo Hotel"
+            },
             "currencyCode": "USD"
           },
           "PostBookingReservationPrice:opaque": {
@@ -274,11 +278,11 @@ def test_traverses_current_mytrips_tabs_and_confirmation_cache() -> None:
           },
           "PostBookingReservationDate:in": {
             "__typename": "PostBookingReservationDate",
-            "rawDate": "2027-08-10"
+            "rawDate": 1817856000
           },
           "PostBookingReservationDate:out": {
             "__typename": "PostBookingReservationDate",
-            "rawDate": "2027-08-12"
+            "rawDate": 1818028800
           },
           "PostBookingRoomReservation:opaque": {
             "__typename": "PostBookingRoomReservation",
@@ -291,7 +295,7 @@ def test_traverses_current_mytrips_tabs_and_confirmation_cache() -> None:
         }
         </script>
         """,
-        "Confirmed",
+        "Confirmed · 2 adults · 1 child · 1 room",
     )
     browser = _InteractiveInventoryBrowser(
         [entry, trip, confirmation],
@@ -308,10 +312,16 @@ def test_traverses_current_mytrips_tabs_and_confirmation_cache() -> None:
     assert observation.property_name == "Apollo Hotel"
     assert observation.property_ref == "42"
     assert observation.room_type == "King Suite"
+    assert observation.check_in is not None
+    assert observation.check_in.isoformat() == "2027-08-10"
+    assert observation.check_out is not None
+    assert observation.check_out.isoformat() == "2027-08-12"
     assert observation.booked_total is not None
     assert str(observation.booked_total.amount) == "1234.56"
     assert observation.refundable is True
     assert observation.occupancy is not None
+    assert observation.occupancy.adults == 2
+    assert observation.occupancy.children == 1
 
 
 def test_unknown_layout_fails_closed() -> None:
