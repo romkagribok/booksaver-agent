@@ -140,22 +140,25 @@ class TestV5Migration:
                     "SELECT version FROM schema_meta ORDER BY version"
                 ).fetchall()
             ]
-            # old check rows survive the table rebuild
+            # The v11 pre-launch cutover intentionally removes old booking state.
             old_checks = store.conn.execute(
                 "SELECT check_id, failure_code FROM check_history"
             ).fetchall()
-            # and the rebuilt table accepts the new 'agent' method
+            replacement, _ = register_booking(
+                repo=repo, **_booking_kwargs("POST-CUTOVER")
+            )
+            # The rebuilt history table still accepts the v5 'agent' method.
             store.conn.execute(
                 "INSERT INTO check_history (check_id, booking_id, checked_at, outcome,"
                 " extraction_method, live_amount, live_currency)"
-                " VALUES ('chk-agent', 'legacy-1', '2026-07-05T00:00:00+00:00',"
-                " 'success', 'agent', '250.00', 'EUR')"
+                " VALUES ('chk-agent', ?, '2026-07-05T00:00:00+00:00',"
+                " 'success', 'agent', '250.00', 'EUR')",
+                (replacement.booking_id,),
             )
 
-        assert legacy is not None
-        assert legacy.occupancy is None  # explicit occupancy-missing state
+        assert legacy is None
         assert versions[-1] == SCHEMA_VERSION
-        assert ("chk-1", "timeout") in [tuple(r) for r in old_checks]
+        assert old_checks == []
 
     def test_migration_is_idempotent_on_reopen(self, tmp_path):
         db_path = tmp_path / "old.db"
@@ -168,15 +171,17 @@ class TestV5Migration:
 
 
 class TestSetOccupancy:
-    def test_backfill_legacy_booking(self, tmp_path):
+    def test_legacy_booking_cannot_be_backfilled_after_cutover(self, tmp_path):
         db_path = tmp_path / "old.db"
         _make_v4_db(db_path)
 
         with SqliteStore(db_path) as store:
             repo = SqliteBookingRepository(store)
-            repo.set_occupancy("legacy-1", Occupancy(adults=3, children=1, rooms=2))
-            updated = repo.get_by_id("legacy-1")
-        assert updated.occupancy == Occupancy(adults=3, children=1, rooms=2)
+            with pytest.raises(KeyError, match="legacy-1"):
+                repo.set_occupancy(
+                    "legacy-1", Occupancy(adults=3, children=1, rooms=2)
+                )
+            assert repo.get_by_id("legacy-1") is None
 
     def test_unknown_booking_raises_key_error(self, tmp_path):
         with SqliteStore(tmp_path / "t.db") as store:

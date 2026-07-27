@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-20T02:45:00Z
-total_decisions: 26
+last_updated: 2026-07-27T16:33:44Z
+total_decisions: 28
 ---
 
 # Decision Index
@@ -17,6 +17,26 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-028: Gate absence reconciliation on complete inventory traversal
+- **Status**: accepted
+- **Date**: 2026-07-27
+- **Bolt**: 034-booking-account-sync-core (booking-account-sync-core)
+- **Path**: `bolts/034-booking-account-sync-core/adr-028-completeness-gated-reconciliation.md`
+- **Summary**: Dynamic Booking.com inventory can be partially observed. Only recognized complete
+  traversal evidence permits unseen synchronized reservations to become absent.
+- **Read when**: Working on Booking.com account discovery, pagination, synchronization completeness,
+  lifecycle reconciliation, stale inventory, or absence-based state changes.
+
+### ADR-027: Booking.com account inventory is authoritative
+- **Status**: accepted
+- **Date**: 2026-07-27
+- **Bolt**: 034-booking-account-sync-core (booking-account-sync-core)
+- **Path**: `bolts/034-booking-account-sync-core/adr-027-account-inventory-authoritative-projection.md`
+- **Summary**: Manual local booking truth conflicts with authenticated account evidence. Persist the
+  complete synchronized account inventory and derive strict eligible monitoring projections only.
+- **Read when**: Working on booking registration/edit/delete, account synchronization, booking
+  persistence, eligibility, guided rebooking, or monitoring projection lifecycle.
 
 ### ADR-026: Telegram-bound HTTPS remote browser login
 - **Status**: accepted
@@ -52,7 +72,7 @@ Use this to find relevant prior decisions when working on related features.
   context lifecycle, authentication failures, or legacy session migration.
 
 ### ADR-023: Stable-ID atomic post-rebook propagation
-- **Status**: accepted
+- **Status**: superseded by ADR-027
 - **Date**: 2026-07-19
 - **Bolt**: 023-post-rebook-monitoring (post-rebook-monitoring)
 - **Path**: `bolts/023-post-rebook-monitoring/adr-023-stable-id-post-rebook-propagation.md`
@@ -152,7 +172,7 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Working on the price monitor, journey steps, navigation failure codes, bot-wall handling, or reconsidering deep-linking/manage-page extraction.
 
 ### ADR-012: Guided final click — MVP does not automate the destructive button press
-- **Status**: accepted
+- **Status**: superseded by ADR-027
 - **Date**: 2026-07-05
 - **Bolt**: 005-guided-rebook (guided-rebook)
 - **Path**: `bolts/005-guided-rebook/adr-012-guided-final-click.md`

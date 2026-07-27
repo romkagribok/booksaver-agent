@@ -163,13 +163,13 @@ class TestV7Migration:
                 users[0].user_id
             )
 
-        assert versions[-1] == SCHEMA_VERSION == 10
+        assert versions[-1] == SCHEMA_VERSION == 11
         assert len(users) == 1
         assert users[0].role is UserRole.OWNER
         assert users[0].access_state is UserAccessState.ACTIVE
         assert users[0].telegram_user_id is None
-        assert legacy1 is not None and legacy2 is not None
-        assert {b.booking_id for b in owner_bookings} == {"legacy-1", "legacy-2"}
+        assert legacy1 is None and legacy2 is None
+        assert owner_bookings == []
 
     def test_migration_is_idempotent_on_reopen(self, tmp_path):
         db_path = tmp_path / "old.db"
@@ -186,7 +186,7 @@ class TestV7Migration:
         with SqliteStore(tmp_path / "fresh.db") as store:
             row = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
             users = SqliteUserRepository(store).list_all()
-        assert row[0] == SCHEMA_VERSION == 10
+        assert row[0] == SCHEMA_VERSION == 11
         assert len(users) == 1
         assert users[0].role is UserRole.OWNER
 

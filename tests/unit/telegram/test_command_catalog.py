@@ -26,10 +26,10 @@ def test_help_uses_same_catalog_and_can_hide_admin() -> None:
     assert "/admin" in owner_help
 
 
-def test_booking_management_commands_are_published_and_documented() -> None:
+def test_retired_booking_mutation_commands_are_absent() -> None:
     ordinary = {entry["command"] for entry in api_commands(include_owner_only=False)}
     help_output = help_text(include_owner_only=False)
 
-    assert {"editbooking", "deletebooking"} <= ordinary
-    assert "/editbooking" in help_output
-    assert "/deletebooking" in help_output
+    retired = {"register", "editbooking", "deletebooking", "rebook"}
+    assert retired.isdisjoint(ordinary)
+    assert all(f"/{command}" not in help_output for command in retired)

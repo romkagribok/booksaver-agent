@@ -171,23 +171,23 @@ def test_no_channels_configured_still_persists() -> None:
 
 # ── alert content (US-009) ────────────────────────────────────────────────────
 
-def test_alert_contains_core_facts_and_rebook_pointer() -> None:
+def test_alert_contains_core_facts_and_booking_com_action_boundary() -> None:
     email = FakeNotifier("email")
     pipeline, repo = _make_pipeline([email])
 
     pipeline.process([_success_check()])
 
     subject, body = email.sent[0]
-    opportunity = repo.added[0]
     assert "50.00 EUR" in subject or "50.00" in body          # amount saved
     assert "12.50" in subject + body                          # percent saved
     assert "400.00" in body                                    # baseline
     assert "350.00" in body                                    # live price
     assert "CONF-b-1" in body                                  # confirmation id
-    assert f"booksaver rebook {opportunity.opportunity_id}" in body
+    assert "directly in Booking.com" in body
+    assert "booksaver rebook" not in body
 
 
-def test_render_alert_mentions_confirmation_gate() -> None:
+def test_render_alert_states_bookings_are_never_mutated() -> None:
     booking = make_booking()
     opportunity = SavingsOpportunity(
         opportunity_id="opp-1",
@@ -200,7 +200,7 @@ def test_render_alert_mentions_confirmation_gate() -> None:
         validated_at=datetime.now(UTC),
     )
     _, body = render_alert(opportunity, booking)
-    assert "explicit confirmation" in body  # no autonomous cancel/purchase promise
+    assert "never cancels or books reservations" in body
 
 
 def test_render_alert_labels_logged_out_price_as_public_rate() -> None:

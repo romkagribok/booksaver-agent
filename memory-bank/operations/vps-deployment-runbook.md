@@ -9,7 +9,7 @@ backups, authentication, and live Booking.com validation.
 
 - **Minimum spec:** 2 GB RAM, 1 vCPU, 10 GB disk. Headless Chromium is the resource-hungry part
   of every check (see `docker-compose.yml`'s `mem_limit` note) — 2 GB is a floor, not a comfort
-  margin, if you register more than one or two bookings.
+  margin when an account contains several reservations.
 - **Swap:** on a 2 GB box, add 1-2 GB of swap so a transient Chromium memory spike degrades
   performance instead of triggering the OOM killer mid-check:
 
@@ -119,10 +119,10 @@ Validate the one-off CLI path before starting the daemon:
 
 ```bash
 docker compose run --rm --build booksaver config validate
-docker compose run --rm booksaver register --help
+docker compose run --rm booksaver bookings list --help
 ```
 
-The normal registration path after startup is `/register` in the private Telegram chat.
+Reservations are discovered from each user's authenticated Booking.com account after `/connect`.
 
 ## 5. First `docker compose up -d`
 
@@ -137,10 +137,13 @@ curl --fail "https://${BOOKSAVER_AUTH_DOMAIN}/healthz"
 ```
 
 At this point the bot is running, but price checks intentionally fail with `auth_required` until
-each user completes `/connect` as described in §11. Headed `booksaver auth` needs a local display
-and is not the phone/VPS path.
+each user completes `/connect` as described in §11.
 
 ## 6. Upgrade procedure
+
+Schema v11 intentionally removes every legacy manually registered booking and its booking-scoped
+check, trace, savings, and rebook history before repopulating from Booking.com. Make and verify the
+recoverable §7 backup before the first upgrade to this schema.
 
 ```bash
 git pull
@@ -196,35 +199,29 @@ substitute `journalctl -u booksaver -f` for `docker compose logs -f` throughout 
 
 ## 10. Authenticated mobile-web and VPS-IP validation smoke test
 
-Headed `booksaver auth` needs a display, which a VPS doesn't have. BookSaver's search-journey
-checks now require **authenticated mobile web** for every Telegram user. Before a check navigates,
+BookSaver's search-journey checks require **authenticated mobile web** for every Telegram user.
+Before a check navigates,
 the coordinator resolves exactly the booking owner's encrypted session revision and restores it
 into a fresh allowlisted Android Chromium context. Missing, expired, invalid, or rendered-signed-out
 state becomes `auth_required`; BookSaver never substitutes public, owner, or another user's rates.
 Complete `/connect` from §11 for each admitted user before this smoke test.
 
 Use `/status` from the owner chat alongside `docker compose exec booksaver booksaver checks list
-<booking-id>` for daemon health and the last check, `/register` to add a booking, and `/checknow`
-to select one of your active bookings and run the normal
+<booking-id>` for daemon health and the last check, `/bookings` to refresh and inspect the complete
+account inventory, and `/checknow` to select one of the eligible bookings and run the normal
 live Booking.com check immediately. The bot stays responsive while that background check runs; if a
 scheduled or manual check already owns the single browser gate, retry after its concise busy reply.
-Manual checks consume the same per-user daily check and LLM-call limits as scheduled checks. A
-detected savings opportunity drives the guided-rebook flow
-end-to-end over Telegram (inline-keyboard confirmations, final booking click handed off to your
-own device via a deep link) — see `memory-bank/intents/003-telegram-interface/units/`
-`004-telegram-rebook-gate/` for that flow's details.
+Manual checks consume the same per-user daily check and LLM-call limits as scheduled checks.
+Detected savings are informational: the user makes any reservation change independently in
+Booking.com, and later synchronization observes the result.
 
 **Datacenter IPs sometimes get walled by Booking.com's bot detection more aggressively than
 residential ones — validate this from your actual VPS before relying on it.** Do this once, right
 after step 5:
 
-1. Register a real refundable Booking.com booking you can watch (or use one you already track):
-
-   ```bash
-   docker compose run --rm booksaver register --help
-   ```
-
-   Use the displayed required arguments, or complete `/register` in Telegram.
+1. Connect an account containing a real refundable Booking.com reservation, then run `/bookings`.
+   Confirm that the reservation appears and is either eligible or has a precise ineligibility
+   reason.
 2. Trigger a check. Either wait for the scheduler's next `check_interval` tick (watch
    `docker compose logs -f booksaver`), or lower `check_interval` temporarily to something short
    (e.g. `"5m"`) in `config.toml` and restart the container to force a near-immediate run.
@@ -243,8 +240,8 @@ after step 5:
      blocking this IP. Pull the trace for confirmation: `booksaver checks trace <check-id>`.
      Proceed to the fallback ladder below.
    - `failure` with code `step_failed` / `property_not_found` / `no_equivalent_offer` on the first
-     attempt → more likely a config/selector issue than an IP block; re-check your booking's
-     property name and occupancy (`booksaver bookings set-occupancy`) before assuming a wall.
+     attempt → more likely a selector or extracted-account-fact issue than an IP block; inspect
+     `/bookings` for the reservation's current eligibility reasons before assuming a wall.
    - `failure` with code `auth_required` → inspect `/status`, then have that exact user send
      `/connect`. The scheduled notifier also sends a user-scoped reconnect button with a cooldown.
 
@@ -338,6 +335,3 @@ docker compose exec booksaver booksaver auth status \
 docker compose exec booksaver booksaver auth delete \
   --telegram-user-id TELEGRAM_USER_ID
 ```
-
-Legacy owner state can be migrated explicitly with `booksaver auth migrate-legacy
---telegram-user-id OWNER_TELEGRAM_USER_ID`; it is never used as an implicit Telegram fallback.

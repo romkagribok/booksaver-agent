@@ -5,34 +5,21 @@ import json
 import os
 import sys
 import threading
-from datetime import date
 from pathlib import Path
 from typing import Any
 
 from booksaver.application.load_config import load_config
-from booksaver.application.register_booking import register_booking
 from booksaver.daemon import lifecycle
 from booksaver.daemon import scheduler as scheduler_mod
-from booksaver.domain.errors import BookingRejectedError, ConfigValidationError
+from booksaver.domain.account_sync import SynchronizationTrigger
+from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.models import Config
-from booksaver.domain.value_objects import (
-    ConfirmationId,
-    Money,
-    Occupancy,
-    Platform,
-    ProductType,
-    Property,
-    RefundabilityPolicy,
-    RoomType,
-    StayDates,
-)
 from booksaver.infrastructure.config.toml_env_source import (
     DEFAULT_CONFIG_PATH,
     TomlEnvConfigSource,
 )
-from booksaver.infrastructure.paths import ensure_data_dir
 from booksaver.infrastructure.persistence.sqlite_store import (
-    SqliteBookingRepository,
+    SqliteAccountReservationRepository,
     SqliteCheckHistoryRepository,
     SqliteStore,
     SqliteUserRepository,
@@ -86,8 +73,6 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 
 [limits]
 # Per-user abuse/fairness limits for multi-user Telegram deployments (US-031).
-# The owner is exempt from max_bookings_per_user.
-# max_bookings_per_user = 3          # active bookings a single bot user may register
 # max_checks_per_user_per_day = 48   # price checks per user per day before skipping
 # max_llm_calls_per_user_per_day = 200  # shared scheduled/manual daily LLM ceiling
 # messages_per_minute_per_chat = 20  # outbound bot replies per chat per minute
@@ -194,7 +179,6 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"telegram_bot.enabled         : {tb.enabled}")
     print(f"telegram_bot.owner_chat_id   : {tb.owner_chat_id or '(not set)'}")
     print(f"telegram_bot.poll_timeout_s  : {tb.poll_timeout_seconds}")
-    print(f"limits.max_bookings_per_user : {lim.max_bookings_per_user}")
     print(f"limits.max_checks_per_user/day: {lim.max_checks_per_user_per_day}")
     print(f"limits.max_llm_calls_per_user/day: {lim.max_llm_calls_per_user_per_day}")
     print(f"limits.messages_per_min/chat : {lim.messages_per_minute_per_chat}")
@@ -212,134 +196,52 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     return 0
 
 
-# ── register ──────────────────────────────────────────────────────────────────
-
-def cmd_register(args: argparse.Namespace) -> int:
-    cfg, db_path = _db_path_for(args)
-
-    try:
-        confirmation_id = ConfirmationId.of(args.confirmation)
-        prop = Property(name=args.property_name, booking_com_ref=args.property_ref)
-        check_in = date.fromisoformat(args.check_in)
-        check_out = date.fromisoformat(args.check_out)
-        stay_dates = StayDates(check_in=check_in, check_out=check_out)
-        room_type = RoomType(label=args.room_type)
-        baseline_price = Money.of(args.amount, args.currency)
-        refundability = RefundabilityPolicy(
-            is_refundable=True,
-            note=args.refund_note,
-            deadline=date.fromisoformat(args.refund_deadline) if args.refund_deadline else None,
-        )
-        occupancy = Occupancy(adults=args.adults, children=args.children, rooms=args.rooms)
-    except ValueError as e:
-        print(f"Invalid input: {e}", file=sys.stderr)
-        return 2
-
-    ensure_data_dir(cfg.data_directory)
-    with SqliteStore(db_path) as store:
-        repo = SqliteBookingRepository(store)
-        owner = SqliteUserRepository(store).get_owner()
-        try:
-            booking, _ = register_booking(
-                repo=repo,
-                platform=Platform.BOOKING_COM,
-                product_type=ProductType.HOTEL,
-                confirmation_id=confirmation_id,
-                property=prop,
-                stay_dates=stay_dates,
-                room_type=room_type,
-                baseline_price=baseline_price,
-                refundability=refundability,
-                occupancy=occupancy,
-                user_id=owner.user_id,
-            )
-        except BookingRejectedError as e:
-            print(f"Registration rejected: {e}", file=sys.stderr)
-            return 2
-
-    print(f"Registered: {booking.booking_id}")
-    print(f"  Confirmation : {booking.confirmation_id.value}")
-    print(f"  Property     : {booking.property.name}")
-    print(f"  Stay         : {booking.stay_dates.check_in} → {booking.stay_dates.check_out}")
-    print(f"  Room         : {booking.room_type.label}")
-    print(f"  Baseline     : {booking.baseline_price.amount} {booking.baseline_price.currency}")
-    print(f"  Occupancy    : {booking.occupancy}")
-    return 0
-
-
-# ── bookings set-occupancy ────────────────────────────────────────────────────
-
-def cmd_bookings_set_occupancy(args: argparse.Namespace) -> int:
-    cfg, db_path = _db_path_for(args)
-    if not db_path.exists():
-        print("No bookings registered yet.", file=sys.stderr)
-        return 2
-
-    try:
-        occupancy = Occupancy(adults=args.adults, children=args.children, rooms=args.rooms)
-    except ValueError as e:
-        print(f"Invalid input: {e}", file=sys.stderr)
-        return 2
-
-    with SqliteStore(db_path) as store:
-        repo = SqliteBookingRepository(store)
-        try:
-            repo.set_occupancy(args.booking_id, occupancy)
-        except KeyError as e:
-            print(f"Error: {e.args[0]}", file=sys.stderr)
-            return 2
-
-    print(f"Occupancy set to {occupancy} for booking {args.booking_id}")
-    print("Scheduled checks for this booking will now run the search journey.")
-    return 0
-
-
 # ── bookings list ─────────────────────────────────────────────────────────────
 
 def cmd_bookings_list(args: argparse.Namespace) -> int:
     cfg, db_path = _db_path_for(args)
 
     if not db_path.exists():
-        print("No bookings registered yet.")
+        print("No synchronized reservations yet.")
         return 0
 
     with SqliteStore(db_path) as store:
-        repo = SqliteBookingRepository(store)
         owner = SqliteUserRepository(store).get_owner()
-        bookings = (
-            repo.list_all_for_user(owner.user_id)
-            if getattr(args, "all", False)
-            else repo.list_active_for_user(owner.user_id)
+        reservations = SqliteAccountReservationRepository(store).list_for_user(
+            owner.user_id
         )
 
-    if not bookings:
-        label = "bookings" if getattr(args, "all", False) else "active bookings"
-        print(f"No {label} found.")
+    if not reservations:
+        print("No synchronized reservations found.")
         return 0
 
     header = (
         f"{'ID':8}  {'CONFIRMATION':20}  {'PROPERTY':25}  "
-        f"{'CHECK-IN':10}  {'CHECK-OUT':10}  {'BASELINE':>14}  {'OCC':>7}  {'STATUS':8}"
+        f"{'CHECK-IN':10}  {'CHECK-OUT':10}  {'TOTAL':>14}  {'LIFECYCLE':10}  ELIGIBILITY"
     )
     print(header)
     print("-" * len(header))
-    for b in bookings:
-        occ = str(b.occupancy) if b.occupancy else "MISSING"
-        print(
-            f"{b.booking_id[:8]:8}  "
-            f"{b.confirmation_id.value[:20]:20}  "
-            f"{b.property.name[:25]:25}  "
-            f"{str(b.stay_dates.check_in):10}  "
-            f"{str(b.stay_dates.check_out):10}  "
-            f"{str(b.baseline_price.amount) + ' ' + b.baseline_price.currency:>14}  "
-            f"{occ:>7}  "
-            f"{b.status.value:8}"
+    for reservation in reservations:
+        item = reservation.observation
+        total = (
+            f"{item.booked_total.amount} {item.booked_total.currency}"
+            if item.booked_total is not None
+            else "unavailable"
         )
-    if any(b.occupancy is None for b in bookings):
-        print()
+        eligibility = (
+            "eligible"
+            if reservation.eligibility.is_eligible
+            else ", ".join(reason.value for reason in reservation.eligibility.reasons)
+        )
         print(
-            "Bookings marked OCC=MISSING predate the occupancy field; set it with:\n"
-            "  booksaver bookings set-occupancy <BOOKING_ID> --adults N"
+            f"{reservation.account_reservation_id[:8]:8}  "
+            f"{(item.confirmation_id or 'unavailable')[:20]:20}  "
+            f"{(item.property_name or 'unavailable')[:25]:25}  "
+            f"{str(item.check_in or 'unknown'):10}  "
+            f"{str(item.check_out or 'unknown'):10}  "
+            f"{total:>14}  "
+            f"{item.lifecycle.value:10}  "
+            f"{eligibility}"
         )
     return 0
 
@@ -369,6 +271,47 @@ def cmd_run(args: argparse.Namespace) -> int:
         from booksaver.infrastructure.telegram.client import TelegramBotClient
 
         telegram_client = TelegramBotClient(bot_token=telegram_token)
+
+    coordinator = _make_check_coordinator(
+        cfg,
+        sched.stop_event,
+        execution_gate=browser_gate,
+    )
+
+    def _synchronize_after_connect(telegram_user_id: int) -> None:
+        assert telegram_client is not None
+
+        def _completed(completion: Any) -> None:
+            report = completion.report
+            if report is not None and report.succeeded:
+                telegram_client.send_message(
+                    telegram_user_id,
+                    "Booking.com reservations synchronized: "
+                    f"{report.discovered} found, {report.eligible} eligible for "
+                    "price-drop checks. Send /bookings for details.",
+                )
+            else:
+                detail = (
+                    report.failure_detail
+                    if report is not None and report.failure_detail
+                    else "the reservation inventory could not be refreshed"
+                )
+                telegram_client.send_message(
+                    telegram_user_id,
+                    f"Connected, but {detail} Send /bookings to retry.",
+                )
+
+        admission = coordinator.request_inventory(
+            telegram_user_id,
+            _completed,
+            trigger=SynchronizationTrigger.CONNECT,
+        )
+        if admission.value != "accepted":
+            telegram_client.send_message(
+                telegram_user_id,
+                "Connected. Reservation refresh is busy; send /bookings shortly.",
+            )
+
     if cfg.remote_auth_settings.enabled:
         if telegram_client is None or telegram_token is None:
             print(
@@ -387,18 +330,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             telegram_token,
             telegram_client,
             browser_gate,
+            on_connected=_synchronize_after_connect,
         )
-
-    coordinator = _make_check_coordinator(
-        cfg,
-        sched.stop_event,
-        auth_required_notifier=(
+        coordinator.set_auth_required_notifier(
             remote_auth_runtime.reconnect_notifier.notify
-            if remote_auth_runtime is not None
-            else None
-        ),
-        execution_gate=browser_gate,
-    )
+        )
     sched.register("booking_com_check", coordinator.run_scheduled)
 
     bot_runner = None
@@ -579,58 +515,6 @@ def _make_agent_brain(cfg: Config) -> Any:
     return _make_llm_client_factory(cfg).agent_brain_for_booking(None)
 
 
-# ── auth ──────────────────────────────────────────────────────────────────────
-
-def cmd_auth(args: argparse.Namespace) -> int:
-    source = TomlEnvConfigSource(_config_path(args))
-    try:
-        cfg = load_config(source)
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 2
-    except ConfigValidationError as e:
-        print("Config validation failed:", file=sys.stderr)
-        for err in e.errors:
-            print(f"  - {err}", file=sys.stderr)
-        return 2
-
-    try:
-        from booksaver.infrastructure.browser.playwright_adapter import interactive_login
-    except ImportError:
-        print(
-            "Error: playwright is not installed.\n"
-            "Run: pip install playwright && playwright install chromium",
-            file=sys.stderr,
-        )
-        return 2
-
-    from datetime import UTC, datetime
-
-    from booksaver.domain.session import SessionState
-    from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
-
-    print("Opening a browser window for Booking.com login...")
-    cookies = interactive_login()
-    if not json.loads(cookies.decode("utf-8")):
-        print("No cookies captured — login may not have completed.", file=sys.stderr)
-        return 2
-
-    ensure_data_dir(cfg.data_directory)
-    session = SessionState.new(
-        platform=Platform.BOOKING_COM,
-        cookies=cookies,
-        authenticated_at=datetime.now(UTC),
-    )
-    LocalSessionRepository(cfg.data_directory).save(session)
-    print(f"Legacy session saved to {cfg.data_directory.path}/session_booking_com.json")
-    print(
-        "For Telegram monitoring, migrate it explicitly with `booksaver auth "
-        "migrate-legacy --telegram-user-id <OWNER_ID>`; it is never shared or used "
-        "as a daemon fallback."
-    )
-    return 0
-
-
 # ── auth import ──────────────────────────────────────────────────────────────
 
 def cmd_auth_import(args: argparse.Namespace) -> int:
@@ -751,44 +635,6 @@ def cmd_auth_delete(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_auth_migrate_legacy(args: argparse.Namespace) -> int:
-    from booksaver.application.user_sessions import SessionTargetError
-    from booksaver.domain.errors import SecretKeyError, SessionRevokedError
-    from booksaver.infrastructure.persistence.session_store import LocalSessionRepository
-
-    cfg, db_path = _db_path_for(args)
-    legacy_repo = LocalSessionRepository(cfg.data_directory)
-    legacy = legacy_repo.load(Platform.BOOKING_COM)
-    legacy_path = cfg.data_directory.path / "session_booking_com.json"
-    if legacy is None:
-        print("No readable legacy global Booking.com session exists.", file=sys.stderr)
-        return 2
-
-    try:
-        with SqliteStore(db_path) as store:
-            _user_session_service(cfg, store).migrate_legacy_owner(
-                args.telegram_user_id, legacy
-            )
-    except (SessionTargetError, SecretKeyError, SessionRevokedError) as e:
-        print(f"Legacy session migration failed: {e}", file=sys.stderr)
-        return 2
-
-    try:
-        legacy_path.unlink()
-    except OSError as e:
-        print(
-            "Encrypted owner session was saved, but the legacy file could not be "
-            f"removed: {e}. Delete {legacy_path} manually.",
-            file=sys.stderr,
-        )
-        return 2
-    print(
-        "Migrated the legacy global session to the encrypted per-user owner "
-        f"session for Telegram user {args.telegram_user_id}."
-    )
-    return 0
-
-
 # ── stop ──────────────────────────────────────────────────────────────────────
 
 def cmd_stop(args: argparse.Namespace) -> int:
@@ -836,103 +682,6 @@ def cmd_savings_list(args: argparse.Namespace) -> int:
             f"{saved_label:>16}  "
             f"{'yes' if o.notified_at else 'no':8}"
         )
-    print()
-    print("Start a guided rebook with:  booksaver rebook <OPPORTUNITY>")
-    return 0
-
-
-# ── rebook ────────────────────────────────────────────────────────────────────
-
-def _open_or_print(url: str, description: str, use_browser: bool) -> None:
-    print(f"\n>>> {description}:\n    {url}")
-    if not use_browser:
-        return
-    try:
-        import webbrowser
-
-        webbrowser.open(url)
-        print("    (opened in your browser)")
-    except Exception:
-        print("    (could not open a browser — visit the URL manually)")
-
-
-def cmd_rebook(args: argparse.Namespace) -> int:
-    from booksaver.application.rebook_service import (
-        RebookSessionService,
-        UnknownOpportunityError,
-    )
-    from booksaver.domain.rebook import SessionState
-    from booksaver.infrastructure.cli_confirmation import TerminalConfirmationGate
-    from booksaver.infrastructure.persistence.sqlite_store import (
-        SqliteRebookEventRepository,
-        SqliteRebookSessionRepository,
-        SqliteSavingsRepository,
-    )
-
-    cfg, db_path = _db_path_for(args)
-    if not db_path.exists():
-        print("No local database yet — no savings opportunities to rebook.", file=sys.stderr)
-        return 2
-
-    use_browser = not getattr(args, "no_browser", False)
-
-    with SqliteStore(db_path) as store:
-        service = RebookSessionService(
-            savings_repo=SqliteSavingsRepository(store),
-            booking_repo=SqliteBookingRepository(store),
-            session_repo=SqliteRebookSessionRepository(store),
-            event_repo=SqliteRebookEventRepository(store),
-            gate=TerminalConfirmationGate(),
-            navigator=lambda url, desc: _open_or_print(url, desc, use_browser),
-        )
-        try:
-            session = service.run(args.opportunity_id)
-        except UnknownOpportunityError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 2
-        except Exception as e:
-            print(f"Rebook session failed: {e}", file=sys.stderr)
-            return 2
-
-    print()
-    if session.state is SessionState.COMPLETED:
-        print(f"Guided rebook session {session.session_id} completed.")
-        print("Remember: the final cancel/booking clicks on Booking.com are yours to make.")
-    elif session.state is SessionState.DECLINED:
-        print(f"Session {session.session_id} ended: declined. Nothing was changed.")
-    print(f"Audit trail: booksaver rebook-log {session.session_id}")
-    return 0
-
-
-def cmd_rebook_log(args: argparse.Namespace) -> int:
-    from booksaver.infrastructure.persistence.sqlite_store import (
-        SqliteRebookEventRepository,
-        SqliteRebookSessionRepository,
-    )
-
-    cfg, db_path = _db_path_for(args)
-    if not db_path.exists():
-        print("No local database yet.", file=sys.stderr)
-        return 2
-
-    with SqliteStore(db_path) as store:
-        session = SqliteRebookSessionRepository(store).get(args.session_id)
-        events = SqliteRebookEventRepository(store).list_for_session(args.session_id)
-
-    if session is None:
-        print(f"No rebook session found with id '{args.session_id}'.", file=sys.stderr)
-        return 2
-
-    print(f"Session : {session.session_id}")
-    print(f"Booking : {session.booking_id}")
-    print(f"State   : {session.state.value}")
-    print(f"Started : {session.started_at.isoformat()}")
-    if session.ended_at:
-        print(f"Ended   : {session.ended_at.isoformat()}  ({session.end_reason})")
-    print()
-    for event in events:
-        detail = f"  — {event.detail}" if event.detail else ""
-        print(f"{event.occurred_at.isoformat()}  {event.event_type.value:24}{detail}")
     return 0
 
 
@@ -1028,42 +777,13 @@ def create_parser() -> argparse.ArgumentParser:
     p_cfg_show = cfg_sub.add_parser("show", help="Show effective config (secrets redacted)")
     p_cfg_show.set_defaults(func=cmd_config_show)
 
-    # register
-    p_reg = sub.add_parser("register", help="Register a refundable Booking.com hotel booking")
-    p_reg.add_argument("--confirmation", required=True, metavar="ID",
-                       help="Booking.com confirmation number")
-    p_reg.add_argument("--property", required=True, metavar="NAME", dest="property_name",
-                       help="Hotel name")
-    p_reg.add_argument("--property-ref", required=True, metavar="REF", dest="property_ref",
-                       help="Booking.com property ID or URL")
-    p_reg.add_argument("--check-in", required=True, metavar="YYYY-MM-DD", dest="check_in")
-    p_reg.add_argument("--check-out", required=True, metavar="YYYY-MM-DD", dest="check_out")
-    p_reg.add_argument("--room-type", required=True, metavar="LABEL", dest="room_type")
-    p_reg.add_argument("--amount", required=True, metavar="DECIMAL",
-                       help="Total amount paid")
-    p_reg.add_argument("--currency", required=True, metavar="ISO",
-                       help="3-letter currency code (e.g. EUR)")
-    p_reg.add_argument("--refund-note", required=True, metavar="TEXT", dest="refund_note",
-                       help="Refundability confirmation (e.g. 'Free cancellation until Aug 1')")
-    p_reg.add_argument("--refund-deadline", metavar="YYYY-MM-DD", dest="refund_deadline",
-                       help="Refund deadline date (optional)")
-    p_reg.add_argument("--adults", required=True, type=int, metavar="N",
-                       help="Adults the booking is for (search checks use the real party size)")
-    p_reg.add_argument("--children", type=int, default=0, metavar="N",
-                       help="Children the booking is for (default: 0)")
-    p_reg.add_argument("--rooms", type=int, default=1, metavar="N",
-                       help="Rooms booked (default: 1)")
-    p_reg.set_defaults(func=cmd_register)
-
     # run
     p_run = sub.add_parser("run", help="Start the daemon (foreground; Ctrl-C or SIGTERM to stop)")
     p_run.set_defaults(func=cmd_run)
 
     # auth
-    p_auth = sub.add_parser(
-        "auth", help="Log in to Booking.com in a browser; save session locally"
-    )
-    p_auth.set_defaults(func=cmd_auth)
+    p_auth = sub.add_parser("auth", help="Per-user Booking.com session commands")
+    p_auth.set_defaults(func=_no_subcommand(p_auth))
     auth_sub = p_auth.add_subparsers(dest="auth_command")
     p_auth_import = auth_sub.add_parser(
         "import",
@@ -1093,13 +813,6 @@ def create_parser() -> argparse.ArgumentParser:
     )
     p_auth_delete.add_argument("--telegram-user-id", required=True, type=int, metavar="ID")
     p_auth_delete.set_defaults(func=cmd_auth_delete)
-    p_auth_migrate = auth_sub.add_parser(
-        "migrate-legacy",
-        help="Explicitly migrate the legacy global session to the admitted owner",
-    )
-    p_auth_migrate.add_argument("--telegram-user-id", required=True, type=int, metavar="ID")
-    p_auth_migrate.set_defaults(func=cmd_auth_migrate_legacy)
-
     # stop
     p_stop = sub.add_parser("stop", help="Stop the running daemon gracefully")
     p_stop.set_defaults(func=cmd_stop)
@@ -1108,34 +821,8 @@ def create_parser() -> argparse.ArgumentParser:
     p_bk = sub.add_parser("bookings", help="Booking commands")
     p_bk.set_defaults(func=_no_subcommand(p_bk))
     bk_sub = p_bk.add_subparsers(dest="bookings_command")
-    p_bk_list = bk_sub.add_parser("list", help="List registered bookings")
-    p_bk_list.add_argument("--all", action="store_true", help="Include archived bookings")
+    p_bk_list = bk_sub.add_parser("list", help="List synchronized reservations")
     p_bk_list.set_defaults(func=cmd_bookings_list)
-    p_bk_occ = bk_sub.add_parser(
-        "set-occupancy",
-        help="Set occupancy on a booking registered before the occupancy field existed",
-    )
-    p_bk_occ.add_argument("booking_id", metavar="BOOKING_ID")
-    p_bk_occ.add_argument("--adults", required=True, type=int, metavar="N")
-    p_bk_occ.add_argument("--children", type=int, default=0, metavar="N")
-    p_bk_occ.add_argument("--rooms", type=int, default=1, metavar="N")
-    p_bk_occ.set_defaults(func=cmd_bookings_set_occupancy)
-
-    # rebook
-    p_rb = sub.add_parser(
-        "rebook",
-        help="Start a guided rebook (explicit confirmations before any cancel/purchase)",
-    )
-    p_rb.add_argument("opportunity_id", metavar="OPPORTUNITY_ID",
-                      help="Savings opportunity id (see: booksaver savings list)")
-    p_rb.add_argument("--no-browser", action="store_true", dest="no_browser",
-                      help="Print URLs instead of opening a browser")
-    p_rb.set_defaults(func=cmd_rebook)
-
-    # rebook-log
-    p_rl = sub.add_parser("rebook-log", help="Show the audit trail of a rebook session")
-    p_rl.add_argument("session_id", metavar="SESSION_ID")
-    p_rl.set_defaults(func=cmd_rebook_log)
 
     # checks
     p_ck = sub.add_parser("checks", help="Price-check history and traces")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +40,7 @@ def build_remote_auth_runtime(
     bot_token: str,
     client: TelegramBotClient,
     browser_gate: threading.Lock,
+    on_connected: Callable[[int], None] | None = None,
 ) -> RemoteAuthRuntime:
     settings = config.remote_auth_settings
     reconnect = ReconnectNotifier(
@@ -63,6 +65,8 @@ def build_remote_auth_runtime(
             user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
         if user is not None:
             reconnect.clear(user.user_id)
+            if on_connected is not None:
+                on_connected(telegram_user_id)
 
     manager = RemoteAuthenticationManager(
         settings=settings,

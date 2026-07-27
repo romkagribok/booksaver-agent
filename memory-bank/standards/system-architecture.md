@@ -13,6 +13,8 @@ flowchart TB
     Connect --> AuthGateway["HTTPS Mini App gateway"]
     AuthGateway --> LoginBrowser["Transient headed mobile browser"]
     LoginBrowser --> SessionVault["Encrypted per-user session vault"]
+    SessionVault --> Inventory["Booking.com Account Inventory"]
+    Inventory --> Store["LocalPersistence (+ sync audit/check traces)"]
     Coordinator --> Monitor["BookingComSearchMonitor"]
     SessionVault --> Monitor
     Monitor --> Journey["SearchJourney (trusted results query → verified property)"]
@@ -20,12 +22,9 @@ flowchart TB
     Journey -- "step failed" --> Agent["BrowserAgent (LLM, guarded)"]
     Agent --> Browser
     Monitor --> LLM["LLMClient (offer extraction + agent brain)"]
-    Monitor --> Store["LocalPersistence (+ check traces)"]
+    Monitor --> Store
     Store --> Savings["SavingsDetection"]
     Savings --> Notify["Notifications"]
-    Savings --> Rebook["GuidedRebook"]
-    Rebook --> Browser
-    Rebook --> Store
 ```
 
 ## Boundaries
@@ -45,6 +44,10 @@ flowchart TB
 - Telegram-owned checks resolve the booking owner's encrypted session and create a fresh Android
   Chromium mobile-web context; missing, stale, rendered-signed-out, or mismatched state fails closed
   as `auth_required` (ADRs 024–025). Never substitute a global, public, or another user's session.
+- The authenticated Booking.com account inventory is authoritative for reservation facts and
+  lifecycle (ADRs 027–028). Synchronize after `/connect`, before checks, and when `/bookings` is
+  requested; preserve unseen reservations unless a complete traversal proves absence. Persist every
+  visible reservation and derive monitorable booking projections only for reason-coded eligible rows.
 - The opt-in `/connect` adapter is the narrow exception to outbound-only operation (ADR-026). A
   signed Telegram Mini App reaches a stdlib HTTP gateway behind Caddy TLS, drives one transient
   headed mobile browser through token-gated noVNC/websockify, captures cookies only after positive
@@ -54,13 +57,14 @@ flowchart TB
   keystrokes against compromised VPS root; stronger disposable/device-local isolation is future
   hardening, not a security property of the current design.
 - Notification adapters send directly through the user's configured services.
-- Guided rebook must never execute cancel or purchase actions without explicit local confirmation.
+- Savings notifications are informational. BookSaver does not create or guide a rebooking workflow;
+  users manage reservations directly in Booking.com and later synchronization observes the result.
 - All secrets, sessions, booking data, logs, and check history remain on the user's machine.
 
 ## Unit Build Order
 
 1. Core & Local Data
-2. Booking.com Price Monitor
-3. Savings Detection & Notifications
-4. Guided Rebook
+2. Booking.com Account Synchronization
+3. Booking.com Price Monitor
+4. Savings Detection & Notifications
 5. Extensibility (future only)

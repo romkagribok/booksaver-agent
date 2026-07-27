@@ -378,6 +378,30 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-110` | Supersede opportunity on conclusive check | Opportunity Lifecycle | Complete | `001-conclusive-opportunity-lifecycle/stories/002-supersede-opportunity-on-conclusive-check.md` |
 | `US-111` | Enforce conclusive currentness atomically | Opportunity Lifecycle | Complete | `001-conclusive-opportunity-lifecycle/stories/003-enforce-conclusive-currentness-atomically.md` |
 
+## 019-booking-account-synchronization
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-booking-account-sync-core` | 4 stories | Complete (bolts 034–035; 959 tests) |
+| `002-synchronized-booking-interface` | 3 stories | Complete (bolt 036; 959 tests) |
+
+### 001-booking-account-sync-core: Booking Account Sync Core
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-112` | Discover the complete authenticated reservation inventory | Account Synchronization | Complete | `001-booking-account-sync-core/stories/001-discover-complete-authenticated-inventory.md` |
+| `US-113` | Reconcile remote reservation snapshots atomically | Account Synchronization | Complete | `001-booking-account-sync-core/stories/002-reconcile-remote-snapshots-atomically.md` |
+| `US-114` | Explain eligibility and preserve price-source boundaries | Account Synchronization | Complete | `001-booking-account-sync-core/stories/003-explain-eligibility-and-price-boundary.md` |
+| `US-115` | Cut over legacy state and recover from synchronization failures | Account Synchronization | Complete | `001-booking-account-sync-core/stories/004-cut-over-legacy-and-recover-failures.md` |
+
+### 002-synchronized-booking-interface: Synchronized Booking Interface
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-116` | Synchronize at every freshness boundary | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/001-synchronize-every-freshness-boundary.md` |
+| `US-117` | Show every reservation and eligibility reason | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/002-show-every-reservation-and-reason.md` |
+| `US-118` | Remove manual booking mutation and guided rebooking | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/003-remove-manual-mutation-and-rebook.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -400,6 +424,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `016-device-aware-remote-auth-viewer` | 1 | 5 | Complete (bolts 030–031; 898 tests) |
 | `017-current-rebook-opportunities` | 1 | 3 | Complete (bolt 032; 909 tests) |
 | `018-conclusive-rebook-opportunity-lifecycle` | 1 | 3 | Complete (bolt 033; 937 tests) |
+| `019-booking-account-synchronization` | 2 | 7 | Complete (bolts 034–036; 959 tests) |
 
-All 111 stories (109 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
+All 118 stories (116 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
 exactly once.

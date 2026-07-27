@@ -4,10 +4,11 @@
 
 BookSaver Agent is a self-hosted Python daemon/CLI and private Telegram bot. It monitors refundable
 Booking.com hotel reservations, detects cheaper equivalent offers through scripted browser
-automation with bounded LLM assistance, and guides rebooking with mandatory human confirmation.
+automation with bounded LLM assistance, and reports savings while users manage reservations directly
+in Booking.com.
 
-The implemented scope is 109 in-scope stories across intents 001-018, 33 completed bolts, schema
-v10, 26 ADRs, and 937 tests. Two assigned extensibility stories remain explicitly post-MVP. See
+The implemented scope is 116 in-scope stories across intents 001-019, 36 completed bolts, schema
+v11, 28 ADRs, and 959 tests. Two assigned extensibility stories remain explicitly post-MVP. See
 `memory-bank/story-index.md` for status and `memory-bank/standards/decision-index.md` for decisions.
 
 ## Commands
@@ -29,7 +30,7 @@ Python 3.11+ is required. Runtime dependencies are Playwright, Anthropic, and cr
 - Equivalence requires the same property, stay dates, room type, and occupancy.
 - Compare currency-aligned, all-in bookable totals; fail closed on ambiguity.
 - Never autonomously cancel, reserve, purchase, pay, or submit a final booking action.
-- The final rebook action stays on the user's device after explicit confirmation.
+- Never orchestrate a rebooking workflow; users act independently in Booking.com.
 - Self-hosted owner/invite access only; no public bot or BookSaver-operated backend.
 - Keep config, SQLite, cookies, encrypted keys, traces, and snapshots locally controlled.
 - Secrets come only from `BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`,
@@ -40,8 +41,8 @@ Python 3.11+ is required. Runtime dependencies are Playwright, Anthropic, and cr
 ## Architecture
 
 Keep the single-process, stdlib-first architecture and explicit domain types. Browser automation,
-LLM interpretation, persistence, savings evaluation, notifications, access control, and rebook
-confirmation must stay behind separate module boundaries. Binding architecture and technology
+LLM interpretation, account synchronization, persistence, savings evaluation, notifications, and
+access control must stay behind separate module boundaries. Binding architecture and technology
 constraints are in:
 
 - `memory-bank/standards/system-architecture.md`

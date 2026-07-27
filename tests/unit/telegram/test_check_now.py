@@ -9,6 +9,7 @@ from booksaver.daemon.check_coordinator import (
     ImmediateAdmission,
     ImmediateCompletion,
     ImmediateCompletionKind,
+    InventoryCompletion,
 )
 from booksaver.domain.check_result import (
     CheckResult,
@@ -71,10 +72,17 @@ class FakeCoordinator:
         self.admission = admission
         self.requests: list[tuple[int, str]] = []
         self.completions: list[Any] = []
+        self.inventory_completions: list[Any] = []
 
     def request_immediate(self, user_id: int, booking_id: str, callback: Any) -> Any:
         self.requests.append((user_id, booking_id))
         self.completions.append(callback)
+        return self.admission
+
+    def request_inventory(
+        self, user_id: int, callback: Any, *, trigger: Any
+    ) -> ImmediateAdmission:
+        self.inventory_completions.append(callback)
         return self.admission
 
 
@@ -137,6 +145,8 @@ def test_no_arg_picker_is_scoped_and_callback_payload_is_safe(tmp_path: Path) ->
     _add_user_booking(db_path, 202, foreign)
 
     router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
+    assert "Refreshing" in sent[-1][1]
+    coordinator.inventory_completions[0](InventoryCompletion(None))
 
     markup = sent[-1][2]
     assert markup is not None

@@ -18,19 +18,15 @@ from booksaver.infrastructure.persistence.encrypted_session_store import (
 from .access import AccessControl, AccessRefusalReason, RateLimiter
 from .admin_commands import ACCESS_LOSS_MESSAGE, register_admin_commands
 from .admin_usage import AdminUsageSnapshot
-from .booking_management import register_booking_management_commands
 from .bot_loop import BotLoop
 from .check_now import register_check_now_command
 from .client import TelegramBotClient
 from .command_catalog import api_commands
 from .commands_readonly import register_readonly_commands
 from .connect_command import register_connect_command
-from .dialogs import DialogManager
 from .key_dialogs import KeyIntakeFlow, handle_deletekey
 from .key_validator import AnthropicKeyValidator
 from .offset_store import TelegramOffsetStore
-from .rebook_gate import register_rebook_command  # US-032/US-033 (bolt 011)
-from .register_dialog import register_booking_dialog  # US-025 (bolt 010)
 from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCommand
 
 logger = logging.getLogger(__name__)
@@ -76,7 +72,6 @@ def build_bot_runner(
         client = TelegramBotClient(bot_token=token)
     router = CommandRouter()
     callback_router = CallbackRouter()
-    dialog_manager = DialogManager()
     access_control = AccessControl(
         owner_chat_id=settings.owner_chat_id,
         db_path=db_path,
@@ -116,6 +111,7 @@ def build_bot_runner(
         client=client,
         send=_send,
         is_owner=access_control.is_owner,
+        check_coordinator=check_coordinator,
     )
 
     # ── US-026/US-027/US-028: access modes, personal-key intake, admin ────────
@@ -126,7 +122,6 @@ def build_bot_runner(
     )
 
     def _setkey(cmd: IncomingCommand) -> None:
-        dialog_manager.cancel(cmd.chat_id)
         _reply(cmd.chat_id, key_flow.start(cmd.chat_id))
 
     def _deletekey(cmd: IncomingCommand) -> None:
@@ -170,25 +165,6 @@ def build_bot_runner(
     )
     # ── end US-026/US-027/US-028 wiring ────────────────────────────────────────
 
-    # US-025 (bolt 010): /register guided dialog
-    register_booking_dialog(
-        router=router,
-        dialog_manager=dialog_manager,
-        reply=_reply,
-        db_path=db_path,
-        limits_settings=config.limits_settings,
-    )
-
-    register_booking_management_commands(
-        router=router,
-        callback_router=callback_router,
-        dialog_manager=dialog_manager,
-        reply=_reply,
-        send=_send,
-        client=client,
-        db_path=db_path,
-    )
-
     register_check_now_command(
         router=router,
         callback_router=callback_router,
@@ -212,54 +188,15 @@ def build_bot_runner(
         if key_flow.cancel(cmd.chat_id):
             _reply(cmd.chat_id, "Cancelled the current dialog.")
         else:
-            dialog_name = dialog_manager.active_dialog_name(cmd.chat_id)
-            if dialog_manager.cancel(cmd.chat_id):
-                if dialog_name == "post-rebook:archived":
-                    _reply(
-                        cmd.chat_id,
-                        "Replacement details cancelled. The reported-cancelled old "
-                        "reservation remains archived, so no reservation is monitored for "
-                        "that stay.",
-                    )
-                elif dialog_name == "post-rebook:original-active":
-                    _reply(
-                        cmd.chat_id,
-                        "Replacement details cancelled. The original reservation remains "
-                        "monitored with its existing baseline.",
-                    )
-                else:
-                    _reply(cmd.chat_id, "Cancelled the current dialog.")
-            else:
-                _reply(cmd.chat_id, "No active dialog to cancel.")
+            _reply(cmd.chat_id, "No active dialog to cancel.")
 
     router.register("/cancelflow", _cancelflow)
-
-    # US-032/US-033 (bolt 011): /rebook + inline-keyboard confirmation gate +
-    # device-handoff deep link. Kept in its own module (rebook_gate.py); this
-    # block only wires it into the shared router/client/reply and returns the
-    # callback_query handler BotLoop needs.
-    rebook_callback_handler = register_rebook_command(
-        router=router,
-        reply=_reply,
-        client=client,
-        db_path=db_path,
-        stop_event=scheduler.stop_event,
-        confirm_timeout_seconds=settings.rebook_confirm_timeout_seconds,
-        send=_send,
-        dialog_manager=dialog_manager,
-    )
-    callback_router.register("rebook:", rebook_callback_handler)
-    # ── end US-032/US-033 wiring ─────────────────────────────────────────────
 
     def _dialog_handler(cmd: IncomingCommand) -> bool:
         if key_flow.is_pending(cmd.chat_id):
             _reply(cmd.chat_id, key_flow.handle(cmd))
             return True
-        if not dialog_manager.has_active(cmd.chat_id):
-            return False
-        reply_text = dialog_manager.handle_message(cmd.chat_id, cmd.user_id, cmd.raw_text)
-        _reply(cmd.chat_id, reply_text)
-        return True
+        return False
 
     def _access_guard(cmd: IncomingCommand) -> bool:
         if cmd.chat_type != "private":

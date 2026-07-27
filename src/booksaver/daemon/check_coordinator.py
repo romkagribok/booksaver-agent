@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import uuid
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
@@ -10,14 +11,26 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from booksaver.application.account_sync import SynchronizeBookingAccount
 from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
 from booksaver.application.user_sessions import (
     AuthenticatedSessionProvider,
     UserSessionRepository,
 )
+from booksaver.domain.account_sync import (
+    AccountReservation,
+    InventoryCompleteness,
+    InventoryDiscoveryResult,
+    SynchronizationFailureCode,
+    SynchronizationReport,
+    SynchronizationTrigger,
+)
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
 from booksaver.domain.models import Booking, Config
-from booksaver.domain.user_session import SessionUnavailableReason
+from booksaver.domain.user_session import SessionUnavailableReason, UserSessionHealth
+from booksaver.infrastructure.browser.booking_account_inventory import (
+    BookingComAccountInventorySource,
+)
 from booksaver.infrastructure.notifications.routing import (
     OwnerBookingNotifierResolver,
     resolve_telegram_chat_id,
@@ -27,6 +40,7 @@ from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
+    SqliteAccountReservationRepository,
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteCheckTraceRepository,
@@ -51,6 +65,9 @@ NotifierBuilder = Callable[[Config], list[Any]]
 InvalidKeyNotifier = Callable[[Any, list[Any]], None]
 BrowserFactory = Callable[[], AbstractContextManager[Any]]
 AuthRequiredNotifier = Callable[[int], None]
+InventorySynchronizer = Callable[
+    [SqliteStore, Any, int, SynchronizationTrigger], SynchronizationReport
+]
 
 
 class _UnavailableLegacySessionRepository:
@@ -79,6 +96,13 @@ class ImmediateCompletion:
     kind: ImmediateCompletionKind
     result: CheckResult | None = None
     property_name: str | None = None
+    unavailable_detail: str | None = None
+
+
+@dataclass(frozen=True)
+class InventoryCompletion:
+    report: SynchronizationReport | None
+    reservations: tuple[AccountReservation, ...] = ()
 
 
 class CheckCoordinator:
@@ -102,6 +126,7 @@ class CheckCoordinator:
         capped_notice_sent_today: DailyCounter | None = None,
         session_repository: UserSessionRepository | None = None,
         auth_required_notifier: AuthRequiredNotifier | None = None,
+        inventory_synchronizer: InventorySynchronizer | None = None,
         execution_gate: threading.Lock | None = None,
     ) -> None:
         self._config = config
@@ -115,6 +140,7 @@ class CheckCoordinator:
             config.data_directory
         )
         self._auth_required_notifier = auth_required_notifier
+        self._inventory_synchronizer = inventory_synchronizer
         self._checks_today = checks_today or DailyCounter()
         self._llm_calls_today = llm_calls_today or DailyCounter()
         self._capped_notice_sent_today = capped_notice_sent_today or DailyCounter()
@@ -127,6 +153,11 @@ class CheckCoordinator:
     @property
     def llm_calls_today(self) -> dict[int, int]:
         return self._llm_calls_today.snapshot()
+
+    def set_auth_required_notifier(
+        self, notifier: AuthRequiredNotifier | None
+    ) -> None:
+        self._auth_required_notifier = notifier
 
     def _default_browser_factory(self) -> AbstractContextManager[Any]:
         from booksaver.infrastructure.browser.playwright_adapter import (
@@ -176,6 +207,83 @@ class CheckCoordinator:
             raise
         return ImmediateAdmission.ACCEPTED
 
+    def request_inventory(
+        self,
+        telegram_user_id: int,
+        on_complete: Callable[[InventoryCompletion], None] | None = None,
+        *,
+        trigger: SynchronizationTrigger = SynchronizationTrigger.BOOKINGS,
+    ) -> ImmediateAdmission:
+        """Synchronize one caller's complete account inventory in the background."""
+        if self._stop_event.is_set():
+            return ImmediateAdmission.STOPPING
+        if not self._execution_gate.acquire(blocking=False):
+            return ImmediateAdmission.BUSY
+        callback = on_complete or (lambda _completion: None)
+        worker = threading.Thread(
+            target=self._run_inventory_worker,
+            args=(telegram_user_id, trigger, callback),
+            name=f"booksaver-inventory-{telegram_user_id}",
+            daemon=True,
+        )
+        try:
+            worker.start()
+        except Exception:
+            self._execution_gate.release()
+            raise
+        return ImmediateAdmission.ACCEPTED
+
+    def _run_inventory_worker(
+        self,
+        telegram_user_id: int,
+        trigger: SynchronizationTrigger,
+        on_complete: Callable[[InventoryCompletion], None],
+    ) -> None:
+        completion = InventoryCompletion(None)
+        try:
+            if self._stop_event.is_set():
+                return
+            with SqliteStore(self._db_path) as store:
+                user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
+                if user is None or not user.is_active:
+                    return
+                with self._browser_factory() as browser:
+                    report = self._synchronize_user(
+                        store, browser, user.user_id, trigger
+                    )
+                reservations = tuple(
+                    SqliteAccountReservationRepository(store).list_for_user(user.user_id)
+                )
+                completion = InventoryCompletion(report, reservations)
+        except Exception:
+            logger.exception(
+                "Booking.com inventory synchronization failed for Telegram user %s",
+                telegram_user_id,
+            )
+        finally:
+            self._execution_gate.release()
+            try:
+                with SqliteStore(self._db_path) as store:
+                    current = SqliteUserRepository(store).get_by_telegram_id(
+                        telegram_user_id
+                    )
+                    may_deliver = current is not None and current.is_active
+            except Exception:
+                may_deliver = False
+                logger.warning(
+                    "Could not re-authorize inventory synchronization callback",
+                    exc_info=True,
+                )
+            if not may_deliver:
+                return
+            try:
+                on_complete(completion)
+            except Exception:
+                logger.warning(
+                    "Inventory synchronization completion callback failed",
+                    exc_info=True,
+                )
+
     def _run_immediate_worker(
         self,
         telegram_user_id: int,
@@ -192,68 +300,92 @@ class CheckCoordinator:
                 if user is None or not user.is_active:
                     return
                 bookings = SqliteBookingRepository(store)
-                booking = bookings.get_by_id(booking_id)
-                if (
-                    booking is None
-                    or bookings.get_owner_user_id(booking_id) != user.user_id
-                    or all(
-                        active.booking_id != booking_id
-                        for active in bookings.list_active_for_user(user.user_id)
-                    )
-                ):
-                    return
-                if not self._checks_today.try_increment(
-                    user.user_id,
-                    self._config.limits_settings.max_checks_per_user_per_day,
-                ):
-                    result = self._limit_result(booking, "Immediate check skipped")
-                    SqliteCheckHistoryRepository(store).add(result)
-                    self._send_capped_notice(store, user.user_id)
-                    completion = ImmediateCompletion(
-                        ImmediateCompletionKind.RESULT,
-                        result=result,
-                        property_name=booking.property.name,
-                    )
-                elif self._stop_event.is_set():
-                    return
-                else:
+                with self._browser_factory() as browser:
                     try:
-                        with self._browser_factory() as browser:
+                        report = self._synchronize_user(
+                            store,
+                            browser,
+                            user.user_id,
+                            SynchronizationTrigger.CHECK_NOW,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Immediate inventory synchronization failed for user %s",
+                            user.user_id,
+                        )
+                        completion = ImmediateCompletion(
+                            ImmediateCompletionKind.UNAVAILABLE,
+                            unavailable_detail=(
+                                "Booking.com reservations could not be refreshed. "
+                                "Try /bookings again shortly."
+                            ),
+                        )
+                        return
+                    if report.completeness is not InventoryCompleteness.COMPLETE:
+                        completion = ImmediateCompletion(
+                            ImmediateCompletionKind.UNAVAILABLE,
+                            unavailable_detail=(
+                                report.failure_detail
+                                or "Booking.com reservation refresh was incomplete."
+                            ),
+                        )
+                        return
+                    booking = bookings.get_by_id(booking_id)
+                    if (
+                        booking is None
+                        or bookings.get_owner_user_id(booking_id) != user.user_id
+                        or all(
+                            active.booking_id != booking_id
+                            for active in bookings.list_active_for_user(user.user_id)
+                        )
+                    ):
+                        return
+                    if not self._checks_today.try_increment(
+                        user.user_id,
+                        self._config.limits_settings.max_checks_per_user_per_day,
+                    ):
+                        result = self._limit_result(booking, "Immediate check skipped")
+                        SqliteCheckHistoryRepository(store).add(result)
+                        self._send_capped_notice(store, user.user_id)
+                    elif self._stop_event.is_set():
+                        return
+                    else:
+                        try:
                             result = self._run_booking(
                                 store, browser, user.user_id, booking
                             )
-                    except Exception as exc:
-                        logger.exception(
-                            "Immediate browser execution failed for booking %s",
-                            booking.booking_id,
-                        )
-                        result = CheckResult.failure(
-                            booking.booking_id,
-                            datetime.now(UTC),
-                            FailureReason(
-                                FailureCode.NAVIGATION_ERROR,
-                                f"Could not start the live browser check: {exc}",
-                            ),
-                        )
-                        SqliteCheckHistoryRepository(store).add(result)
+                        except Exception as exc:
+                            logger.exception(
+                                "Immediate browser execution failed for booking %s",
+                                booking_id,
+                            )
+                            result = CheckResult.failure(
+                                booking.booking_id,
+                                datetime.now(UTC),
+                                FailureReason(
+                                    FailureCode.NAVIGATION_ERROR,
+                                    f"Could not start the live browser check: {exc}",
+                                ),
+                            )
+                            SqliteCheckHistoryRepository(store).add(result)
 
-                    # A check may take minutes. Re-authorize and re-resolve at
-                    # completion so revocation/deletion during navigation does
-                    # not disclose its result through the callback.
-                    current_user = users.get_by_telegram_id(telegram_user_id)
-                    current_booking = bookings.get_by_id(booking_id)
-                    if (
-                        current_user is not None
-                        and current_user.is_active
-                        and current_booking is not None
-                        and bookings.get_owner_user_id(booking_id)
-                        == current_user.user_id
-                    ):
-                        completion = ImmediateCompletion(
-                            ImmediateCompletionKind.RESULT,
-                            result=result,
-                            property_name=current_booking.property.name,
-                        )
+                # A check may take minutes. Re-authorize and re-resolve at
+                # completion so revocation/deletion during navigation does
+                # not disclose its result through the callback.
+                current_user = users.get_by_telegram_id(telegram_user_id)
+                current_booking = bookings.get_by_id(booking_id)
+                if (
+                    current_user is not None
+                    and current_user.is_active
+                    and current_booking is not None
+                    and bookings.get_owner_user_id(booking_id)
+                    == current_user.user_id
+                ):
+                    completion = ImmediateCompletion(
+                        ImmediateCompletionKind.RESULT,
+                        result=result,
+                        property_name=current_booking.property.name,
+                    )
         except Exception:
             logger.exception("Immediate check worker failed for booking %s", booking_id)
         finally:
@@ -268,10 +400,52 @@ class CheckCoordinator:
             users = SqliteUserRepository(store)
             bookings = SqliteBookingRepository(store)
             active_users = users.list_active()
-            bookings_by_user = {
-                user.user_id: bookings.list_active_for_user(user.user_id)
-                for user in active_users
-            }
+            bookings_by_user: dict[int, list[Booking]] = {}
+            for user in active_users:
+                if self._stop_event.is_set():
+                    return
+                has_account_inventory = (
+                    store.conn.execute(
+                        "SELECT 1 FROM account_reservations WHERE user_id = ? LIMIT 1",
+                        (user.user_id,),
+                    ).fetchone()
+                    is not None
+                )
+                if (
+                    not bookings.list_all_for_user(user.user_id)
+                    and not has_account_inventory
+                ):
+                    try:
+                        if (
+                            self._session_repository.status(user.user_id).health
+                            is not UserSessionHealth.READY
+                        ):
+                            continue
+                    except Exception:
+                        logger.warning(
+                            "Could not resolve session status for user %s",
+                            user.user_id,
+                            exc_info=True,
+                        )
+                        continue
+                try:
+                    with self._browser_factory() as browser:
+                        report = self._synchronize_user(
+                            store,
+                            browser,
+                            user.user_id,
+                            SynchronizationTrigger.SCHEDULED,
+                        )
+                except Exception:
+                    logger.exception(
+                        "Scheduled inventory synchronization failed for user %s",
+                        user.user_id,
+                    )
+                    continue
+                if report.completeness is InventoryCompleteness.COMPLETE:
+                    bookings_by_user[user.user_id] = bookings.list_active_for_user(
+                        user.user_id
+                    )
             plan = build_check_plan(
                 users=active_users,
                 bookings_by_user=bookings_by_user,
@@ -322,6 +496,79 @@ class CheckCoordinator:
                             "Could not issue Booking.com reconnect notice for user %s",
                             user_id,
                         )
+
+    def _synchronize_user(
+        self,
+        store: SqliteStore,
+        browser: Any,
+        user_id: int,
+        trigger: SynchronizationTrigger,
+    ) -> SynchronizationReport:
+        if self._inventory_synchronizer is not None:
+            return self._inventory_synchronizer(store, browser, user_id, trigger)
+        users = SqliteUserRepository(store)
+        provider = AuthenticatedSessionProvider(users, self._session_repository)
+        resolution = provider.resolve(user_id)
+        repository = SqliteAccountReservationRepository(store)
+        if not resolution.is_ready or resolution.snapshot is None:
+            reason = (
+                resolution.unavailable_reason.value
+                if resolution.unavailable_reason is not None
+                else "unavailable"
+            )
+            report = repository.reconcile(
+                user_id=user_id,
+                run_id=str(uuid.uuid4()),
+                trigger=trigger,
+                session_revision=f"unavailable:{reason}",
+                result=InventoryDiscoveryResult.failed(
+                    SynchronizationFailureCode.AUTH_REQUIRED,
+                    f"Booking.com session is {reason}.",
+                ),
+                observed_at=datetime.now(UTC),
+            )
+            self._notify_auth_required(user_id)
+            return report
+
+        snapshot = resolution.snapshot
+        browser.restore_cookies(snapshot.cookies)
+        report = SynchronizeBookingAccount(
+            BookingComAccountInventorySource(), repository
+        ).execute(
+            browser=browser,
+            user_id=user_id,
+            trigger=trigger,
+            session_revision=snapshot.metadata.revision_id,
+        )
+        if report.failure_code is SynchronizationFailureCode.AUTH_REQUIRED:
+            provider.mark_reauth_required(user_id, snapshot.metadata.revision_id)
+            self._notify_auth_required(user_id)
+        else:
+            try:
+                if browser.is_authenticated():
+                    provider.refresh(
+                        user_id,
+                        snapshot.metadata.revision_id,
+                        browser.get_cookies(),
+                        datetime.now(UTC),
+                    )
+            except Exception:
+                logger.warning(
+                    "Could not refresh the synchronized Booking.com session for user %s",
+                    user_id,
+                    exc_info=True,
+                )
+        return report
+
+    def _notify_auth_required(self, user_id: int) -> None:
+        if self._auth_required_notifier is None:
+            return
+        try:
+            self._auth_required_notifier(user_id)
+        except Exception:
+            logger.warning(
+                "Could not issue Booking.com reconnect notice for user %s", user_id
+            )
 
     def _run_booking(
         self, store: SqliteStore, browser: Any, user_id: int, booking: Booking

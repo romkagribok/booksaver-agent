@@ -250,7 +250,7 @@ class TestSchemaMigration:
             row = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
         assert row[0] == SCHEMA_VERSION
 
-    def test_v9_database_adds_price_source_columns_without_losing_legacy_rows(
+    def test_v9_database_applies_v10_shape_then_removes_legacy_booking_rows(
         self, tmp_path: Path
     ) -> None:
         db_path = tmp_path / "v9.db"
@@ -350,17 +350,11 @@ class TestSchemaMigration:
                 "SELECT check_id, booking_id, live_amount, live_currency "
                 "FROM check_history"
             ).fetchall()
-            [loaded] = SqliteCheckHistoryRepository(store).get_recent("legacy-booking")
             version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
 
         assert expected_columns <= columns
-        assert [tuple(row) for row in legacy_rows] == [
-            ("legacy-check", "legacy-booking", "380.50", "EUR")
-        ]
-        assert loaded.check_id == "legacy-check"
-        assert loaded.live_price == Money(amount=Decimal("380.50"), currency="EUR")
-        assert loaded.price_source is None
-        assert version == SCHEMA_VERSION == 10
+        assert legacy_rows == []
+        assert version == SCHEMA_VERSION == 11
 
 
 class TestLocalSessionRepository:

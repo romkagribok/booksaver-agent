@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 import uuid
@@ -10,6 +11,21 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from booksaver.domain.account_sync import (
+    AccountReservation,
+    EligibilityDecision,
+    EligibilityReason,
+    EligibilityStatus,
+    InventoryCompleteness,
+    InventoryDiscoveryResult,
+    ReservationLifecycle,
+    ReservationObservation,
+    SynchronizationFailureCode,
+    SynchronizationReport,
+    SynchronizationTrigger,
+    evaluate_eligibility,
+    remote_key_hash,
+)
 from booksaver.domain.agent import CheckTrace, TraceEvent, TraceKind
 from booksaver.domain.check_result import (
     CheckOutcome,
@@ -61,7 +77,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 
@@ -389,6 +405,133 @@ def _migrate_v10(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE check_history ADD COLUMN {name} {column_type}")
 
 
+def _migrate_v11(conn: sqlite3.Connection) -> None:
+    """Destructive pre-launch cutover to authoritative account inventory.
+
+    The product owner confirmed there are no active users of legacy booking
+    state. Preserve access/session/key data, remove every booking-scoped row,
+    and rebuild `bookings` with caller-scoped confirmation uniqueness.
+    """
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    # Earlier version upgrades run in the same connection transaction. Commit
+    # those non-destructive steps before starting the all-or-nothing v11 cutover.
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for table in (
+            "account_reservations",
+            "booking_sync_runs",
+            "rebook_events",
+            "rebook_sessions",
+            "savings_opportunities",
+            "check_traces",
+            "check_history",
+            "bookings",
+        ):
+            if table in tables:
+                conn.execute(f"DELETE FROM {table}")
+        for table in ("account_reservations", "booking_sync_runs"):
+            if table in tables:
+                conn.execute(f"DROP TABLE {table}")
+        if "bookings" in tables:
+            conn.execute("DROP TABLE bookings")
+        conn.execute(
+            """
+            CREATE TABLE bookings (
+                booking_id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL CHECK(platform = 'booking_com'),
+                product_type TEXT NOT NULL CHECK(product_type = 'hotel'),
+                confirmation_id TEXT NOT NULL,
+                property_name TEXT NOT NULL,
+                property_ref TEXT NOT NULL,
+                check_in TEXT NOT NULL,
+                check_out TEXT NOT NULL CHECK(check_out > check_in),
+                room_type TEXT NOT NULL,
+                baseline_amount TEXT NOT NULL,
+                baseline_currency TEXT NOT NULL,
+                refundable INTEGER NOT NULL CHECK(refundable = 1),
+                refund_note TEXT NOT NULL DEFAULT '',
+                refund_deadline TEXT,
+                registered_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                occ_adults INTEGER CHECK(occ_adults IS NULL OR occ_adults >= 1),
+                occ_children INTEGER CHECK(occ_children IS NULL OR occ_children >= 0),
+                occ_rooms INTEGER CHECK(occ_rooms IS NULL OR occ_rooms >= 1),
+                user_id INTEGER NOT NULL REFERENCES users(user_id),
+                UNIQUE(user_id, confirmation_id)
+            )
+            """
+        )
+        conn.execute("CREATE INDEX idx_bookings_user ON bookings(user_id)")
+        conn.execute(
+            """
+            CREATE TABLE booking_sync_runs (
+                run_id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(user_id),
+                trigger TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL,
+                completeness TEXT NOT NULL
+                    CHECK(completeness IN ('complete', 'incomplete', 'failed')),
+                failure_code TEXT,
+                failure_detail TEXT,
+                discovered_count INTEGER NOT NULL,
+                eligible_count INTEGER NOT NULL,
+                ineligible_count INTEGER NOT NULL,
+                session_revision TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX idx_booking_sync_runs_user "
+            "ON booking_sync_runs(user_id, completed_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE account_reservations (
+                account_reservation_id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(user_id),
+                remote_key_hash TEXT NOT NULL,
+                confirmation_id TEXT,
+                property_name TEXT,
+                property_ref TEXT,
+                check_in TEXT,
+                check_out TEXT,
+                room_type TEXT,
+                baseline_amount TEXT,
+                baseline_currency TEXT,
+                refundable INTEGER,
+                refund_note TEXT NOT NULL DEFAULT '',
+                refund_deadline TEXT,
+                occ_adults INTEGER,
+                occ_children INTEGER,
+                occ_rooms INTEGER,
+                remote_lifecycle TEXT NOT NULL,
+                eligibility_status TEXT NOT NULL
+                    CHECK(eligibility_status IN ('eligible', 'ineligible')),
+                eligibility_reasons TEXT NOT NULL DEFAULT '[]',
+                snapshot_revision INTEGER NOT NULL DEFAULT 1,
+                first_observed_at TEXT NOT NULL,
+                last_observed_at TEXT NOT NULL,
+                last_sync_run_id TEXT NOT NULL REFERENCES booking_sync_runs(run_id),
+                monitoring_booking_id TEXT UNIQUE REFERENCES bookings(booking_id),
+                UNIQUE(user_id, remote_key_hash)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX idx_account_reservations_user "
+            "ON account_reservations(user_id, last_observed_at DESC)"
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -398,12 +541,14 @@ def _migrate_v10(conn: sqlite3.Connection) -> None:
 # v3/v4/v6.
 # v8 -> v9: users.telegram_username optional display metadata (US-063).
 # v9 -> v10: durable authenticated-mobile price provenance (US-087).
+# v10 -> v11: destructive booking cutover + authoritative synchronized inventory.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
     7: _migrate_v7,
     9: _migrate_v9,
     10: _migrate_v10,
+    11: _migrate_v11,
 }
 
 
@@ -884,6 +1029,476 @@ class SqliteBookingRepository:
             registered_at=datetime.fromisoformat(row["registered_at"]),
             status=BookingStatus(row["status"]),
             occupancy=occupancy,
+        )
+
+
+class SqliteAccountReservationRepository:
+    """Atomic account-inventory reconciliation (ADRs 027-028)."""
+
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def reconcile(
+        self,
+        *,
+        user_id: int,
+        run_id: str,
+        trigger: SynchronizationTrigger,
+        session_revision: str,
+        result: InventoryDiscoveryResult,
+        observed_at: datetime,
+    ) -> SynchronizationReport:
+        conn = self._store.conn
+        decisions = [
+            (observation, evaluate_eligibility(observation, today=observed_at.date()))
+            for observation in result.observations
+        ]
+        eligible_count = sum(decision.is_eligible for _, decision in decisions)
+        report = SynchronizationReport(
+            run_id=run_id,
+            completeness=result.completeness,
+            discovered=len(decisions),
+            eligible=eligible_count,
+            ineligible=len(decisions) - eligible_count,
+            failure_code=result.failure_code,
+            failure_detail=result.failure_detail,
+        )
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            owner = conn.execute(
+                "SELECT access_state FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            if owner is None or owner["access_state"] != UserAccessState.ACTIVE.value:
+                raise PermissionError(
+                    "Synchronization owner is no longer an active user"
+                )
+            conn.execute(
+                """
+                INSERT INTO booking_sync_runs (
+                    run_id, user_id, trigger, started_at, completed_at,
+                    completeness, failure_code, failure_detail,
+                    discovered_count, eligible_count, ineligible_count,
+                    session_revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    user_id,
+                    trigger.value,
+                    observed_at.isoformat(),
+                    observed_at.isoformat(),
+                    result.completeness.value,
+                    result.failure_code.value if result.failure_code else None,
+                    (result.failure_detail or "")[:500] or None,
+                    report.discovered,
+                    report.eligible,
+                    report.ineligible,
+                    session_revision,
+                ),
+            )
+            if result.completeness is not InventoryCompleteness.FAILED:
+                for observation, decision in decisions:
+                    self._upsert_observation(
+                        conn,
+                        user_id=user_id,
+                        run_id=run_id,
+                        observation=observation,
+                        decision=decision,
+                        observed_at=observed_at,
+                    )
+                if result.completeness is InventoryCompleteness.COMPLETE:
+                    self._mark_unseen_absent(conn, user_id, run_id, observed_at)
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            failed = SynchronizationReport(
+                run_id=run_id,
+                completeness=InventoryCompleteness.FAILED,
+                discovered=report.discovered,
+                eligible=0,
+                ineligible=report.discovered,
+                failure_code=SynchronizationFailureCode.PERSISTENCE_CONFLICT,
+                failure_detail=(
+                    "The synchronized reservation identities conflict with existing "
+                    "caller-scoped state."
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO booking_sync_runs (
+                    run_id, user_id, trigger, started_at, completed_at,
+                    completeness, failure_code, failure_detail,
+                    discovered_count, eligible_count, ineligible_count,
+                    session_revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    user_id,
+                    trigger.value,
+                    observed_at.isoformat(),
+                    observed_at.isoformat(),
+                    failed.completeness.value,
+                    SynchronizationFailureCode.PERSISTENCE_CONFLICT.value,
+                    failed.failure_detail,
+                    failed.discovered,
+                    failed.eligible,
+                    failed.ineligible,
+                    session_revision,
+                ),
+            )
+            conn.commit()
+            return failed
+        except Exception:
+            conn.rollback()
+            raise
+        return report
+
+    def list_for_user(self, user_id: int) -> list[AccountReservation]:
+        rows = self._store.conn.execute(
+            "SELECT * FROM account_reservations WHERE user_id = ? "
+            "ORDER BY COALESCE(check_in, '9999-12-31'), first_observed_at",
+            (user_id,),
+        ).fetchall()
+        return [self._row_to_account_reservation(row) for row in rows]
+
+    def latest_run_for_user(self, user_id: int) -> SynchronizationReport | None:
+        row = self._store.conn.execute(
+            "SELECT * FROM booking_sync_runs WHERE user_id = ? "
+            "ORDER BY completed_at DESC, rowid DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        code = (
+            SynchronizationFailureCode(row["failure_code"])
+            if row["failure_code"]
+            else None
+        )
+        return SynchronizationReport(
+            run_id=row["run_id"],
+            completeness=InventoryCompleteness(row["completeness"]),
+            discovered=row["discovered_count"],
+            eligible=row["eligible_count"],
+            ineligible=row["ineligible_count"],
+            failure_code=code,
+            failure_detail=row["failure_detail"],
+        )
+
+    def _upsert_observation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: int,
+        run_id: str,
+        observation: ReservationObservation,
+        decision: EligibilityDecision,
+        observed_at: datetime,
+    ) -> None:
+        fingerprint = remote_key_hash(user_id, observation.remote_id)
+        existing = conn.execute(
+            "SELECT * FROM account_reservations "
+            "WHERE user_id = ? AND remote_key_hash = ?",
+            (user_id, fingerprint),
+        ).fetchone()
+        monitoring_booking_id = (
+            str(existing["monitoring_booking_id"])
+            if existing is not None and existing["monitoring_booking_id"]
+            else None
+        )
+        if decision.is_eligible:
+            monitoring_booking_id = self._upsert_projection(
+                conn,
+                user_id=user_id,
+                existing_booking_id=monitoring_booking_id,
+                observation=observation,
+                observed_at=observed_at,
+            )
+        elif monitoring_booking_id is not None:
+            self._archive_projection(conn, monitoring_booking_id)
+
+        values = self._observation_values(observation, decision)
+        if existing is None:
+            conn.execute(
+                """
+                INSERT INTO account_reservations (
+                    account_reservation_id, user_id, remote_key_hash,
+                    confirmation_id, property_name, property_ref, check_in, check_out,
+                    room_type, baseline_amount, baseline_currency, refundable,
+                    refund_note, refund_deadline, occ_adults, occ_children, occ_rooms,
+                    remote_lifecycle, eligibility_status, eligibility_reasons,
+                    snapshot_revision, first_observed_at, last_observed_at,
+                    last_sync_run_id, monitoring_booking_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    user_id,
+                    fingerprint,
+                    *values,
+                    observed_at.isoformat(),
+                    observed_at.isoformat(),
+                    run_id,
+                    monitoring_booking_id,
+                ),
+            )
+            return
+
+        current = tuple(
+            existing[column]
+            for column in (
+                "confirmation_id",
+                "property_name",
+                "property_ref",
+                "check_in",
+                "check_out",
+                "room_type",
+                "baseline_amount",
+                "baseline_currency",
+                "refundable",
+                "refund_note",
+                "refund_deadline",
+                "occ_adults",
+                "occ_children",
+                "occ_rooms",
+                "remote_lifecycle",
+                "eligibility_status",
+                "eligibility_reasons",
+            )
+        )
+        changed = current != values
+        conn.execute(
+            """
+            UPDATE account_reservations SET
+                confirmation_id = ?, property_name = ?, property_ref = ?,
+                check_in = ?, check_out = ?, room_type = ?,
+                baseline_amount = ?, baseline_currency = ?, refundable = ?,
+                refund_note = ?, refund_deadline = ?,
+                occ_adults = ?, occ_children = ?, occ_rooms = ?,
+                remote_lifecycle = ?, eligibility_status = ?,
+                eligibility_reasons = ?,
+                snapshot_revision = snapshot_revision + ?,
+                last_observed_at = ?, last_sync_run_id = ?,
+                monitoring_booking_id = ?
+            WHERE account_reservation_id = ?
+            """,
+            (
+                *values,
+                1 if changed else 0,
+                observed_at.isoformat(),
+                run_id,
+                monitoring_booking_id,
+                existing["account_reservation_id"],
+            ),
+        )
+
+    @staticmethod
+    def _observation_values(
+        observation: ReservationObservation, decision: EligibilityDecision
+    ) -> tuple[Any, ...]:
+        total = observation.booked_total
+        occupancy = observation.occupancy
+        return (
+            observation.confirmation_id,
+            observation.property_name,
+            observation.property_ref,
+            observation.check_in.isoformat() if observation.check_in else None,
+            observation.check_out.isoformat() if observation.check_out else None,
+            observation.room_type,
+            str(total.amount) if total else None,
+            total.currency if total else None,
+            (
+                1
+                if observation.refundable is True
+                else 0
+                if observation.refundable is False
+                else None
+            ),
+            observation.refund_note,
+            (
+                observation.refund_deadline.isoformat()
+                if observation.refund_deadline
+                else None
+            ),
+            occupancy.adults if occupancy else None,
+            occupancy.children if occupancy else None,
+            occupancy.rooms if occupancy else None,
+            observation.lifecycle.value,
+            decision.status.value,
+            json.dumps([reason.value for reason in decision.reasons]),
+        )
+
+    def _upsert_projection(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        user_id: int,
+        existing_booking_id: str | None,
+        observation: ReservationObservation,
+        observed_at: datetime,
+    ) -> str:
+        assert observation.confirmation_id is not None
+        assert observation.property_name is not None
+        assert observation.property_ref is not None
+        assert observation.check_in is not None
+        assert observation.check_out is not None
+        assert observation.room_type is not None
+        assert observation.booked_total is not None
+        assert observation.refundable is True
+        assert observation.occupancy is not None
+        booking_id = existing_booking_id or str(uuid.uuid4())
+        values = (
+            observation.confirmation_id,
+            observation.property_name,
+            observation.property_ref,
+            observation.check_in.isoformat(),
+            observation.check_out.isoformat(),
+            observation.room_type,
+            str(observation.booked_total.amount),
+            observation.booked_total.currency,
+            observation.refund_note,
+            (
+                observation.refund_deadline.isoformat()
+                if observation.refund_deadline
+                else None
+            ),
+            observation.occupancy.adults,
+            observation.occupancy.children,
+            observation.occupancy.rooms,
+        )
+        existing = conn.execute(
+            "SELECT confirmation_id, property_name, property_ref, check_in, check_out, "
+            "room_type, baseline_amount, baseline_currency, refund_note, refund_deadline, "
+            "occ_adults, occ_children, occ_rooms, status FROM bookings WHERE booking_id = ?",
+            (booking_id,),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                """
+                INSERT INTO bookings (
+                    booking_id, platform, product_type, confirmation_id,
+                    property_name, property_ref, check_in, check_out, room_type,
+                    baseline_amount, baseline_currency, refundable, refund_note,
+                    refund_deadline, registered_at, status,
+                    occ_adults, occ_children, occ_rooms, user_id
+                ) VALUES (
+                    ?, 'booking_com', 'hotel', ?, ?, ?, ?, ?, ?, ?, ?, 1,
+                    ?, ?, ?, 'active', ?, ?, ?, ?
+                )
+                """,
+                (booking_id, *values[:10], observed_at.isoformat(), *values[10:], user_id),
+            )
+            return booking_id
+        changed = tuple(existing[:13]) != values or existing["status"] != "active"
+        conn.execute(
+            """
+            UPDATE bookings SET
+                confirmation_id = ?, property_name = ?, property_ref = ?,
+                check_in = ?, check_out = ?, room_type = ?,
+                baseline_amount = ?, baseline_currency = ?, refundable = 1,
+                refund_note = ?, refund_deadline = ?,
+                occ_adults = ?, occ_children = ?, occ_rooms = ?, status = 'active'
+            WHERE booking_id = ? AND user_id = ?
+            """,
+            (*values, booking_id, user_id),
+        )
+        if changed:
+            conn.execute(
+                "DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,)
+            )
+        return booking_id
+
+    @staticmethod
+    def _archive_projection(conn: sqlite3.Connection, booking_id: str) -> None:
+        cursor = conn.execute(
+            "UPDATE bookings SET status = 'archived' "
+            "WHERE booking_id = ? AND status != 'archived'",
+            (booking_id,),
+        )
+        if cursor.rowcount:
+            conn.execute(
+                "DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,)
+            )
+
+    def _mark_unseen_absent(
+        self,
+        conn: sqlite3.Connection,
+        user_id: int,
+        run_id: str,
+        observed_at: datetime,
+    ) -> None:
+        rows = conn.execute(
+            "SELECT account_reservation_id, monitoring_booking_id "
+            "FROM account_reservations "
+            "WHERE user_id = ? AND last_sync_run_id != ? "
+            "AND remote_lifecycle != 'absent'",
+            (user_id, run_id),
+        ).fetchall()
+        for row in rows:
+            if row["monitoring_booking_id"]:
+                self._archive_projection(conn, row["monitoring_booking_id"])
+            conn.execute(
+                "UPDATE account_reservations SET remote_lifecycle = 'absent', "
+                "eligibility_status = 'ineligible', eligibility_reasons = ?, "
+                "snapshot_revision = snapshot_revision + 1, last_sync_run_id = ? "
+                "WHERE account_reservation_id = ?",
+                (
+                    json.dumps([EligibilityReason.NOT_OBSERVED.value]),
+                    run_id,
+                    row["account_reservation_id"],
+                ),
+            )
+
+    @staticmethod
+    def _row_to_account_reservation(row: sqlite3.Row) -> AccountReservation:
+        occupancy = (
+            Occupancy(row["occ_adults"], row["occ_children"], row["occ_rooms"])
+            if row["occ_adults"] is not None
+            else None
+        )
+        total = (
+            Money(Decimal(row["baseline_amount"]), row["baseline_currency"])
+            if row["baseline_amount"] is not None and row["baseline_currency"]
+            else None
+        )
+        observation = ReservationObservation(
+            remote_id=row["remote_key_hash"],
+            confirmation_id=row["confirmation_id"],
+            lifecycle=ReservationLifecycle(row["remote_lifecycle"]),
+            property_name=row["property_name"],
+            property_ref=row["property_ref"],
+            check_in=date.fromisoformat(row["check_in"]) if row["check_in"] else None,
+            check_out=date.fromisoformat(row["check_out"]) if row["check_out"] else None,
+            room_type=row["room_type"],
+            booked_total=total,
+            refundable=(
+                bool(row["refundable"]) if row["refundable"] is not None else None
+            ),
+            refund_note=row["refund_note"],
+            refund_deadline=(
+                date.fromisoformat(row["refund_deadline"])
+                if row["refund_deadline"]
+                else None
+            ),
+            occupancy=occupancy,
+            observed_at=datetime.fromisoformat(row["last_observed_at"]),
+            extraction_method="persisted",
+        )
+        reasons = tuple(
+            EligibilityReason(value) for value in json.loads(row["eligibility_reasons"])
+        )
+        return AccountReservation(
+            account_reservation_id=row["account_reservation_id"],
+            user_id=row["user_id"],
+            remote_key_hash=row["remote_key_hash"],
+            observation=observation,
+            eligibility=EligibilityDecision(
+                EligibilityStatus(row["eligibility_status"]), reasons
+            ),
+            monitoring_booking_id=row["monitoring_booking_id"],
+            first_observed_at=datetime.fromisoformat(row["first_observed_at"]),
+            last_observed_at=datetime.fromisoformat(row["last_observed_at"]),
+            snapshot_revision=row["snapshot_revision"],
         )
 
 
@@ -1511,8 +2126,12 @@ class SqliteUserRepository:
                 "SELECT booking_id FROM bookings WHERE user_id = ?", (user_id,)
             )
         ]
+        # Account rows own the optional monitoring projection FK, so remove
+        # them before the ordinary booking-scoped deletion cascade.
+        conn.execute("DELETE FROM account_reservations WHERE user_id = ?", (user_id,))
         for booking_id in booking_ids:
             _delete_booking_rows(conn, booking_id)
+        conn.execute("DELETE FROM booking_sync_runs WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM invite_codes WHERE used_by = ?", (user_id,))
         conn.execute("UPDATE invite_codes SET issued_by = NULL WHERE issued_by = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))

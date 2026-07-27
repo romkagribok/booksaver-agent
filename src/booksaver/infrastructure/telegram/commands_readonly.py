@@ -6,7 +6,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from booksaver.daemon.check_coordinator import (
+    CheckCoordinator,
+    ImmediateAdmission,
+    InventoryCompletion,
+)
 from booksaver.daemon.scheduler import Scheduler
+from booksaver.domain.account_sync import (
+    AccountReservation,
+    EligibilityReason,
+    InventoryCompleteness,
+)
 from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.user import User
 from booksaver.domain.user_session import UserSessionHealth, UserSessionStatusView
@@ -15,6 +25,7 @@ from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
+    SqliteAccountReservationRepository,
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteSavingsRepository,
@@ -30,6 +41,21 @@ Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
 
 logger = logging.getLogger(__name__)
+
+_ELIGIBILITY_LABELS = {
+    EligibilityReason.PAST_OR_COMPLETED: "stay is past or completed",
+    EligibilityReason.CANCELLED: "cancelled",
+    EligibilityReason.NOT_UPCOMING: "not an upcoming stay",
+    EligibilityReason.NON_REFUNDABLE: "non-refundable",
+    EligibilityReason.REFUNDABILITY_UNKNOWN: "refundability unavailable",
+    EligibilityReason.MISSING_CONFIRMATION: "confirmation unavailable",
+    EligibilityReason.MISSING_PROPERTY: "property identity unavailable",
+    EligibilityReason.MISSING_STAY_DATES: "stay dates unavailable",
+    EligibilityReason.MISSING_ROOM_TYPE: "room type unavailable",
+    EligibilityReason.MISSING_OCCUPANCY: "occupancy unavailable",
+    EligibilityReason.MISSING_BOOKED_TOTAL: "booked total unavailable",
+    EligibilityReason.NOT_OBSERVED: "not present in the latest complete account refresh",
+}
 
 
 def _format_timedelta(delta: timedelta) -> str:
@@ -89,6 +115,7 @@ def register_readonly_commands(
     client: TelegramBotClient | None = None,
     send: Send | None = None,
     is_owner: Callable[[int], bool] | None = None,
+    check_coordinator: CheckCoordinator | None = None,
 ) -> None:
     """Registers /start, /help, /status, /bookings, /savings, /checks (US-036).
 
@@ -155,27 +182,116 @@ def register_readonly_commands(
         lines.append(f"Your active bookings: {active_booking_count}")
         reply(cmd.chat_id, "\n".join(lines))
 
+    def _render_inventory(
+        reservations: tuple[AccountReservation, ...],
+        completion: InventoryCompletion | None = None,
+    ) -> list[str]:
+        report = completion.report if completion is not None else None
+        if not reservations:
+            if report is not None and report.failure_detail:
+                return [
+                    "Booking.com refresh failed: "
+                    f"{report.failure_detail}\nNo synchronized reservations are available."
+                ]
+            return ["No reservations found in your Booking.com account."]
+
+        if report is None:
+            header = "Your last synchronized Booking.com reservations:"
+        elif report.succeeded:
+            header = (
+                "Booking.com reservations refreshed "
+                f"({report.eligible} eligible, {report.ineligible} ineligible):"
+            )
+        elif report.completeness is InventoryCompleteness.INCOMPLETE:
+            header = (
+                "Booking.com refresh was incomplete; no missing reservations were "
+                "removed. Showing synchronized observations:"
+            )
+        elif report.failure_detail:
+            header = (
+                f"Booking.com refresh failed: {report.failure_detail}\n"
+                "Showing the last safe synchronized inventory:"
+            )
+        else:
+            header = "Booking.com refresh failed. Showing the last safe inventory:"
+
+        entries: list[str] = []
+        for reservation in reservations:
+            item = reservation.observation
+            name = item.property_name or item.confirmation_id or "Reservation"
+            dates = (
+                f"{item.check_in}→{item.check_out}"
+                if item.check_in is not None and item.check_out is not None
+                else "dates unavailable"
+            )
+            total = (
+                f"{item.booked_total.amount} {item.booked_total.currency}"
+                if item.booked_total is not None
+                else "total unavailable"
+            )
+            if reservation.eligibility.is_eligible:
+                eligibility = "eligible for price-drop checks"
+            else:
+                reasons = ", ".join(
+                    _ELIGIBILITY_LABELS[reason]
+                    for reason in reservation.eligibility.reasons
+                )
+                eligibility = f"ineligible: {reasons}"
+            entries.append(
+                f"{name}\n"
+                f"  Confirmation: {item.confirmation_id or 'unavailable'}\n"
+                f"  {dates} · {total} · {item.lifecycle.value}\n"
+                f"  {eligibility}"
+            )
+
+        messages: list[str] = []
+        current = header
+        for entry in entries:
+            candidate = f"{current}\n\n{entry}"
+            if len(candidate) > 3800 and current != header:
+                messages.append(current)
+                current = f"More Booking.com reservations:\n\n{entry}"
+            else:
+                current = candidate
+        messages.append(current)
+        return messages
+
+    def _send_inventory(
+        chat_id: int,
+        completion: InventoryCompletion,
+    ) -> None:
+        for message in _render_inventory(completion.reservations, completion):
+            reply(chat_id, message)
+
     def _bookings(cmd: IncomingCommand) -> None:
         if not db_path.exists():
-            reply(cmd.chat_id, "No bookings registered yet.")
+            reply(cmd.chat_id, "No synchronized reservations yet. Send /connect first.")
+            return
+        if check_coordinator is not None:
+            admission = check_coordinator.request_inventory(
+                cmd.user_id,
+                lambda completion: _send_inventory(cmd.chat_id, completion),
+            )
+            if admission is ImmediateAdmission.ACCEPTED:
+                reply(cmd.chat_id, "Refreshing reservations from Booking.com…")
+            elif admission is ImmediateAdmission.BUSY:
+                reply(
+                    cmd.chat_id,
+                    "BookSaver is using the browser right now. Try /bookings again shortly.",
+                )
+            else:
+                reply(cmd.chat_id, "BookSaver is shutting down.")
             return
         with SqliteStore(db_path) as store:
             user = _resolve_active_user(store, cmd.user_id)
             if user is None:
                 reply(cmd.chat_id, _NOT_RECOGNIZED)
                 return
-            bookings = SqliteBookingRepository(store).list_active_for_user(user.user_id)
-        if not bookings:
-            reply(cmd.chat_id, "No active bookings.")
-            return
-        lines = ["Your active bookings:"]
-        for booking in bookings:
-            lines.append(
-                f"{booking.booking_id[:8]} — {booking.property.name} "
-                f"{booking.stay_dates.check_in}→{booking.stay_dates.check_out} "
-                f"{booking.baseline_price.amount} {booking.baseline_price.currency}"
+            reservations = tuple(
+                SqliteAccountReservationRepository(store).list_for_user(user.user_id)
             )
-        reply(cmd.chat_id, "\n".join(lines))
+        for message in _render_inventory(reservations):
+            reply(cmd.chat_id, message)
 
     def _savings(cmd: IncomingCommand) -> None:
         if not db_path.exists():

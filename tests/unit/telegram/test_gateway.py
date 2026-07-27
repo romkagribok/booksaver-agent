@@ -682,7 +682,7 @@ def _scripted_conversation_transport(
     return _Transport()
 
 
-def test_register_dialog_end_to_end_through_the_bot_loop(tmp_path: Path) -> None:
+def test_retired_register_command_is_unknown_immediately(tmp_path: Path) -> None:
     owner_chat_id = 555
     db_path = tmp_path / "booksaver.db"
     cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
@@ -692,23 +692,7 @@ def test_register_dialog_end_to_end_through_the_bot_loop(tmp_path: Path) -> None
 
     stop_event = threading.Event()
     sent: list[tuple[int, str]] = []
-    texts = [
-        "/register",
-        "Ibis Berlin Mitte",
-        "-",
-        "2026-09-01",
-        "2026-09-05",
-        "Standard Double",
-        "250.00 EUR",
-        "yes",
-        "-",
-        "-",
-        "2",
-        "-",
-        "-",
-        "CONF123",
-        "yes",
-    ]
+    texts = ["/register"]
     client = TelegramBotClient(
         "fake-token",
         transport=_scripted_conversation_transport(owner_chat_id, texts, sent, stop_event),
@@ -718,11 +702,12 @@ def test_register_dialog_end_to_end_through_the_bot_loop(tmp_path: Path) -> None
 
     runner(stop_event)
 
-    assert any("Registered:" in text for _chat_id, text in sent)
-    assert any("Please confirm this booking" in text for _chat_id, text in sent)
+    assert sent == [
+        (owner_chat_id, "Unknown command: /register. Send /help for the list.")
+    ]
 
 
-def test_cancelflow_aborts_a_register_dialog_mid_flow(tmp_path: Path) -> None:
+def test_cancelflow_has_no_booking_dialog_semantics(tmp_path: Path) -> None:
     owner_chat_id = 555
     db_path = tmp_path / "booksaver.db"
     cfg = _config(tmp_path, enabled=True, owner_chat_id=owner_chat_id)
@@ -731,7 +716,7 @@ def test_cancelflow_aborts_a_register_dialog_mid_flow(tmp_path: Path) -> None:
 
     stop_event = threading.Event()
     sent: list[tuple[int, str]] = []
-    texts = ["/register", "Ibis Berlin Mitte", "/cancelflow"]
+    texts = ["/cancelflow"]
     client = TelegramBotClient(
         "fake-token",
         transport=_scripted_conversation_transport(owner_chat_id, texts, sent, stop_event),
@@ -741,7 +726,7 @@ def test_cancelflow_aborts_a_register_dialog_mid_flow(tmp_path: Path) -> None:
 
     runner(stop_event)
 
-    assert sent[-1] == (owner_chat_id, "Cancelled the current dialog.")
+    assert sent[-1] == (owner_chat_id, "No active dialog to cancel.")
 
 
 def test_message_rate_limit_drops_excess_replies_within_the_window(tmp_path: Path) -> None:

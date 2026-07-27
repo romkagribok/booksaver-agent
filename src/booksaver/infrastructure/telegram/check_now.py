@@ -10,7 +10,9 @@ from booksaver.daemon.check_coordinator import (
     ImmediateAdmission,
     ImmediateCompletion,
     ImmediateCompletionKind,
+    InventoryCompletion,
 )
+from booksaver.domain.account_sync import SynchronizationTrigger
 from booksaver.domain.check_result import CheckOutcome
 from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.models import Booking
@@ -76,7 +78,7 @@ def register_check_now_command(
 
     def _format_completion(completion: ImmediateCompletion) -> str:
         if completion.kind is ImmediateCompletionKind.UNAVAILABLE:
-            return _UNAVAILABLE
+            return completion.unavailable_detail or _UNAVAILABLE
         result = completion.result
         if result is None:
             return "The live check could not be completed. Please try again later."
@@ -118,17 +120,14 @@ def register_check_now_command(
             return "BookSaver is shutting down; no new check was started."
         return f"Checking {booking.property.name} now. I'll send the result here."
 
-    def _command(cmd: IncomingCommand) -> None:
-        selector = cmd.args.strip()
-        if selector:
-            booking = _resolve(cmd.user_id, selector)
-            reply(cmd.chat_id, _UNAVAILABLE if booking is None else _request(
-                cmd.user_id, cmd.chat_id, booking
-            ))
-            return
-        bookings = _owned_active(cmd.user_id)
+    def _send_picker(telegram_user_id: int, chat_id: int) -> None:
+        bookings = _owned_active(telegram_user_id)
         if not bookings:
-            reply(cmd.chat_id, "No active bookings to check.")
+            reply(
+                chat_id,
+                "No reservations are currently eligible for price-drop checks. "
+                "Send /bookings to see every reservation and the reasons.",
+            )
             return
         keyboard = {
             "inline_keyboard": [
@@ -145,7 +144,37 @@ def register_check_now_command(
                 for booking in bookings[:10]
             ]
         }
-        send(cmd.chat_id, "Choose a booking to check now:", keyboard)
+        send(chat_id, "Choose a booking to check now:", keyboard)
+
+    def _command(cmd: IncomingCommand) -> None:
+        selector = cmd.args.strip()
+        if selector:
+            booking = _resolve(cmd.user_id, selector)
+            reply(cmd.chat_id, _UNAVAILABLE if booking is None else _request(
+                cmd.user_id, cmd.chat_id, booking
+            ))
+            return
+        if coordinator is None:
+            reply(
+                cmd.chat_id,
+                "Immediate checks are unavailable until the daemon is restarted.",
+            )
+            return
+
+        def _synchronized(_completion: InventoryCompletion) -> None:
+            _send_picker(cmd.user_id, cmd.chat_id)
+
+        admission = coordinator.request_inventory(
+            cmd.user_id,
+            _synchronized,
+            trigger=SynchronizationTrigger.CHECK_NOW,
+        )
+        if admission is ImmediateAdmission.ACCEPTED:
+            reply(cmd.chat_id, "Refreshing Booking.com reservations before checking…")
+        elif admission is ImmediateAdmission.BUSY:
+            reply(cmd.chat_id, "A live browser task is already running. Try again shortly.")
+        else:
+            reply(cmd.chat_id, "BookSaver is shutting down; no new check was started.")
 
     def _callback(callback: IncomingCallback) -> None:
         selector = callback.data.removeprefix("checknow:")
