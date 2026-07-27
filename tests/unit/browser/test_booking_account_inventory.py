@@ -182,6 +182,7 @@ def test_booking_status_links_are_not_mistaken_for_inventory_tabs() -> None:
         "https://secure.booking.com/confirmation.en-us.html?reservation=opaque",
         """
         <main data-inventory-complete="true"></main>
+        <a href="/confirmation.en-us.html?alternate=opaque">Print confirmation</a>
         <script type="application/json">
           {"bookingId": "booking-1", "status": "confirmed",
            "propertyName": "Hotel", "checkIn": "2027-01-01",

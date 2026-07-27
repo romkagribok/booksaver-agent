@@ -86,7 +86,11 @@ class _InventoryParser(HTMLParser):
             if target:
                 candidate = urljoin(self.source_url, target)
                 lowered = candidate.lower()
-                if "trip_id=" in lowered or "/confirmation" in lowered:
+                source_path = urlparse(self.source_url).path.lower()
+                if (
+                    not source_path.startswith("/confirmation")
+                    and ("trip_id=" in lowered or "/confirmation" in lowered)
+                ):
                     self.detail_urls.add(candidate)
                     self.recognized_inventory = True
         if tag == "script" and values.get("type", "").lower() in {
