@@ -3,7 +3,7 @@ intent: 019-booking-account-synchronization
 phase: inception
 status: complete
 created: 2026-07-27T14:57:11.000Z
-updated: 2026-07-27T16:28:04.000Z
+updated: 2026-07-27T22:09:25.000Z
 ---
 
 # Requirements: Booking Account Synchronization
@@ -24,7 +24,7 @@ replacement bookings directly in Booking.com.
 | Goal | Success Metric | Priority |
 |------|----------------|----------|
 | Remove duplicate booking data entry | No user-entered reservation facts are required for normal operation | Must |
-| Make account state visible | Every reservation returned by the supported Booking.com account journey is shown with lifecycle and eligibility status | Must |
+| Make current account state visible | Every future upcoming reservation is shown with monitoring eligibility status | Must |
 | Keep monitoring safe | Only complete, active, refundable hotel reservations are checked for price drops | Must |
 | Eliminate competing sources of truth | No normal BookSaver command can create, edit, delete, cancel, or replace synchronized reservation facts | Must |
 | Simplify rebooking | BookSaver detects and reports savings; the user performs all booking and cancellation actions independently in Booking.com | Must |
@@ -33,9 +33,10 @@ replacement bookings directly in Booking.com.
 
 - Synchronize after `/connect`, before scheduled checks, before `/checknow`, and when `/bookings` is
   requested.
-- Fetch and display every reservation exposed by the supported authenticated account journey,
-  including reservations that are not eligible for monitoring.
-- Explain every ineligible reservation with a user-visible reason.
+- Fetch and synchronize every reservation exposed by the supported authenticated account journey.
+- Display only future upcoming reservations in `/bookings`, including future reservations that are
+  not eligible for monitoring, and explain every displayed ineligible reservation with a
+  user-visible reason.
 - Retire Telegram booking registration, editing, deletion, and guided rebooking commands and flows.
 - Treat Booking.com as authoritative; local reservation records are synchronized snapshots, not
   user-editable truth.
@@ -75,7 +76,9 @@ replacement bookings directly in Booking.com.
   - A conclusive inventory traversal follows supported pagination or grouping until it can prove the
     account inventory is complete for the supported hotel-reservation scope.
   - Upcoming, current, past, cancelled, non-refundable, incomplete, and otherwise ineligible hotel
-    reservations returned by the journey are synchronized and remain user-visible.
+    reservations returned by the journey are synchronized for reconciliation, history, and audit.
+  - Historical, current-stay, cancelled, absent, and missing-date reservations are not exposed by
+    `/bookings`; the command is a future-upcoming reservation view.
   - BookSaver's per-user monitoring cap or daily check allowance never hides or prevents
     synchronization of an account reservation.
   - Non-hotel Booking.com products remain outside the BookSaver product scope and are never treated
@@ -201,8 +204,11 @@ replacement bookings directly in Booking.com.
 - **Acceptance Criteria**:
   - The command promptly acknowledges that synchronization is running and later edits or sends a
     bounded result when browser work completes.
-  - The result includes every synchronized hotel reservation in a bounded, paginated, or
-    button-selectable presentation that respects Telegram message and callback limits.
+  - The result includes every synchronized reservation whose remote lifecycle is upcoming and whose
+    check-in date is later than the current UTC date, in a bounded, paginated, or button-selectable
+    presentation that respects Telegram message and callback limits.
+  - Completed, past, current-stay, cancelled, absent, and missing-date reservations remain
+    synchronized internally but are omitted from `/bookings`.
   - Each reservation summary shows recognizable property/dates, remote lifecycle state, monitoring
     eligibility, all applicable ineligibility reasons, and last successful observation time.
   - Eligible reservations provide applicable read-only actions such as viewing current savings or

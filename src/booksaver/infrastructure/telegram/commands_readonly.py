@@ -16,6 +16,7 @@ from booksaver.domain.account_sync import (
     AccountReservation,
     EligibilityReason,
     InventoryCompleteness,
+    ReservationLifecycle,
 )
 from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.user import User
@@ -186,34 +187,48 @@ def register_readonly_commands(
         reservations: tuple[AccountReservation, ...],
         completion: InventoryCompletion | None = None,
     ) -> list[str]:
+        today = datetime.now(UTC).date()
+        reservations = tuple(
+            reservation
+            for reservation in reservations
+            if reservation.observation.lifecycle is ReservationLifecycle.UPCOMING
+            and reservation.observation.check_in is not None
+            and reservation.observation.check_in > today
+        )
         report = completion.report if completion is not None else None
         if not reservations:
             if report is not None and report.failure_detail:
                 return [
                     "Booking.com refresh failed: "
-                    f"{report.failure_detail}\nNo synchronized reservations are available."
+                    f"{report.failure_detail}\n"
+                    "No future synchronized reservations are available."
                 ]
-            return ["No reservations found in your Booking.com account."]
+            return ["No future reservations found in your Booking.com account."]
 
         if report is None:
-            header = "Your last synchronized Booking.com reservations:"
+            header = "Your future Booking.com reservations:"
         elif report.succeeded:
+            eligible = sum(
+                reservation.eligibility.is_eligible for reservation in reservations
+            )
             header = (
-                "Booking.com reservations refreshed "
-                f"({report.eligible} eligible, {report.ineligible} ineligible):"
+                "Future Booking.com reservations refreshed "
+                f"({eligible} eligible, {len(reservations) - eligible} ineligible):"
             )
         elif report.completeness is InventoryCompleteness.INCOMPLETE:
             header = (
                 "Booking.com refresh was incomplete; no missing reservations were "
-                "removed. Showing synchronized observations:"
+                "removed. Showing future synchronized observations:"
             )
         elif report.failure_detail:
             header = (
                 f"Booking.com refresh failed: {report.failure_detail}\n"
-                "Showing the last safe synchronized inventory:"
+                "Showing the last safe future reservations:"
             )
         else:
-            header = "Booking.com refresh failed. Showing the last safe inventory:"
+            header = (
+                "Booking.com refresh failed. Showing the last safe future reservations:"
+            )
 
         entries: list[str] = []
         for reservation in reservations:
@@ -250,7 +265,7 @@ def register_readonly_commands(
             candidate = f"{current}\n\n{entry}"
             if len(candidate) > 3800 and current != header:
                 messages.append(current)
-                current = f"More Booking.com reservations:\n\n{entry}"
+                current = f"More future Booking.com reservations:\n\n{entry}"
             else:
                 current = candidate
         messages.append(current)

@@ -9,18 +9,21 @@ assigned_bolt: 036-synchronized-booking-interface
 implemented: true
 ---
 
-# Story: US-117 Show every reservation and eligibility reason
+# Story: US-117 Show future upcoming reservations and eligibility reasons
 
 ## User Story
 
 **As a** BookSaver user
-**I want** `/bookings` to show my complete synchronized reservation inventory and eligibility
-**So that** I know what is monitored and why anything else is not.
+**I want** `/bookings` to show my future upcoming reservations and their eligibility
+**So that** the list stays relevant while still explaining which future stays are monitored.
 
 ## Acceptance Criteria
 
-- [ ] Bounded pagination/selection exposes every synchronized hotel reservation.
+- [ ] Bounded pagination/selection exposes every synchronized reservation whose remote lifecycle is
+  upcoming and whose check-in date is later than the current UTC date.
 - [ ] Each summary shows property/dates, lifecycle, eligibility, all reasons, and observation time.
+- [ ] Completed, past, current-stay, cancelled, absent, and missing-date reservations are omitted
+  while remaining synchronized internally.
 - [ ] Eligible reservations expose only applicable read-only savings/check actions.
 - [ ] Ineligible reservations expose no price-check action.
 - [ ] Auth-required results offer `/connect`; retryable failures offer a safe refresh.

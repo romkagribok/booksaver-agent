@@ -42,13 +42,14 @@ complexity:
 
 ## Objective
 
-Integrate synchronization with every approved trigger, make `/bookings` the complete read-only
-reservation view, and remove manual CRUD and guided rebooking from Telegram, CLI, and documentation.
+Integrate synchronization with every approved trigger, make `/bookings` the future-upcoming
+read-only reservation view, and remove manual CRUD and guided rebooking from Telegram, CLI, and
+documentation.
 
 ## Stories Included
 
 - **US-116**: Synchronize every freshness boundary (Must)
-- **US-117**: Show every reservation and reason (Must)
+- **US-117**: Show future upcoming reservations and reasons (Must)
 - **US-118**: Remove manual mutation and guided rebooking (Must)
 
 ## Stages
@@ -70,7 +71,8 @@ reservation view, and remove manual CRUD and guided rebooking from Telegram, CLI
 ## Success Criteria
 
 - [x] `/connect`, schedule, `/checknow`, and `/bookings` synchronize safely.
-- [x] `/bookings` shows complete lifecycle/eligibility without mutation actions.
+- [x] `/bookings` shows only future upcoming reservations and their eligibility without mutation
+  actions.
 - [x] Retired commands are absent and unknown.
 - [x] Savings remain informational with no guided-rebook session.
 - [x] Documentation and full quality gates pass.

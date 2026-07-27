@@ -60,25 +60,37 @@ def _register_caller(db_path: Path, telegram_id: int) -> int:
         return user.user_id
 
 
-def _booking(booking_id: str = "b-1") -> Booking:
+def _booking(
+    booking_id: str = "b-1",
+    *,
+    check_in: date | None = None,
+    refundable: bool = True,
+) -> Booking:
+    check_in = check_in or datetime.now(UTC).date() + timedelta(days=30)
     return Booking(
         booking_id=booking_id,
         platform=Platform.BOOKING_COM,
         product_type=ProductType.HOTEL,
         confirmation_id=ConfirmationId(f"CONF-{booking_id}"),
         property=Property(name="Hotel Test", booking_com_ref="ref-1"),
-        stay_dates=StayDates(check_in=date(2026, 9, 1), check_out=date(2026, 9, 5)),
+        stay_dates=StayDates(check_in=check_in, check_out=check_in + timedelta(days=4)),
         room_type=RoomType(label="Double"),
         baseline_price=Money(amount=Decimal("400.00"), currency="EUR"),
-        refundability=RefundabilityPolicy(is_refundable=True, note="free cancellation"),
+        refundability=RefundabilityPolicy(
+            is_refundable=refundable,
+            note="free cancellation" if refundable else "non-refundable",
+        ),
         registered_at=datetime.now(UTC),
     )
 
 
-def _sync_booking(db_path: Path, user_id: int, booking: Booking) -> None:
-    observation = ReservationObservation(
+def _observation(
+    booking: Booking,
+    lifecycle: ReservationLifecycle = ReservationLifecycle.UPCOMING,
+) -> ReservationObservation:
+    return ReservationObservation(
         remote_id=booking.booking_id,
-        lifecycle=ReservationLifecycle.UPCOMING,
+        lifecycle=lifecycle,
         observed_at=datetime.now(UTC),
         confirmation_id=booking.confirmation_id.value,
         property_name=booking.property.name,
@@ -87,21 +99,32 @@ def _sync_booking(db_path: Path, user_id: int, booking: Booking) -> None:
         check_out=booking.stay_dates.check_out,
         room_type=booking.room_type.label,
         booked_total=booking.baseline_price,
-        refundable=True,
+        refundable=booking.refundability.is_refundable,
         refund_note=booking.refundability.note,
         occupancy=booking.occupancy,
     )
+
+
+def _sync_observations(
+    db_path: Path,
+    user_id: int,
+    observations: tuple[ReservationObservation, ...],
+) -> None:
     with SqliteStore(db_path) as store:
         SqliteAccountReservationRepository(store).reconcile(
             user_id=user_id,
-            run_id=f"run-{user_id}-{booking.booking_id}",
+            run_id=f"run-{user_id}",
             trigger=SynchronizationTrigger.BOOKINGS,
             session_revision="test-session",
             result=InventoryDiscoveryResult(
-                (observation,), InventoryCompleteness.COMPLETE
+                observations, InventoryCompleteness.COMPLETE
             ),
             observed_at=datetime.now(UTC),
         )
+
+
+def _sync_booking(db_path: Path, user_id: int, booking: Booking) -> None:
+    _sync_observations(db_path, user_id, (_observation(booking),))
 
 
 def _cmd(command: str, args: str = "", chat_id: int = 1) -> IncomingCommand:
@@ -293,6 +316,42 @@ def test_bookings_lists_active_bookings(tmp_path: Path) -> None:
     router.dispatch(_cmd("/bookings", chat_id=1))
     text = sent[0][1]
     assert "Hotel Test" in text
+
+
+def test_bookings_only_lists_future_upcoming_reservations(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    today = datetime.now(UTC).date()
+    future_eligible = _booking("future-eligible", check_in=today + timedelta(days=10))
+    future_ineligible = _booking(
+        "future-ineligible",
+        check_in=today + timedelta(days=20),
+        refundable=False,
+    )
+    past = _booking("past", check_in=today - timedelta(days=10))
+    current = _booking("current", check_in=today)
+    cancelled = _booking("cancelled", check_in=today + timedelta(days=30))
+    _sync_observations(
+        db_path,
+        user_id,
+        (
+            _observation(future_eligible),
+            _observation(future_ineligible),
+            _observation(past, ReservationLifecycle.COMPLETED),
+            _observation(current),
+            _observation(cancelled, ReservationLifecycle.CANCELLED),
+        ),
+    )
+
+    router.dispatch(_cmd("/bookings", chat_id=1))
+
+    text = "\n".join(message for _chat_id, message in sent)
+    assert "CONF-future-eligible" in text
+    assert "CONF-future-ineligible" in text
+    assert "ineligible: non-refundable" in text
+    assert "CONF-past" not in text
+    assert "CONF-current" not in text
+    assert "CONF-cancelled" not in text
 
 
 def test_bookings_with_no_database_reports_none_registered(tmp_path: Path) -> None:
