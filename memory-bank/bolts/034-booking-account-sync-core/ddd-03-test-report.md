@@ -14,11 +14,12 @@ completed: 2026-07-27T17:00:55Z
 
 ## Verification
 
-- `pytest` account-sync domain, browser, and persistence set: **22 passed**.
+- `pytest` browser inventory adapter set: **14 passed**.
 - Release-review regressions cover delayed dynamic rendering, alternate tab markup, non-navigable
-  scope controls, and an empty upcoming scope without complete-inventory evidence.
-- Full repository gate shared at final construction verification: **959 passed in 12.42s**.
+  scope controls, redirected `/mytrips` rendering, JavaScript Active/Past/Canceled tabs, normalized
+  Apollo cache references, formatted totals, booking-status-link disambiguation, and an empty
+  upcoming scope without complete-inventory evidence.
+- Full repository gate shared at final construction verification: **962 passed in 12.57s**.
 - Ruff and mypy: clean.
-
-No live Booking.com account was available in this local construction environment; the real
-authenticated `/connect` and `/bookings` smoke test remains a deployment gate.
+- Isolated VPS acceptance against two authenticated account sessions: complete traversal for both;
+  one and three upcoming reservations respectively, with every eligibility fact present.

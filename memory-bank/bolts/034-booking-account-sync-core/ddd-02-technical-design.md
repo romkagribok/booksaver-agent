@@ -137,11 +137,17 @@ The operations runbook requires an online SQLite backup before upgrade.
 ## Browser Inventory Adapter
 
 - Restore only the caller's validated encrypted session into a fresh Android-like Chromium context.
-- Navigate to the allowlisted Booking.com reservation/account inventory entry.
+- Navigate to the allowlisted Booking.com reservation/account inventory entry and accept Booking.com's
+  authenticated redirect from `/myreservations.html` to `/mytrips.html`.
 - After `domcontentloaded`, wait within a fixed timeout for a stable rendered card, explicit empty
   state, structured reservation payload, or signed-out state; never snapshot a loading skeleton as
   inventory evidence.
-- Parse scripted DOM/embedded structured data first and follow allowlisted pagination/detail links.
+- Drive the read-only Active, Past, and Canceled tab controls before leaving the inventory page, then
+  follow allowlisted trip and confirmation detail links.
+- Parse scripted DOM, JSON-LD, generic embedded structured data, and Booking.com's normalized
+  `PostBookingReservation` cache; resolve cache references with depth/cycle bounds.
+- Normalize translated property names and epoch stay dates, and use the single-reservation
+  confirmation summary as a bounded occupancy fallback when structured occupancy is absent.
 - Keep a visited set and hard page/item/action limits.
 - Report `complete` only when every pagination link terminates and either explicit all-scope
   evidence is rendered or upcoming, past, and cancelled scopes are each traversed successfully.
