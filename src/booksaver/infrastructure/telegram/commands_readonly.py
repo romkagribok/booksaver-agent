@@ -96,14 +96,10 @@ def _format_session_status(
 
 
 def _format_price_source(source: PriceSourceProvenance) -> str:
-    genius = (
-        "Genius observed/present"
-        if source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT
-        else "Genius not observed"
-    )
-    return (
-        f"source=authenticated mobile web ({source.profile_id.value}); {genius}"
-    )
+    detail = f"source=authenticated mobile web ({source.profile_id.value})"
+    if source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT:
+        detail += "; Genius evidence visible"
+    return detail
 
 
 def register_readonly_commands(

@@ -233,8 +233,8 @@ after step 5:
 
 4. **Interpret the outcome:**
    - `success` with a live price and `authenticated mobile web` source provenance → the VPS IP,
-     mobile profile, and imported session all work. `Genius observed/present` means Booking.com
-     rendered Genius evidence; `Genius not observed` is still valid because not every offer
+     mobile profile, and imported session all work. `Genius evidence visible` means Booking.com
+     rendered Genius evidence; absence of a Genius line is still valid because not every offer
      participates. Restore your normal `check_interval` if you lowered it.
    - `failure` with code `bot_wall` → Booking.com's interstitial (captcha/"unusual traffic") is
      blocking this IP. Pull the trace for confirmation: `booksaver checks trace <check-id>`.
@@ -272,8 +272,8 @@ MFA code, or Booking.com session is sent in Telegram messages.
    cookies after positive rendered account evidence, encrypts them with `BOOKSAVER_SECRET_KEY`, and
    destroys the temporary Chromium/Xvfb/VNC processes and all viewer capabilities.
 5. Send `/status`, then `/checknow` for one booking. Confirm the result reports authenticated mobile
-   web. `Genius observed` is evidence the page rendered Genius state; `Genius not observed` does not
-   mean authentication failed because not every stay/offer has a Genius discount.
+   web. `Genius evidence visible` means the page rendered Genius state; absence of a Genius line does
+   not mean authentication failed because not every stay/offer has a Genius discount.
 
 Before accepting a release, repeat this flow on Telegram Android, iOS/iPadOS, and Desktop. On each
 client, verify typing, Unicode/composition, Backspace, Next, Enter, Hide/Show, viewport resizing,

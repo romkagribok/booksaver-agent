@@ -274,10 +274,10 @@ def test_pipeline_alert_identifies_authenticated_mobile_genius_observed() -> Non
 
     _, body = email.sent[0]
     assert "authenticated mobile web (android-chromium)" in body
-    assert "Genius       : evidence observed/present on the rendered page" in body
+    assert "Genius       : evidence visible on the rendered page" in body
 
 
-def test_pipeline_alert_identifies_authenticated_mobile_without_genius() -> None:
+def test_pipeline_alert_omits_unobserved_genius_status() -> None:
     email = FakeNotifier("email")
     pipeline, _ = _make_pipeline([email])
 
@@ -287,7 +287,7 @@ def test_pipeline_alert_identifies_authenticated_mobile_without_genius() -> None
 
     _, body = email.sent[0]
     assert "authenticated mobile web (android-chromium)" in body
-    assert "Genius       : not observed on the rendered page" in body
+    assert "Genius" not in body
 
 
 # ── pipeline flow ─────────────────────────────────────────────────────────────

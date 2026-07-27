@@ -51,16 +51,12 @@ def render_alert(
         live_price_line += "  (public rate — member deals may be cheaper)"
     source_lines = ""
     if price_source is not None:
-        genius = (
-            "evidence observed/present on the rendered page"
-            if price_source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT
-            else "not observed on the rendered page"
-        )
         source_lines = (
             "\nPrice source : authenticated mobile web "
-            f"({price_source.profile_id.value})\n"
-            f"Genius       : {genius}"
+            f"({price_source.profile_id.value})"
         )
+        if price_source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT:
+            source_lines += "\nGenius       : evidence visible on the rendered page"
     body = (
         f"Savings opportunity found for your Booking.com reservation.\n"
         f"\n"
