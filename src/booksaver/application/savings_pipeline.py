@@ -33,7 +33,7 @@ def render_alert(
     session_mode: SessionMode | None = None,
     price_source: PriceSourceProvenance | None = None,
 ) -> tuple[str, str]:
-    """Subject + body shared by all channels (US-009 core facts + rebook pointer).
+    """Subject + body shared by all channels (US-009 core facts).
 
     US-035: when the live price came from a logged-out (public) check,
     `session_mode` carries that through so the alert never reads as more
@@ -76,10 +76,9 @@ def render_alert(
         f"\n"
         f"The cheaper offer is confirmed refundable and matches your stay and room.\n"
         f"\n"
-        f"To start a guided rebook (nothing is cancelled or purchased without your\n"
-        f"explicit confirmation), run:\n"
-        f"\n"
-        f"    booksaver rebook {opportunity.opportunity_id}\n"
+        f"Review and make any reservation changes directly in Booking.com. BookSaver "
+        f"will observe the updated account state during the next refresh; it never "
+        f"cancels or books reservations.\n"
     )
     return subject, body
 

@@ -7,6 +7,13 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 from booksaver.daemon.scheduler import Scheduler
+from booksaver.domain.account_sync import (
+    InventoryCompleteness,
+    InventoryDiscoveryResult,
+    ReservationLifecycle,
+    ReservationObservation,
+    SynchronizationTrigger,
+)
 from booksaver.domain.check_result import CheckResult, ExtractionMethod, FailureCode, FailureReason
 from booksaver.domain.mobile_web import (
     GeniusEvidence,
@@ -30,6 +37,7 @@ from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
+    SqliteAccountReservationRepository,
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteStore,
@@ -65,6 +73,35 @@ def _booking(booking_id: str = "b-1") -> Booking:
         refundability=RefundabilityPolicy(is_refundable=True, note="free cancellation"),
         registered_at=datetime.now(UTC),
     )
+
+
+def _sync_booking(db_path: Path, user_id: int, booking: Booking) -> None:
+    observation = ReservationObservation(
+        remote_id=booking.booking_id,
+        lifecycle=ReservationLifecycle.UPCOMING,
+        observed_at=datetime.now(UTC),
+        confirmation_id=booking.confirmation_id.value,
+        property_name=booking.property.name,
+        property_ref=booking.property.booking_com_ref,
+        check_in=booking.stay_dates.check_in,
+        check_out=booking.stay_dates.check_out,
+        room_type=booking.room_type.label,
+        booked_total=booking.baseline_price,
+        refundable=True,
+        refund_note=booking.refundability.note,
+        occupancy=booking.occupancy,
+    )
+    with SqliteStore(db_path) as store:
+        SqliteAccountReservationRepository(store).reconcile(
+            user_id=user_id,
+            run_id=f"run-{user_id}-{booking.booking_id}",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="test-session",
+            result=InventoryDiscoveryResult(
+                (observation,), InventoryCompleteness.COMPLETE
+            ),
+            observed_at=datetime.now(UTC),
+        )
 
 
 def _cmd(command: str, args: str = "", chat_id: int = 1) -> IncomingCommand:
@@ -136,7 +173,8 @@ def test_start_sends_welcome_message(tmp_path: Path) -> None:
     router.dispatch(_cmd("/start"))
     assert len(sent) == 1
     assert "Welcome" in sent[0][1]
-    assert "/register" in sent[0][1]
+    assert "/connect" in sent[0][1]
+    assert "/register" not in sent[0][1]
 
 
 def test_help_lists_all_commands(tmp_path: Path) -> None:
@@ -145,17 +183,18 @@ def test_help_lists_all_commands(tmp_path: Path) -> None:
     text = sent[0][1]
     for cmd in (
         "/status",
-        "/register",
+        "/connect",
         "/bookings",
         "/savings",
         "/checks",
-        "/rebook",
         "/setkey",
         "/deletekey",
         "/admin",
         "/cancelflow",
     ):
         assert cmd in text
+    assert "/register" not in text
+    assert "/rebook" not in text
 
 
 def test_status_with_no_database_refuses_unrecognized_sender(tmp_path: Path) -> None:
@@ -249,8 +288,7 @@ def test_status_refuses_unrecognized_sender_even_when_other_users_exist(
 def test_bookings_lists_active_bookings(tmp_path: Path) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
     user_id = _register_caller(db_path, telegram_id=1)
-    with SqliteStore(db_path) as store:
-        SqliteBookingRepository(store).add(_booking(), user_id=user_id)
+    _sync_booking(db_path, user_id, _booking())
 
     router.dispatch(_cmd("/bookings", chat_id=1))
     text = sent[0][1]
@@ -260,7 +298,7 @@ def test_bookings_lists_active_bookings(tmp_path: Path) -> None:
 def test_bookings_with_no_database_reports_none_registered(tmp_path: Path) -> None:
     _db, router, sent, _sched = _setup(tmp_path)
     router.dispatch(_cmd("/bookings"))
-    assert sent[0][1] == "No bookings registered yet."
+    assert sent[0][1] == "No synchronized reservations yet. Send /connect first."
 
 
 def test_bookings_unrecognized_sender_gets_polite_refusal(tmp_path: Path) -> None:
@@ -277,20 +315,18 @@ def test_bookings_only_shows_the_calling_users_own_bookings(tmp_path: Path) -> N
     db_path, router, sent, _sched = _setup(tmp_path)
     user_a = _register_caller(db_path, telegram_id=1)
     user_b = _register_caller(db_path, telegram_id=2)
-    with SqliteStore(db_path) as store:
-        repo = SqliteBookingRepository(store)
-        repo.add(_booking("b-1"), user_id=user_a)
-        repo.add(_booking("b-2"), user_id=user_b)
+    _sync_booking(db_path, user_a, _booking("b-1"))
+    _sync_booking(db_path, user_b, _booking("b-2"))
 
     router.dispatch(_cmd("/bookings", chat_id=1))
     text_a = sent[-1][1]
-    assert "b-1" in text_a or "b-1"[:8] in text_a
-    assert "b-2"[:8] not in text_a
+    assert "CONF-b-1" in text_a
+    assert "CONF-b-2" not in text_a
 
     router.dispatch(_cmd("/bookings", chat_id=2))
     text_b = sent[-1][1]
-    assert "b-2"[:8] in text_b
-    assert "b-1"[:8] not in text_b
+    assert "CONF-b-2" in text_b
+    assert "CONF-b-1" not in text_b
 
 
 def test_savings_with_no_database_reports_none_detected(tmp_path: Path) -> None:

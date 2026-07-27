@@ -4,8 +4,8 @@
 
 BookSaver is a self-hosted Python agent that watches refundable Booking.com hotel
 reservations for a cheaper equivalent room. It re-runs the search with the original dates and
-occupancy, alerts the right user, and guides a rebook while leaving every cancellation, payment,
-and final booking action to the human.
+occupancy and alerts the right user. Reservation changes happen independently in Booking.com;
+BookSaver never cancels, books, pays, or runs a rebooking workflow.
 
 > [!WARNING]
 > BookSaver is experimental personal-use software, not a hosted service. Booking.com UI changes,
@@ -15,14 +15,13 @@ and final booking action to the human.
 
 ## Current state
 
-The implemented hotel-monitoring scope is complete: **109 in-scope stories, 33 construction bolts,
-and 937 automated tests**. The current release includes:
+The implemented hotel-monitoring scope is complete: **116 in-scope stories, 36 construction bolts,
+and 949 automated tests**. The current release includes:
 
 - scripted Playwright searches with bounded LLM recovery when a page step changes;
 - same-property, dates, occupancy, room-type, currency, and refundability checks;
-- local SQLite history, redacted traces, savings alerts, and guided rebooking;
-- one current guided-rebook choice per active booking, preserving the last verified saving across
-  technical failures while conclusive market changes reject stale selections atomically;
+- local SQLite history, redacted traces, and savings alerts;
+- automatic authenticated-account reservation discovery with visible eligibility reasons;
 - a private Telegram interface with owner-issued, single-use invites and per-user isolation;
 - encrypted, user-scoped Booking.com sessions and optional personal Anthropic keys;
 - Docker/systemd deployment and an opt-in HTTPS `/connect` login flow for a trusted VPS;
@@ -38,15 +37,16 @@ issues are exploratory future capabilities, not missing parts of the current hot
 
 ## How it works
 
-1. You register a refundable hotel booking and its all-in baseline price.
+1. You connect your Booking.com account; BookSaver synchronizes every visible reservation and uses
+   only complete, upcoming, refundable records for monitoring.
 2. On schedule or via `/checknow`, BookSaver opens a fresh authenticated mobile Chromium context
    and repeats the Booking.com search for the same stay and party.
 3. Deterministic code drives the normal journey. If one step fails, an LLM browser agent may use a
    limited click/fill/select/scroll vocabulary. An adapter-level guard blocks reservation,
    checkout, payment, and cancellation destinations.
 4. Only a cheaper, currency-aligned, still-refundable equivalent offer becomes a savings result.
-5. Telegram or email reports the result. Rebooking uses explicit confirmations and hands the final
-   action to the user's own device.
+5. Telegram or email reports the result. You independently review and make any change in
+   Booking.com; the next synchronization observes the updated account state.
 
 Every check is locally traceable with `booksaver checks trace <CHECK_ID>`.
 
@@ -80,7 +80,9 @@ docker compose ps
 docker compose logs -f booksaver
 ```
 
-In a private chat with the bot, send `/start`, then `/connect`, `/register`, and `/checknow`.
+In a private chat with the bot, send `/start`, then `/connect`. BookSaver discovers your
+Booking.com reservations automatically. Use `/bookings` to refresh the full account inventory and
+see why any reservation is ineligible for price-drop checks; use `/checknow` for an immediate check.
 The first real Booking.com check is a required deployment test; VPS IPs can encounter bot walls.
 
 The [VPS deployment runbook](memory-bank/operations/vps-deployment-runbook.md) covers DNS/TLS,
@@ -103,12 +105,11 @@ booksaver --help
 
 `booksaver init` creates `~/.booksaver/config.toml` with mode `0600`. For a desktop operator,
 enable the Telegram bot in that file, export the required `BOOKSAVER_*` values, and run
-`booksaver run`. A headed `booksaver auth` login can be migrated to the Telegram-linked owner with
-`booksaver auth migrate-legacy --telegram-user-id <ID>`. The normal VPS path is `/connect`.
+`booksaver run`. Connect each admitted user through `/connect`; `auth import` remains a scoped
+break-glass recovery path.
 
 Useful CLI commands include `bookings list`, `checks list`, `checks trace`, `savings list`,
-`auth status|delete|import`, `rebook`, and `rebook-log`. Run any command with `--help` for its full
-arguments.
+and `auth status|delete|import`. Run any command with `--help` for its full arguments.
 
 ## Data, LLM, and security boundaries
 

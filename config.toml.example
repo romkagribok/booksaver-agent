@@ -30,7 +30,6 @@ public_url = "https://connect.example.com" # Must match BOOKSAVER_AUTH_DOMAIN.
 session_timeout_seconds = 600
 
 [limits]
-max_bookings_per_user = 3
 max_checks_per_user_per_day = 48
 max_llm_calls_per_user_per_day = 200
 messages_per_minute_per_chat = 20

@@ -6,9 +6,8 @@ BookSaver Agent is a local-first Python daemon / CLI-style tool. It is not a hos
 
 ## Current State
 
-All 4 MVP units (bolts 001–005) plus intent 002's agentic search monitor (bolts 006–007)
-are implemented. The stack below is decided and in use; each choice is recorded as an ADR
-(see `standards/decision-index.md`).
+The implemented scope spans intents 001–019 and bolts 001–036. The stack below is decided and in
+use; each choice is recorded in `standards/decision-index.md`.
 
 ## Runtime Stack (decided)
 
@@ -26,7 +25,8 @@ are implemented. The stack below is decided and in use; each choice is recorded 
   and noVNC ES modules (ADR-026). Only Caddy publishes ports 80/443.
 - **LLM integration**: official `anthropic` SDK, default model `claude-haiku-4-5`, key from `BOOKSAVER_LLM_API_KEY` only; degrades to DOM-only extraction without a key (ADR-009). Two roles: offer extraction/judgment on the property page, and the browser-agent brain — a plain tool-use loop, no agent frameworks (ADR-016), tiered text→screenshot observations (ADR-015), hard `[agent]` config caps with adaptive budgeting named as future work (ADR-017).
 - **Notifications**: stdlib `smtplib` (STARTTLS) for email, stdlib `urllib` against the Telegram Bot API (ADR-011); no BookSaver cloud relay.
-- **Rebook safety**: guided final click — automation navigates, the human performs Booking.com's destructive click (ADR-012).
+- **Reservation authority**: authenticated Booking.com inventory is synchronized read-only;
+  BookSaver reports savings but never creates or guides a rebooking workflow (ADR-027).
 
 ## Dependency Policy
 

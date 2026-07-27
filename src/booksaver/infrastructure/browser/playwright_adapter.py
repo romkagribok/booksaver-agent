@@ -29,6 +29,48 @@ _SIGNED_IN_SELECTORS = (
 
 _PAGE_TIMEOUT_MS = 45_000
 _ACTION_TIMEOUT_MS = 15_000
+_INVENTORY_STABLE_MS = 750
+_INVENTORY_READY_SCRIPT = """
+() => {
+  const body = document.body;
+  if (!body) return false;
+
+  const text = body.innerText || "";
+  const signedOut = /sign in to manage|log in to your account|sign in or register/i.test(text);
+  const cardCount = document.querySelectorAll(
+    '[data-testid="reservation-card"], [data-testid="booking-card"]'
+  ).length;
+  const empty = document.querySelector(
+    '[data-testid="bookings-empty-state"], [data-testid="reservation-empty-state"]'
+  );
+  const explicitComplete = document.querySelector(
+    '[data-inventory-complete="true"], [data-inventory-scopes]'
+  );
+  const structured = Array.from(document.querySelectorAll(
+    'script[type="application/ld+json"], script[type="application/json"]'
+  )).some((node) =>
+    /reservationId|reservationNumber|confirmationNumber|bookingId/.test(
+      node.textContent || ""
+    )
+  );
+  const loading = document.querySelector(
+    '[aria-busy="true"], [data-testid*="skeleton"], [data-testid*="loading"]'
+  );
+  if (loading || !(signedOut || cardCount || empty || explicitComplete || structured)) {
+    delete window.__booksaverInventoryReady;
+    return false;
+  }
+
+  const fingerprint = [cardCount, text.length, structured, Boolean(empty)].join(":");
+  const now = Date.now();
+  const previous = window.__booksaverInventoryReady;
+  if (previous && previous.fingerprint === fingerprint) {
+    return now - previous.observedAt >= __STABLE_MS__;
+  }
+  window.__booksaverInventoryReady = {fingerprint, observedAt: now};
+  return false;
+}
+""".replace("__STABLE_MS__", str(_INVENTORY_STABLE_MS))
 # Include Booking.com calendar day cells (role=checkbox + data-date) so the agent
 # can click check-in/out dates — they are not <button>s.
 _INTERACTIVE_SELECTOR = (
@@ -63,6 +105,25 @@ def new_mobile_context(
 ) -> Any:
     """Create a fresh, version-matched mobile context without session fallback."""
     return browser.new_context(**settings.context_options(device_descriptor))
+
+
+def _is_account_inventory_url(url: str) -> bool:
+    return "booking.com" in url.lower() and "myreservations" in url.lower()
+
+
+def _wait_for_account_inventory(page: Any) -> None:
+    """Wait for a stable rendered inventory signal, not only initial HTML."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=_ACTION_TIMEOUT_MS)
+    except Exception:
+        # Booking.com may keep background requests open. The stable DOM signal
+        # below is the authoritative bounded readiness condition.
+        pass
+    page.wait_for_function(
+        _INVENTORY_READY_SCRIPT,
+        polling=250,
+        timeout=_ACTION_TIMEOUT_MS,
+    )
 
 
 class PlaywrightBrowserSession:
@@ -181,6 +242,21 @@ class PlaywrightInteractiveBrowser:
     def goto(self, url: str) -> None:
         page = self._ensure_page()
         page.goto(url, timeout=_PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+
+    def open_page(self, url: str) -> PageContent:
+        """Navigate the persistent context and return bounded extraction input.
+
+        Account synchronization uses this read-only surface so it can share the
+        same caller-scoped browser lease as price checks without exposing raw
+        Playwright handles to the application layer.
+        """
+        page = self._ensure_page()
+        page.goto(url, timeout=_PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+        if _is_account_inventory_url(page.url):
+            _wait_for_account_inventory(page)
+        html = page.content()
+        text = page.inner_text("body")
+        return PageContent(url=page.url, html=html, text=text)
 
     def click(self, selector: str) -> None:
         self._ensure_page().locator(selector).first.click()

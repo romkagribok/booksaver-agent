@@ -203,10 +203,9 @@ def test_auth_import_requires_explicit_telegram_user_id(tmp_path) -> None:
     assert exc.value.code == 2
 
 
-def test_bare_auth_still_routes_to_headed_login(tmp_path) -> None:
-    """The scoped import subparser must not shadow headed laptop auth."""
+def test_bare_auth_only_shows_scoped_session_commands(tmp_path, capsys) -> None:
     config_path, _ = _write_config(tmp_path)
     args = create_parser().parse_args(["--config", str(config_path), "auth"])
-    from booksaver.cli.commands import cmd_auth
 
-    assert args.func is cmd_auth
+    assert args.func(args) == 1
+    assert "import" in capsys.readouterr().out

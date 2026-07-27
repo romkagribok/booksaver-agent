@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     booking_id       TEXT    PRIMARY KEY,
     platform         TEXT    NOT NULL CHECK(platform = 'booking_com'),
     product_type     TEXT    NOT NULL CHECK(product_type = 'hotel'),
-    confirmation_id  TEXT    NOT NULL UNIQUE,
+    confirmation_id  TEXT    NOT NULL,
     property_name    TEXT    NOT NULL,
     property_ref     TEXT    NOT NULL,
     check_in         TEXT    NOT NULL,
@@ -60,10 +60,66 @@ CREATE TABLE IF NOT EXISTS bookings (
     occ_children     INTEGER CHECK(occ_children IS NULL OR occ_children >= 0),
     occ_rooms        INTEGER CHECK(occ_rooms IS NULL OR occ_rooms >= 1),
     -- v7: ownership (US-029). Pre-v7 rows are backfilled to the owner user.
-    user_id          INTEGER NOT NULL REFERENCES users(user_id)
+    user_id          INTEGER NOT NULL REFERENCES users(user_id),
+    UNIQUE(user_id, confirmation_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id);
+
+-- v11: Booking.com account inventory is authoritative (ADR-027). These rows
+-- include ineligible/incomplete/cancelled reservations; `bookings` above is the
+-- strict derived monitoring projection for eligible rows only.
+CREATE TABLE IF NOT EXISTS booking_sync_runs (
+    run_id             TEXT PRIMARY KEY,
+    user_id            INTEGER NOT NULL REFERENCES users(user_id),
+    trigger             TEXT NOT NULL,
+    started_at          TEXT NOT NULL,
+    completed_at        TEXT NOT NULL,
+    completeness        TEXT NOT NULL
+        CHECK(completeness IN ('complete', 'incomplete', 'failed')),
+    failure_code        TEXT,
+    failure_detail      TEXT,
+    discovered_count    INTEGER NOT NULL,
+    eligible_count      INTEGER NOT NULL,
+    ineligible_count    INTEGER NOT NULL,
+    session_revision    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_booking_sync_runs_user
+    ON booking_sync_runs(user_id, completed_at DESC);
+
+CREATE TABLE IF NOT EXISTS account_reservations (
+    account_reservation_id TEXT PRIMARY KEY,
+    user_id                 INTEGER NOT NULL REFERENCES users(user_id),
+    remote_key_hash         TEXT NOT NULL,
+    confirmation_id         TEXT,
+    property_name           TEXT,
+    property_ref            TEXT,
+    check_in                TEXT,
+    check_out               TEXT,
+    room_type               TEXT,
+    baseline_amount         TEXT,
+    baseline_currency       TEXT,
+    refundable              INTEGER,
+    refund_note             TEXT NOT NULL DEFAULT '',
+    refund_deadline         TEXT,
+    occ_adults              INTEGER,
+    occ_children            INTEGER,
+    occ_rooms               INTEGER,
+    remote_lifecycle        TEXT NOT NULL,
+    eligibility_status      TEXT NOT NULL
+        CHECK(eligibility_status IN ('eligible', 'ineligible')),
+    eligibility_reasons     TEXT NOT NULL DEFAULT '[]',
+    snapshot_revision       INTEGER NOT NULL DEFAULT 1,
+    first_observed_at       TEXT NOT NULL,
+    last_observed_at        TEXT NOT NULL,
+    last_sync_run_id        TEXT NOT NULL REFERENCES booking_sync_runs(run_id),
+    monitoring_booking_id   TEXT UNIQUE REFERENCES bookings(booking_id),
+    UNIQUE(user_id, remote_key_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_reservations_user
+    ON account_reservations(user_id, last_observed_at DESC);
 
 -- v2: finalised by Unit 2 (booking-com-price-monitor)
 -- v5: extraction_method also allows 'agent' (bolt 007 agent-assisted checks)

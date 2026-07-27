@@ -7,11 +7,18 @@ from pathlib import Path
 from types import MethodType
 from typing import Any
 
+from booksaver.application.ports import PageContent
 from booksaver.daemon.check_coordinator import (
     CheckCoordinator,
     ImmediateAdmission,
     ImmediateCompletion,
     ImmediateCompletionKind,
+    InventoryCompletion,
+)
+from booksaver.domain.account_sync import (
+    InventoryCompleteness,
+    SynchronizationReport,
+    SynchronizationTrigger,
 )
 from booksaver.domain.agent import AgentSettings
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
@@ -71,6 +78,18 @@ class NullLLMFactory:
 _TEST_SESSION_KEY = "wGeBQ1NevJlDl9nkMrKT4uh90w2yK8sBgKYrp4r1pTk="
 
 
+def _complete_sync(
+    _store: SqliteStore, _browser: Any, _user_id: int, _trigger: Any
+) -> SynchronizationReport:
+    return SynchronizationReport(
+        run_id="test-sync",
+        completeness=InventoryCompleteness.COMPLETE,
+        discovered=0,
+        eligible=0,
+        ineligible=0,
+    )
+
+
 def _session_repo(tmp_path: Path) -> EncryptedUserSessionRepository:
     return EncryptedUserSessionRepository(
         DataDirectory(tmp_path), FernetKeyStore(_TEST_SESSION_KEY)
@@ -120,6 +139,7 @@ def _coordinator(
         notifier_builder=lambda _cfg: [],
         invalid_key_notifier=lambda _repo, _results: None,
         browser_factory=BrowserContext,
+        inventory_synchronizer=_complete_sync,
         checks_today=check_counter,
         llm_calls_today=llm_counter,
     )
@@ -307,6 +327,7 @@ def test_scheduled_checks_use_a_fresh_browser_context_per_booking(tmp_path: Path
         notifier_builder=lambda _cfg: [],
         invalid_key_notifier=lambda _repo, _results: None,
         browser_factory=FreshBrowserContext,
+        inventory_synchronizer=_complete_sync,
     )
     _user_id, bookings = _add(tmp_path, 101, count=2)
     observed: list[object] = []
@@ -321,7 +342,7 @@ def test_scheduled_checks_use_a_fresh_browser_context_per_booking(tmp_path: Path
 
     assert len(observed) == len(bookings) == 2
     assert observed[0] is not observed[1]
-    assert len(created) == len(closed) == 2
+    assert len(created) == len(closed) == 3
 
 
 def test_missing_user_session_fails_closed_with_history_and_trace(tmp_path: Path) -> None:
@@ -413,6 +434,7 @@ def test_one_users_missing_session_does_not_stop_another_users_scheduled_check(
         invalid_key_notifier=lambda _repo, _results: None,
         browser_factory=BrowserContext,
         session_repository=sessions,
+        inventory_synchronizer=_complete_sync,
     )
 
     coordinator.run_scheduled()
@@ -437,7 +459,7 @@ def test_revoked_plan_snapshot_never_starts_browser(
 ) -> None:
     user_id, _bookings = _add(tmp_path, 101)
     planned = threading.Event()
-    browser_entered = threading.Event()
+    browser_entries = 0
 
     def revoke_after_plan(**kwargs: Any) -> Any:
         plan = build_check_plan(**kwargs)
@@ -450,7 +472,8 @@ def test_revoked_plan_snapshot_never_starts_browser(
 
     class ObservedBrowser(AbstractContextManager[object]):
         def __enter__(self) -> object:
-            browser_entered.set()
+            nonlocal browser_entries
+            browser_entries += 1
             return object()
 
         def __exit__(self, *args: object) -> None:
@@ -466,12 +489,13 @@ def test_revoked_plan_snapshot_never_starts_browser(
         notifier_builder=lambda _cfg: [],
         invalid_key_notifier=lambda _repo, _results: None,
         browser_factory=ObservedBrowser,
+        inventory_synchronizer=_complete_sync,
     )
 
     coordinator.run_scheduled()
 
     assert planned.is_set()
-    assert not browser_entered.is_set()
+    assert browser_entries == 1
     assert coordinator.checks_today == {}
 
 
@@ -517,6 +541,7 @@ def test_midflight_revocation_keeps_history_but_suppresses_post_check_effects(
         notifier_builder=lambda _cfg: [],
         invalid_key_notifier=lambda _repo, results: invalid_key_calls.append(results),
         browser_factory=BrowserContext,
+        inventory_synchronizer=_complete_sync,
         session_repository=sessions,
     )
 
@@ -616,6 +641,7 @@ def test_runtime_signed_out_failure_marks_only_resolved_revision_for_reauth(
         invalid_key_notifier=lambda _repo, _results: None,
         browser_factory=BrowserContext,
         session_repository=sessions,
+        inventory_synchronizer=_complete_sync,
     )
     user_id, bookings = _add(tmp_path, 101)
     _seed_session(sessions, user_id)
@@ -673,6 +699,7 @@ def test_scheduled_and_manual_boundary_uses_normal_history_trace_and_savings_pip
         invalid_key_notifier=lambda _repo, _results: None,
         browser_factory=lambda: ExistingBrowserContext(browser),
         session_repository=sessions,
+        inventory_synchronizer=_complete_sync,
     )
     user_id, bookings = _add(tmp_path, 101)
     _seed_session(sessions, user_id)
@@ -699,8 +726,116 @@ def test_stopping_refuses_new_immediate_work(tmp_path: Path) -> None:
         notifier_builder=lambda _cfg: [],
         invalid_key_notifier=lambda _repo, _results: None,
         browser_factory=BrowserContext,
+        inventory_synchronizer=_complete_sync,
     )
 
     assert coordinator.request_immediate(
         101, "booking", lambda _outcome: None
     ) is ImmediateAdmission.STOPPING
+
+
+def test_bookings_request_discovers_and_projects_authenticated_inventory(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
+            101, UserRole.USER
+        )
+    _seed_session(sessions, user.user_id)
+
+    class InventoryBrowser:
+        def restore_cookies(self, _cookies: bytes) -> None:
+            return None
+
+        def open_page(self, url: str) -> PageContent:
+            return PageContent(
+                url,
+                """
+                    <main data-testid="bookings-list"
+                          data-inventory-scopes="upcoming,past,cancelled">
+                  <article data-testid="reservation-card"
+                    data-reservation-id="remote-1"
+                    data-confirmation-id="CONF-1"
+                    data-status="confirmed"
+                    data-property-name="Synchronized Hotel"
+                    data-property-url="hotel-ref"
+                    data-checkin="2026-09-01"
+                    data-checkout="2026-09-05"
+                    data-room-type="Double"
+                    data-total-amount="400"
+                    data-currency="EUR"
+                    data-refundable="true"
+                    data-adults="2"></article>
+                </main>
+                """,
+                "",
+            )
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def get_cookies(self) -> bytes:
+            return b"[]"
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=lambda: ExistingBrowserContext(InventoryBrowser()),
+        session_repository=sessions,
+    )
+    completed = threading.Event()
+    outcomes: list[InventoryCompletion] = []
+
+    assert coordinator.request_inventory(
+        101,
+        lambda outcome: (outcomes.append(outcome), completed.set()),
+    ) is ImmediateAdmission.ACCEPTED
+    assert completed.wait(1)
+
+    assert outcomes[0].report is not None and outcomes[0].report.succeeded
+    assert outcomes[0].reservations[0].observation.property_name == (
+        "Synchronized Hotel"
+    )
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        projected = SqliteBookingRepository(store).list_active_for_user(user.user_id)
+    assert len(projected) == 1
+
+
+def test_check_now_synchronizes_before_resolving_booking(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    def synchronize(
+        _store: SqliteStore, _browser: Any, _user_id: int, trigger: Any
+    ) -> SynchronizationReport:
+        events.append(trigger.value)
+        return _complete_sync(_store, _browser, _user_id, trigger)
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        inventory_synchronizer=synchronize,
+    )
+    _user_id, bookings = _add(tmp_path, 101)
+    completed = threading.Event()
+
+    def fake_run(
+        self: Any, store: Any, browser: Any, owner: int, booking: Any
+    ) -> CheckResult:
+        events.append("price_check")
+        return _failure(booking.booking_id)
+
+    coordinator._run_booking = MethodType(fake_run, coordinator)  # type: ignore[method-assign]
+    coordinator.request_immediate(
+        101, bookings[0].booking_id, lambda _outcome: completed.set()
+    )
+    assert completed.wait(1)
+
+    assert events == [SynchronizationTrigger.CHECK_NOW.value, "price_check"]
