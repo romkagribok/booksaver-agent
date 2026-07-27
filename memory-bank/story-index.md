@@ -350,6 +350,34 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-104` | Preserve credential and desktop safety | Remote Auth Viewer | Complete | `001-device-aware-remote-auth-viewer/stories/004-preserve-credential-and-desktop-safety.md` |
 | `US-105` | Recover from an abandoned viewer | Remote Auth Viewer | Complete | `001-device-aware-remote-auth-viewer/stories/005-recover-from-abandoned-viewer.md` |
 
+## 017-current-rebook-opportunities
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-current-rebook-opportunities` | 3 stories | Complete (bolt 032; 909 tests) |
+
+### 001-current-rebook-opportunities: Current Rebook Opportunities
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-106` | Show one current opportunity per booking | Current Rebook | Complete | `001-current-rebook-opportunities/stories/001-show-one-current-opportunity-per-booking.md` |
+| `US-107` | Reject superseded rebook selections | Current Rebook | Complete | `001-current-rebook-opportunities/stories/002-reject-superseded-rebook-selection.md` |
+| `US-108` | Preserve savings audit and access boundaries | Current Rebook | Complete | `001-current-rebook-opportunities/stories/003-preserve-savings-audit-and-access-boundaries.md` |
+
+## 018-conclusive-rebook-opportunity-lifecycle
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-conclusive-opportunity-lifecycle` | 3 stories | Complete (bolt 033; 937 tests) |
+
+### 001-conclusive-opportunity-lifecycle: Conclusive Opportunity Lifecycle
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-109` | Preserve opportunity across technical failures | Opportunity Lifecycle | Complete | `001-conclusive-opportunity-lifecycle/stories/001-preserve-opportunity-across-technical-failures.md` |
+| `US-110` | Supersede opportunity on conclusive check | Opportunity Lifecycle | Complete | `001-conclusive-opportunity-lifecycle/stories/002-supersede-opportunity-on-conclusive-check.md` |
+| `US-111` | Enforce conclusive currentness atomically | Opportunity Lifecycle | Complete | `001-conclusive-opportunity-lifecycle/stories/003-enforce-conclusive-currentness-atomically.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -370,6 +398,8 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `014-remote-auth-display-reliability` | 1 | 2 | Complete (bolt 027; 871 tests) |
 | `015-authentication-boundary-hardening` | 2 | 4 | Complete (bolts 028–029; 883 tests) |
 | `016-device-aware-remote-auth-viewer` | 1 | 5 | Complete (bolts 030–031; 898 tests) |
+| `017-current-rebook-opportunities` | 1 | 3 | Complete (bolt 032; 909 tests) |
+| `018-conclusive-rebook-opportunity-lifecycle` | 1 | 3 | Complete (bolt 033; 937 tests) |
 
-All 105 stories (103 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
+All 111 stories (109 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
 exactly once.

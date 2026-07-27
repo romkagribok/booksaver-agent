@@ -85,6 +85,60 @@ _CHECK_HISTORY_COLUMNS = (
     "extracted_check_in, extracted_check_out, failure_code, failure_detail"
 )
 
+# An opportunity is actionable only when its source check is the booking's
+# latest conclusive market observation.  Successful checks establish a price;
+# NO_EQUIVALENT_OFFER establishes that no eligible rate is currently bookable.
+# Every other failure is technical or ambiguous and must not erase the last
+# successfully verified saving.
+_CURRENT_OPPORTUNITIES_CTE = """
+WITH current_opportunities AS (
+    SELECT
+        selected.*,
+        b.user_id AS owner_user_id,
+        source.checked_at AS source_checked_at,
+        source.id AS source_check_order,
+        selected.id AS opportunity_order
+    FROM savings_opportunities AS selected
+    JOIN check_history AS source
+      ON source.check_id = selected.check_id
+     AND source.booking_id = selected.booking_id
+    JOIN bookings AS b ON b.booking_id = selected.booking_id
+    WHERE b.status = 'active'
+      AND source.outcome = :success_outcome
+      AND NOT EXISTS (
+          SELECT 1
+          FROM check_history AS newer
+          WHERE newer.booking_id = source.booking_id
+            AND (
+                newer.outcome = :success_outcome
+                OR newer.failure_code = :no_equivalent_code
+            )
+            AND (
+                newer.checked_at > source.checked_at
+                OR (
+                    newer.checked_at = source.checked_at
+                    AND newer.id > source.id
+                )
+            )
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM savings_opportunities AS duplicate
+          WHERE duplicate.booking_id = selected.booking_id
+            AND duplicate.check_id = selected.check_id
+            AND duplicate.id > selected.id
+      )
+)
+"""
+
+
+def _current_opportunity_params(**scope: object) -> dict[str, object]:
+    return {
+        "success_outcome": CheckOutcome.SUCCESS.value,
+        "no_equivalent_code": FailureCode.NO_EQUIVALENT_OFFER.value,
+        **scope,
+    }
+
 
 def _delete_booking_rows(conn: sqlite3.Connection, booking_id: str) -> None:
     """Delete rows owned through one booking; caller controls the transaction."""
@@ -1004,10 +1058,31 @@ class SqliteSavingsRepository:
         ).fetchone()
         return self._row_to_opportunity(row) if row else None
 
+    def get_current_for_booking(self, booking_id: str) -> SavingsOpportunity | None:
+        """Return the opportunity produced by the latest conclusive check.
+
+        Later technical failures do not erase the last verified saving.  A
+        later successful non-saving check or explicit no-equivalent result
+        leaves no matching row and therefore returns ``None``.
+        """
+        row = self._store.conn.execute(
+            _CURRENT_OPPORTUNITIES_CTE
+            + """
+            SELECT *
+            FROM current_opportunities
+            WHERE booking_id = :booking_id
+            ORDER BY source_checked_at DESC, source_check_order DESC,
+                     opportunity_order DESC
+            LIMIT 1
+            """,
+            _current_opportunity_params(booking_id=booking_id),
+        ).fetchone()
+        return self._row_to_opportunity(row) if row else None
+
     def list_for_booking(self, booking_id: str) -> list[SavingsOpportunity]:
         rows = self._store.conn.execute(
             "SELECT * FROM savings_opportunities WHERE booking_id = ? "
-            "ORDER BY validated_at DESC",
+            "ORDER BY validated_at DESC, id DESC",
             (booking_id,),
         ).fetchall()
         return [self._row_to_opportunity(r) for r in rows]
@@ -1029,6 +1104,26 @@ class SqliteSavingsRepository:
             "WHERE b.user_id = ? "
             "ORDER BY s.validated_at DESC",
             (user_id,),
+        ).fetchall()
+        return [self._row_to_opportunity(r) for r in rows]
+
+    def list_current_for_user(self, user_id: int) -> list[SavingsOpportunity]:
+        """Return current conclusive opportunities for active owned bookings.
+
+        Historical rows remain untouched.  Technical failures are ignored for
+        supersession, while later successful or explicit no-equivalent checks
+        replace the market state.
+        """
+        rows = self._store.conn.execute(
+            _CURRENT_OPPORTUNITIES_CTE
+            + """
+            SELECT *
+            FROM current_opportunities
+            WHERE owner_user_id = :user_id
+            ORDER BY source_checked_at DESC, source_check_order DESC,
+                     opportunity_order DESC
+            """,
+            _current_opportunity_params(user_id=user_id),
         ).fetchall()
         return [self._row_to_opportunity(r) for r in rows]
 
@@ -1061,6 +1156,42 @@ class SqliteRebookSessionRepository:
         self._store = store
 
     def add(self, session: RebookSession) -> None:
+        self._insert(session)
+        self._store.conn.commit()
+
+    def add_if_opportunity_current(self, session: RebookSession) -> bool:
+        """Atomically validate actionability and create the guided session.
+
+        ``BEGIN IMMEDIATE`` prevents another connection from appending a newer
+        conclusive check between the current-row check and the session insert.
+        """
+        conn = self._store.conn
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                _CURRENT_OPPORTUNITIES_CTE
+                + """
+                SELECT 1
+                FROM current_opportunities
+                WHERE opportunity_id = :opportunity_id
+                  AND booking_id = :booking_id
+                """,
+                _current_opportunity_params(
+                    opportunity_id=session.opportunity_id,
+                    booking_id=session.booking_id,
+                ),
+            ).fetchone()
+            if row is None:
+                conn.rollback()
+                return False
+            self._insert(session)
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+
+    def _insert(self, session: RebookSession) -> None:
         self._store.conn.execute(
             """
             INSERT INTO rebook_sessions (
@@ -1078,7 +1209,6 @@ class SqliteRebookSessionRepository:
                 session.end_reason,
             ),
         )
-        self._store.conn.commit()
 
     def update(self, session: RebookSession) -> None:
         self._store.conn.execute(

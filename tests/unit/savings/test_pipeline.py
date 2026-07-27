@@ -54,6 +54,12 @@ class FakeSavingsRepository:
     def get(self, opportunity_id: str) -> SavingsOpportunity | None:
         return next((o for o in self.added if o.opportunity_id == opportunity_id), None)
 
+    def get_current_for_booking(self, booking_id: str) -> SavingsOpportunity | None:
+        matches = self.list_for_booking(booking_id)
+        indexed = list(enumerate(matches))
+        latest = max(indexed, key=lambda item: (item[1].validated_at, item[0]), default=None)
+        return latest[1] if latest is not None else None
+
     def list_for_booking(self, booking_id: str) -> list[SavingsOpportunity]:
         return [o for o in self.added if o.booking_id == booking_id]
 
@@ -62,6 +68,22 @@ class FakeSavingsRepository:
 
     def list_all_for_user(self, user_id: int) -> list[SavingsOpportunity]:
         return list(self.added)
+
+    def list_current_for_user(self, user_id: int) -> list[SavingsOpportunity]:
+        latest_by_booking: dict[str, tuple[int, SavingsOpportunity]] = {}
+        for index, opportunity in enumerate(self.added):
+            current = latest_by_booking.get(opportunity.booking_id)
+            if current is None or (opportunity.validated_at, index) > (
+                current[1].validated_at,
+                current[0],
+            ):
+                latest_by_booking[opportunity.booking_id] = (index, opportunity)
+        ordered = sorted(
+            latest_by_booking.values(),
+            key=lambda value: (value[1].validated_at, value[0]),
+            reverse=True,
+        )
+        return [value[1] for value in ordered]
 
     def mark_notified(self, opportunity_id: str, at: datetime) -> None:
         self.notified.append(opportunity_id)

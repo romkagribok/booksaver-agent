@@ -16,8 +16,12 @@ from booksaver.application.ports import (
     RebookEventRepository,
     RebookSessionRepository,
 )
-from booksaver.application.rebook_service import RebookSessionService, UnknownOpportunityError
-from booksaver.domain.models import Booking
+from booksaver.application.rebook_service import (
+    RebookSessionService,
+    SupersededOpportunityError,
+    UnknownOpportunityError,
+)
+from booksaver.domain.models import Booking, BookingStatus
 from booksaver.domain.post_rebook import HandoffOutcome, PostRebookContext
 from booksaver.domain.rebook import (
     ConfirmationAnswer,
@@ -183,6 +187,12 @@ class _SessionIdCapturingRepo:
     def add(self, session: RebookSession) -> None:
         self._box["session_id"] = session.session_id
         self._inner.add(session)
+
+    def add_if_opportunity_current(self, session: RebookSession) -> bool:
+        added = self._inner.add_if_opportunity_current(session)
+        if added:
+            self._box["session_id"] = session.session_id
+        return added
 
     def update(self, session: RebookSession) -> None:
         self._inner.update(session)
@@ -587,13 +597,17 @@ def register_rebook_command(
             if user is None or not user.is_active:
                 reply(cmd.chat_id, "You're not recognized by this bot.")
                 return
-            opportunities = SqliteSavingsRepository(store).list_all_for_user(user.user_id)
-            booking_repo = SqliteBookingRepository(store)
+            opportunities = SqliteSavingsRepository(store).list_current_for_user(user.user_id)
+            bookings_by_id = {
+                booking.booking_id: booking
+                for booking in SqliteBookingRepository(store).list_active_for_user(user.user_id)
+            }
             choices = [
-                (opportunity, booking_repo.get_by_id(opportunity.booking_id))
-                for opportunity in opportunities[:10]
-            ]
-        if not opportunities:
+                (opportunity, booking)
+                for opportunity in opportunities
+                if (booking := bookings_by_id.get(opportunity.booking_id)) is not None
+            ][:10]
+        if not choices:
             reply(cmd.chat_id, "No savings opportunities to rebook right now.")
             return
         if send is not None:
@@ -602,9 +616,10 @@ def register_rebook_command(
                     [
                         {
                             "text": (
-                                f"{booking.property.name[:28] if booking else 'Booking'} · "
+                                f"{booking.property.name[:20]} · "
                                 f"save {opportunity.amount_saved.amount} "
-                                f"{opportunity.amount_saved.currency}"
+                                f"{opportunity.amount_saved.currency} · "
+                                f"{opportunity.validated_at.astimezone(UTC):%b %d %H:%M}"
                             ),
                             "callback_data": f"rebook:select:{opportunity.opportunity_id}",
                         }
@@ -612,14 +627,19 @@ def register_rebook_command(
                     for opportunity, booking in choices
                 ]
             }
-            send(cmd.chat_id, "Choose a savings opportunity to rebook:", keyboard)
+            send(
+                cmd.chat_id,
+                "Choose a savings opportunity to rebook. Times show the last "
+                "successful verification in UTC; technical failures do not update them.",
+                keyboard,
+            )
             return
         lines = ["Your savings opportunities — start a guided rebook with /rebook <id>:"]
-        for opp in opportunities[:10]:
+        for opp, _booking in choices:
             lines.append(
                 f"{opp.opportunity_id} — booking {opp.booking_id[:8]}: "
                 f"saved {opp.amount_saved.amount} {opp.amount_saved.currency} "
-                f"({opp.percent_saved}%)"
+                f"({opp.percent_saved}%); last verified {opp.validated_at.isoformat()}"
             )
         reply(cmd.chat_id, "\n".join(lines))
 
@@ -697,6 +717,14 @@ def register_rebook_command(
                     session = service.run(opportunity_id)
                 except _RebookAccessLost:
                     return
+                except SupersededOpportunityError:
+                    if is_active():
+                        reply(
+                            chat_id,
+                            "That savings opportunity is no longer current. "
+                            "Run /checknow, then /rebook again.",
+                        )
+                    return
                 except UnknownOpportunityError as e:
                     if is_active():
                         reply(chat_id, f"Error: {e}")
@@ -732,7 +760,7 @@ def register_rebook_command(
         finally:
             session_guard.release(local_user_id)
 
-    def _start_rebook(cmd: IncomingCommand, opportunity_id: str) -> None:
+    def _start_rebook(cmd: IncomingCommand, opportunity_id: str) -> bool:
         active_dialog = (
             dialog_manager.active_dialog_name(cmd.chat_id)
             if dialog_manager is not None
@@ -744,26 +772,41 @@ def register_rebook_command(
                 "Finish the replacement-details dialog, or use /cancelflow, before "
                 "starting another guided rebook.",
             )
-            return
+            return False
         if not db_path.exists():
             reply(cmd.chat_id, "No local database yet — nothing to rebook.")
-            return
+            return False
 
         with SqliteStore(db_path) as store:
             user = SqliteUserRepository(store).get_by_telegram_id(cmd.user_id)
             if user is None or not user.is_active:
                 reply(cmd.chat_id, "You're not recognized by this bot.")
-                return
-            opportunity = SqliteSavingsRepository(store).get(opportunity_id)
+                return False
+            savings_repo = SqliteSavingsRepository(store)
+            opportunity = savings_repo.get(opportunity_id)
             if opportunity is None:
                 reply(cmd.chat_id, f"No savings opportunity found with id '{opportunity_id}'.")
-                return
+                return False
             owner = SqliteUserRepository(store).get_owner_of_booking(opportunity.booking_id)
             if owner is None or owner.user_id != user.user_id:
                 # Same message for "doesn't exist" and "not yours" — don't leak
                 # whether an opportunity belonging to someone else exists.
                 reply(cmd.chat_id, f"No savings opportunity found with id '{opportunity_id}'.")
-                return
+                return False
+            booking = SqliteBookingRepository(store).get_by_id(opportunity.booking_id)
+            current = savings_repo.get_current_for_booking(opportunity.booking_id)
+            if (
+                booking is None
+                or booking.status is not BookingStatus.ACTIVE
+                or current is None
+                or current.opportunity_id != opportunity_id
+            ):
+                reply(
+                    cmd.chat_id,
+                    "That savings opportunity is no longer current. "
+                    "Run /checknow, then /rebook again.",
+                )
+                return False
 
         if not session_guard.try_acquire(user.user_id):
             reply(
@@ -771,12 +814,12 @@ def register_rebook_command(
                 "You already have a rebook session in progress. Finish or let it "
                 "time out before starting another.",
             )
-            return
+            return False
 
         reply(
             cmd.chat_id,
-            f"Starting a guided rebook for {opportunity_id}. "
-            "I'll ask you to confirm each step here.",
+            f"Checking that savings opportunity {opportunity_id} is still current. "
+            "If it is, I'll ask you to confirm each step here.",
         )
         thread = threading.Thread(
             target=_run_session,
@@ -785,6 +828,7 @@ def register_rebook_command(
             daemon=True,
         )
         thread.start()
+        return True
 
     def _rebook(cmd: IncomingCommand) -> None:
         opportunity_id = cmd.args.strip()
@@ -804,16 +848,6 @@ def register_rebook_command(
                 logger.warning(
                     "Could not answer rebook selection callback %s",
                     callback.callback_query_id,
-                )
-            try:
-                client.edit_message_text(
-                    callback.chat_id,
-                    callback.message_id,
-                    "Starting the selected guided rebook…",
-                )
-            except Exception:
-                logger.warning(
-                    "Could not update rebook selection message %s", callback.message_id
                 )
             _start_rebook(
                 IncomingCommand(

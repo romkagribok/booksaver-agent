@@ -15,12 +15,14 @@ and final booking action to the human.
 
 ## Current state
 
-The implemented hotel-monitoring scope is complete: **103 in-scope stories, 31 construction bolts,
-and 898 automated tests**. The current release includes:
+The implemented hotel-monitoring scope is complete: **109 in-scope stories, 33 construction bolts,
+and 937 automated tests**. The current release includes:
 
 - scripted Playwright searches with bounded LLM recovery when a page step changes;
 - same-property, dates, occupancy, room-type, currency, and refundability checks;
 - local SQLite history, redacted traces, savings alerts, and guided rebooking;
+- one current guided-rebook choice per active booking, preserving the last verified saving across
+  technical failures while conclusive market changes reject stale selections atomically;
 - a private Telegram interface with owner-issued, single-use invites and per-user isolation;
 - encrypted, user-scoped Booking.com sessions and optional personal Anthropic keys;
 - Docker/systemd deployment and an opt-in HTTPS `/connect` login flow for a trusted VPS;

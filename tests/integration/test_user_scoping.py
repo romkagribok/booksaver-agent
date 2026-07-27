@@ -286,6 +286,7 @@ class TestCrossUserIsolation:
 
     def test_savings_list_all_for_user_is_isolated(self, tmp_path):
         from booksaver.domain.savings import SavingsOpportunity
+        from tests.integration.test_savings_repo import _add_checked_opportunity
 
         with SqliteStore(tmp_path / "t.db") as store:
             bookings = SqliteBookingRepository(store)
@@ -310,14 +311,22 @@ class TestCrossUserIsolation:
                     notified_at=None,
                 )
 
-            savings.add(_opportunity(booking_a.booking_id, "a"))
-            savings.add(_opportunity(booking_b.booking_id, "b"))
+            _add_checked_opportunity(
+                store, savings, _opportunity(booking_a.booking_id, "a")
+            )
+            _add_checked_opportunity(
+                store, savings, _opportunity(booking_b.booking_id, "b")
+            )
 
             a_savings = savings.list_all_for_user(user_a_id)
             b_savings = savings.list_all_for_user(user_b_id)
+            a_current = savings.list_current_for_user(user_a_id)
+            b_current = savings.list_current_for_user(user_b_id)
 
         assert [o.opportunity_id for o in a_savings] == ["opp-a"]
         assert [o.opportunity_id for o in b_savings] == ["opp-b"]
+        assert [o.opportunity_id for o in a_current] == ["opp-a"]
+        assert [o.opportunity_id for o in b_current] == ["opp-b"]
 
     def test_users_are_isolated_from_each_other_via_telegram_id(self, tmp_path):
         with SqliteStore(tmp_path / "t.db") as store:

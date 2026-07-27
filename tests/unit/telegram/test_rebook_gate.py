@@ -3,7 +3,8 @@ from __future__ import annotations
 import threading
 import time
 import uuid
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from booksaver.domain.value_objects import Money, Occupancy
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
     SqliteRebookEventRepository,
+    SqliteRebookSessionRepository,
     SqliteSavingsRepository,
     SqliteStore,
     SqliteUserRepository,
@@ -561,6 +563,48 @@ def test_outcome_followup_unreported_on_timeout() -> None:
 # ── register_rebook_command (end-to-end wiring) ─────────────────────────────
 
 
+def _add_checked_opportunity(
+    store: SqliteStore, opportunity: SavingsOpportunity
+) -> None:
+    store.conn.execute(
+        """
+        INSERT INTO check_history (
+            check_id, booking_id, checked_at, outcome, extraction_method,
+            live_amount, live_currency
+        ) VALUES (?, ?, ?, 'success', 'dom', ?, ?)
+        """,
+        (
+            opportunity.check_id,
+            opportunity.booking_id,
+            opportunity.validated_at.isoformat(),
+            str(opportunity.live_price.amount),
+            opportunity.live_price.currency,
+        ),
+    )
+    store.conn.commit()
+    SqliteSavingsRepository(store).add(opportunity)
+
+
+def _add_failed_check(
+    store: SqliteStore,
+    *,
+    booking_id: str,
+    check_id: str,
+    checked_at: datetime,
+    failure_code: str,
+) -> None:
+    store.conn.execute(
+        """
+        INSERT INTO check_history (
+            check_id, booking_id, checked_at, outcome, extraction_method,
+            failure_code, failure_detail
+        ) VALUES (?, ?, ?, 'failure', 'none', ?, 'test failure')
+        """,
+        (check_id, booking_id, checked_at.isoformat(), failure_code),
+    )
+    store.conn.commit()
+
+
 def _fixture_db(tmp_path: Path) -> tuple[Path, int, str, str]:
     """Sets up a user + booking + savings opportunity. Returns
     (db_path, telegram_user_id, booking_id, opportunity_id)."""
@@ -571,7 +615,8 @@ def _fixture_db(tmp_path: Path) -> tuple[Path, int, str, str]:
     with SqliteStore(db_path) as store:
         user = SqliteUserRepository(store).get_or_create_by_telegram_id(telegram_user_id)
         SqliteBookingRepository(store).add(booking, user_id=user.user_id)
-        SqliteSavingsRepository(store).add(
+        _add_checked_opportunity(
+            store,
             SavingsOpportunity(
                 opportunity_id=opportunity_id,
                 booking_id=booking.booking_id,
@@ -581,7 +626,7 @@ def _fixture_db(tmp_path: Path) -> tuple[Path, int, str, str]:
                 amount_saved=Money(amount=Decimal("50.00"), currency="EUR"),
                 percent_saved=Decimal("12.50"),
                 validated_at=datetime.now(UTC),
-            )
+            ),
         )
     return db_path, telegram_user_id, booking.booking_id, opportunity_id
 
@@ -614,6 +659,12 @@ def test_rebook_no_args_lists_users_own_opportunities(tmp_path: Path) -> None:
 
 def test_rebook_no_args_offers_owned_opportunity_button(tmp_path: Path) -> None:
     db_path, telegram_user_id, _booking_id, opportunity_id = _fixture_db(tmp_path)
+    with SqliteStore(db_path) as store:
+        opportunity = SqliteSavingsRepository(store).get(opportunity_id)
+        assert opportunity is not None
+        expected_verified = opportunity.validated_at.astimezone(UTC).strftime(
+            "%b %d %H:%M"
+        )
     client = FakeClient()
     router = CommandRouter()
     register_rebook_command(
@@ -639,8 +690,441 @@ def test_rebook_no_args_offers_owned_opportunity_button(tmp_path: Path) -> None:
 
     button = client.sent[0]["reply_markup"]["inline_keyboard"][0][0]
     assert "Hotel Test" in button["text"]
+    assert "save 50.00 EUR" in button["text"]
+    assert expected_verified in button["text"]
+    assert "last successful verification" in client.sent[0]["text"]
     assert button["callback_data"] == f"rebook:select:{opportunity_id}"
     assert len(button["callback_data"].encode()) <= 64
+
+
+def test_rebook_picker_preserves_last_verified_opportunity_after_technical_failure(
+    tmp_path: Path,
+) -> None:
+    db_path, telegram_user_id, booking_id, opportunity_id = _fixture_db(tmp_path)
+    with SqliteStore(db_path) as store:
+        opportunity = SqliteSavingsRepository(store).get(opportunity_id)
+        assert opportunity is not None
+        _add_failed_check(
+            store,
+            booking_id=booking_id,
+            check_id="later-timeout",
+            checked_at=opportunity.validated_at + timedelta(minutes=1),
+            failure_code="timeout",
+        )
+    client = FakeClient()
+    router = CommandRouter()
+    register_rebook_command(
+        router=router,
+        reply=lambda cid, text: None,
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+        send=lambda chat_id, text, markup: client.send_message(chat_id, text, markup),
+    )
+    from booksaver.infrastructure.telegram.router import IncomingCommand
+
+    router.dispatch(
+        IncomingCommand(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            command="/rebook",
+            args="",
+            raw_text="/rebook",
+        )
+    )
+
+    button = client.sent[0]["reply_markup"]["inline_keyboard"][0][0]
+    assert button["callback_data"] == f"rebook:select:{opportunity_id}"
+    assert "last successful verification" in client.sent[0]["text"]
+
+
+def test_rebook_direct_id_rejects_conclusively_invalidated_opportunity(
+    tmp_path: Path,
+) -> None:
+    db_path, telegram_user_id, booking_id, opportunity_id = _fixture_db(tmp_path)
+    with SqliteStore(db_path) as store:
+        opportunity = SqliteSavingsRepository(store).get(opportunity_id)
+        assert opportunity is not None
+        _add_failed_check(
+            store,
+            booking_id=booking_id,
+            check_id="later-no-equivalent",
+            checked_at=opportunity.validated_at + timedelta(minutes=1),
+            failure_code="no_equivalent_offer",
+        )
+    client = FakeClient()
+    router = CommandRouter()
+    replies: list[str] = []
+    register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+    from booksaver.infrastructure.telegram.router import IncomingCommand
+
+    router.dispatch(
+        IncomingCommand(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            command="/rebook",
+            args=opportunity_id,
+            raw_text=f"/rebook {opportunity_id}",
+        )
+    )
+
+    assert replies == [
+        "That savings opportunity is no longer current. "
+        "Run /checknow, then /rebook again."
+    ]
+    assert client.sent == []
+
+
+def test_rebook_picker_offers_only_newest_opportunity_per_active_booking(
+    tmp_path: Path,
+) -> None:
+    db_path, telegram_user_id, booking_id, old_opportunity_id = _fixture_db(tmp_path)
+    now = datetime.now(UTC)
+    second_booking = make_booking("b-2")
+    newer = SavingsOpportunity(
+        opportunity_id="newer-b1",
+        booking_id=booking_id,
+        check_id="chk-newer-b1",
+        baseline_price=Money(amount=Decimal("400.00"), currency="EUR"),
+        live_price=Money(amount=Decimal("300.00"), currency="EUR"),
+        amount_saved=Money(amount=Decimal("100.00"), currency="EUR"),
+        percent_saved=Decimal("25.00"),
+        validated_at=now,
+    )
+    second = SavingsOpportunity(
+        opportunity_id="current-b2",
+        booking_id=second_booking.booking_id,
+        check_id="chk-b2",
+        baseline_price=Money(amount=Decimal("400.00"), currency="EUR"),
+        live_price=Money(amount=Decimal("320.00"), currency="EUR"),
+        amount_saved=Money(amount=Decimal("80.00"), currency="EUR"),
+        percent_saved=Decimal("20.00"),
+        validated_at=now + timedelta(minutes=1),
+    )
+    with SqliteStore(db_path) as store:
+        user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
+        assert user is not None
+        SqliteBookingRepository(store).add(second_booking, user_id=user.user_id)
+        _add_checked_opportunity(store, newer)
+        _add_checked_opportunity(store, second)
+
+    client = FakeClient()
+    router = CommandRouter()
+    register_rebook_command(
+        router=router,
+        reply=lambda cid, text: None,
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+        send=lambda chat_id, text, markup: client.send_message(chat_id, text, markup),
+    )
+    from booksaver.infrastructure.telegram.router import IncomingCommand
+
+    router.dispatch(
+        IncomingCommand(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            command="/rebook",
+            args="",
+            raw_text="/rebook",
+        )
+    )
+
+    buttons = [
+        row[0] for row in client.sent[0]["reply_markup"]["inline_keyboard"]
+    ]
+    assert [button["callback_data"] for button in buttons] == [
+        "rebook:select:current-b2",
+        "rebook:select:newer-b1",
+    ]
+    assert all(old_opportunity_id not in button["callback_data"] for button in buttons)
+
+
+def test_rebook_picker_filters_booking_missing_from_batch_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, telegram_user_id, _booking_id, _opportunity_id = _fixture_db(tmp_path)
+    monkeypatch.setattr(
+        SqliteBookingRepository,
+        "list_active_for_user",
+        lambda self, user_id: [],
+    )
+    client = FakeClient()
+    router = CommandRouter()
+    replies: list[str] = []
+    register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+        send=lambda chat_id, text, markup: client.send_message(chat_id, text, markup),
+    )
+    from booksaver.infrastructure.telegram.router import IncomingCommand
+
+    router.dispatch(
+        IncomingCommand(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            command="/rebook",
+            args="",
+            raw_text="/rebook",
+        )
+    )
+
+    assert replies == ["No savings opportunities to rebook right now."]
+    assert client.sent == []
+
+    fallback_router = CommandRouter()
+    fallback_replies: list[str] = []
+    register_rebook_command(
+        router=fallback_router,
+        reply=lambda cid, text: fallback_replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+    fallback_router.dispatch(
+        IncomingCommand(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            command="/rebook",
+            args="",
+            raw_text="/rebook",
+        )
+    )
+    assert fallback_replies == ["No savings opportunities to rebook right now."]
+
+
+def test_rebook_direct_id_rejects_superseded_opportunity(tmp_path: Path) -> None:
+    db_path, telegram_user_id, booking_id, old_opportunity_id = _fixture_db(tmp_path)
+    with SqliteStore(db_path) as store:
+        old = SqliteSavingsRepository(store).get(old_opportunity_id)
+        assert old is not None
+        _add_checked_opportunity(
+            store,
+            replace(
+                old,
+                opportunity_id="newer-opportunity",
+                check_id="newer-check",
+                validated_at=old.validated_at + timedelta(minutes=1),
+            ),
+        )
+    client = FakeClient()
+    router = CommandRouter()
+    replies: list[str] = []
+    register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+    from booksaver.infrastructure.telegram.router import IncomingCommand
+
+    router.dispatch(
+        IncomingCommand(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            command="/rebook",
+            args=old_opportunity_id,
+            raw_text=f"/rebook {old_opportunity_id}",
+        )
+    )
+
+    assert replies == [
+        "That savings opportunity is no longer current. "
+        "Run /checknow, then /rebook again."
+    ]
+    assert client.sent == []
+    assert client.edits == []
+    with SqliteStore(db_path) as store:
+        assert (
+            store.conn.execute("SELECT COUNT(*) FROM rebook_sessions").fetchone()[0]
+            == 0
+        )
+
+
+def test_rebook_callback_rejects_superseded_opportunity(tmp_path: Path) -> None:
+    db_path, telegram_user_id, _booking_id, old_opportunity_id = _fixture_db(tmp_path)
+    with SqliteStore(db_path) as store:
+        old = SqliteSavingsRepository(store).get(old_opportunity_id)
+        assert old is not None
+        _add_checked_opportunity(
+            store,
+            replace(
+                old,
+                opportunity_id="newer-opportunity",
+                check_id="newer-check",
+                validated_at=old.validated_at + timedelta(minutes=1),
+            ),
+        )
+    client = FakeClient()
+    router = CommandRouter()
+    replies: list[str] = []
+    callback_handler = register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+
+    callback_handler(
+        IncomingCallback(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            callback_query_id="stale-callback",
+            message_id=1,
+            data=f"rebook:select:{old_opportunity_id}",
+        )
+    )
+
+    assert client.answered_callbacks == ["stale-callback"]
+    assert replies == [
+        "That savings opportunity is no longer current. "
+        "Run /checknow, then /rebook again."
+    ]
+    assert client.sent == []
+    assert client.edits == []
+    with SqliteStore(db_path) as store:
+        assert (
+            store.conn.execute("SELECT COUNT(*) FROM rebook_sessions").fetchone()[0]
+            == 0
+        )
+
+
+def test_rebook_atomic_guard_closes_preflight_to_worker_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, telegram_user_id, _booking_id, opportunity_id = _fixture_db(tmp_path)
+    original_add = SqliteRebookSessionRepository.add_if_opportunity_current
+
+    def supersede_before_atomic_add(
+        repository: SqliteRebookSessionRepository, session: Any
+    ) -> bool:
+        savings = SqliteSavingsRepository(repository._store)
+        selected = savings.get(session.opportunity_id)
+        assert selected is not None
+        _add_checked_opportunity(
+            repository._store,
+            replace(
+                selected,
+                opportunity_id="racing-newer-opportunity",
+                check_id="racing-newer-check",
+                validated_at=selected.validated_at + timedelta(minutes=1),
+            ),
+        )
+        return original_add(repository, session)
+
+    monkeypatch.setattr(
+        SqliteRebookSessionRepository,
+        "add_if_opportunity_current",
+        supersede_before_atomic_add,
+    )
+    client = FakeClient()
+    router = CommandRouter()
+    replies: list[str] = []
+    register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+    from booksaver.infrastructure.telegram.router import IncomingCommand
+
+    router.dispatch(
+        IncomingCommand(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            command="/rebook",
+            args=opportunity_id,
+            raw_text=f"/rebook {opportunity_id}",
+        )
+    )
+
+    _wait_until(lambda: any("no longer current" in text for text in replies))
+    assert not client.sent
+    with SqliteStore(db_path) as store:
+        assert (
+            store.conn.execute("SELECT COUNT(*) FROM rebook_sessions").fetchone()[0]
+            == 0
+        )
+
+
+def test_rebook_callback_atomic_race_never_edits_picker_to_starting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, telegram_user_id, _booking_id, opportunity_id = _fixture_db(tmp_path)
+    original_add = SqliteRebookSessionRepository.add_if_opportunity_current
+
+    def invalidate_before_atomic_add(
+        repository: SqliteRebookSessionRepository, session: Any
+    ) -> bool:
+        selected = SqliteSavingsRepository(repository._store).get(
+            session.opportunity_id
+        )
+        assert selected is not None
+        _add_failed_check(
+            repository._store,
+            booking_id=selected.booking_id,
+            check_id="racing-no-equivalent",
+            checked_at=selected.validated_at + timedelta(minutes=1),
+            failure_code="no_equivalent_offer",
+        )
+        return original_add(repository, session)
+
+    monkeypatch.setattr(
+        SqliteRebookSessionRepository,
+        "add_if_opportunity_current",
+        invalidate_before_atomic_add,
+    )
+    client = FakeClient()
+    router = CommandRouter()
+    replies: list[str] = []
+    callback_handler = register_rebook_command(
+        router=router,
+        reply=lambda cid, text: replies.append(text),
+        client=client,  # type: ignore[arg-type]
+        db_path=db_path,
+        stop_event=threading.Event(),
+        confirm_timeout_seconds=5.0,
+    )
+
+    callback_handler(
+        IncomingCallback(
+            user_id=telegram_user_id,
+            chat_id=telegram_user_id,
+            callback_query_id="racing-callback",
+            message_id=1,
+            data=f"rebook:select:{opportunity_id}",
+        )
+    )
+
+    _wait_until(lambda: any("no longer current" in text for text in replies))
+    assert client.answered_callbacks == ["racing-callback"]
+    assert client.edits == []
+    assert client.sent == []
+    with SqliteStore(db_path) as store:
+        assert (
+            store.conn.execute("SELECT COUNT(*) FROM rebook_sessions").fetchone()[0]
+            == 0
+        )
 
 
 def test_rebook_selection_callback_rechecks_opportunity_ownership(tmp_path: Path) -> None:
@@ -700,7 +1184,8 @@ def test_rebook_selection_callback_starts_existing_guided_session(tmp_path: Path
     )
 
     _wait_until(lambda: len(client.sent) >= 1)
-    assert any("Starting a guided rebook" in text for text in replies)
+    assert any("Checking that savings opportunity" in text for text in replies)
+    assert client.edits == []
     nonce = _nonce_from_sent(client.sent[0], "no")
     callback_handler(
         IncomingCallback(
@@ -714,11 +1199,11 @@ def test_rebook_selection_callback_starts_existing_guided_session(tmp_path: Path
     _wait_until(lambda: any("ended: declined" in text for text in replies))
 
 
-def test_rebook_selection_starts_when_acknowledgement_and_picker_edit_fail(
+def test_rebook_selection_starts_when_callback_acknowledgement_fails(
     tmp_path: Path, caplog
 ) -> None:
     db_path, telegram_user_id, _booking_id, opportunity_id = _fixture_db(tmp_path)
-    client = FakeClient(fail_answer=True, fail_edit=True)
+    client = FakeClient(fail_answer=True)
     router = CommandRouter()
     replies: list[str] = []
     callback_handler = register_rebook_command(
@@ -741,9 +1226,9 @@ def test_rebook_selection_starts_when_acknowledgement_and_picker_edit_fail(
     )
 
     _wait_until(lambda: len(client.sent) >= 1)
-    assert any("Starting a guided rebook" in text for text in replies)
+    assert any("Checking that savings opportunity" in text for text in replies)
     assert "Could not answer rebook selection callback" in caplog.text
-    assert "Could not update rebook selection message 1" in caplog.text
+    assert client.edits == []
 
     nonce = _nonce_from_sent(client.sent[0], "no")
     callback_handler(

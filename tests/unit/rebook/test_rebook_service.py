@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from booksaver.application.rebook_service import (
     RebookSessionService,
+    SupersededOpportunityError,
     UnknownOpportunityError,
 )
 from booksaver.domain.rebook import (
@@ -37,11 +39,18 @@ class ScriptedGate:
 
 
 class FakeSessionRepo:
-    def __init__(self) -> None:
+    def __init__(self, *, current_at_insert: bool = True) -> None:
         self.sessions: dict[str, RebookSession] = {}
+        self.current_at_insert = current_at_insert
 
     def add(self, session: RebookSession) -> None:
         self.sessions[session.session_id] = session
+
+    def add_if_opportunity_current(self, session: RebookSession) -> bool:
+        if not self.current_at_insert:
+            return False
+        self.add(session)
+        return True
 
     def update(self, session: RebookSession) -> None:
         self.sessions[session.session_id] = session
@@ -71,6 +80,12 @@ class FakeSavingsRepo:
     def get(self, opportunity_id: str) -> SavingsOpportunity | None:
         return self._by_id.get(opportunity_id)
 
+    def get_current_for_booking(self, booking_id: str) -> SavingsOpportunity | None:
+        matches = self.list_for_booking(booking_id)
+        indexed = list(enumerate(matches))
+        latest = max(indexed, key=lambda item: (item[1].validated_at, item[0]), default=None)
+        return latest[1] if latest is not None else None
+
     def list_for_booking(self, booking_id: str) -> list[SavingsOpportunity]:
         return [o for o in self._by_id.values() if o.booking_id == booking_id]
 
@@ -79,6 +94,22 @@ class FakeSavingsRepo:
 
     def list_all_for_user(self, user_id: int) -> list[SavingsOpportunity]:
         return list(self._by_id.values())
+
+    def list_current_for_user(self, user_id: int) -> list[SavingsOpportunity]:
+        latest_by_booking: dict[str, tuple[int, SavingsOpportunity]] = {}
+        for index, opportunity in enumerate(self._by_id.values()):
+            current = latest_by_booking.get(opportunity.booking_id)
+            if current is None or (opportunity.validated_at, index) > (
+                current[1].validated_at,
+                current[0],
+            ):
+                latest_by_booking[opportunity.booking_id] = (index, opportunity)
+        ordered = sorted(
+            latest_by_booking.values(),
+            key=lambda value: (value[1].validated_at, value[0]),
+            reverse=True,
+        )
+        return [value[1] for value in ordered]
 
     def mark_notified(self, opportunity_id: str, at: datetime) -> None:
         pass
@@ -128,6 +159,75 @@ def test_unknown_opportunity_creates_no_session() -> None:
         service.run("nonexistent")
     assert events.events == []       # nothing logged
     assert navigations == []          # nothing navigated
+
+
+def test_superseded_opportunity_creates_no_session_or_prompt() -> None:
+    older = _opportunity()
+    newer = SavingsOpportunity(
+        opportunity_id=str(uuid.uuid4()),
+        booking_id=older.booking_id,
+        check_id="chk-2",
+        baseline_price=older.baseline_price,
+        live_price=Money(amount=Decimal("340.00"), currency="EUR"),
+        amount_saved=Money(amount=Decimal("60.00"), currency="EUR"),
+        percent_saved=Decimal("15.00"),
+        validated_at=older.validated_at + timedelta(minutes=1),
+    )
+    gate = ScriptedGate([True, True])
+    sessions = FakeSessionRepo()
+    events = FakeEventRepo()
+    navigations: list[str] = []
+    service = RebookSessionService(
+        savings_repo=FakeSavingsRepo([older, newer]),
+        booking_repo=FakeBookingRepository([make_booking("b-1")]),
+        session_repo=sessions,
+        event_repo=events,
+        gate=gate,
+        navigator=lambda url, desc: navigations.append(url),
+    )
+
+    with pytest.raises(SupersededOpportunityError, match="no longer current"):
+        service.run(older.opportunity_id)
+
+    assert sessions.sessions == {}
+    assert gate.prompts == []
+    assert events.events == []
+    assert navigations == []
+
+
+def test_fake_current_listing_uses_cross_booking_insertion_order_for_time_ties() -> None:
+    at = datetime.now(UTC)
+    first = replace(_opportunity("b-1"), validated_at=at)
+    second = replace(_opportunity("b-2"), validated_at=at)
+
+    assert [
+        opportunity.booking_id
+        for opportunity in FakeSavingsRepo([first, second]).list_current_for_user(1)
+    ] == ["b-2", "b-1"]
+
+
+def test_opportunity_superseded_at_atomic_insert_creates_no_partial_session() -> None:
+    opportunity = _opportunity()
+    gate = ScriptedGate([True, True])
+    sessions = FakeSessionRepo(current_at_insert=False)
+    events = FakeEventRepo()
+    navigations: list[str] = []
+    service = RebookSessionService(
+        savings_repo=FakeSavingsRepo([opportunity]),
+        booking_repo=FakeBookingRepository([make_booking("b-1")]),
+        session_repo=sessions,
+        event_repo=events,
+        gate=gate,
+        navigator=lambda url, desc: navigations.append(url),
+    )
+
+    with pytest.raises(SupersededOpportunityError, match="no longer current"):
+        service.run(opportunity.opportunity_id)
+
+    assert sessions.sessions == {}
+    assert gate.prompts == []
+    assert events.events == []
+    assert navigations == []
 
 
 # ── US-011: confirmation gates ────────────────────────────────────────────────

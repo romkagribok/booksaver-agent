@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from booksaver.domain.models import Booking
+from booksaver.domain.models import Booking, BookingStatus
 from booksaver.domain.rebook import (
     ConfirmationPrompt,
     EventType,
@@ -31,6 +31,10 @@ class UnknownOpportunityError(Exception):
     pass
 
 
+class SupersededOpportunityError(UnknownOpportunityError):
+    pass
+
+
 def _cancel_url(booking: Booking) -> str:
     ref = booking.property.booking_com_ref
     if ref.startswith(("http://", "https://")):
@@ -50,10 +54,11 @@ def _rebook_url(booking: Booking) -> str:
 class RebookSessionService:
     """Runs a guided rebook session (US-010/011/012).
 
-    Only invoked from the CLI — the scheduler has no path to this service, which is
-    the structural guarantee behind US-010's "no rebook automation without explicit
-    intent". Per ADR-012 the destructive final click stays with the human: each
-    approved step navigates to the right page and hands off.
+    Only invoked from an explicit CLI or Telegram request — the scheduler has no
+    path to this service, which is the structural guarantee behind US-010's
+    "no rebook automation without explicit intent". Per ADR-012 the destructive
+    final click stays with the human: each approved step navigates to the right
+    page and hands off.
     """
 
     def __init__(
@@ -85,9 +90,23 @@ class RebookSessionService:
                 f"Opportunity '{opportunity_id}' references unknown booking "
                 f"'{opportunity.booking_id}'."
             )
+        current = self._savings.get_current_for_booking(opportunity.booking_id)
+        if (
+            booking.status is not BookingStatus.ACTIVE
+            or current is None
+            or current.opportunity_id != opportunity_id
+        ):
+            raise SupersededOpportunityError(
+                f"Savings opportunity '{opportunity_id}' is no longer current. "
+                "Run a fresh check and choose the current opportunity."
+            )
 
         session = RebookSession.start(opportunity_id, booking.booking_id)
-        self._sessions.add(session)
+        if not self._sessions.add_if_opportunity_current(session):
+            raise SupersededOpportunityError(
+                f"Savings opportunity '{opportunity_id}' is no longer current. "
+                "Run a fresh check and choose the current opportunity."
+            )
         self._log(session, EventType.STARTED, f"opportunity {opportunity_id}")
 
         try:
