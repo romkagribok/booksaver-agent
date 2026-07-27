@@ -14,10 +14,10 @@ completed: 2026-07-27T17:00:55Z
 
 ## Verification
 
-- `pytest` browser inventory adapter set: **13 passed**.
+- `pytest` browser inventory adapter set: **14 passed**.
 - Release-review regressions cover delayed dynamic rendering, alternate tab markup, non-navigable
   scope controls, redirected `/mytrips` rendering, JavaScript Active/Past/Canceled tabs, normalized
-  Apollo cache references, formatted totals, and an empty upcoming scope without
-  complete-inventory evidence.
-- Full repository gate shared at final construction verification: **961 passed in 13.13s**.
+  Apollo cache references, formatted totals, booking-status-link disambiguation, and an empty
+  upcoming scope without complete-inventory evidence.
+- Full repository gate shared at final construction verification: **962 passed in 13.07s**.
 - Ruff and mypy: clean.

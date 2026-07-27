@@ -118,17 +118,27 @@ class _InventoryParser(HTMLParser):
             self._json_chunks.append(data)
 
     def _register_scope_control(self) -> None:
+        target = (
+            self._control_attrs.get("href")
+            or self._control_attrs.get("data-href")
+            or self._control_attrs.get("data-url")
+        )
+        testid = self._control_attrs.get("data-testid", "").lower()
+        target_path = urlparse(urljoin(self.source_url, target)).path.lower() if target else ""
+        is_scope_control = (
+            self._control_attrs.get("role", "").lower() == "tab"
+            or "tab" in testid
+            or "myreservations" in target_path
+            or "mytrips" in target_path
+        )
+        if not is_scope_control:
+            return
         evidence = " ".join(
             [
                 *self._control_attrs.values(),
                 " ".join(self._control_text),
             ]
         ).lower()
-        target = (
-            self._control_attrs.get("href")
-            or self._control_attrs.get("data-href")
-            or self._control_attrs.get("data-url")
-        )
         for scope in _REQUIRED_SCOPES:
             aliases = {scope}
             if scope == "upcoming":

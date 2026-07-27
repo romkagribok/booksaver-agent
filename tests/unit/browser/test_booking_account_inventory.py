@@ -169,6 +169,36 @@ def test_non_navigable_scope_buttons_cannot_prove_complete_inventory() -> None:
     assert result.failure_code is SynchronizationFailureCode.PAGINATION_INCOMPLETE
 
 
+def test_booking_status_links_are_not_mistaken_for_inventory_tabs() -> None:
+    page = PageContent(
+        "https://secure.booking.com/mytrips.html?trip_id=active-trip",
+        """
+        <a href="/confirmation.en-us.html?reservation=opaque">Confirmed</a>
+        <a href="/mybooking_archivedsummary.en-us.html">View canceled booking</a>
+        """,
+        "Confirmed View canceled booking",
+    )
+    confirmation = PageContent(
+        "https://secure.booking.com/confirmation.en-us.html?reservation=opaque",
+        """
+        <main data-inventory-complete="true"></main>
+        <script type="application/json">
+          {"bookingId": "booking-1", "status": "confirmed",
+           "propertyName": "Hotel", "checkIn": "2027-01-01",
+           "checkOut": "2027-01-02"}
+        </script>
+        """,
+        "Confirmed",
+    )
+
+    result = BookingComAccountInventorySource().discover(
+        _Browser([page, confirmation])
+    )
+
+    assert result.completeness is InventoryCompleteness.COMPLETE
+    assert result.failure_code is None
+
+
 def test_traverses_current_mytrips_tabs_and_confirmation_cache() -> None:
     entry = PageContent(
         "https://secure.booking.com/mytrips.html",
