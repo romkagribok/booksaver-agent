@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from booksaver.application.ports import PageContent
 from booksaver.domain.account_sync import (
     InventoryCompleteness,
     InventoryDiscoveryResult,
@@ -30,6 +30,7 @@ class _InventoryParser(HTMLParser):
         self.next_url: str | None = None
         self.scope_urls: dict[str, str] = {}
         self.scope_controls: set[str] = set()
+        self.detail_urls: set[str] = set()
         self.recognized_inventory = False
         self.recognized_empty = False
         self.explicit_complete = False
@@ -76,6 +77,18 @@ class _InventoryParser(HTMLParser):
             self._control_depth = 1
             self._control_attrs = values
             self._control_text = []
+        if tag == "a":
+            target = (
+                values.get("href")
+                or values.get("data-href")
+                or values.get("data-url")
+            )
+            if target:
+                candidate = urljoin(self.source_url, target)
+                lowered = candidate.lower()
+                if "trip_id=" in lowered or "/confirmation" in lowered:
+                    self.detail_urls.add(candidate)
+                    self.recognized_inventory = True
         if tag == "script" and values.get("type", "").lower() in {
             "application/ld+json",
             "application/json",
@@ -118,10 +131,15 @@ class _InventoryParser(HTMLParser):
         )
         for scope in _REQUIRED_SCOPES:
             aliases = {scope}
+            if scope == "upcoming":
+                aliases.add("active")
             if scope == "past":
                 aliases.update({"completed", "previous"})
+            if scope == "cancelled":
+                aliases.add("canceled")
             if any(alias in evidence for alias in aliases):
                 self.scope_controls.add(scope)
+                self.recognized_inventory = True
                 if target:
                     self.scope_urls[scope] = urljoin(self.source_url, target)
 
@@ -135,26 +153,32 @@ class BookingComAccountInventorySource:
     """
 
     def discover(self, browser: Any) -> InventoryDiscoveryResult:
-        pending: list[tuple[str, str]] = [(_INVENTORY_URL, "upcoming")]
-        visited: set[str] = set()
+        pending: list[tuple[str, str, str]] = [
+            ("url", _INVENTORY_URL, "upcoming")
+        ]
+        visited: set[tuple[str, str, str]] = set()
         visited_scopes: set[str] = set()
         observations: dict[str, ReservationObservation] = {}
         explicit_complete = False
 
         try:
             while pending and len(visited) < _MAX_PAGES:
-                url, scope = pending.pop(0)
-                if url in visited:
+                work_kind, target, scope = pending.pop(0)
+                work_key = (work_kind, target, scope)
+                if work_key in visited:
                     continue
-                if not _allowlisted(url):
+                if work_kind == "url" and not _allowlisted(target):
                     return InventoryDiscoveryResult(
                         tuple(observations.values()),
                         InventoryCompleteness.INCOMPLETE,
                         SynchronizationFailureCode.PAGINATION_INCOMPLETE,
                         "Booking.com reservation pagination did not complete.",
                     )
-                visited.add(url)
-                page: PageContent = browser.open_page(url)
+                visited.add(work_key)
+                if work_kind == "scope":
+                    page = browser.open_inventory_scope(scope)
+                else:
+                    page = browser.open_page(target)
                 if not browser.is_authenticated():
                     return InventoryDiscoveryResult.failed(
                         SynchronizationFailureCode.AUTH_REQUIRED,
@@ -162,6 +186,9 @@ class BookingComAccountInventorySource:
                     )
                 parser = _InventoryParser(page.url)
                 parser.feed(page.html)
+                if _looks_like_empty_scope(page.text, scope):
+                    parser.recognized_inventory = True
+                    parser.recognized_empty = True
                 page_observations = _parse_page(parser, page.url)
                 explicit_complete = explicit_complete or parser.explicit_complete
                 unidentified_cards = [
@@ -202,7 +229,14 @@ class BookingComAccountInventorySource:
                         SynchronizationFailureCode.PAGINATION_INCOMPLETE,
                         "Booking.com returned more reservations than the safe limit.",
                     )
-                if not page_observations and not parser.recognized_empty:
+                is_navigation_container = bool(
+                    parser.scope_controls or parser.detail_urls
+                )
+                if (
+                    not page_observations
+                    and not parser.recognized_empty
+                    and not is_navigation_container
+                ):
                     code = (
                         SynchronizationFailureCode.EXTRACTION_AMBIGUOUS
                         if parser.recognized_inventory
@@ -213,13 +247,21 @@ class BookingComAccountInventorySource:
                         "Booking.com reservation inventory layout was not recognized.",
                     )
                 visited_scopes.add(scope)
-                if parser.next_url is not None and parser.next_url not in visited:
-                    pending.append((parser.next_url, scope))
+                if parser.next_url is not None:
+                    pending.append(("url", parser.next_url, scope))
                 for candidate_scope, candidate_url in sorted(
                     parser.scope_urls.items()
                 ):
-                    if candidate_url not in visited:
-                        pending.append((candidate_url, candidate_scope))
+                    pending.append(("url", candidate_url, candidate_scope))
+                interactive_scopes = sorted(
+                    parser.scope_controls - parser.scope_urls.keys() - visited_scopes
+                )
+                if interactive_scopes and not hasattr(browser, "open_inventory_scope"):
+                    continue
+                for candidate_scope in interactive_scopes:
+                    pending.append(("scope", candidate_scope, candidate_scope))
+                for detail_url in sorted(parser.detail_urls):
+                    pending.append(("url", detail_url, scope))
         except Exception:
             return InventoryDiscoveryResult.failed(
                 SynchronizationFailureCode.NAVIGATION_FAILED,
@@ -252,7 +294,11 @@ def _allowlisted(url: str) -> bool:
     return (
         parsed.scheme == "https"
         and (hostname == "booking.com" or hostname.endswith(".booking.com"))
-        and "myreservations" in parsed.path.lower()
+        and (
+            "myreservations" in parsed.path.lower()
+            or "mytrips" in parsed.path.lower()
+            or parsed.path.lower().startswith("/confirmation")
+        )
     )
 
 
@@ -265,18 +311,249 @@ def _parse_page(
         if observation is not None:
             observations[observation.remote_id] = observation
     for document in parser.json_documents:
+        for observation in _observations_from_apollo_cache(document, source_url):
+            observations[observation.remote_id] = observation
+            parser.recognized_inventory = True
         for item in _walk_json(document):
             observation = (
                 _observation_from_json_ld(item, source_url)
                 if item.get("@type") in {"LodgingReservation", "Reservation"}
                 else _observation_from_generic_json(item, source_url)
             )
-            if observation is not None:
+            if observation is not None and (
+                item.get("@type") in {"LodgingReservation", "Reservation"}
+                or _fact_count(observation) >= 2
+            ):
                 existing = observations.get(observation.remote_id)
                 if existing is None or _fact_count(observation) > _fact_count(existing):
                     observations[observation.remote_id] = observation
                 parser.recognized_inventory = True
     return list(observations.values())
+
+
+def _observations_from_apollo_cache(
+    document: Any, source_url: str
+) -> list[ReservationObservation]:
+    if not isinstance(document, dict):
+        return []
+    entities = [
+        value
+        for value in document.values()
+        if isinstance(value, dict)
+        and value.get("__typename") == "PostBookingReservation"
+    ]
+    observations: list[ReservationObservation] = []
+    for entity in entities:
+        identity = _resolve_cache_value(document, entity.get("identity"))
+        property_data = _resolve_cache_value(document, entity.get("property"))
+        price = _resolve_cache_value(document, entity.get("price"))
+        check_in = _resolve_cache_value(
+            document, entity.get("reservationCheckinDate")
+        )
+        check_out = _resolve_cache_value(
+            document, entity.get("reservationCheckoutDate")
+        )
+        remote_id = _first_string(identity, "reservationId", "reservationNumber")
+        if remote_id is None:
+            continue
+        property_name = _first_string(property_data, "hotelName", "name")
+        property_ref = _first_string(
+            property_data, "url", "hotelId", "propertyId"
+        )
+        room_type = _apollo_room_type(document, entity)
+        currency = (
+            _first_string(price, "currency", "currencyCode")
+            or _first_string(property_data, "currencyCode")
+            or _deep_first_string(
+                _resolve_cache_value(document, entity), "selectedCurrency"
+            )
+        )
+        total_text = _first_string(
+            price,
+            "userTotal",
+            "total",
+            "userTotalPretty",
+            "totalPretty",
+        )
+        non_refundable = _first_bool(entity, "hasNonRefundableRoom")
+        refundable = None if non_refundable is None else not non_refundable
+        resolved = _resolve_cache_value(document, entity)
+        observations.append(
+            ReservationObservation(
+                remote_id=remote_id,
+                confirmation_id=remote_id,
+                lifecycle=_lifecycle(
+                    _first_string(
+                        entity,
+                        "reservationStatus",
+                        "confirmedStatus",
+                        "status",
+                    )
+                ),
+                property_name=property_name,
+                property_ref=property_ref,
+                check_in=_date(_first_string(check_in, "rawDate", "date")),
+                check_out=_date(_first_string(check_out, "rawDate", "date")),
+                room_type=room_type,
+                booked_total=_money(_amount_text(total_text), currency),
+                refundable=refundable,
+                refund_note=_first_string(
+                    entity, "cancellationType", "cancellationPolicy"
+                )
+                or "",
+                occupancy=_occupancy_from_apollo(resolved),
+                observed_at=datetime.now(UTC),
+                source_url=source_url,
+                extraction_method="apollo_cache",
+            )
+        )
+    return observations
+
+
+def _resolve_cache_value(
+    cache: dict[str, Any],
+    value: Any,
+    *,
+    visited: frozenset[str] = frozenset(),
+    depth: int = 0,
+) -> Any:
+    if depth > 12:
+        return {}
+    if isinstance(value, dict):
+        reference = value.get("__ref")
+        if isinstance(reference, str):
+            if reference in visited:
+                return {}
+            return _resolve_cache_value(
+                cache,
+                cache.get(reference, {}),
+                visited=visited | {reference},
+                depth=depth + 1,
+            )
+        return {
+            key: _resolve_cache_value(
+                cache, nested, visited=visited, depth=depth + 1
+            )
+            for key, nested in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _resolve_cache_value(cache, item, visited=visited, depth=depth + 1)
+            for item in value
+        ]
+    return value
+
+
+def _apollo_room_type(cache: dict[str, Any], entity: dict[str, Any]) -> str | None:
+    room_reservations = entity.get("roomReservations")
+    if isinstance(room_reservations, list):
+        for raw_reservation in room_reservations:
+            reservation = _resolve_cache_value(cache, raw_reservation)
+            room = _resolve_cache_value(cache, reservation.get("room"))
+            name = _first_string(room, "roomName", "name")
+            if name:
+                return name
+    room_types = _resolve_cache_value(cache, entity.get("roomTypes"))
+    if isinstance(room_types, list):
+        for room_type in room_types:
+            if isinstance(room_type, str) and room_type.strip():
+                return room_type
+            if isinstance(room_type, dict):
+                name = _first_string(room_type, "roomName", "name")
+                if name:
+                    return name
+    return None
+
+
+def _deep_first_string(value: Any, *keys: str) -> str | None:
+    if isinstance(value, dict):
+        direct = _first_string(value, *keys)
+        if direct:
+            return direct
+        for nested in value.values():
+            found = _deep_first_string(nested, *keys)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for nested in value:
+            found = _deep_first_string(nested, *keys)
+            if found:
+                return found
+    return None
+
+
+def _deep_first_int(value: Any, *keys: str) -> int | None:
+    if isinstance(value, dict):
+        direct = _first_int(value, *keys)
+        if direct is not None:
+            return direct
+        for nested in value.values():
+            found = _deep_first_int(nested, *keys)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for nested in value:
+            found = _deep_first_int(nested, *keys)
+            if found is not None:
+                return found
+    return None
+
+
+def _occupancy_from_apollo(value: Any) -> Occupancy | None:
+    adults = _deep_first_int(
+        value, "adults", "adultCount", "numberOfAdults", "numberOfAdultGuests"
+    )
+    if adults is None:
+        return None
+    try:
+        return Occupancy(
+            adults,
+            _deep_first_int(
+                value,
+                "children",
+                "childCount",
+                "numberOfChildren",
+                "numberOfChildGuests",
+            )
+            or 0,
+            _deep_first_int(value, "rooms", "roomCount", "numberOfRooms") or 1,
+        )
+    except ValueError:
+        return None
+
+
+def _amount_text(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    value = re.sub(r"[^\d,.\-]", "", raw)
+    if "," in value and "." in value:
+        if value.rfind(".") > value.rfind(","):
+            value = value.replace(",", "")
+        else:
+            value = value.replace(".", "").replace(",", ".")
+    elif "," in value:
+        pieces = value.split(",")
+        value = "".join(pieces) if len(pieces[-1]) == 3 else ".".join(pieces)
+    return value or None
+
+
+def _looks_like_empty_scope(text: str, scope: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    aliases = {
+        "upcoming": ("active", "upcoming"),
+        "past": ("past", "previous"),
+        "cancelled": ("canceled", "cancelled"),
+    }[scope]
+    return any(
+        phrase in normalized
+        for alias in aliases
+        for phrase in (
+            f"no {alias} bookings",
+            f"no {alias} trips",
+            f"no {alias} reservations",
+            f"no {alias} stays",
+        )
+    )
 
 
 def _observation_from_mapping(

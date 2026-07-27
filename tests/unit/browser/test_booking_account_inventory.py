@@ -24,6 +24,21 @@ class _Browser:
         return self.authenticated
 
 
+class _InteractiveInventoryBrowser(_Browser):
+    def __init__(
+        self,
+        pages: list[PageContent],
+        scope_pages: dict[str, PageContent],
+    ) -> None:
+        super().__init__(pages)
+        self.scope_pages = scope_pages
+        self.selected_scopes: list[str] = []
+
+    def open_inventory_scope(self, scope: str) -> PageContent:
+        self.selected_scopes.append(scope)
+        return self.scope_pages[scope]
+
+
 def test_discovers_eligible_and_incomplete_cards_across_pages() -> None:
     first = PageContent(
         "https://secure.booking.com/myreservations.html",
@@ -152,6 +167,120 @@ def test_non_navigable_scope_buttons_cannot_prove_complete_inventory() -> None:
 
     assert result.completeness is InventoryCompleteness.INCOMPLETE
     assert result.failure_code is SynchronizationFailureCode.PAGINATION_INCOMPLETE
+
+
+def test_traverses_current_mytrips_tabs_and_confirmation_cache() -> None:
+    entry = PageContent(
+        "https://secure.booking.com/mytrips.html",
+        """
+        <main>
+          <button role="tab">Active</button>
+          <button role="tab">Past</button>
+          <button role="tab">Canceled</button>
+          <a href="/mytrips.html?trip_id=active-trip">Upcoming trip</a>
+        </main>
+        """,
+        "Active Past Canceled",
+    )
+    empty_past = PageContent(
+        entry.url,
+        """
+        <button role="tab">Active</button>
+        <button role="tab">Past</button>
+        <button role="tab">Canceled</button>
+        """,
+        "No past trips",
+    )
+    empty_cancelled = PageContent(
+        entry.url,
+        """
+        <button role="tab">Active</button>
+        <button role="tab">Past</button>
+        <button role="tab">Canceled</button>
+        """,
+        "No canceled trips",
+    )
+    trip = PageContent(
+        "https://secure.booking.com/mytrips.html?trip_id=active-trip",
+        '<a href="/confirmation.en-us.html?reservation=opaque">Confirmed</a>',
+        "Confirmed",
+    )
+    confirmation = PageContent(
+        "https://secure.booking.com/confirmation.en-us.html?reservation=opaque",
+        """
+        <div data-testid="ReservationStatus">Confirmed</div>
+        <script type="application/json">
+        {
+          "PostBookingReservation:opaque": {
+            "__typename": "PostBookingReservation",
+            "identity": {"__ref": "PostBookingReservationIdentity:opaque"},
+            "property": {"__ref": "PostBookingProperty:42"},
+            "price": {"__ref": "PostBookingReservationPrice:opaque"},
+            "reservationCheckinDate": {"__ref": "PostBookingReservationDate:in"},
+            "reservationCheckoutDate": {"__ref": "PostBookingReservationDate:out"},
+            "reservationStatus": "ReservationConfirmed",
+            "roomReservations": [
+              {"__ref": "PostBookingRoomReservation:opaque"}
+            ],
+            "hasNonRefundableRoom": false,
+            "numberOfAdults": 2,
+            "numberOfChildren": 1,
+            "numberOfRooms": 1
+          },
+          "PostBookingReservationIdentity:opaque": {
+            "__typename": "PostBookingReservationIdentity",
+            "reservationId": "CONF-APOLLO"
+          },
+          "PostBookingProperty:42": {
+            "__typename": "PostBookingProperty",
+            "hotelId": 42,
+            "hotelName": "Apollo Hotel",
+            "currencyCode": "USD"
+          },
+          "PostBookingReservationPrice:opaque": {
+            "__typename": "PostBookingReservationPrice",
+            "userTotalPretty": "US$ 1,234.56"
+          },
+          "PostBookingReservationDate:in": {
+            "__typename": "PostBookingReservationDate",
+            "rawDate": "2027-08-10"
+          },
+          "PostBookingReservationDate:out": {
+            "__typename": "PostBookingReservationDate",
+            "rawDate": "2027-08-12"
+          },
+          "PostBookingRoomReservation:opaque": {
+            "__typename": "PostBookingRoomReservation",
+            "room": {"__ref": "PostBookingRoom:opaque"}
+          },
+          "PostBookingRoom:opaque": {
+            "__typename": "PostBookingRoom",
+            "roomName": "King Suite"
+          }
+        }
+        </script>
+        """,
+        "Confirmed",
+    )
+    browser = _InteractiveInventoryBrowser(
+        [entry, trip, confirmation],
+        {"past": empty_past, "cancelled": empty_cancelled},
+    )
+
+    result = BookingComAccountInventorySource().discover(browser)
+
+    assert result.completeness is InventoryCompleteness.COMPLETE
+    assert browser.selected_scopes == ["cancelled", "past"]
+    assert len(result.observations) == 1
+    observation = result.observations[0]
+    assert observation.remote_id == "CONF-APOLLO"
+    assert observation.property_name == "Apollo Hotel"
+    assert observation.property_ref == "42"
+    assert observation.room_type == "King Suite"
+    assert observation.booked_total is not None
+    assert str(observation.booked_total.amount) == "1234.56"
+    assert observation.refundable is True
+    assert observation.occupancy is not None
 
 
 def test_unknown_layout_fails_closed() -> None:
@@ -285,6 +414,12 @@ class _DelayedInventoryPage:
         return "No reservations"
 
 
+class _RedirectedInventoryPage(_DelayedInventoryPage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.url = "https://secure.booking.com/mytrips.html"
+
+
 def test_interactive_browser_waits_for_dynamic_inventory_before_snapshot() -> None:
     page = _DelayedInventoryPage()
     browser = PlaywrightInteractiveBrowser()
@@ -300,3 +435,13 @@ def test_interactive_browser_waits_for_dynamic_inventory_before_snapshot() -> No
         "content",
         "text",
     ]
+
+
+def test_interactive_browser_waits_when_inventory_entry_redirects() -> None:
+    page = _RedirectedInventoryPage()
+    browser = PlaywrightInteractiveBrowser()
+    browser._page = page
+
+    browser.open_page("https://secure.booking.com/myreservations.html")
+
+    assert "inventory-ready" in page.events

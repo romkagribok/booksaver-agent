@@ -40,6 +40,11 @@ _INVENTORY_READY_SCRIPT = """
   const cardCount = document.querySelectorAll(
     '[data-testid="reservation-card"], [data-testid="booking-card"]'
   ).length;
+  const tabCount = document.querySelectorAll('[role="tab"]').length;
+  const tripCount = document.querySelectorAll('a[href*="trip_id"]').length;
+  const confirmationCount = document.querySelectorAll(
+    'a[href*="confirmation"], [data-testid="ReservationStatus"]'
+  ).length;
   const empty = document.querySelector(
     '[data-testid="bookings-empty-state"], [data-testid="reservation-empty-state"]'
   );
@@ -56,12 +61,18 @@ _INVENTORY_READY_SCRIPT = """
   const loading = document.querySelector(
     '[aria-busy="true"], [data-testid*="skeleton"], [data-testid*="loading"]'
   );
-  if (loading || !(signedOut || cardCount || empty || explicitComplete || structured)) {
+  if (loading || !(
+    signedOut || cardCount || tabCount || tripCount || confirmationCount ||
+    empty || explicitComplete || structured
+  )) {
     delete window.__booksaverInventoryReady;
     return false;
   }
 
-  const fingerprint = [cardCount, text.length, structured, Boolean(empty)].join(":");
+  const fingerprint = [
+    cardCount, tabCount, tripCount, confirmationCount, text.length,
+    structured, Boolean(empty)
+  ].join(":");
   const now = Date.now();
   const previous = window.__booksaverInventoryReady;
   if (previous && previous.fingerprint === fingerprint) {
@@ -108,7 +119,11 @@ def new_mobile_context(
 
 
 def _is_account_inventory_url(url: str) -> bool:
-    return "booking.com" in url.lower() and "myreservations" in url.lower()
+    lowered = url.lower()
+    return "booking.com" in lowered and any(
+        marker in lowered
+        for marker in ("myreservations", "mytrips", "/confirmation")
+    )
 
 
 def _wait_for_account_inventory(page: Any) -> None:
@@ -252,11 +267,33 @@ class PlaywrightInteractiveBrowser:
         """
         page = self._ensure_page()
         page.goto(url, timeout=_PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
-        if _is_account_inventory_url(page.url):
+        if _is_account_inventory_url(url) or _is_account_inventory_url(page.url):
             _wait_for_account_inventory(page)
         html = page.content()
         text = page.inner_text("body")
         return PageContent(url=page.url, html=html, text=text)
+
+    def open_inventory_scope(self, scope: str) -> PageContent:
+        """Select one Booking.com inventory tab and snapshot its stable result."""
+        patterns = {
+            "upcoming": re.compile(r"^(active|upcoming)$", re.I),
+            "past": re.compile(r"^past$", re.I),
+            "cancelled": re.compile(r"^(canceled|cancelled)$", re.I),
+        }
+        try:
+            pattern = patterns[scope]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported Booking.com inventory scope: {scope}") from exc
+        page = self._ensure_page()
+        tab = page.get_by_role("tab", name=pattern).first
+        tab.click(timeout=_ACTION_TIMEOUT_MS)
+        page.evaluate("delete window.__booksaverInventoryReady")
+        _wait_for_account_inventory(page)
+        return PageContent(
+            url=page.url,
+            html=page.content(),
+            text=page.inner_text("body"),
+        )
 
     def click(self, selector: str) -> None:
         self._ensure_page().locator(selector).first.click()
