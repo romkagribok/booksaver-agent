@@ -402,6 +402,20 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-117` | Show future upcoming reservations and eligibility reasons | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/002-show-every-reservation-and-reason.md` |
 | `US-118` | Remove manual booking mutation and guided rebooking | Synchronized Interface | Complete | `002-synchronized-booking-interface/stories/003-remove-manual-mutation-and-rebook.md` |
 
+## 020-randomized-daily-booking-checks
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-randomized-daily-booking-checks` | 3 stories | Complete (bolt 037; 1038 tests) |
+
+### 001-randomized-daily-booking-checks: Randomized Daily Booking Checks
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-119` | Plan durable random daily slots | Randomized Scheduling | Complete | `001-randomized-daily-booking-checks/stories/001-plan-durable-random-daily-slots.md` |
+| `US-120` | Dispatch due booking checks safely | Randomized Scheduling | Complete | `001-randomized-daily-booking-checks/stories/002-dispatch-due-booking-checks-safely.md` |
+| `US-121` | Configure and observe randomized scheduling | Randomized Scheduling | Complete | `001-randomized-daily-booking-checks/stories/003-configure-and-observe-randomized-scheduling.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -425,6 +439,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `017-current-rebook-opportunities` | 1 | 3 | Complete (bolt 032; 909 tests) |
 | `018-conclusive-rebook-opportunity-lifecycle` | 1 | 3 | Complete (bolt 033; 937 tests) |
 | `019-booking-account-synchronization` | 2 | 7 | Complete (bolts 034–036; 959 tests) |
+| `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 
-All 118 stories (116 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
-exactly once.
+All 121 stories (119 complete in-scope stories and 2 post-MVP
+extensibility stories) are assigned exactly once.

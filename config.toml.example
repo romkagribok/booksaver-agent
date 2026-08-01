@@ -1,5 +1,8 @@
 [schedule]
-check_interval = "6h"
+# Every eligible booking participates in one random slot per broad UTC window.
+checks_per_booking_per_day = 3
+minimum_spacing = "2h"
+missed_run_grace = "1h"
 
 [storage]
 # Docker Compose persists this directory in the booksaver-data volume.

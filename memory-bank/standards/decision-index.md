@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-07-27T16:33:44Z
-total_decisions: 28
+last_updated: 2026-08-01T17:24:48Z
+total_decisions: 29
 ---
 
 # Decision Index
@@ -17,6 +17,17 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-029: Persisted random daily scheduling
+- **Status**: accepted
+- **Date**: 2026-08-01
+- **Bolt**: 037-randomized-daily-booking-checks (randomized-daily-booking-checks)
+- **Path**: `bolts/037-randomized-daily-booking-checks/adr-029-persisted-random-daily-scheduling.md`
+- **Summary**: A global fixed interval cannot provide per-user broad daily coverage or restart-safe
+  jitter. Persist independently randomized UTC slots per user/date, retain the interruptible stdlib
+  wait loop, and acquire the existing coordinator gate before atomically claiming due work.
+- **Read when**: Changing scheduled-check timing, randomization, daily slot persistence, missed-run
+  recovery, scheduler waiting, caller next-run status, or coordinator admission ordering.
 
 ### ADR-028: Gate absence reconciliation on complete inventory traversal
 - **Status**: accepted
@@ -220,12 +231,14 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Any browser automation work (Units 2 and 4), session login flows, navigation failure handling, or environment setup docs.
 
 ### ADR-006: threading.Event sleep loop as the scheduler mechanism
-- **Status**: accepted
+- **Status**: superseded by ADR-029
 - **Date**: 2026-07-01
 - **Bolt**: 002-core-local-data (core-local-data)
 - **Path**: `bolts/002-core-local-data/adr-006-threading-event-scheduler.md`
-- **Summary**: A `threading.Event.wait(timeout)` loop is used for the fixed-interval scheduler instead of `sched`, `time.sleep()`, or APScheduler. Wakes immediately on stop signal; no third-party dep; sufficient for a single fixed-interval job in MVP.
-- **Read when**: Adding a new job to the scheduler; changing the check interval; considering APScheduler or cron-style scheduling for future units; implementing or testing clean daemon shutdown.
+- **Summary**: The original fixed-interval premise is superseded by ADR-029. Its
+  `threading.Event.wait(timeout)` shutdown mechanism remains in the adaptive durable scheduler.
+- **Read when**: Reviewing the history of scheduler mechanics; use ADR-029 for current timing,
+  persistence, jitter, retry, and shutdown decisions.
 
 ### ADR-005: Foreground-only daemon (no os.fork double-fork)
 - **Status**: accepted

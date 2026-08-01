@@ -90,7 +90,7 @@ def start(
 
     def _run_scheduler() -> None:
         try:
-            scheduler.run(config.check_interval)
+            scheduler.run()
         except BaseException as exc:  # noqa: BLE001 - watchdog must catch everything
             logger.error("Scheduler thread crashed: %s", exc, exc_info=True)
             failures.append(exc)

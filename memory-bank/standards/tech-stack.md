@@ -12,7 +12,9 @@ use; each choice is recorded in `standards/decision-index.md`.
 ## Runtime Stack (decided)
 
 - **Language**: Python 3.11+ minimum, stdlib-first (ADR-003).
-- **Runtime shape**: single local foreground daemon (`booksaver run`, ADR-005) with a `threading.Event` interval scheduler (ADR-006), plus CLI entry points.
+- **Runtime shape**: single local foreground daemon (`booksaver run`, ADR-005) with persisted
+  randomized per-user daily slots and an adaptive interruptible `threading.Event` scheduler
+  (ADR-029, superseding ADR-006's fixed interval), plus CLI entry points.
 - **Persistence**: SQLite via stdlib `sqlite3`, one file under the user's data directory, versioned
   migrations, plus Fernet-encrypted, atomic, mode-0600 per-user Booking.com session bundles under a
   mode-0700 vault (ADRs 019 and 024). Legacy global session state is explicit migration input only.

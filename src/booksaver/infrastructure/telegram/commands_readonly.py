@@ -25,6 +25,9 @@ from booksaver.domain.value_objects import DataDirectory
 from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
 )
+from booksaver.infrastructure.persistence.scheduled_check_slots import (
+    SqliteScheduledCheckSlotRepository,
+)
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteAccountReservationRepository,
     SqliteBookingRepository,
@@ -160,6 +163,9 @@ def register_readonly_commands(
             session_status = EncryptedUserSessionRepository(
                 DataDirectory(path=db_path.parent)
             ).status(user.user_id)
+            next_slot = SqliteScheduledCheckSlotRepository(
+                store
+            ).next_planned_for_user(user.user_id, datetime.now(UTC))
 
         lines = ["BookSaver status"]
         started = scheduler.started_at
@@ -169,9 +175,9 @@ def register_readonly_commands(
         else:
             lines.append("Uptime: scheduler not started yet")
 
-        next_run = scheduler.next_run_at
         lines.append(
-            f"Next scheduled run: {next_run.isoformat() if next_run else 'pending first tick'}"
+            "Your next scheduled check: "
+            f"{next_slot.planned_at.isoformat() if next_slot else 'pending daily planning'}"
         )
 
         lines.extend(_format_session_status(session_status, cmd.user_id))

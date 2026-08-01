@@ -3,11 +3,15 @@ unit: 001-core-local-data
 bolt: 002-core-local-data
 id: ADR-006
 title: threading.Event sleep loop as the scheduler mechanism
-status: accepted
+status: superseded
+superseded_by: ADR-029
 updated: 2026-07-01T00:00:00Z
 ---
 
 # ADR-006: threading.Event sleep loop as the scheduler mechanism
+
+> **Superseded by ADR-029** for fixed-interval timing. The interruptible
+> `threading.Event.wait(timeout)` mechanism remains in use with adaptive durable daily slots.
 
 ## Context
 

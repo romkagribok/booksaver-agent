@@ -7,8 +7,8 @@ Booking.com hotel reservations, detects cheaper equivalent offers through script
 automation with bounded LLM assistance, and reports savings while users manage reservations directly
 in Booking.com.
 
-The implemented scope is 116 in-scope stories across intents 001-019, 36 completed bolts, schema
-v11, 28 ADRs, and 959 tests. Two assigned extensibility stories remain explicitly post-MVP. See
+The implemented scope is 119 in-scope stories across intents 001-020, 37 completed bolts, schema
+v12, 29 ADRs, and 1038 tests. Two assigned extensibility stories remain explicitly post-MVP. See
 `memory-bank/story-index.md` for status and `memory-bank/standards/decision-index.md` for decisions.
 
 ## Commands

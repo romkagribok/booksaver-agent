@@ -27,6 +27,11 @@ from booksaver.domain.account_sync import (
 )
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
 from booksaver.domain.models import Booking, Config
+from booksaver.domain.schedule import (
+    ScheduledAdmission,
+    ScheduleSettings,
+    SlotIdentity,
+)
 from booksaver.domain.user_session import SessionUnavailableReason, UserSessionHealth
 from booksaver.infrastructure.browser.booking_account_inventory import (
     BookingComAccountInventorySource,
@@ -38,6 +43,9 @@ from booksaver.infrastructure.notifications.routing import (
 from booksaver.infrastructure.notifications.telegram_notifier import TelegramNotifier
 from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
+)
+from booksaver.infrastructure.persistence.scheduled_check_slots import (
+    SqliteScheduledCheckSlotRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteAccountReservationRepository,
@@ -170,7 +178,12 @@ class CheckCoordinator:
         )
 
     def run_scheduled(self) -> None:
-        """Run one fair scheduled batch, or skip when another check owns the browser."""
+        """Run the legacy all-user batch used by compatibility tests and tooling.
+
+        Production scheduling enters through :meth:`run_scheduled_slot`, which
+        claims one durable, user-scoped opportunity after acquiring the shared
+        browser gate.
+        """
         if self._stop_event.is_set():
             return
         if not self._execution_gate.acquire(blocking=False):
@@ -179,6 +192,45 @@ class CheckCoordinator:
         try:
             if not self._stop_event.is_set():
                 self._run_scheduled_locked()
+        finally:
+            self._execution_gate.release()
+
+    def run_scheduled_slot(
+        self,
+        identity: SlotIdentity,
+        settings: ScheduleSettings,
+        now: datetime,
+    ) -> ScheduledAdmission:
+        """Claim and run one durable user-scoped schedule slot synchronously."""
+        if self._stop_event.is_set():
+            return ScheduledAdmission.STOPPING
+        if not self._execution_gate.acquire(blocking=False):
+            return ScheduledAdmission.BUSY
+
+        try:
+            if self._stop_event.is_set():
+                return ScheduledAdmission.STOPPING
+            with SqliteStore(self._db_path) as store:
+                claimed = SqliteScheduledCheckSlotRepository(store).claim(
+                    identity,
+                    now,
+                    settings.missed_run_grace,
+                    settings.minimum_spacing,
+                )
+            if claimed is None:
+                return ScheduledAdmission.STALE
+            try:
+                with SqliteStore(self._db_path) as store:
+                    self._run_scheduled_user_locked(store, identity.user_id)
+            finally:
+                # Terminalize through a fresh connection so an unexpected
+                # browser/persistence transaction cannot strand this slot in
+                # RUNNING until the next process restart.
+                with SqliteStore(self._db_path) as store:
+                    SqliteScheduledCheckSlotRepository(store).complete(
+                        identity, datetime.now(UTC)
+                    )
+            return ScheduledAdmission.COMPLETED
         finally:
             self._execution_gate.release()
 
@@ -496,6 +548,96 @@ class CheckCoordinator:
                             "Could not issue Booking.com reconnect notice for user %s",
                             user_id,
                         )
+
+    def _run_scheduled_user_locked(self, store: SqliteStore, user_id: int) -> None:
+        """Synchronize and check bookings for exactly one still-active user."""
+        users = SqliteUserRepository(store)
+        user = users.get_by_id(user_id)
+        if user is None or not user.is_active or self._stop_event.is_set():
+            return
+
+        bookings = SqliteBookingRepository(store)
+        has_account_inventory = (
+            store.conn.execute(
+                "SELECT 1 FROM account_reservations WHERE user_id = ? LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            is not None
+        )
+        if not bookings.list_all_for_user(user_id) and not has_account_inventory:
+            try:
+                if (
+                    self._session_repository.status(user_id).health
+                    is not UserSessionHealth.READY
+                ):
+                    return
+            except Exception:
+                logger.warning(
+                    "Could not resolve session status for user %s",
+                    user_id,
+                    exc_info=True,
+                )
+                return
+
+        try:
+            with self._browser_factory() as browser:
+                report = self._synchronize_user(
+                    store,
+                    browser,
+                    user_id,
+                    SynchronizationTrigger.SCHEDULED,
+                )
+        except Exception:
+            logger.exception(
+                "Scheduled inventory synchronization failed for user %s",
+                user_id,
+            )
+            return
+        if report.completeness is not InventoryCompleteness.COMPLETE:
+            return
+
+        active_bookings = bookings.list_active_for_user(user_id)
+        plan = build_check_plan(
+            users=[user],
+            bookings_by_user={user_id: active_bookings},
+            checks_today=self._checks_today.snapshot(),
+            max_checks_per_user_per_day=(
+                self._config.limits_settings.max_checks_per_user_per_day
+            ),
+        )
+        history = SqliteCheckHistoryRepository(store)
+        for skipped_user_id, booking in plan.skipped:
+            if self._is_active_user(store, skipped_user_id):
+                history.add(self._limit_result(booking, "Scheduled check skipped"))
+        for capped_user_id in users_needing_capped_notice(
+            plan.capped_user_ids, self._capped_notice_sent_today
+        ):
+            self._send_capped_notice(store, capped_user_id, already_marked=True)
+
+        for planned_user_id, booking in plan.ordered:
+            if self._stop_event.is_set() or not self._is_active_user(
+                store, planned_user_id
+            ):
+                break
+            if not self._checks_today.try_increment(
+                planned_user_id,
+                self._config.limits_settings.max_checks_per_user_per_day,
+            ):
+                history.add(self._limit_result(booking, "Scheduled check skipped"))
+                continue
+            with self._browser_factory() as browser:
+                result = self._run_booking(
+                    store,
+                    browser,
+                    planned_user_id,
+                    booking,
+                )
+            if (
+                self._auth_required_notifier is not None
+                and result.failure_reason is not None
+                and result.failure_reason.code is FailureCode.AUTH_REQUIRED
+            ):
+                self._notify_auth_required(planned_user_id)
 
     def _synchronize_user(
         self,

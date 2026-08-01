@@ -21,6 +21,7 @@ from booksaver.domain.mobile_web import (
     PriceSourceProvenance,
 )
 from booksaver.domain.models import Booking
+from booksaver.domain.schedule import ScheduledCheckSlot, SlotIdentity
 from booksaver.domain.user_session import UserSessionMetadata, UserSessionSnapshot
 from booksaver.domain.value_objects import (
     ConfirmationId,
@@ -35,6 +36,9 @@ from booksaver.domain.value_objects import (
 )
 from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
+)
+from booksaver.infrastructure.persistence.scheduled_check_slots import (
+    SqliteScheduledCheckSlotRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteAccountReservationRepository,
@@ -252,6 +256,48 @@ def test_status_reports_only_callers_booking_count_without_exact_records(tmp_pat
     assert "caller-booking" not in text
     assert "foreign" not in text
     assert "success" not in text
+
+
+def test_status_reports_only_callers_next_randomized_slot(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    caller_id = _register_caller(db_path, telegram_id=1)
+    foreign_id = _register_caller(db_path, telegram_id=2)
+    now = datetime.now(UTC)
+    caller_at = now + timedelta(hours=3)
+    foreign_at = now + timedelta(hours=1)
+    with SqliteStore(db_path) as store:
+        repo = SqliteScheduledCheckSlotRepository(store)
+        repo.insert_daily_schedule(
+            (
+                ScheduledCheckSlot(
+                    SlotIdentity(caller_id, caller_at.date(), 0), caller_at
+                ),
+            )
+        )
+        repo.insert_daily_schedule(
+            (
+                ScheduledCheckSlot(
+                    SlotIdentity(foreign_id, foreign_at.date(), 0), foreign_at
+                ),
+            )
+        )
+
+    router.dispatch(_cmd("/status"))
+
+    text = sent[0][1]
+    assert f"Your next scheduled check: {caller_at.isoformat()}" in text
+    assert foreign_at.isoformat() not in text
+
+
+def test_status_reports_pending_when_daily_schedule_is_not_planned(
+    tmp_path: Path,
+) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    _register_caller(db_path, telegram_id=1)
+
+    router.dispatch(_cmd("/status"))
+
+    assert "Your next scheduled check: pending daily planning" in sent[0][1]
 
 
 def test_status_reports_missing_caller_session_with_connect_action(

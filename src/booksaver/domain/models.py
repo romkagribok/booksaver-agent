@@ -8,6 +8,7 @@ from enum import Enum
 from .agent import AgentSettings
 from .mobile_web import MobileWebSettings
 from .remote_auth import RemoteAuthSettings
+from .schedule import ScheduleSettings
 from .value_objects import (
     CheckInterval,
     ConfirmationId,
@@ -79,7 +80,7 @@ class Booking:
 
 @dataclass
 class Config:
-    check_interval: CheckInterval
+    check_interval: CheckInterval | None
     data_directory: DataDirectory
     notification_settings: NotificationSettings
     loaded_at: datetime
@@ -89,3 +90,4 @@ class Config:
     limits_settings: LimitsSettings = field(default_factory=LimitsSettings)
     mobile_web_settings: MobileWebSettings = field(default_factory=MobileWebSettings)
     remote_auth_settings: RemoteAuthSettings = field(default_factory=RemoteAuthSettings)
+    schedule_settings: ScheduleSettings = field(default_factory=ScheduleSettings)
