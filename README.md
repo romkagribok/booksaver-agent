@@ -15,8 +15,8 @@ BookSaver never cancels, books, pays, or runs a rebooking workflow.
 
 ## Current state
 
-The implemented hotel-monitoring scope is complete: **116 in-scope stories, 36 construction bolts,
-and 949 automated tests**. The current release includes:
+The implemented hotel-monitoring scope is complete: **119 in-scope stories, 37 construction bolts,
+and 1,038 automated tests**. The current release includes:
 
 - scripted Playwright searches with bounded LLM recovery when a page step changes;
 - same-property, dates, occupancy, room-type, currency, and refundability checks;
@@ -39,8 +39,10 @@ issues are exploratory future capabilities, not missing parts of the current hot
 
 1. You connect your Booking.com account; BookSaver synchronizes every visible reservation and uses
    only complete, upcoming, refundable records for monitoring.
-2. On schedule or via `/checknow`, BookSaver opens a fresh authenticated mobile Chromium context
-   and repeats the Booking.com search for the same stay and party.
+2. Three times per UTC day by default, BookSaver gives each user one randomized slot in a different
+   broad part of the day. At each slot it synchronizes that user's account once, then opens a fresh
+   authenticated mobile Chromium context for every eligible booking. `/checknow` remains available
+   for an immediate check.
 3. Deterministic code drives the normal journey. If one step fails, an LLM browser agent may use a
    limited click/fill/select/scroll vocabulary. An adapter-level guard blocks reservation,
    checkout, payment, and cancellation destinations.
@@ -49,6 +51,8 @@ issues are exploratory future capabilities, not missing parts of the current hot
    Booking.com; the next synchronization observes the updated account state.
 
 Every check is locally traceable with `booksaver checks trace <CHECK_ID>`.
+Randomized slots are persisted locally, so restarts do not reroll or replay completed work. Send
+`/status` to see your own next planned UTC slot.
 
 ## Recommended setup: private Telegram bot on your VPS
 

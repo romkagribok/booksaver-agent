@@ -121,6 +121,29 @@ CREATE TABLE IF NOT EXISTS account_reservations (
 CREATE INDEX IF NOT EXISTS idx_account_reservations_user
     ON account_reservations(user_id, last_observed_at DESC);
 
+-- v12: durable per-user randomized daily monitoring slots (ADR-029). The
+-- schedule owns execution lifecycle only; booking checks and their outcomes
+-- remain in the existing booking-scoped tables below.
+CREATE TABLE IF NOT EXISTS scheduled_check_slots (
+    user_id       INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    schedule_date TEXT    NOT NULL,
+    ordinal       INTEGER NOT NULL CHECK(ordinal >= 0),
+    planned_at    TEXT    NOT NULL,
+    status        TEXT    NOT NULL
+        CHECK(status IN ('planned', 'running', 'completed', 'missed')),
+    started_at    TEXT,
+    finished_at   TEXT,
+    miss_reason   TEXT,
+    created_at    TEXT    NOT NULL,
+    PRIMARY KEY (user_id, schedule_date, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_slots_due
+    ON scheduled_check_slots(status, planned_at, user_id, ordinal);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_slots_user_next
+    ON scheduled_check_slots(user_id, status, planned_at);
+
 -- v2: finalised by Unit 2 (booking-com-price-monitor)
 -- v5: extraction_method also allows 'agent' (bolt 007 agent-assisted checks)
 CREATE TABLE IF NOT EXISTS check_history (

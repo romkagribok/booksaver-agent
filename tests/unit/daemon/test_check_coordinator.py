@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import threading
 from contextlib import AbstractContextManager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MethodType
 from typing import Any
+
+import pytest
 
 from booksaver.application.ports import PageContent
 from booksaver.daemon.check_coordinator import (
@@ -23,6 +25,13 @@ from booksaver.domain.account_sync import (
 from booksaver.domain.agent import AgentSettings
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
 from booksaver.domain.models import Config
+from booksaver.domain.schedule import (
+    ScheduledAdmission,
+    ScheduledCheckSlot,
+    ScheduleSettings,
+    SlotIdentity,
+    SlotStatus,
+)
 from booksaver.domain.user import UserAccessState, UserRole
 from booksaver.domain.user_session import UserSessionMetadata, UserSessionSnapshot
 from booksaver.domain.value_objects import (
@@ -35,6 +44,9 @@ from booksaver.domain.value_objects import (
 from booksaver.infrastructure.crypto.fernet_key_store import FernetKeyStore
 from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
+)
+from booksaver.infrastructure.persistence.scheduled_check_slots import (
+    SqliteScheduledCheckSlotRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
@@ -165,6 +177,112 @@ def _failure(booking_id: str) -> CheckResult:
         datetime.now(UTC),
         FailureReason(FailureCode.STEP_FAILED, "test failure"),
     )
+
+
+def _scheduled_slot(tmp_path: Path, user_id: int, planned_at: datetime) -> SlotIdentity:
+    slot = ScheduledCheckSlot(
+        identity=SlotIdentity(user_id, planned_at.date(), 0),
+        planned_at=planned_at,
+    )
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        return SqliteScheduledCheckSlotRepository(store).insert_daily_schedule(
+            (slot,)
+        )[0].identity
+
+
+def test_scheduled_slot_is_not_claimed_until_shared_gate_is_available(
+    tmp_path: Path,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    user_id, _bookings = _add(tmp_path, 101)
+    planned_at = datetime.now(UTC)
+    identity = _scheduled_slot(tmp_path, user_id, planned_at)
+
+    coordinator._execution_gate.acquire()  # noqa: SLF001
+    try:
+        admission = coordinator.run_scheduled_slot(
+            identity,
+            ScheduleSettings(),
+            planned_at,
+        )
+    finally:
+        coordinator._execution_gate.release()  # noqa: SLF001
+
+    assert admission is ScheduledAdmission.BUSY
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        persisted = SqliteScheduledCheckSlotRepository(store).list_for_user_date(
+            user_id, planned_at.date()
+        )[0]
+    assert persisted.status is SlotStatus.PLANNED
+
+
+def test_scheduled_slot_runs_only_its_user_and_completes_durably(
+    tmp_path: Path,
+) -> None:
+    coordinator = _coordinator(tmp_path, checks=10)
+    selected_user_id, selected_bookings = _add(tmp_path, 101, count=2)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        foreign_user_id = SqliteUserRepository(store).get_or_create_by_telegram_id(
+            202, UserRole.USER
+        ).user_id
+        foreign_bookings = [make_booking("99999999-1111-4111-8111-111111111111")]
+        SqliteBookingRepository(store).add(
+            foreign_bookings[0], user_id=foreign_user_id
+        )
+    planned_at = datetime.now(UTC) - timedelta(seconds=1)
+    identity = _scheduled_slot(tmp_path, selected_user_id, planned_at)
+    ran: list[str] = []
+
+    def fake_run(self: Any, store: Any, browser: Any, owner: int, booking: Any) -> Any:
+        ran.append(booking.booking_id)
+        return _failure(booking.booking_id)
+
+    coordinator._run_booking = MethodType(fake_run, coordinator)  # type: ignore[method-assign]
+
+    admission = coordinator.run_scheduled_slot(
+        identity,
+        ScheduleSettings(),
+        datetime.now(UTC),
+    )
+
+    assert admission is ScheduledAdmission.COMPLETED
+    assert set(ran) == {booking.booking_id for booking in selected_bookings}
+    assert foreign_bookings[0].booking_id not in ran
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        persisted = SqliteScheduledCheckSlotRepository(store).list_for_user_date(
+            selected_user_id, planned_at.date()
+        )[0]
+    assert persisted.status is SlotStatus.COMPLETED
+
+
+def test_scheduled_slot_terminalizes_after_unexpected_check_failure(
+    tmp_path: Path,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    user_id, _bookings = _add(tmp_path, 101)
+    planned_at = datetime.now(UTC) - timedelta(seconds=1)
+    identity = _scheduled_slot(tmp_path, user_id, planned_at)
+
+    def fail_run(self: Any, store: Any, browser: Any, owner: int, booking: Any) -> Any:
+        store.conn.execute(
+            "UPDATE users SET access_state = access_state WHERE user_id = ?", (owner,)
+        )
+        raise RuntimeError("unexpected check failure")
+
+    coordinator._run_booking = MethodType(fail_run, coordinator)  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="unexpected check failure"):
+        coordinator.run_scheduled_slot(
+            identity,
+            ScheduleSettings(),
+            datetime.now(UTC),
+        )
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        persisted = SqliteScheduledCheckSlotRepository(store).list_for_user_date(
+            user_id, planned_at.date()
+        )[0]
+    assert persisted.status is SlotStatus.COMPLETED
 
 
 def test_immediate_check_runs_in_background_and_shares_global_gate(tmp_path: Path) -> None:

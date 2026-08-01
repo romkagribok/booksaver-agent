@@ -82,7 +82,9 @@ The important VPS settings are:
 
 ```toml
 [schedule]
-check_interval = "6h"
+checks_per_booking_per_day = 3
+minimum_spacing = "2h"
+missed_run_grace = "1h"
 
 [storage]
 data_directory = "/data"
@@ -132,7 +134,7 @@ both the VPS provider firewall and the OS firewall. Caddy obtains and renews the
 ```bash
 docker compose --profile remote-auth up -d --build
 docker compose ps                 # should show "healthy" after ~30-60s (start_period)
-docker compose logs -f booksaver  # watch the first scheduler tick
+docker compose logs -f booksaver  # confirm daily slots are planned without a startup check burst
 curl --fail "https://${BOOKSAVER_AUTH_DOMAIN}/healthz"
 ```
 
@@ -144,6 +146,10 @@ each user completes `/connect` as described in §11.
 Schema v11 intentionally removes every legacy manually registered booking and its booking-scoped
 check, trace, savings, and rebook history before repopulating from Booking.com. Make and verify the
 recoverable §7 backup before the first upgrade to this schema.
+
+Schema v12 adds only persisted randomized schedule slots. It preserves synchronized reservations,
+checks, traces, savings, sessions, and users. Existing `check_interval` config remains parseable for
+migration but is ignored with a warning; replace it with the three schedule keys shown in §4.
 
 ```bash
 git pull
@@ -157,13 +163,15 @@ container with `docker compose stop booksaver`; note that a stop issued
 mid-check waits for the in-flight browser check to finish, up to `check_timeout_seconds` ≈ 180 s;
 `stop_grace_period`/`TimeoutStopSec` are sized for this. Start it again with
 (`docker compose start booksaver`) or just let Docker's restart policy bring it back after a crash
-— the scheduler resumes on its own interval and Telegram long-polling resumes from its persisted
-update offset.
+— the scheduler resumes its persisted per-user daily slots without rerolling completed work, and
+Telegram long-polling resumes from its persisted update offset. A slot no more than one hour overdue
+may catch up once; older missed slots are not replayed in a burst.
 
 ## 7. Backup of the data volume
 
-`/data` (the named `booksaver-data` volume) contains the SQLite database, the Booking.com session
-file, per-check traces, and redacted failure snapshots. **This is guest PII** — booking
+`/data` (the named `booksaver-data` volume) contains the SQLite database, persisted randomized
+schedule slots, encrypted Booking.com sessions, per-check traces, and redacted failure snapshots.
+**This is guest PII** — booking
 confirmation numbers, property names, stay dates, and other users' encrypted
 API keys. Treat backups with the same care as the live deployment: encrypt them at rest, don't
 copy them to a shared or third-party host, and delete backups you no longer need.
@@ -222,9 +230,9 @@ after step 5:
 1. Connect an account containing a real refundable Booking.com reservation, then run `/bookings`.
    Confirm that the reservation appears and is either eligible or has a precise ineligibility
    reason.
-2. Trigger a check. Either wait for the scheduler's next `check_interval` tick (watch
-   `docker compose logs -f booksaver`), or lower `check_interval` temporarily to something short
-   (e.g. `"5m"`) in `config.toml` and restart the container to force a near-immediate run.
+2. Send `/status` to confirm your next randomized UTC slot is planned. Use `/checknow` to trigger the
+   real browser acceptance check immediately; do not rewrite or delete persisted slots merely to
+   force a scheduled run.
 3. Inspect the result:
 
    ```bash
@@ -235,7 +243,7 @@ after step 5:
    - `success` with a live price and `authenticated mobile web` source provenance → the VPS IP,
      mobile profile, and imported session all work. `Genius evidence visible` means Booking.com
      rendered Genius evidence; absence of a Genius line is still valid because not every offer
-     participates. Restore your normal `check_interval` if you lowered it.
+     participates.
    - `failure` with code `bot_wall` → Booking.com's interstitial (captcha/"unusual traffic") is
      blocking this IP. Pull the trace for confirmation: `booksaver checks trace <check-id>`.
      Proceed to the fallback ladder below.

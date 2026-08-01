@@ -5,10 +5,13 @@ import json
 import os
 import sys
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from booksaver.application.load_config import load_config
+from booksaver.application.schedule_dispatcher import RandomizedScheduleDispatcher
 from booksaver.daemon import lifecycle
 from booksaver.daemon import scheduler as scheduler_mod
 from booksaver.domain.account_sync import SynchronizationTrigger
@@ -17,6 +20,9 @@ from booksaver.domain.models import Config
 from booksaver.infrastructure.config.toml_env_source import (
     DEFAULT_CONFIG_PATH,
     TomlEnvConfigSource,
+)
+from booksaver.infrastructure.persistence.scheduled_check_slots import (
+    SqliteScheduledCheckSlotRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteAccountReservationRepository,
@@ -27,7 +33,10 @@ from booksaver.infrastructure.persistence.sqlite_store import (
 
 _SAMPLE_CONFIG = """\
 [schedule]
-check_interval = "6h"            # How often to check for price drops (e.g. "30m", "6h", "1d")
+# Each eligible booking is checked once in each broadly distributed random UTC slot.
+checks_per_booking_per_day = 3
+minimum_spacing = "2h"
+missed_run_grace = "1h"
 
 [storage]
 data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local only
@@ -147,7 +156,10 @@ def cmd_config_validate(args: argparse.Namespace) -> int:
         return 2
 
     print("Config is valid.")
-    print(f"  check_interval : {cfg.check_interval}")
+    schedule = cfg.schedule_settings
+    print(f"  checks_per_booking_per_day : {schedule.checks_per_booking_per_day}")
+    print(f"  minimum_spacing            : {schedule.minimum_spacing}")
+    print(f"  missed_run_grace           : {schedule.missed_run_grace}")
     print(f"  data_directory : {cfg.data_directory.path}")
     return 0
 
@@ -172,7 +184,13 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     lim = cfg.limits_settings
     mobile = cfg.mobile_web_settings
     remote_auth = cfg.remote_auth_settings
-    print(f"check_interval               : {cfg.check_interval}")
+    schedule = cfg.schedule_settings
+    print(
+        "schedule.checks_per_booking/day: "
+        f"{schedule.checks_per_booking_per_day}"
+    )
+    print(f"schedule.minimum_spacing     : {schedule.minimum_spacing}")
+    print(f"schedule.missed_run_grace    : {schedule.missed_run_grace}")
     print(f"data_directory               : {cfg.data_directory.path}")
     print(f"notifications.email          : {ns.email or '(not set)'}")
     print(f"notifications.telegram_chat_id: {ns.telegram_chat_id or '(not set)'}")
@@ -335,7 +353,25 @@ def cmd_run(args: argparse.Namespace) -> int:
         coordinator.set_auth_required_notifier(
             remote_auth_runtime.reconnect_notifier.notify
         )
-    sched.register("booking_com_check", coordinator.run_scheduled)
+    @contextmanager
+    def _schedule_repository() -> Iterator[SqliteScheduledCheckSlotRepository]:
+        with SqliteStore(db_path) as store:
+            yield SqliteScheduledCheckSlotRepository(store)
+
+    def _active_user_ids() -> tuple[int, ...]:
+        with SqliteStore(db_path) as store:
+            return tuple(
+                user.user_id for user in SqliteUserRepository(store).list_active()
+            )
+
+    schedule_dispatcher = RandomizedScheduleDispatcher(
+        settings=cfg.schedule_settings,
+        repository_factory=_schedule_repository,
+        active_user_ids=_active_user_ids,
+        coordinator=coordinator,
+        stop_event=sched.stop_event,
+    )
+    sched.register("booking_com_check", schedule_dispatcher.run_once)
 
     bot_runner = None
     if cfg.telegram_bot_settings.enabled:
@@ -355,7 +391,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     if remote_auth_runtime is not None:
         print(f"Remote authentication gateway: {cfg.remote_auth_settings.public_url}")
 
-    print(f"BookSaver daemon starting (interval={cfg.check_interval}, data={cfg.data_directory.path})")  # noqa: E501
+    print(
+        "BookSaver daemon starting "
+        f"(random_checks_per_day={cfg.schedule_settings.checks_per_booking_per_day}, "
+        f"minimum_spacing={cfg.schedule_settings.minimum_spacing}, "
+        f"data={cfg.data_directory.path})"
+    )
     print("Press Ctrl-C or send SIGTERM to stop cleanly.")
     lifecycle.start(
         cfg,

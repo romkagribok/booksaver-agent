@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.models import Config
 from booksaver.domain.remote_auth import RemoteAuthSettings
+from booksaver.domain.schedule import ScheduleSettings
 from booksaver.domain.value_objects import (
     CheckInterval,
     DataDirectory,
@@ -24,15 +26,42 @@ def load_config(source: ConfigSource) -> Config:
     raw: dict[str, Any] = source.read()
     errors: list[str] = []
 
+    schedule_raw = raw.get("schedule", {})
     check_interval: CheckInterval | None = None
-    interval_str: str | None = raw.get("schedule", {}).get("check_interval")
-    if not interval_str:
-        errors.append("schedule.check_interval is required")
-    else:
+    interval_str: str | None = schedule_raw.get("check_interval")
+    if interval_str is not None:
         try:
             check_interval = CheckInterval.parse(interval_str)
         except ValueError as e:
             errors.append(f"schedule.check_interval: {e}")
+        else:
+            warnings.warn(
+                "schedule.check_interval is deprecated and ignored; use "
+                "checks_per_booking_per_day, minimum_spacing, and missed_run_grace",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    schedule_settings: ScheduleSettings | None = None
+    schedule_defaults = ScheduleSettings()
+    try:
+        schedule_settings = ScheduleSettings(
+            checks_per_booking_per_day=int(
+                schedule_raw.get(
+                    "checks_per_booking_per_day",
+                    schedule_defaults.checks_per_booking_per_day,
+                )
+            ),
+            minimum_spacing=CheckInterval.parse(
+                str(schedule_raw.get("minimum_spacing", "2h"))
+            ).duration,
+            missed_run_grace=CheckInterval.parse(
+                str(schedule_raw.get("missed_run_grace", "1h"))
+            ).duration,
+            retention_days=schedule_defaults.retention_days,
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"schedule: {e}")
 
     data_directory: DataDirectory | None = None
     data_dir_str: str | None = raw.get("storage", {}).get("data_directory")
@@ -184,7 +213,7 @@ def load_config(source: ConfigSource) -> Config:
     if errors:
         raise ConfigValidationError(errors)
 
-    assert check_interval is not None
+    assert schedule_settings is not None
     assert data_directory is not None
     assert agent_settings is not None
     assert telegram_bot_settings is not None
@@ -220,4 +249,5 @@ def load_config(source: ConfigSource) -> Config:
         limits_settings=limits_settings,
         mobile_web_settings=mobile_web_settings,
         remote_auth_settings=remote_auth_settings,
+        schedule_settings=schedule_settings,
     )

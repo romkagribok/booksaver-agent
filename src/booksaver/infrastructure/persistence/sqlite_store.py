@@ -77,7 +77,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 
@@ -532,6 +532,35 @@ def _migrate_v11(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _migrate_v12(conn: sqlite3.Connection) -> None:
+    """Add durable randomized daily schedule state without touching v11 data."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scheduled_check_slots (
+            user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            schedule_date TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+            planned_at TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK(status IN ('planned', 'running', 'completed', 'missed')),
+            started_at TEXT,
+            finished_at TEXT,
+            miss_reason TEXT,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, schedule_date, ordinal)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scheduled_slots_due "
+        "ON scheduled_check_slots(status, planned_at, user_id, ordinal)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scheduled_slots_user_next "
+        "ON scheduled_check_slots(user_id, status, planned_at)"
+    )
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -542,6 +571,7 @@ def _migrate_v11(conn: sqlite3.Connection) -> None:
 # v8 -> v9: users.telegram_username optional display metadata (US-063).
 # v9 -> v10: durable authenticated-mobile price provenance (US-087).
 # v10 -> v11: destructive booking cutover + authoritative synchronized inventory.
+# v11 -> v12: persisted per-user randomized schedule slots (ADR-029), additive.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -549,6 +579,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     9: _migrate_v9,
     10: _migrate_v10,
     11: _migrate_v11,
+    12: _migrate_v12,
 }
 
 
@@ -2132,6 +2163,10 @@ class SqliteUserRepository:
         for booking_id in booking_ids:
             _delete_booking_rows(conn, booking_id)
         conn.execute("DELETE FROM booking_sync_runs WHERE user_id = ?", (user_id,))
+        # Keep this explicit even though schema v12 also declares ON DELETE
+        # CASCADE: purge must remain safe if a legacy connection disabled
+        # foreign-key enforcement.
+        conn.execute("DELETE FROM scheduled_check_slots WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM invite_codes WHERE used_by = ?", (user_id,))
         conn.execute("UPDATE invite_codes SET issued_by = NULL WHERE issued_by = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
