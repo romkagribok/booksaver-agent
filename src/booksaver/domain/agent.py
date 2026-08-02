@@ -233,12 +233,16 @@ class AgentBudget:
                 f"agent step cap exceeded ({self.steps_used}/{self._settings.max_steps})"
             )
 
-    def consume_llm_call(self) -> None:
+    def ensure_llm_call_available(self) -> None:
+        """Raise if another LLM call is not permitted without consuming it."""
         if self.llm_calls_used >= self._settings.max_llm_calls:
             raise BudgetExceeded(
                 f"LLM call cap exceeded "
                 f"({self.llm_calls_used}/{self._settings.max_llm_calls})"
             )
+
+    def consume_llm_call(self) -> None:
+        self.ensure_llm_call_available()
         self.llm_calls_used += 1
 
     def check_time(self) -> None:

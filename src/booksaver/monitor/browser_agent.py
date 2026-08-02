@@ -233,12 +233,19 @@ class BrowserAgent:
                     ),
                     verification_condition=verification_condition,
                 )
-                self._budget.consume_llm_call()
+                # Enforce the shared check budget before inviting a turn, but only
+                # consume after the brain admits a real provider attempt. Nested
+                # daily gates (inventory) may raise BudgetExceeded without calling
+                # the provider; those must not charge step or check budgets.
+                self._budget.ensure_llm_call_available()
                 try:
                     action = self._brain.decide(context)
                 except UserKeyInvalidError:
                     raise
+                except BudgetExceeded:
+                    raise
                 except Exception as exc:
+                    self._budget.consume_llm_call()
                     safe_error = _safe_error(exc, include_message=False)
                     logger.warning("Browser-agent provider call failed: %s", safe_error)
                     return self._stop(
@@ -248,6 +255,7 @@ class BrowserAgent:
                         used_screenshot,
                         AgentStopReason.PROVIDER_ERROR,
                     )
+                self._budget.consume_llm_call()
                 step_llm_calls += 1
                 self._budget.check_time()
                 decision_elapsed = self._clock() - started_at

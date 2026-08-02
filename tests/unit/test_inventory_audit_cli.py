@@ -16,16 +16,18 @@ from booksaver.infrastructure.persistence.sqlite_store import (
 )
 
 
-def test_bookings_trace_prints_content_free_owner_audit(
+def test_bookings_trace_prints_content_free_caller_audit(
     tmp_path, monkeypatch, capsys
 ) -> None:
     db_path = tmp_path / "booksaver.db"
     with SqliteStore(db_path) as store:
-        owner = SqliteUserRepository(store).get_owner()
+        users = SqliteUserRepository(store)
+        owner = users.get_owner()
+        invited = users.get_or_create_by_telegram_id(4242)
         repository = SqliteAccountReservationRepository(store)
         repository.reconcile(
-            user_id=owner.user_id,
-            run_id="sync-audit",
+            user_id=invited.user_id,
+            run_id="sync-audit-invited",
             trigger=SynchronizationTrigger.BOOKINGS,
             session_revision="test-revision",
             result=InventoryDiscoveryResult.failed(
@@ -55,9 +57,15 @@ def test_bookings_trace_prints_content_free_owner_audit(
             ),
         )
         repository.attach_recovery_audit(
-            user_id=owner.user_id,
-            run_id="sync-audit",
+            user_id=invited.user_id,
+            run_id="sync-audit-invited",
             audit=audit,
+        )
+        assert (
+            repository.recovery_audit_for_run(
+                user_id=owner.user_id, run_id="sync-audit-invited"
+            )
+            is None
         )
 
     monkeypatch.setattr(
@@ -66,7 +74,7 @@ def test_bookings_trace_prints_content_free_owner_audit(
         lambda _args: (object(), db_path),
     )
 
-    result = commands.cmd_bookings_trace(Namespace(run_id="sync-audit"))
+    result = commands.cmd_bookings_trace(Namespace(run_id="sync-audit-invited"))
 
     assert result == 0
     output = capsys.readouterr().out

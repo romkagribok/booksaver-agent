@@ -297,21 +297,19 @@ def cmd_bookings_list(args: argparse.Namespace) -> int:
 
 
 def cmd_bookings_trace(args: argparse.Namespace) -> int:
-    """Show one owner-scoped, content-free inventory recovery audit."""
+    """Show one caller-scoped, content-free inventory recovery audit by run id."""
     _cfg, db_path = _db_path_for(args)
     if not db_path.exists():
         print("No local database yet.", file=sys.stderr)
         return 2
 
     with SqliteStore(db_path) as store:
-        owner = SqliteUserRepository(store).get_owner()
-        audit = SqliteAccountReservationRepository(store).recovery_audit_for_run(
-            user_id=owner.user_id,
+        audit = SqliteAccountReservationRepository(store).recovery_audit_for_run_id(
             run_id=args.run_id,
         )
     if audit is None:
         print(
-            f"No owner-scoped inventory recovery audit found for '{args.run_id}'.",
+            f"No inventory recovery audit found for '{args.run_id}'.",
             file=sys.stderr,
         )
         return 2

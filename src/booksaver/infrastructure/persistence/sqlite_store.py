@@ -1449,6 +1449,18 @@ class SqliteAccountReservationRepository:
             return None
         return _inventory_recovery_audit_from_row(row)
 
+    def recovery_audit_for_run_id(self, *, run_id: str) -> InventoryRecoveryAudit | None:
+        """Return the audit for a sync run id (operator lookup; run ids are unique)."""
+        if not run_id.strip():
+            raise ValueError("Synchronization run id must be non-empty")
+        row = self._store.conn.execute(
+            "SELECT * FROM booking_sync_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return _inventory_recovery_audit_from_row(row)
+
     def _upsert_observation(
         self,
         conn: sqlite3.Connection,

@@ -32,9 +32,7 @@ from booksaver.domain.account_sync import (
 )
 from booksaver.domain.agent import (
     AgentAction,
-    AgentActionType,
     AgentBudget,
-    AgentStopReason,
     AgentTurnContext,
     BudgetExceeded,
 )
@@ -175,11 +173,7 @@ class _LazyCountedInventoryBrain:
             if self._delegate is None:
                 raise RuntimeError("user-scoped navigation agent is unavailable")
         if not self._counter.try_increment(self._user_id, self._limit):
-            return AgentAction(
-                AgentActionType.GIVE_UP,
-                value="daily LLM allowance exhausted",
-                stop_reason=AgentStopReason.BUDGET_EXHAUSTED,
-            )
+            raise BudgetExceeded("daily LLM allowance exhausted")
         self._usage.actual_calls += 1
         try:
             return self._delegate.decide(context)
@@ -197,12 +191,17 @@ class _LazyCountedInventoryInterpreter:
         counter: DailyCounter,
         limit: int,
         usage: _InventoryLLMUsage,
+        *,
+        ensure_llm_call: Callable[[], None],
+        consume_llm_call: Callable[[], None],
     ) -> None:
         self._factory = factory
         self._user_id = user_id
         self._counter = counter
         self._limit = limit
         self._usage = usage
+        self._ensure_llm_call = ensure_llm_call
+        self._consume_llm_call = consume_llm_call
         self._delegate: InventoryInterpreter | None = None
 
     def interpret(
@@ -215,8 +214,11 @@ class _LazyCountedInventoryInterpreter:
             self._delegate = method(self._user_id, role="inventory_interpreter")
             if self._delegate is None:
                 raise RuntimeError("user-scoped inventory interpreter is unavailable")
+        # Shared check budget, then daily gate, then consume — before any provider call.
+        self._ensure_llm_call()
         if not self._counter.try_increment(self._user_id, self._limit):
             raise BudgetExceeded("daily LLM allowance exhausted")
+        self._consume_llm_call()
         self._usage.actual_calls += 1
         try:
             return self._delegate.interpret(page_text, source_url)
@@ -894,6 +896,8 @@ class CheckCoordinator:
                 self._llm_calls_today,
                 daily_limit,
                 usage,
+                ensure_llm_call=budget.ensure_llm_call_available,
+                consume_llm_call=budget.consume_llm_call,
             )
 
             def _recovery_factory(guarded_browser: Any) -> BrowserAgent:
@@ -908,7 +912,8 @@ class CheckCoordinator:
             source = BookingComAccountInventorySource(
                 recovery_factory=_recovery_factory,
                 interpreter=interpreter,
-                consume_interpreter_call=budget.consume_llm_call,
+                # Budget is reserved inside the lazy interpreter after the daily gate.
+                consume_interpreter_call=lambda: None,
                 check_time=budget.check_time,
                 llm_calls_used=lambda: usage.actual_calls,
                 action_observer=usage.record_action,

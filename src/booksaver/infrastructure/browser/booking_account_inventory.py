@@ -570,9 +570,15 @@ class BookingComAccountInventorySource:
                 or "Booking.com inventory discovery exceeded its time budget.",
             )
         except Exception:
+            self._set_recovery_failure(
+                InventoryRecoveryOutcome.UNAVAILABLE,
+                "inventory_discovery",
+                "Booking.com reservation inventory could not be read.",
+            )
             return InventoryDiscoveryResult.failed(
                 SynchronizationFailureCode.NAVIGATION_FAILED,
-                "Booking.com reservation inventory could not be read.",
+                self._recovery_detail
+                or "Booking.com reservation inventory could not be read.",
             )
 
         if pending:
@@ -751,8 +757,10 @@ class BookingComAccountInventorySource:
             return None
         try:
             self._check_time()
-            self._consume_interpreter_call()
+            # Interpret first so nested daily gates can fail closed before the
+            # shared per-sync LLM budget is consumed.
             candidates = self._interpreter.interpret(page.text, page.url)
+            self._consume_interpreter_call()
             self._check_time()
         except BudgetExceeded:
             self._set_recovery_failure(
