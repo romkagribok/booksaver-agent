@@ -8,6 +8,7 @@ from booksaver.application.ports import ExtractionResult, PageContent, PageSnaps
 from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
+    AgentTurnContext,
     ElementInfo,
     Observation,
 )
@@ -208,7 +209,11 @@ class FakeInteractiveBrowser:
         self.elements: tuple[ElementInfo, ...] = ()  # agent observation elements
         self.fail_refs: set[str] = set()  # refs whose act() raises
         self.on_act = None  # optional hook: (browser, action) -> None
+        self.on_observe = None  # optional hook: (browser) -> None
         self.on_goto = None  # optional hook: (browser, url) -> None
+        self.popup_count = 0
+        self.popup_urls: tuple[str, ...] = ()
+        self.scroll_y = 0
         self.property_redirect_url: str | None = None
         self.actions: list[tuple[str, str]] = []
         self.restored_cookies: list[bytes] = []
@@ -364,11 +369,17 @@ class FakeInteractiveBrowser:
     # ── agent surface (bolt 007) ────────────────────────────────────────────
 
     def observe(self) -> Observation:
+        on_observe = getattr(self, "on_observe", None)
+        if on_observe is not None:
+            on_observe(self)
         return Observation(
             url=self.url,
             title="",
             text=self.page_text,
             elements=tuple(getattr(self, "elements", ())),
+            popup_count=self.popup_count,
+            popup_urls=self.popup_urls,
+            scroll_y=self.scroll_y,
         )
 
     def act(self, action: AgentAction) -> None:
@@ -377,6 +388,7 @@ class FakeInteractiveBrowser:
         if action.ref in fail_refs:
             raise RuntimeError(f"element {action.ref} not interactable")
         if action.type is AgentActionType.SCROLL:
+            self.scroll_y += -600 if action.value == "up" else 600
             return
         on_act = getattr(self, "on_act", None)
         if on_act is not None:
@@ -408,14 +420,19 @@ class FakeAgentBrain:
     """Scripted AgentBrain: returns queued actions in order; gives up when the
     script runs dry."""
 
-    def __init__(self, script: list[AgentAction]) -> None:
+    def __init__(
+        self, script: list[AgentAction], raise_error: Exception | None = None
+    ) -> None:
         self.script = list(script)
         self.decisions: list[Observation] = []
+        self.contexts: list[AgentTurnContext] = []
+        self.raise_error = raise_error
 
-    def decide(
-        self, goal: str, observation: Observation, history: list[str]
-    ) -> AgentAction:
-        self.decisions.append(observation)
+    def decide(self, context: AgentTurnContext) -> AgentAction:
+        self.contexts.append(context)
+        self.decisions.append(context.observation)
+        if self.raise_error is not None:
+            raise self.raise_error
         if self.script:
             return self.script.pop(0)
         return AgentAction(type=AgentActionType.GIVE_UP, value="script exhausted")

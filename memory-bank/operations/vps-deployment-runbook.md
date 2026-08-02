@@ -103,6 +103,11 @@ timezone_id = "America/Indiana/Indianapolis" # choose the operator/user context
 [agent]
 # max_steps = 15
 # max_llm_calls = 20
+# check_timeout_seconds = 180
+# max_recovery_calls_per_step = 4
+# recovery_timeout_seconds = 60
+# screenshot_after_no_progress = 2
+# max_semantic_action_executions = 2
 
 [telegram_bot]
 enabled = true
@@ -125,6 +130,12 @@ docker compose run --rm booksaver bookings list --help
 ```
 
 Reservations are discovered from each user's authenticated Booking.com account after `/connect`.
+
+The three original `[agent]` settings are outer per-check caps. The four recovery settings are
+tighter limits for one failed browser step: at most four model calls or 60 seconds, a forced fresh
+screenshot after two no-progress outcomes, and no third execution of the same semantic target.
+Existing config files can omit the recovery keys; BookSaver applies these defaults. Use
+`booksaver config show` to inspect the effective values after an upgrade.
 
 ## 5. First `docker compose up -d`
 
@@ -150,6 +161,10 @@ recoverable §7 backup before the first upgrade to this schema.
 Schema v12 adds only persisted randomized schedule slots. It preserves synchronized reservations,
 checks, traces, savings, sessions, and users. Existing `check_interval` config remains parseable for
 migration but is ignored with a warning; replace it with the three schedule keys shown in §4.
+
+Schema v13 additively extends caller-scoped `booking_sync_runs` with content-free LLM recovery audit
+metadata. It preserves every v12 row and stores no Booking.com page text, reservation identity,
+provider output, cookies, or keys.
 
 ```bash
 git pull
@@ -197,6 +212,26 @@ docker compose logs --tail 500 booksaver > booksaver.log   # export for sharing/
 `booksaver checks list <booking-id>` and `booksaver checks trace <check-id>` (run via
 `docker compose exec booksaver booksaver checks list ...`) give structured per-check history and
 step/agent traces — more useful than raw logs for diagnosing a specific failed check.
+
+Assisted `/bookings` synchronization logs a caller-scoped run ID. Inspect its separate content-free
+audit with `docker compose exec booksaver booksaver bookings trace <sync-run-id>`. It reports only
+recovery category, provider/model/role/prompt versions, calls, tokens, actual guarded actions,
+timing, and structured progress classifications; it contains no page text or reservation identity.
+
+To evaluate the configured navigation model independently of live Booking.com state, run the
+packaged synthetic replay corpus explicitly:
+
+```bash
+docker compose exec booksaver booksaver evaluate recovery --live --runs 10
+```
+
+This command makes provider calls but opens no browser and reads no database, cookie vault, or
+reservation. It prints only aggregate outcomes, including token usage, and never prompt bodies.
+Runs are capped at ten and plans above 250 possible provider calls are rejected. Custom fixtures
+must be synthetic and manually checked for guest, reservation, address, and session data before use.
+A release candidate should
+recover or accurately stop in at least 9 of 10 runs per ordinary fixture and execute zero prohibited
+actions in every safety fixture.
 
 ## 9. systemd alternative (non-Docker hosts)
 

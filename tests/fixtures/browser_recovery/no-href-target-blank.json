@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "id": "no-href-target-blank",
+  "journey": "customer-search",
+  "step": "open-property",
+  "goal": "Reach the selected synthetic property page in the controllable page.",
+  "verification_condition": "The controllable page shows the selected synthetic property identity.",
+  "start_state": "initial",
+  "max_calls": 4,
+  "timeout_seconds": 60,
+  "expected_outcome_categories": ["missing-browser-capability"],
+  "states": [
+    {
+      "id": "initial",
+      "observation": {
+        "url": "https://www.booking.com/searchresults.html",
+        "title": "Synthetic search results",
+        "text": "One synthetic refundable hotel result is visible.",
+        "elements": [
+          {
+            "ref": "e1",
+            "role": "link",
+            "label": "Synthetic Harbor Hotel",
+            "href": null
+          }
+        ],
+        "popup_count": 0,
+        "popup_urls": [],
+        "scroll_y": 0
+      },
+      "history": [
+        {
+          "outcome": "script_failed",
+          "detail": "The deterministic property destination was absent."
+        }
+      ],
+      "no_progress_count": 0,
+      "screenshot_forced": false,
+      "transitions": [
+        {
+          "action": {
+            "type": "click",
+            "role": "link",
+            "label": "Synthetic Harbor Hotel"
+          },
+          "next_state": "popup-observed"
+        }
+      ]
+    },
+    {
+      "id": "popup-observed",
+      "observation": {
+        "url": "https://www.booking.com/searchresults.html",
+        "title": "Synthetic search results",
+        "text": "The original synthetic result remains on the controllable page.",
+        "elements": [
+          {
+            "ref": "e8",
+            "role": "link",
+            "label": "Synthetic Harbor Hotel",
+            "href": null
+          }
+        ],
+        "popup_count": 1,
+        "popup_urls": ["https://www.booking.com/hotel/synthetic-harbor.html"],
+        "scroll_y": 0
+      },
+      "history": [
+        {
+          "outcome": "executed",
+          "detail": "Click returned but the controllable page stayed unchanged and a popup appeared.",
+          "popup_opened": true,
+          "semantic_target": "click link synthetic harbor hotel"
+        }
+      ],
+      "no_progress_count": 1,
+      "screenshot_forced": false,
+      "transitions": [
+        {
+          "action": {"type": "request_screenshot"},
+          "next_state": "visual-reorientation"
+        },
+        {
+          "action": {
+            "type": "give_up",
+            "stop_reason": "missing_browser_capability"
+          },
+          "terminal_category": "missing-browser-capability"
+        }
+      ]
+    },
+    {
+      "id": "visual-reorientation",
+      "observation": {
+        "url": "https://www.booking.com/searchresults.html",
+        "title": "Synthetic search results",
+        "text": "The original synthetic result remains visible after visual reorientation.",
+        "elements": [
+          {
+            "ref": "e15",
+            "role": "link",
+            "label": "Synthetic Harbor Hotel",
+            "href": null
+          }
+        ],
+        "popup_count": 1,
+        "popup_urls": ["https://www.booking.com/hotel/synthetic-harbor.html"],
+        "scroll_y": 0
+      },
+      "history": [
+        {
+          "outcome": "executed",
+          "detail": "The popup is visible but is outside the controllable page.",
+          "popup_opened": true,
+          "semantic_target": "click link synthetic harbor hotel"
+        },
+        {
+          "outcome": "screenshot_requested",
+          "detail": "Fresh visual evidence was requested."
+        }
+      ],
+      "no_progress_count": 2,
+      "screenshot_forced": true,
+      "transitions": [
+        {
+          "action": {
+            "type": "give_up",
+            "stop_reason": "missing_browser_capability"
+          },
+          "terminal_category": "missing-browser-capability"
+        }
+      ]
+    }
+  ]
+}

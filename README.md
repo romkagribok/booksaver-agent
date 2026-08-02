@@ -45,14 +45,47 @@ issues are exploratory future capabilities, not missing parts of the current hot
    for an immediate check.
 3. Deterministic code drives the normal journey. If one step fails, an LLM browser agent may use a
    limited click/fill/select/scroll vocabulary. An adapter-level guard blocks reservation,
-   checkout, payment, and cancellation destinations.
+   checkout, payment, and cancellation destinations. Recovery distinguishes an executed click from
+   verified page progress, treats changed element references as the same semantic target, forces a
+   fresh screenshot after two no-progress outcomes, and stops after at most four model calls or 60
+   seconds for that step.
 4. Only a cheaper, currency-aligned, still-refundable equivalent offer becomes a savings result.
 5. Telegram or email reports the result. You independently review and make any change in
    Booking.com; the next synchronization observes the updated account state.
 
 Every check is locally traceable with `booksaver checks trace <CHECK_ID>`.
+When guarded recovery assists account discovery, the local log includes a synchronization run ID;
+inspect its content-free provider/call/token/action/timing audit with
+`booksaver bookings trace <SYNC_RUN_ID>`.
 Randomized slots are persisted locally, so restarts do not reroll or replay completed work. Send
 `/status` to see your own next planned UTC slot.
+
+The `[agent]` section keeps the existing outer per-check limits (`max_steps`, `max_llm_calls`, and
+`check_timeout_seconds`) and adds tighter recovery defaults:
+
+```toml
+max_recovery_calls_per_step = 4
+recovery_timeout_seconds = 60
+screenshot_after_no_progress = 2
+max_semantic_action_executions = 2
+```
+
+Older config files remain valid and receive these defaults automatically. The inner limits cannot
+expand the outer per-check or per-user daily LLM budgets.
+
+Model behavior can be measured without opening Booking.com or reading local sessions/database.
+The explicit live command replays the packaged, synthetic recovery corpus ten times per case and
+reports correctness, safety, calls, actions, latency, and outcome categories without printing
+prompts. It also reports provider token usage, caps repetitions at ten, and rejects replay plans
+that could exceed 250 calls:
+
+```bash
+booksaver evaluate recovery --live --runs 10
+```
+
+It requires `BOOKSAVER_LLM_API_KEY`. Use `--fixture PATH` only for synthetic data that you have
+personally checked contains no guest, reservation, address, or session information and that passes
+the same strict Booking.com-only, secret/PII-rejecting loader.
 
 ## Recommended setup: private Telegram bot on your VPS
 

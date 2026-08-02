@@ -199,28 +199,50 @@ def register_readonly_commands(
         )
         report = completion.report if completion is not None else None
         if not reservations:
+            if completion is not None and report is None:
+                return [
+                    "Booking.com refresh was unavailable. No fresh inventory conclusion "
+                    "was made; try /bookings again shortly."
+                ]
             if report is not None and report.failure_detail:
+                guidance = (
+                    "Send /connect to restore authentication."
+                    if report.failure_code is not None
+                    and report.failure_code.value == "auth_required"
+                    else "Send /setkey to replace it, or /deletekey to use the shared key."
+                    if report.failure_code is not None
+                    and report.failure_code.value == "user_key_invalid"
+                    else "Try /bookings again shortly."
+                )
                 return [
                     "Booking.com refresh failed: "
                     f"{report.failure_detail}\n"
-                    "No future synchronized reservations are available."
+                    "No fresh empty-account conclusion was made. "
+                    f"{guidance}"
                 ]
             return ["No future reservations found in your Booking.com account."]
 
-        if report is None:
+        if completion is not None and report is None:
+            header = (
+                "Booking.com refresh was unavailable; showing the last safe future "
+                "reservations:"
+            )
+        elif report is None:
             header = "Your future Booking.com reservations:"
         elif report.succeeded:
             eligible = sum(
                 reservation.eligibility.is_eligible for reservation in reservations
             )
             header = (
-                "Future Booking.com reservations refreshed "
+                "Future Booking.com reservations refreshed"
+                f"{' with guarded LLM assistance' if report.assisted else ''} "
                 f"({eligible} eligible, {len(reservations) - eligible} ineligible):"
             )
         elif report.completeness is InventoryCompleteness.INCOMPLETE:
             header = (
                 "Booking.com refresh was incomplete; no missing reservations were "
-                "removed. Showing future synchronized observations:"
+                "removed. Showing future synchronized observations"
+                f"{' recovered with guarded LLM assistance' if report.assisted else ''}:"
             )
         elif report.failure_detail:
             header = (

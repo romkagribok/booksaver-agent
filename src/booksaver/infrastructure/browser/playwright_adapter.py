@@ -4,9 +4,16 @@ import json
 import logging
 import re
 from typing import Any
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from booksaver.application.ports import PageContent, PageSnapshot
-from booksaver.domain.agent import AgentAction, AgentActionType, ElementInfo, Observation
+from booksaver.domain.agent import (
+    AgentAction,
+    AgentActionType,
+    ElementInfo,
+    Observation,
+    blocked_url_reason,
+)
 from booksaver.domain.mobile_web import MobileWebSettings
 
 logger = logging.getLogger(__name__)
@@ -90,6 +97,13 @@ _INTERACTIVE_SELECTOR = (
 )
 _MAX_ELEMENTS = 120
 _OBSERVATION_TEXT_CHARS = 30_000
+_MAX_POPUP_URLS = 16
+_MAX_PAGE_METADATA_CHARS = 512
+_MAX_SCROLL_Y = 2_147_483_647
+_OPAQUE_PATH_SEGMENT = re.compile(
+    r"^(?:\d{8,}|[0-9a-f]{8}-[0-9a-f-]{20,}|[A-Za-z0-9_-]{16,})$",
+    re.I,
+)
 
 
 def has_authenticated_account_context(page: Any, text: str) -> bool:
@@ -124,6 +138,60 @@ def _is_account_inventory_url(url: str) -> bool:
         marker in lowered
         for marker in ("myreservations", "mytrips", "/confirmation")
     )
+
+
+def _sanitize_top_level_url(raw_url: str) -> str:
+    """Return bounded destination metadata without credentials or URL state.
+
+    Observed destinations are safety evidence for the recovery controller, not
+    navigation sources. Host and route shape remain inspectable while userinfo,
+    query strings, fragments, confirmation identifiers, and other opaque path
+    values never reach the provider observation.
+    """
+    try:
+        parsed = urlsplit(raw_url)
+    except ValueError:
+        return "unavailable:invalid-url"
+
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        if scheme == "about" and parsed.path == "blank":
+            return "about:blank"
+        return f"{scheme or 'unavailable'}:"
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return "unavailable:missing-host"
+    netloc = f"[{hostname}]" if ":" in hostname else hostname
+    path_segments: list[str] = []
+    redact_next_segment = False
+    for segment in (parsed.path or "/").split("/"):
+        lowered = segment.lower()
+        sensitive = redact_next_segment or bool(_OPAQUE_PATH_SEGMENT.fullmatch(segment))
+        path_segments.append("{id}" if segment and sensitive else segment)
+        redact_next_segment = any(
+            marker in lowered
+            for marker in ("confirmation", "reservation", "mybooking")
+        )
+    path = "/".join(path_segments) or "/"
+    sanitized = urlunsplit((scheme, netloc, path, "", ""))
+    if len(sanitized) > _MAX_PAGE_METADATA_CHARS:
+        return "unavailable:popup-url-too-long"
+    return sanitized
+
+
+def _agent_destination_problem(raw_url: str) -> str | None:
+    """Return a non-sensitive reason the controllable page cannot be acted on."""
+    sanitized = _sanitize_top_level_url(raw_url)
+    parsed = urlsplit(sanitized)
+    hostname = (parsed.hostname or "").casefold()
+    if parsed.scheme != "https" or not (
+        hostname == "booking.com" or hostname.endswith(".booking.com")
+    ):
+        return "controllable page is not a secure Booking.com destination"
+    if blocked_url_reason(sanitized) is not None:
+        return "controllable page is a reservation-mutating destination"
+    return None
 
 
 def _wait_for_account_inventory(page: Any) -> None:
@@ -356,7 +424,12 @@ class PlaywrightInteractiveBrowser:
 
     def observe(self) -> Observation:
         """Tier-1 observation: URL, title, bounded text, and enumerated visible
-        interactive elements. Refs are valid until the next observe()."""
+        interactive elements. Refs are valid until the next observe().
+
+        Top-level popup metadata is intentionally observational only. The
+        controllable page remains ``self._page``; recovery may diagnose a popup
+        or fail closed on its destination, but this adapter never adopts it.
+        """
         page = self._ensure_page()
         locator = page.locator(_INTERACTIVE_SELECTOR)
         elements: list[ElementInfo] = []
@@ -384,22 +457,72 @@ class PlaywrightInteractiveBrowser:
                 ).strip()[:120]
                 if not label and handle.get_attribute("data-date"):
                     label = f"date {handle.get_attribute('data-date')}"
-                href = handle.get_attribute("href") if role == "link" else None
+                raw_href = handle.get_attribute("href") if role == "link" else None
+                href = (
+                    _sanitize_top_level_url(urljoin(str(page.url), raw_href))
+                    if raw_href
+                    else None
+                )
             except Exception:
                 continue
             ref = f"e{len(elements)}"
             self._ref_map[ref] = handle
             elements.append(ElementInfo(ref=ref, role=role, label=label, href=href))
+        popup_count, popup_urls = self._popup_metadata(page)
         return Observation(
-            url=page.url,
+            url=_sanitize_top_level_url(str(page.url)),
             title=page.title(),
             text=page.inner_text("body")[:_OBSERVATION_TEXT_CHARS],
             elements=tuple(elements),
+            popup_count=popup_count,
+            popup_urls=popup_urls,
+            scroll_y=self._scroll_y(page),
         )
+
+    def _popup_metadata(self, controllable_page: Any) -> tuple[int, tuple[str, ...]]:
+        context = self._context
+        if context is None:
+            return 0, ()
+        try:
+            popup_pages = [page for page in context.pages if page is not controllable_page]
+        except Exception:
+            return 0, ()
+
+        popup_count = len(popup_pages)
+        if popup_count > _MAX_POPUP_URLS:
+            inspected_pages = popup_pages[: _MAX_POPUP_URLS - 1]
+        else:
+            inspected_pages = popup_pages
+        urls: list[str] = []
+        for popup in inspected_pages:
+            try:
+                urls.append(_sanitize_top_level_url(str(popup.url)))
+            except Exception:
+                urls.append("unavailable:popup-url")
+        if popup_count > _MAX_POPUP_URLS:
+            # The explicit marker lets the controller fail closed without
+            # rendering an attacker-controlled, unbounded number of URLs.
+            urls.append("unavailable:popup-metadata-overflow")
+        return popup_count, tuple(urls)
+
+    @staticmethod
+    def _scroll_y(page: Any) -> int:
+        try:
+            raw = page.evaluate(
+                "() => Math.round(window.scrollY || window.pageYOffset || 0)"
+            )
+            return max(0, min(int(raw), _MAX_SCROLL_Y))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        except Exception:
+            return 0
 
     def act(self, action: AgentAction) -> None:
         """Dispatch a bounded agent action (ADR-016). Unknown/stale refs raise."""
         page = self._ensure_page()
+        destination_problem = _agent_destination_problem(str(page.url))
+        if destination_problem is not None:
+            raise RuntimeError(f"Agent action refused: {destination_problem}")
         if action.type is AgentActionType.SCROLL:
             delta = -600 if (action.value or "").lower() == "up" else 600
             page.mouse.wheel(0, delta)
@@ -417,7 +540,11 @@ class PlaywrightInteractiveBrowser:
             raise RuntimeError(f"Action {action.type.value} is not a browser action")
 
     def screenshot(self) -> bytes:
-        result: bytes = self._ensure_page().screenshot(type="png")
+        page = self._ensure_page()
+        destination_problem = _agent_destination_problem(str(page.url))
+        if destination_problem is not None:
+            raise RuntimeError(f"Agent screenshot refused: {destination_problem}")
+        result: bytes = page.screenshot(type="png")
         return result
 
     def get_cookies(self) -> bytes:

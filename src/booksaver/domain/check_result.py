@@ -38,6 +38,11 @@ class FailureCode(Enum):
     BOT_WALL = "bot_wall"
     # Agentic-escalation codes (bolt 007, ADR-015/016/017)
     AGENT_GAVE_UP = "agent_gave_up"
+    # Progress-aware recovery (bolt 038, ADR-030): the controller could not
+    # verify material progress after its bounded evidence-reorientation policy.
+    # Keep this distinct from a model-selected give-up, an exhausted budget,
+    # and an LLM/provider failure so operators can diagnose the right layer.
+    AGENT_NO_PROGRESS = "agent_no_progress"
     BLOCKED_ACTION = "blocked_action"
     BUDGET_EXCEEDED = "budget_exceeded"
     # Hybrid billing (bolt 009, US-027): the booking owner's personal Anthropic

@@ -18,6 +18,9 @@ from booksaver.domain.account_sync import (
     EligibilityStatus,
     InventoryCompleteness,
     InventoryDiscoveryResult,
+    InventoryRecoveryAudit,
+    InventoryRecoveryOutcome,
+    InventoryRecoveryTraceEvent,
     ReservationLifecycle,
     ReservationObservation,
     SynchronizationFailureCode,
@@ -77,7 +80,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 
@@ -561,6 +564,55 @@ def _migrate_v12(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v13(conn: sqlite3.Connection) -> None:
+    """Add content-free inventory recovery audit fields to v12 sync runs."""
+    table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'booking_sync_runs'"
+    ).fetchone()
+    if table is None:
+        return
+    existing = {
+        row[1] for row in conn.execute("PRAGMA table_info(booking_sync_runs)")
+    }
+    additions = {
+        "recovery_outcome": (
+            "TEXT CHECK(recovery_outcome IS NULL OR recovery_outcome IN ("
+            "'not_needed', 'recovered', 'partial', 'unavailable', 'gave_up', "
+            "'blocked', 'provider_error', 'budget_exhausted'))"
+        ),
+        "recovery_step": "TEXT",
+        "recovery_providers_json": "TEXT",
+        "recovery_models_json": "TEXT",
+        "recovery_roles_json": "TEXT",
+        "recovery_prompt_versions_json": "TEXT",
+        "recovery_llm_calls": (
+            "INTEGER CHECK(recovery_llm_calls IS NULL OR recovery_llm_calls >= 0)"
+        ),
+        "recovery_input_tokens": (
+            "INTEGER CHECK(recovery_input_tokens IS NULL "
+            "OR recovery_input_tokens >= 0)"
+        ),
+        "recovery_output_tokens": (
+            "INTEGER CHECK(recovery_output_tokens IS NULL "
+            "OR recovery_output_tokens >= 0)"
+        ),
+        "recovery_action_count": (
+            "INTEGER CHECK(recovery_action_count IS NULL "
+            "OR recovery_action_count >= 0)"
+        ),
+        "recovery_duration_ms": (
+            "INTEGER CHECK(recovery_duration_ms IS NULL OR recovery_duration_ms >= 0)"
+        ),
+        "recovery_trace_json": "TEXT",
+    }
+    for name, declaration in additions.items():
+        if name not in existing:
+            conn.execute(
+                f"ALTER TABLE booking_sync_runs ADD COLUMN {name} {declaration}"
+            )
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -572,6 +624,7 @@ def _migrate_v12(conn: sqlite3.Connection) -> None:
 # v9 -> v10: durable authenticated-mobile price provenance (US-087).
 # v10 -> v11: destructive booking cutover + authoritative synchronized inventory.
 # v11 -> v12: persisted per-user randomized schedule slots (ADR-029), additive.
+# v12 -> v13: caller-scoped inventory recovery audit columns, additive.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -580,6 +633,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     10: _migrate_v10,
     11: _migrate_v11,
     12: _migrate_v12,
+    13: _migrate_v13,
 }
 
 
@@ -1063,6 +1117,104 @@ class SqliteBookingRepository:
         )
 
 
+_MAX_RECOVERY_TRACE_JSON_BYTES = 131_072
+
+
+def _serialize_inventory_recovery_audit(
+    audit: InventoryRecoveryAudit,
+) -> tuple[str, str, str, str, str]:
+    providers_json = json.dumps(list(audit.providers), separators=(",", ":"))
+    models_json = json.dumps(list(audit.models), separators=(",", ":"))
+    roles_json = json.dumps(list(audit.roles), separators=(",", ":"))
+    prompts_json = json.dumps(list(audit.prompt_versions), separators=(",", ":"))
+    trace_json = json.dumps(
+        [event.as_dict() for event in audit.trace],
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    if len(trace_json.encode()) > _MAX_RECOVERY_TRACE_JSON_BYTES:
+        raise ValueError("Inventory recovery trace exceeds the persistence limit")
+    return providers_json, models_json, roles_json, prompts_json, trace_json
+
+
+def _load_recovery_code_list(raw: object, *, field_name: str) -> tuple[str, ...]:
+    if not isinstance(raw, str):
+        raise ValueError(f"Stored inventory recovery {field_name} are invalid")
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Stored inventory recovery {field_name} are invalid"
+        ) from exc
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        raise ValueError(f"Stored inventory recovery {field_name} are invalid")
+    return tuple(values)
+
+
+def _load_recovery_trace(raw: object) -> tuple[InventoryRecoveryTraceEvent, ...]:
+    if not isinstance(raw, str) or len(raw.encode()) > _MAX_RECOVERY_TRACE_JSON_BYTES:
+        raise ValueError("Stored inventory recovery trace is invalid")
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Stored inventory recovery trace is invalid") from exc
+    if not isinstance(values, list):
+        raise ValueError("Stored inventory recovery trace is invalid")
+    events: list[InventoryRecoveryTraceEvent] = []
+    for value in values:
+        if not isinstance(value, dict) or not all(
+            isinstance(key, str) for key in value
+        ):
+            raise ValueError("Stored inventory recovery trace is invalid")
+        event: dict[str, str | bool | int] = {}
+        for key, item in value.items():
+            if isinstance(item, str) or type(item) in {bool, int}:
+                event[key] = item
+            else:
+                raise ValueError("Stored inventory recovery trace is invalid")
+        events.append(InventoryRecoveryTraceEvent.from_mapping(event))
+    return tuple(events)
+
+
+def _inventory_recovery_audit_from_row(
+    row: sqlite3.Row,
+) -> InventoryRecoveryAudit | None:
+    outcome = row["recovery_outcome"]
+    if outcome is None:
+        return None
+    integer_fields = (
+        "recovery_llm_calls",
+        "recovery_input_tokens",
+        "recovery_output_tokens",
+        "recovery_action_count",
+        "recovery_duration_ms",
+    )
+    if any(type(row[field]) is not int for field in integer_fields):
+        raise ValueError("Stored inventory recovery counters are invalid")
+    return InventoryRecoveryAudit(
+        outcome=InventoryRecoveryOutcome(outcome),
+        step=row["recovery_step"],
+        providers=_load_recovery_code_list(
+            row["recovery_providers_json"], field_name="providers"
+        ),
+        models=_load_recovery_code_list(
+            row["recovery_models_json"], field_name="models"
+        ),
+        roles=_load_recovery_code_list(
+            row["recovery_roles_json"], field_name="roles"
+        ),
+        prompt_versions=_load_recovery_code_list(
+            row["recovery_prompt_versions_json"], field_name="prompt versions"
+        ),
+        llm_calls_used=row["recovery_llm_calls"],
+        input_tokens=row["recovery_input_tokens"],
+        output_tokens=row["recovery_output_tokens"],
+        action_count=row["recovery_action_count"],
+        duration_ms=row["recovery_duration_ms"],
+        trace=_load_recovery_trace(row["recovery_trace_json"]),
+    )
+
+
 class SqliteAccountReservationRepository:
     """Atomic account-inventory reconciliation (ADRs 027-028)."""
 
@@ -1201,6 +1353,7 @@ class SqliteAccountReservationRepository:
         ).fetchone()
         if row is None:
             return None
+        audit = _inventory_recovery_audit_from_row(row)
         code = (
             SynchronizationFailureCode(row["failure_code"])
             if row["failure_code"]
@@ -1214,7 +1367,87 @@ class SqliteAccountReservationRepository:
             ineligible=row["ineligible_count"],
             failure_code=code,
             failure_detail=row["failure_detail"],
+            recovery_outcome=(
+                audit.outcome
+                if audit is not None
+                else InventoryRecoveryOutcome.NOT_NEEDED
+            ),
+            recovery_step=audit.step if audit is not None else None,
+            llm_calls_used=audit.llm_calls_used if audit is not None else 0,
+            recovery_audit=audit,
         )
+
+    def attach_recovery_audit(
+        self,
+        *,
+        user_id: int,
+        run_id: str,
+        audit: InventoryRecoveryAudit,
+    ) -> None:
+        """Attach one complete redacted audit to a caller-owned sync run."""
+        if not run_id.strip():
+            raise ValueError("Synchronization run id must be non-empty")
+        (
+            providers_json,
+            models_json,
+            roles_json,
+            prompts_json,
+            trace_json,
+        ) = _serialize_inventory_recovery_audit(audit)
+        cursor = self._store.conn.execute(
+            """
+            UPDATE booking_sync_runs
+            SET recovery_outcome = ?, recovery_step = ?, recovery_providers_json = ?,
+                recovery_models_json = ?, recovery_roles_json = ?,
+                recovery_prompt_versions_json = ?, recovery_llm_calls = ?,
+                recovery_input_tokens = ?, recovery_output_tokens = ?,
+                recovery_action_count = ?, recovery_duration_ms = ?,
+                recovery_trace_json = ?
+            WHERE user_id = ? AND run_id = ? AND recovery_outcome IS NULL
+            """,
+            (
+                audit.outcome.value,
+                audit.step,
+                providers_json,
+                models_json,
+                roles_json,
+                prompts_json,
+                audit.llm_calls_used,
+                audit.input_tokens,
+                audit.output_tokens,
+                audit.action_count,
+                audit.duration_ms,
+                trace_json,
+                user_id,
+                run_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            existing_row = self._store.conn.execute(
+                "SELECT * FROM booking_sync_runs WHERE user_id = ? AND run_id = ?",
+                (user_id, run_id),
+            ).fetchone()
+            self._store.conn.rollback()
+            if existing_row is None:
+                raise LookupError("Caller-scoped synchronization run was not found")
+            if _inventory_recovery_audit_from_row(existing_row) == audit:
+                return
+            raise ValueError("Synchronization recovery audit is already attached")
+        self._store.conn.commit()
+
+    def recovery_audit_for_run(
+        self, *, user_id: int, run_id: str
+    ) -> InventoryRecoveryAudit | None:
+        """Return only the audit attached to the caller-owned run."""
+        if not run_id.strip():
+            raise ValueError("Synchronization run id must be non-empty")
+        row = self._store.conn.execute(
+            "SELECT * FROM booking_sync_runs WHERE user_id = ? AND run_id = ?",
+            (user_id, run_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return _inventory_recovery_audit_from_row(row)
 
     def _upsert_observation(
         self,
@@ -1232,6 +1465,18 @@ class SqliteAccountReservationRepository:
             "WHERE user_id = ? AND remote_key_hash = ?",
             (user_id, fingerprint),
         ).fetchone()
+        if (
+            existing is not None
+            and observation.extraction_method == "llm_inventory"
+        ):
+            self._merge_assisted_existing_observation(
+                conn,
+                existing=existing,
+                run_id=run_id,
+                observation=observation,
+                observed_at=observed_at,
+            )
+            return
         monitoring_booking_id = (
             str(existing["monitoring_booking_id"])
             if existing is not None and existing["monitoring_booking_id"]
@@ -1319,6 +1564,41 @@ class SqliteAccountReservationRepository:
                 observed_at.isoformat(),
                 run_id,
                 monitoring_booking_id,
+                existing["account_reservation_id"],
+            ),
+        )
+
+    @staticmethod
+    def _merge_assisted_existing_observation(
+        conn: sqlite3.Connection,
+        *,
+        existing: sqlite3.Row,
+        run_id: str,
+        observation: ReservationObservation,
+        observed_at: datetime,
+    ) -> None:
+        """Retain grounded positive metadata without weakening stored authority."""
+        additions = (
+            observation.confirmation_id if existing["confirmation_id"] is None else None,
+            observation.property_name if existing["property_name"] is None else None,
+            observation.property_ref if existing["property_ref"] is None else None,
+        )
+        changed = any(value is not None for value in additions)
+        conn.execute(
+            """
+            UPDATE account_reservations SET
+                confirmation_id = COALESCE(confirmation_id, ?),
+                property_name = COALESCE(property_name, ?),
+                property_ref = COALESCE(property_ref, ?),
+                snapshot_revision = snapshot_revision + ?,
+                last_observed_at = ?, last_sync_run_id = ?
+            WHERE account_reservation_id = ?
+            """,
+            (
+                *additions,
+                1 if changed else 0,
+                observed_at.isoformat(),
+                run_id,
                 existing["account_reservation_id"],
             ),
         )

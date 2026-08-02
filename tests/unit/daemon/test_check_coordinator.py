@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 from contextlib import AbstractContextManager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import MethodType
 from typing import Any
@@ -19,11 +19,16 @@ from booksaver.daemon.check_coordinator import (
 )
 from booksaver.domain.account_sync import (
     InventoryCompleteness,
+    InventoryRecoveryOutcome,
+    ReservationLifecycle,
+    ReservationObservation,
+    SynchronizationFailureCode,
     SynchronizationReport,
     SynchronizationTrigger,
 )
 from booksaver.domain.agent import AgentSettings
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
+from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.models import Config
 from booksaver.domain.schedule import (
     ScheduledAdmission,
@@ -38,7 +43,9 @@ from booksaver.domain.value_objects import (
     CheckInterval,
     DataDirectory,
     LimitsSettings,
+    Money,
     NotificationSettings,
+    Occupancy,
     Platform,
 )
 from booksaver.infrastructure.crypto.fernet_key_store import FernetKeyStore
@@ -921,6 +928,206 @@ def test_bookings_request_discovers_and_projects_authenticated_inventory(
     with SqliteStore(tmp_path / "booksaver.db") as store:
         projected = SqliteBookingRepository(store).list_active_for_user(user.user_id)
     assert len(projected) == 1
+    assert coordinator.llm_calls_today == {}
+
+
+def test_inventory_interpreter_call_is_charged_to_requesting_user(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
+            101, UserRole.USER
+        )
+    _seed_session(sessions, user.user_id)
+
+    class InventoryBrowser:
+        def restore_cookies(self, _cookies: bytes) -> None:
+            return None
+
+        def open_page(self, url: str) -> PageContent:
+            return PageContent(
+                url,
+                '<main data-inventory-complete="true">New layout</main>',
+                "Recovered reservation remote-assisted evidence",
+            )
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def get_cookies(self) -> bytes:
+            return b"[]"
+
+    class Interpreter:
+        def interpret(
+            self, _page_text: str, source_url: str
+        ) -> tuple[ReservationObservation, ...]:
+            return (
+                ReservationObservation(
+                    remote_id="remote-assisted",
+                    lifecycle=ReservationLifecycle.UPCOMING,
+                    observed_at=datetime.now(UTC),
+                    confirmation_id="CONF-ASSISTED",
+                    property_name="Assisted Hotel",
+                    property_ref="assisted-hotel",
+                    check_in=date(2027, 1, 10),
+                    check_out=date(2027, 1, 12),
+                    room_type="King room",
+                    booked_total=Money.of("200", "USD"),
+                    refundable=True,
+                    occupancy=Occupancy(2, 0, 1),
+                    source_url=source_url,
+                    extraction_method="llm_inventory",
+                ),
+            )
+
+    class Factory(NullLLMFactory):
+        def inventory_interpreter_for_user(
+            self, _user_id: int, role: str = "inventory_interpreter"
+        ) -> Interpreter:
+            assert role == "inventory_interpreter"
+            return Interpreter()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: Factory(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=lambda: ExistingBrowserContext(InventoryBrowser()),
+        session_repository=sessions,
+    )
+    completed = threading.Event()
+    outcomes: list[InventoryCompletion] = []
+
+    assert coordinator.request_inventory(
+        101,
+        lambda outcome: (outcomes.append(outcome), completed.set()),
+    ) is ImmediateAdmission.ACCEPTED
+    assert completed.wait(1)
+
+    assert outcomes[0].report is not None
+    # The model call is charged and its grounded positive identity is retained,
+    # but LLM-only facts cannot prove the upcoming-scope traversal complete.
+    assert outcomes[0].report.recovery_outcome is InventoryRecoveryOutcome.UNAVAILABLE
+    assert outcomes[0].report.completeness is InventoryCompleteness.INCOMPLETE
+    assert outcomes[0].report.llm_calls_used == 1
+    assert outcomes[0].report.recovery_audit is not None
+    assert outcomes[0].report.recovery_audit.roles == ("inventory_interpreter",)
+    assert coordinator.llm_calls_today == {user.user_id: 1}
+
+
+def test_inventory_with_no_daily_allowance_stays_deterministic_only(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
+            101, UserRole.USER
+        )
+    _seed_session(sessions, user.user_id)
+    cfg = _config(tmp_path)
+    calls = DailyCounter()
+    daily_limit = cfg.limits_settings.max_llm_calls_per_user_per_day
+    calls.increment(user.user_id, by=daily_limit)
+
+    class Browser:
+        def restore_cookies(self, _cookies: bytes) -> None:
+            return None
+
+        def open_page(self, url: str) -> PageContent:
+            return PageContent(url, "<main>Changed layout</main>", "Unknown layout")
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def get_cookies(self) -> bytes:
+            return b"[]"
+
+    completed = threading.Event()
+    outcomes: list[InventoryCompletion] = []
+    coordinator = CheckCoordinator(
+        cfg,
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: (_ for _ in ()).throw(
+            AssertionError("factory must not resolve without allowance")
+        ),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=lambda: ExistingBrowserContext(Browser()),
+        session_repository=sessions,
+        llm_calls_today=calls,
+    )
+
+    assert coordinator.request_inventory(
+        101,
+        lambda outcome: (outcomes.append(outcome), completed.set()),
+    ) is ImmediateAdmission.ACCEPTED
+    assert completed.wait(1)
+
+    assert outcomes[0].report is not None
+    assert outcomes[0].report.recovery_outcome is InventoryRecoveryOutcome.UNAVAILABLE
+    assert outcomes[0].report.llm_calls_used == 0
+    assert coordinator.llm_calls_today[user.user_id] == daily_limit
+
+
+def test_inventory_personal_key_failure_is_preserved_with_setkey_guidance(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
+            101, UserRole.USER
+        )
+    _seed_session(sessions, user.user_id)
+
+    class Browser:
+        def restore_cookies(self, _cookies: bytes) -> None:
+            return None
+
+        def open_page(self, url: str) -> PageContent:
+            return PageContent(url, "<main>Changed layout</main>", "Changed layout")
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def get_cookies(self) -> bytes:
+            return b"[]"
+
+    class Factory(NullLLMFactory):
+        def inventory_interpreter_for_user(
+            self, requested_user_id: int, role: str = "inventory_interpreter"
+        ) -> None:
+            assert requested_user_id == user.user_id
+            assert role == "inventory_interpreter"
+            raise UserKeyInvalidError(requested_user_id, "private detail")
+
+    completed = threading.Event()
+    outcomes: list[InventoryCompletion] = []
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: Factory(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=lambda: ExistingBrowserContext(Browser()),
+        session_repository=sessions,
+    )
+
+    assert coordinator.request_inventory(
+        101,
+        lambda outcome: (outcomes.append(outcome), completed.set()),
+    ) is ImmediateAdmission.ACCEPTED
+    assert completed.wait(1)
+
+    report = outcomes[0].report
+    assert report is not None
+    assert report.failure_code is SynchronizationFailureCode.USER_KEY_INVALID
+    assert "/setkey" in (report.failure_detail or "")
+    assert "private detail" not in (report.failure_detail or "")
+    assert report.llm_calls_used == 0
+    assert report.recovery_audit is not None
+    assert report.recovery_audit.outcome is InventoryRecoveryOutcome.UNAVAILABLE
 
 
 def test_check_now_synchronizes_before_resolving_booking(tmp_path: Path) -> None:

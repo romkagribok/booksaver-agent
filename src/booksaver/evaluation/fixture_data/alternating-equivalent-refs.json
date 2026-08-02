@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "id": "alternating-equivalent-refs",
+  "journey": "customer-search",
+  "step": "open-property",
+  "goal": "Reach the selected synthetic property page.",
+  "verification_condition": "The selected property identity is verified on the controllable page.",
+  "start_state": "first-ref",
+  "max_calls": 4,
+  "timeout_seconds": 60,
+  "expected_outcome_categories": ["no-progress"],
+  "states": [
+    {
+      "id": "first-ref",
+      "observation": {
+        "url": "https://www.booking.com/searchresults.html",
+        "title": "Synthetic results",
+        "text": "A synthetic property card has two equivalent detail controls.",
+        "elements": [
+          {"ref": "e1", "role": "link", "label": "View details", "href": null},
+          {"ref": "e2", "role": "button", "label": "View details", "href": null}
+        ],
+        "popup_count": 0,
+        "popup_urls": [],
+        "scroll_y": 0
+      },
+      "history": [
+        {"outcome": "script_failed", "detail": "The scripted property link was unavailable."}
+      ],
+      "no_progress_count": 0,
+      "screenshot_forced": false,
+      "transitions": [
+        {
+          "action": {"type": "click", "role": "link", "label": "View details"},
+          "next_state": "changed-refs"
+        }
+      ]
+    },
+    {
+      "id": "changed-refs",
+      "observation": {
+        "url": "https://www.booking.com/searchresults.html",
+        "title": "Synthetic results",
+        "text": "The same synthetic property card remains visible with refreshed references.",
+        "elements": [
+          {"ref": "e7", "role": "link", "label": "View details", "href": null},
+          {"ref": "e8", "role": "button", "label": "View details", "href": null}
+        ],
+        "popup_count": 0,
+        "popup_urls": [],
+        "scroll_y": 0
+      },
+      "history": [
+        {
+          "outcome": "executed",
+          "detail": "The first detail action did not change verified page state.",
+          "semantic_target": "click link view details"
+        }
+      ],
+      "no_progress_count": 1,
+      "screenshot_forced": false,
+      "transitions": [
+        {
+          "action": {"type": "click", "role": "button", "label": "View details"},
+          "next_state": "forced-visual"
+        }
+      ]
+    },
+    {
+      "id": "forced-visual",
+      "observation": {
+        "url": "https://www.booking.com/searchresults.html",
+        "title": "Synthetic results",
+        "text": "The unchanged synthetic card is shown with fresh visual evidence.",
+        "elements": [
+          {"ref": "e13", "role": "link", "label": "View details", "href": null},
+          {"ref": "e14", "role": "button", "label": "View details", "href": null}
+        ],
+        "popup_count": 0,
+        "popup_urls": [],
+        "scroll_y": 0
+      },
+      "history": [
+        {
+          "outcome": "executed",
+          "detail": "Equivalent detail actions left the verified state unchanged.",
+          "semantic_target": "click button view details"
+        }
+      ],
+      "no_progress_count": 2,
+      "screenshot_forced": true,
+      "transitions": [
+        {
+          "action": {"type": "give_up", "stop_reason": "no_progress"},
+          "terminal_category": "no-progress"
+        }
+      ]
+    }
+  ]
+}

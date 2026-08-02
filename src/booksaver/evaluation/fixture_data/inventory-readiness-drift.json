@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "inventory-readiness-drift",
+  "journey": "account-inventory",
+  "step": "inventory-readiness",
+  "goal": "Reveal the synthetic upcoming reservation list.",
+  "verification_condition": "The page exposes the supported upcoming reservation container.",
+  "start_state": "renamed-control",
+  "max_calls": 4,
+  "timeout_seconds": 60,
+  "expected_outcome_categories": ["recovered"],
+  "states": [
+    {
+      "id": "renamed-control",
+      "observation": {
+        "url": "https://secure.booking.com/mytrips.html",
+        "title": "Synthetic trips",
+        "text": "A read-only control offers upcoming stays under a changed label.",
+        "elements": [
+          {
+            "ref": "e3",
+            "role": "button",
+            "label": "Show upcoming stays",
+            "href": null
+          }
+        ],
+        "popup_count": 0,
+        "popup_urls": [],
+        "scroll_y": 0
+      },
+      "history": [
+        {"outcome": "script_failed", "detail": "The known readiness control was not found."}
+      ],
+      "no_progress_count": 0,
+      "screenshot_forced": false,
+      "transitions": [
+        {
+          "action": {"type": "click", "role": "button", "label": "Show upcoming stays"},
+          "terminal_category": "recovered"
+        }
+      ]
+    }
+  ]
+}

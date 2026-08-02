@@ -21,6 +21,13 @@ class TestAgentSettings:
     def test_defaults(self):
         s = AgentSettings()
         assert (s.max_steps, s.max_llm_calls, s.check_timeout_seconds) == (15, 20, 180)
+        assert (
+            s.max_recovery_calls_per_step,
+            s.recovery_timeout_seconds,
+            s.screenshot_after_no_progress,
+            s.max_semantic_action_executions,
+        ) == (4, 60, 2, 2)
+        assert s.recovery_policy.max_llm_calls == 4
 
     def test_invalid_steps_rejected(self):
         with pytest.raises(ValueError, match="max_steps"):
@@ -35,6 +42,19 @@ class TestAgentSettings:
             AgentSettings(check_timeout_seconds=10)
         with pytest.raises(ValueError, match="check_timeout_seconds"):
             AgentSettings(check_timeout_seconds=7200)
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "max_recovery_calls_per_step",
+            "recovery_timeout_seconds",
+            "screenshot_after_no_progress",
+            "max_semantic_action_executions",
+        ],
+    )
+    def test_invalid_recovery_policy_rejected(self, field: str):
+        with pytest.raises(ValueError, match=field):
+            AgentSettings(**{field: 0})
 
 
 class TestAgentBudget:
@@ -96,6 +116,27 @@ class TestActionGuard:
                                 href="/hotel/test.html#room1"),))
         assert blocked_action_reason(self._click(), obs) is None
 
+    def test_external_link_blocked_before_browser_action(self):
+        obs = _obs(
+            (
+                ElementInfo(
+                    ref="e0",
+                    role="link",
+                    label="Trip details",
+                    href="https://example.test/collect?token=private",
+                ),
+            )
+        )
+        assert blocked_action_reason(self._click(), obs) is not None
+
+    @pytest.mark.parametrize(
+        "label",
+        ["Modify reservation", "Change dates", "Update payment", "Save changes"],
+    )
+    def test_additional_mutation_labels_are_blocked(self, label: str):
+        obs = _obs((ElementInfo(ref="e0", role="button", label=label),))
+        assert blocked_action_reason(self._click(), obs) is not None
+
     def test_cancellation_policy_text_allowed(self):
         # Reading policy wording is fine; only mutating targets are blocked
         obs = _obs((ElementInfo(ref="e0", role="button", label="Show cancellation policy"),))
@@ -114,6 +155,8 @@ class TestActionGuard:
         assert blocked_url_reason("https://www.booking.com/cancel/12345")
         assert blocked_url_reason("https://payments.booking.com/session")
         assert blocked_url_reason("https://www.booking.com/checkout/start")
+        assert blocked_url_reason("https://secure.booking.com/orders/create")
+        assert blocked_url_reason("https://www.booking.com/account/settings")
 
     def test_normal_urls_allowed(self):
         assert blocked_url_reason("https://www.booking.com/hotel/test.html") is None

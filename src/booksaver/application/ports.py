@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
-from booksaver.domain.agent import AgentAction, CheckTrace, Observation
+from booksaver.domain.account_sync import ReservationObservation
+from booksaver.domain.agent import AgentAction, AgentTurnContext, CheckTrace, Observation
 from booksaver.domain.check_result import CheckResult
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
@@ -151,9 +152,7 @@ class InteractiveBrowser(Protocol):
 class AgentBrain(Protocol):
     """One LLM decision per agent turn (ADR-016)."""
 
-    def decide(
-        self, goal: str, observation: Observation, history: list[str]
-    ) -> AgentAction: ...
+    def decide(self, context: AgentTurnContext) -> AgentAction: ...
 
 
 @runtime_checkable
@@ -166,6 +165,15 @@ class CheckTraceRepository(Protocol):
 class LLMExtractor(Protocol):
     def extract_price(self, page_text: str, booking: Booking) -> ExtractionResult: ...
     def extract_offers(self, page_text: str, booking: Booking) -> list[OfferCandidate]: ...
+
+
+@runtime_checkable
+class InventoryInterpreter(Protocol):
+    """Positive-only reservation interpretation; never conveys completeness."""
+
+    def interpret(
+        self, page_text: str, source_url: str
+    ) -> tuple[ReservationObservation, ...]: ...
 
 
 @runtime_checkable
@@ -224,3 +232,9 @@ class LLMClientFactory(Protocol):
 
     def for_booking(self, booking: Booking | None) -> LLMExtractor | None: ...
     def agent_brain_for_booking(self, booking: Booking | None) -> AgentBrain | None: ...
+    def agent_brain_for_user(
+        self, user_id: int, role: str = "navigation_agent"
+    ) -> AgentBrain | None: ...
+    def inventory_interpreter_for_user(
+        self, user_id: int, role: str = "inventory_interpreter"
+    ) -> InventoryInterpreter | None: ...

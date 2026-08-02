@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "inventory-scope-drift",
+  "journey": "account-inventory",
+  "step": "scope-traversal",
+  "goal": "Traverse every synthetic upcoming reservation scope.",
+  "verification_condition": "All supported upcoming scopes have conclusive terminal evidence.",
+  "start_state": "scope-tabs",
+  "max_calls": 4,
+  "timeout_seconds": 60,
+  "expected_outcome_categories": ["recovered"],
+  "states": [
+    {
+      "id": "scope-tabs",
+      "observation": {
+        "url": "https://secure.booking.com/mytrips.html",
+        "title": "Synthetic upcoming trips",
+        "text": "Upcoming and previous read-only scopes are visible.",
+        "elements": [
+          {"ref": "e4", "role": "tab", "label": "Upcoming stays", "href": null},
+          {"ref": "e5", "role": "tab", "label": "Previous stays", "href": null}
+        ],
+        "popup_count": 0,
+        "popup_urls": [],
+        "scroll_y": 0
+      },
+      "history": [
+        {"outcome": "script_failed", "detail": "The expected scope selector changed."}
+      ],
+      "no_progress_count": 0,
+      "screenshot_forced": false,
+      "transitions": [
+        {
+          "action": {"type": "click", "role": "tab", "label": "Upcoming stays"},
+          "next_state": "terminal-page"
+        }
+      ]
+    },
+    {
+      "id": "terminal-page",
+      "observation": {
+        "url": "https://secure.booking.com/mytrips.html",
+        "title": "Synthetic upcoming trips",
+        "text": "A final read-only next-scope control is visible.",
+        "elements": [
+          {"ref": "e9", "role": "button", "label": "Next scope", "href": null}
+        ],
+        "popup_count": 0,
+        "popup_urls": [],
+        "scroll_y": 600
+      },
+      "history": [
+        {
+          "outcome": "executed",
+          "detail": "The upcoming scope became visible.",
+          "content_changed": true,
+          "semantic_target": "click tab upcoming stays"
+        }
+      ],
+      "no_progress_count": 0,
+      "screenshot_forced": false,
+      "transitions": [
+        {
+          "action": {"type": "click", "role": "button", "label": "Next scope"},
+          "terminal_category": "recovered"
+        }
+      ]
+    }
+  ]
+}

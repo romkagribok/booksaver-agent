@@ -6,12 +6,18 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 
+from booksaver.daemon.check_coordinator import (
+    ImmediateAdmission,
+    InventoryCompletion,
+)
 from booksaver.daemon.scheduler import Scheduler
 from booksaver.domain.account_sync import (
     InventoryCompleteness,
     InventoryDiscoveryResult,
     ReservationLifecycle,
     ReservationObservation,
+    SynchronizationFailureCode,
+    SynchronizationReport,
     SynchronizationTrigger,
 )
 from booksaver.domain.check_result import CheckResult, ExtractionMethod, FailureCode, FailureReason
@@ -404,6 +410,75 @@ def test_bookings_with_no_database_reports_none_registered(tmp_path: Path) -> No
     _db, router, sent, _sched = _setup(tmp_path)
     router.dispatch(_cmd("/bookings"))
     assert sent[0][1] == "No synchronized reservations yet. Send /connect first."
+
+
+def test_bookings_unexpected_worker_failure_is_not_rendered_as_empty_account(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    _register_caller(db_path, telegram_id=1)
+    router = CommandRouter()
+    sent: list[tuple[int, str]] = []
+
+    class Coordinator:
+        def request_inventory(self, _user_id, callback):
+            callback(InventoryCompletion(None))
+            return ImmediateAdmission.ACCEPTED
+
+    register_readonly_commands(
+        router=router,
+        reply=lambda chat_id, text: sent.append((chat_id, text)),
+        db_path=db_path,
+        scheduler=Scheduler(),
+        check_coordinator=Coordinator(),  # type: ignore[arg-type]
+    )
+
+    router.dispatch(_cmd("/bookings"))
+
+    text = "\n".join(message for _chat_id, message in sent)
+    assert "refresh was unavailable" in text
+    assert "No future reservations found" not in text
+
+
+def test_bookings_personal_key_failure_shows_key_recovery_guidance(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    _register_caller(db_path, telegram_id=1)
+    router = CommandRouter()
+    sent: list[tuple[int, str]] = []
+
+    class Coordinator:
+        def request_inventory(self, _user_id, callback):
+            callback(
+                InventoryCompletion(
+                    SynchronizationReport(
+                        run_id="sync-key",
+                        completeness=InventoryCompleteness.FAILED,
+                        discovered=0,
+                        eligible=0,
+                        ineligible=0,
+                        failure_code=SynchronizationFailureCode.USER_KEY_INVALID,
+                        failure_detail="Your personal LLM key could not be used.",
+                    )
+                )
+            )
+            return ImmediateAdmission.ACCEPTED
+
+    register_readonly_commands(
+        router=router,
+        reply=lambda chat_id, text: sent.append((chat_id, text)),
+        db_path=db_path,
+        scheduler=Scheduler(),
+        check_coordinator=Coordinator(),  # type: ignore[arg-type]
+    )
+
+    router.dispatch(_cmd("/bookings"))
+
+    text = "\n".join(message for _chat_id, message in sent)
+    assert "/setkey" in text
+    assert "/deletekey" in text
+    assert "No future reservations found" not in text
 
 
 def test_bookings_unrecognized_sender_gets_polite_refusal(tmp_path: Path) -> None:

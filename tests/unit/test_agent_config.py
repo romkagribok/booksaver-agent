@@ -34,6 +34,10 @@ class TestAgentConfig:
         assert cfg.agent_settings.max_llm_calls == 20
         assert cfg.agent_settings.check_timeout_seconds == 180
         assert cfg.agent_settings.model == "claude-sonnet-4-6"
+        assert cfg.agent_settings.max_recovery_calls_per_step == 4
+        assert cfg.agent_settings.recovery_timeout_seconds == 60
+        assert cfg.agent_settings.screenshot_after_no_progress == 2
+        assert cfg.agent_settings.max_semantic_action_executions == 2
 
     def test_explicit_values_parsed(self):
         cfg = load_config(
@@ -43,6 +47,10 @@ class TestAgentConfig:
                     "max_llm_calls": 8,
                     "check_timeout_seconds": 90,
                     "model": "claude-haiku-4-5",
+                    "max_recovery_calls_per_step": 3,
+                    "recovery_timeout_seconds": 45,
+                    "screenshot_after_no_progress": 1,
+                    "max_semantic_action_executions": 1,
                 })
             )
         )
@@ -50,6 +58,10 @@ class TestAgentConfig:
         assert cfg.agent_settings.max_llm_calls == 8
         assert cfg.agent_settings.check_timeout_seconds == 90
         assert cfg.agent_settings.model == "claude-haiku-4-5"
+        assert cfg.agent_settings.max_recovery_calls_per_step == 3
+        assert cfg.agent_settings.recovery_timeout_seconds == 45
+        assert cfg.agent_settings.screenshot_after_no_progress == 1
+        assert cfg.agent_settings.max_semantic_action_executions == 1
 
     def test_partial_section_keeps_other_defaults(self):
         cfg = load_config(DictSource(_base({"max_steps": 30})))
@@ -67,3 +79,16 @@ class TestAgentConfig:
     def test_non_numeric_value_rejected(self):
         with pytest.raises(ConfigValidationError, match="agent"):
             load_config(DictSource(_base({"max_steps": "many"})))
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "max_recovery_calls_per_step",
+            "recovery_timeout_seconds",
+            "screenshot_after_no_progress",
+            "max_semantic_action_executions",
+        ],
+    )
+    def test_non_positive_recovery_value_rejected(self, field: str):
+        with pytest.raises(ConfigValidationError, match=field):
+            load_config(DictSource(_base({field: 0})))

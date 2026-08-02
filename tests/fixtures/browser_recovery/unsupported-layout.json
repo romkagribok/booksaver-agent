@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "unsupported-layout",
+  "journey": "account-inventory",
+  "step": "inventory-readiness",
+  "goal": "Find a supported read-only path to synthetic upcoming reservations.",
+  "verification_condition": "A supported reservation container or traversal control is present.",
+  "start_state": "unknown-layout",
+  "max_calls": 4,
+  "timeout_seconds": 60,
+  "expected_outcome_categories": ["unsupported-layout"],
+  "states": [
+    {
+      "id": "unknown-layout",
+      "observation": {
+        "url": "https://secure.booking.com/mytrips.html",
+        "title": "Synthetic travel dashboard",
+        "text": "The page has generic travel content but no supported reservation evidence.",
+        "elements": [
+          {"ref": "e1", "role": "link", "label": "Travel ideas", "href": "https://www.booking.com/index.html"}
+        ],
+        "popup_count": 0,
+        "popup_urls": [],
+        "scroll_y": 0
+      },
+      "history": [
+        {"outcome": "script_failed", "detail": "No supported inventory structure was recognized."}
+      ],
+      "no_progress_count": 0,
+      "screenshot_forced": true,
+      "transitions": [
+        {
+          "action": {"type": "give_up", "stop_reason": "unknown"},
+          "terminal_category": "unsupported-layout"
+        }
+      ]
+    }
+  ]
+}
