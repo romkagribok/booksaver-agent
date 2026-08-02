@@ -416,6 +416,30 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-120` | Dispatch due booking checks safely | Randomized Scheduling | Complete | `001-randomized-daily-booking-checks/stories/002-dispatch-due-booking-checks-safely.md` |
 | `US-121` | Configure and observe randomized scheduling | Randomized Scheduling | Complete | `001-randomized-daily-booking-checks/stories/003-configure-and-observe-randomized-scheduling.md` |
 
+## 021-booking-browser-llm-recovery
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-shared-booking-browser-recovery` | 4 stories | Complete (bolt 038) |
+| `002-agent-assisted-booking-inventory` | 3 stories | Complete (bolt 039; 1225 tests at final verification) |
+
+### 001-shared-booking-browser-recovery: Shared Booking Browser Recovery
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-122` | Detect and stop semantic no-progress | LLM Recovery | Complete | `001-shared-booking-browser-recovery/stories/001-detect-and-stop-semantic-no-progress.md` |
+| `US-123` | Reorient with evidence-rich feedback | LLM Recovery | Complete | `001-shared-booking-browser-recovery/stories/002-reorient-with-evidence-rich-feedback.md` |
+| `US-124` | Back every booking browser step with guarded recovery | LLM Recovery | Complete | `001-shared-booking-browser-recovery/stories/003-back-every-booking-browser-step-with-guarded-recovery.md` |
+| `US-125` | Evaluate recovery with replay fixtures | LLM Recovery | Complete | `001-shared-booking-browser-recovery/stories/004-evaluate-recovery-with-replay-fixtures.md` |
+
+### 002-agent-assisted-booking-inventory: Agent-Assisted Booking Inventory
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-126` | Recover complete booking inventory discovery | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/001-recover-complete-booking-inventory-discovery.md` |
+| `US-127` | Preserve completeness and safety under agent assistance | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/002-preserve-completeness-and-safety-under-agent-assistance.md` |
+| `US-128` | Explain and observe inventory recovery | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/003-explain-and-observe-inventory-recovery.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -440,6 +464,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `018-conclusive-rebook-opportunity-lifecycle` | 1 | 3 | Complete (bolt 033; 937 tests) |
 | `019-booking-account-synchronization` | 2 | 7 | Complete (bolts 034–036; 959 tests) |
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
+| `021-booking-browser-llm-recovery` | 2 | 7 | Complete (bolts 038–039; 1225 tests) |
 
-All 121 stories (119 complete in-scope stories and 2 post-MVP
-extensibility stories) are assigned exactly once.
+All 128 stories (126 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
+exactly once.

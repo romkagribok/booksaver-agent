@@ -266,7 +266,13 @@ class BookingComSearchMonitor:
         self._active_budget = budget
         escalator: BrowserAgent | None = None
         if self._brain is not None:
-            escalator = BrowserAgent(self._browser, self._brain, budget, recorder)
+            escalator = BrowserAgent(
+                self._browser,
+                self._brain,
+                budget,
+                recorder,
+                recovery_policy=self._agent_settings.recovery_policy,
+            )
             self._last_escalator = escalator
 
         search_journey = SearchJourney(

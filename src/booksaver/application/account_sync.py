@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -54,11 +55,18 @@ class SynchronizeBookingAccount:
     ) -> SynchronizationReport:
         now = self._clock()
         result = self._source.discover(browser)
-        return self._repository.reconcile(
+        report = self._repository.reconcile(
             user_id=user_id,
             run_id=str(uuid.uuid4()),
             trigger=trigger,
             session_revision=session_revision,
             result=result,
             observed_at=now,
+        )
+        return replace(
+            report,
+            recovery_outcome=result.recovery_outcome,
+            recovery_step=result.recovery_step,
+            recovery_detail=result.recovery_detail,
+            llm_calls_used=result.llm_calls_used,
         )

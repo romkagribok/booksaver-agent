@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-01T17:24:48Z
-total_decisions: 29
+last_updated: 2026-08-02T18:18:46Z
+total_decisions: 30
 ---
 
 # Decision Index
@@ -17,6 +17,18 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-030: Shared progress-aware Booking.com browser recovery
+- **Status**: accepted
+- **Date**: 2026-08-02
+- **Bolt**: 038-shared-booking-browser-recovery (shared-booking-browser-recovery)
+- **Path**: `bolts/038-shared-booking-browser-recovery/adr-030-shared-progress-aware-booking-browser-recovery.md`
+- **Summary**: Ref-based repetition and action-executed feedback let unchanged pages consume the
+  full budget, while account inventory had no LLM seam. Use one provider-neutral recovery contract
+  with structured progress evidence, semantic loop control, forced visual reorientation, step-local
+  limits, all-page safety checks, and deterministic inventory-completeness authority.
+- **Read when**: Modifying browser-agent observations, prompts, progress/loop control, per-step LLM
+  budgets, popup handling, account-inventory recovery, LLM usage accounting, or replay evaluation.
 
 ### ADR-029: Persisted random daily scheduling
 - **Status**: accepted

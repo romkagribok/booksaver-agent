@@ -84,6 +84,30 @@ def load_config(source: ConfigSource) -> Config:
                 agent_raw.get("check_timeout_seconds", defaults.check_timeout_seconds)
             ),
             model=str(agent_raw.get("model", defaults.model)),
+            max_recovery_calls_per_step=int(
+                agent_raw.get(
+                    "max_recovery_calls_per_step",
+                    defaults.max_recovery_calls_per_step,
+                )
+            ),
+            recovery_timeout_seconds=int(
+                agent_raw.get(
+                    "recovery_timeout_seconds",
+                    defaults.recovery_timeout_seconds,
+                )
+            ),
+            screenshot_after_no_progress=int(
+                agent_raw.get(
+                    "screenshot_after_no_progress",
+                    defaults.screenshot_after_no_progress,
+                )
+            ),
+            max_semantic_action_executions=int(
+                agent_raw.get(
+                    "max_semantic_action_executions",
+                    defaults.max_semantic_action_executions,
+                )
+            ),
         )
     except (ValueError, TypeError) as e:
         errors.append(f"agent: {e}")

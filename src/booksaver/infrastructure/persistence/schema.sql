@@ -69,6 +69,9 @@ CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id);
 -- v11: Booking.com account inventory is authoritative (ADR-027). These rows
 -- include ineligible/incomplete/cancelled reservations; `bookings` above is the
 -- strict derived monitoring projection for eligible rows only.
+-- v13: recovery audit columns are a caller-scoped, content-free operational
+-- record. NULL recovery_outcome means that no complete audit has been attached;
+-- this intentionally distinguishes legacy/interrupted rows from not_needed.
 CREATE TABLE IF NOT EXISTS booking_sync_runs (
     run_id             TEXT PRIMARY KEY,
     user_id            INTEGER NOT NULL REFERENCES users(user_id),
@@ -82,7 +85,28 @@ CREATE TABLE IF NOT EXISTS booking_sync_runs (
     discovered_count    INTEGER NOT NULL,
     eligible_count      INTEGER NOT NULL,
     ineligible_count    INTEGER NOT NULL,
-    session_revision    TEXT NOT NULL
+    session_revision    TEXT NOT NULL,
+    recovery_outcome    TEXT
+        CHECK(recovery_outcome IS NULL OR recovery_outcome IN (
+            'not_needed', 'recovered', 'partial', 'unavailable', 'gave_up',
+            'blocked', 'provider_error', 'budget_exhausted'
+        )),
+    recovery_step       TEXT,
+    recovery_providers_json TEXT,
+    recovery_models_json TEXT,
+    recovery_roles_json TEXT,
+    recovery_prompt_versions_json TEXT,
+    recovery_llm_calls  INTEGER
+        CHECK(recovery_llm_calls IS NULL OR recovery_llm_calls >= 0),
+    recovery_input_tokens INTEGER
+        CHECK(recovery_input_tokens IS NULL OR recovery_input_tokens >= 0),
+    recovery_output_tokens INTEGER
+        CHECK(recovery_output_tokens IS NULL OR recovery_output_tokens >= 0),
+    recovery_action_count INTEGER
+        CHECK(recovery_action_count IS NULL OR recovery_action_count >= 0),
+    recovery_duration_ms INTEGER
+        CHECK(recovery_duration_ms IS NULL OR recovery_duration_ms >= 0),
+    recovery_trace_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_booking_sync_runs_user

@@ -12,7 +12,7 @@ from booksaver.daemon.check_coordinator import (
     ImmediateCompletionKind,
     InventoryCompletion,
 )
-from booksaver.domain.account_sync import SynchronizationTrigger
+from booksaver.domain.account_sync import InventoryCompleteness, SynchronizationTrigger
 from booksaver.domain.check_result import CheckOutcome
 from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.models import Booking
@@ -141,6 +141,35 @@ def register_check_now_command(
         }
         send(chat_id, "Choose a booking to check now:", keyboard)
 
+    def _refresh_failure(completion: InventoryCompletion) -> str | None:
+        report = completion.report
+        if report is None:
+            return (
+                "Booking.com refresh was unavailable. No fresh inventory conclusion "
+                "was made; try /checknow again shortly. Send /bookings to see the "
+                "last safe reservation state."
+            )
+        if report.completeness is InventoryCompleteness.COMPLETE:
+            return None
+        guidance = (
+            "Send /connect to restore authentication."
+            if report.failure_code is not None
+            and report.failure_code.value == "auth_required"
+            else "Try /checknow again shortly."
+        )
+        detail = " ".join((report.failure_detail or "").split())[:180]
+        status = (
+            "was incomplete"
+            if report.completeness is InventoryCompleteness.INCOMPLETE
+            else "failed"
+        )
+        explanation = f": {detail}" if detail else "."
+        return (
+            f"Booking.com refresh {status}{explanation}\n"
+            "No check was started from saved reservation data. "
+            f"{guidance} Send /bookings to see the last safe reservation state."
+        )
+
     def _command(cmd: IncomingCommand) -> None:
         selector = cmd.args.strip()
         if selector:
@@ -156,7 +185,11 @@ def register_check_now_command(
             )
             return
 
-        def _synchronized(_completion: InventoryCompletion) -> None:
+        def _synchronized(completion: InventoryCompletion) -> None:
+            failure = _refresh_failure(completion)
+            if failure is not None:
+                reply(cmd.chat_id, failure)
+                return
             _send_picker(cmd.user_id, cmd.chat_id)
 
         admission = coordinator.request_inventory(

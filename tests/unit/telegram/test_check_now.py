@@ -11,6 +11,11 @@ from booksaver.daemon.check_coordinator import (
     ImmediateCompletionKind,
     InventoryCompletion,
 )
+from booksaver.domain.account_sync import (
+    InventoryCompleteness,
+    SynchronizationFailureCode,
+    SynchronizationReport,
+)
 from booksaver.domain.check_result import (
     CheckResult,
     ExtractionMethod,
@@ -146,7 +151,17 @@ def test_no_arg_picker_is_scoped_and_callback_payload_is_safe(tmp_path: Path) ->
 
     router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
     assert "Refreshing" in sent[-1][1]
-    coordinator.inventory_completions[0](InventoryCompletion(None))
+    coordinator.inventory_completions[0](
+        InventoryCompletion(
+            SynchronizationReport(
+                run_id="run-1",
+                completeness=InventoryCompleteness.COMPLETE,
+                discovered=1,
+                eligible=1,
+                ineligible=0,
+            )
+        )
+    )
 
     markup = sent[-1][2]
     assert markup is not None
@@ -155,6 +170,78 @@ def test_no_arg_picker_is_scoped_and_callback_payload_is_safe(tmp_path: Path) ->
     assert "Foreign Hotel" not in str(markup)
     assert button["callback_data"] == f"checknow:{own.booking_id}"
     assert len(button["callback_data"].encode()) <= 64
+
+
+def test_no_arg_refresh_unavailable_does_not_render_stale_picker(tmp_path: Path) -> None:
+    coordinator = FakeCoordinator()
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+    _add_user_booking(
+        db_path,
+        101,
+        _booking("11111111-1111-4111-8111-111111111111", "Stale Hotel"),
+    )
+
+    router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
+    coordinator.inventory_completions[0](InventoryCompletion(None))
+
+    assert sent[-1][2] is None
+    assert "refresh was unavailable" in sent[-1][1]
+    assert "No fresh inventory conclusion" in sent[-1][1]
+    assert "Stale Hotel" not in sent[-1][1]
+
+
+def test_no_arg_incomplete_refresh_does_not_render_stale_picker(tmp_path: Path) -> None:
+    coordinator = FakeCoordinator()
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+    _add_user_booking(
+        db_path,
+        101,
+        _booking("11111111-1111-4111-8111-111111111111", "Stale Hotel"),
+    )
+
+    router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
+    coordinator.inventory_completions[0](
+        InventoryCompletion(
+            SynchronizationReport(
+                run_id="run-2",
+                completeness=InventoryCompleteness.INCOMPLETE,
+                discovered=1,
+                eligible=1,
+                ineligible=0,
+                failure_code=SynchronizationFailureCode.PAGINATION_INCOMPLETE,
+                failure_detail="Could not confirm every reservation page.",
+            )
+        )
+    )
+
+    assert sent[-1][2] is None
+    assert "refresh was incomplete" in sent[-1][1]
+    assert "No check was started from saved reservation data" in sent[-1][1]
+    assert "Stale Hotel" not in sent[-1][1]
+
+
+def test_no_arg_auth_refresh_failure_directs_user_to_connect(tmp_path: Path) -> None:
+    coordinator = FakeCoordinator()
+    _db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+
+    router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
+    coordinator.inventory_completions[0](
+        InventoryCompletion(
+            SynchronizationReport(
+                run_id="run-3",
+                completeness=InventoryCompleteness.FAILED,
+                discovered=0,
+                eligible=0,
+                ineligible=0,
+                failure_code=SynchronizationFailureCode.AUTH_REQUIRED,
+                failure_detail="Booking.com authentication is required.",
+            )
+        )
+    )
+
+    assert sent[-1][2] is None
+    assert "refresh failed" in sent[-1][1]
+    assert "Send /connect" in sent[-1][1]
 
 
 def test_typed_unique_prefix_starts_background_request(tmp_path: Path) -> None:

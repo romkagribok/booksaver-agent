@@ -60,6 +60,11 @@ class _FakeUserRepo:
     def get_owner_of_booking(self, booking_id: str):
         return self._owner
 
+    def get_by_id(self, user_id: int):
+        if self._owner is not None and self._owner.user_id == user_id:
+            return self._owner
+        return None
+
 
 class _FakeKeyStore:
     def __init__(self, plaintext: str | None = None, raise_error: bool = False) -> None:
@@ -75,14 +80,16 @@ class _FakeKeyStore:
         return self._plaintext
 
 
-def _user(encrypted_key: bytes | None):
+def _user(encrypted_key: bytes | None, *, active: bool = True):
     from booksaver.domain.user import User, UserAccessState, UserRole
 
     return User(
         user_id=1,
         telegram_user_id=42,
         role=UserRole.USER,
-        access_state=UserAccessState.ACTIVE,
+        access_state=(
+            UserAccessState.ACTIVE if active else UserAccessState.REVOKED
+        ),
         created_at=datetime.now(UTC),
         encrypted_key=encrypted_key,
     )
@@ -130,6 +137,23 @@ class TestHybridBilling:
         with pytest.raises(UserKeyInvalidError):
             factory.for_booking(make_booking())
 
+    def test_stored_personal_key_without_key_store_never_uses_owner_key(self):
+        import pytest
+
+        from booksaver.domain.errors import UserKeyInvalidError
+
+        from .monitor.fakes import make_booking
+
+        factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=b"ciphertext")),
+            key_store=None,
+        )
+
+        with pytest.raises(UserKeyInvalidError, match="key store is unavailable"):
+            factory.for_booking(make_booking())
+
     def test_agent_brain_also_uses_personal_key(self):
         from .monitor.fakes import make_booking
 
@@ -146,3 +170,108 @@ class TestHybridBilling:
 
         factory = AnthropicLLMClientFactory(_config(), api_key="sk-owner-key")
         assert factory.for_booking(make_booking()) is not None
+
+
+class TestExplicitUserRoleResolution:
+    def test_builds_versioned_navigation_brain_for_active_user(self):
+        factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=None)),
+        )
+
+        brain = factory.agent_brain_for_user(1)
+
+        assert brain is not None
+        assert brain.provider == "anthropic"
+        assert brain.role == "navigation_agent"
+        assert brain.model == _config().agent_settings.model
+        assert brain.prompt_version == "booking-browser-recovery-v2"
+
+    def test_builds_positive_inventory_interpreter_for_active_user(self):
+        factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=None)),
+        )
+
+        interpreter = factory.inventory_interpreter_for_user(1)
+
+        assert interpreter is not None
+        assert interpreter.provider == "anthropic"
+        assert interpreter.role == "inventory_interpreter"
+        assert interpreter.prompt_version == "booking-inventory-interpretation-v1"
+
+    def test_user_scoped_capabilities_fail_closed_for_unknown_or_revoked_user(self):
+        revoked_factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=None, active=False)),
+        )
+
+        assert revoked_factory.agent_brain_for_user(1) is None
+        assert revoked_factory.inventory_interpreter_for_user(1) is None
+        assert revoked_factory.agent_brain_for_user(999) is None
+
+    def test_explicit_user_resolution_requires_user_repository(self):
+        factory = AnthropicLLMClientFactory(_config(), api_key="sk-owner-key")
+
+        assert factory.agent_brain_for_user(1) is None
+        assert factory.inventory_interpreter_for_user(1) is None
+
+    def test_role_mismatch_is_rejected(self):
+        import pytest
+
+        factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=None)),
+        )
+
+        with pytest.raises(ValueError, match="Unsupported agent role"):
+            factory.agent_brain_for_user(1, "inventory_interpreter")
+        with pytest.raises(ValueError, match="Unsupported inventory interpreter role"):
+            factory.inventory_interpreter_for_user(1, "navigation_agent")
+
+    def test_personal_key_error_applies_to_inventory_interpreter(self):
+        import pytest
+
+        from booksaver.domain.errors import UserKeyInvalidError
+
+        factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=b"ciphertext")),
+            key_store=_FakeKeyStore(raise_error=True),
+        )
+
+        with pytest.raises(UserKeyInvalidError):
+            factory.inventory_interpreter_for_user(1)
+
+    def test_missing_key_store_fails_closed_for_all_user_scoped_roles(self):
+        import pytest
+
+        from booksaver.domain.errors import UserKeyInvalidError
+
+        factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=b"ciphertext")),
+            key_store=None,
+        )
+
+        with pytest.raises(UserKeyInvalidError, match="key store is unavailable"):
+            factory.agent_brain_for_user(1)
+        with pytest.raises(UserKeyInvalidError, match="key store is unavailable"):
+            factory.inventory_interpreter_for_user(1)
+
+    def test_booking_brain_wrapper_delegates_to_explicit_owner(self):
+        from .monitor.fakes import make_booking
+
+        factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=None, active=False)),
+        )
+
+        assert factory.agent_brain_for_booking(make_booking()) is None

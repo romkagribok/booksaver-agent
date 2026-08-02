@@ -60,12 +60,16 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # model = "claude-sonnet-4-6"        # key:      export BOOKSAVER_LLM_API_KEY=...
 
 [agent]
-# Hard cost caps per price check (ADR-017). Deliberately simple for now —
-# smarter adaptive budgeting is planned future work if these prove too blunt.
+# Outer cost caps per price check (ADR-017) plus tighter per-step recovery limits
+# (ADR-030). Existing config files may omit the recovery keys and receive these defaults.
 # model = "claude-sonnet-4-6"        # browser-agent model (extraction uses [extraction])
 # max_steps = 15              # LLM browser-agent turns (screenshot turns count double)
 # max_llm_calls = 20          # all LLM calls in one check (agent + extraction)
 # check_timeout_seconds = 180 # wall-clock limit per booking check
+# max_recovery_calls_per_step = 4      # actual LLM calls for one failed browser step
+# recovery_timeout_seconds = 60        # wall-clock limit for that recovery episode
+# screenshot_after_no_progress = 2     # force fresh visual evidence after no progress
+# max_semantic_action_executions = 2   # never execute an equivalent target a third time
 
 [telegram_bot]
 # Private invite-only Telegram bot gateway. Token: export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
@@ -104,6 +108,11 @@ def _config_path(args: argparse.Namespace) -> Path:
 
 
 def _db_path_for(args: argparse.Namespace) -> tuple[Config, Path]:
+    cfg = _load_config_for_args(args)
+    return cfg, cfg.data_directory.path / "booksaver.db"
+
+
+def _load_config_for_args(args: argparse.Namespace) -> Config:
     source = TomlEnvConfigSource(_config_path(args))
     try:
         cfg = load_config(source)
@@ -115,7 +124,7 @@ def _db_path_for(args: argparse.Namespace) -> tuple[Config, Path]:
         for err in e.errors:
             print(f"  - {err}", file=sys.stderr)
         sys.exit(2)
-    return cfg, cfg.data_directory.path / "booksaver.db"
+    return cfg
 
 
 # ── init ─────────────────────────────────────────────────────────────────────
@@ -161,6 +170,11 @@ def cmd_config_validate(args: argparse.Namespace) -> int:
     print(f"  minimum_spacing            : {schedule.minimum_spacing}")
     print(f"  missed_run_grace           : {schedule.missed_run_grace}")
     print(f"  data_directory : {cfg.data_directory.path}")
+    agent = cfg.agent_settings
+    print(f"  agent_recovery_calls/step  : {agent.max_recovery_calls_per_step}")
+    print(f"  agent_recovery_timeout_s   : {agent.recovery_timeout_seconds}")
+    print(f"  screenshot_after_no_progress: {agent.screenshot_after_no_progress}")
+    print(f"  semantic_action_executions: {agent.max_semantic_action_executions}")
     return 0
 
 
@@ -185,6 +199,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     mobile = cfg.mobile_web_settings
     remote_auth = cfg.remote_auth_settings
     schedule = cfg.schedule_settings
+    agent = cfg.agent_settings
     print(
         "schedule.checks_per_booking/day: "
         f"{schedule.checks_per_booking_per_day}"
@@ -203,6 +218,23 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"browser.device_profile       : {mobile.profile_id.value}")
     print(f"browser.locale               : {mobile.locale}")
     print(f"browser.timezone_id          : {mobile.timezone_id}")
+    print(f"agent.model                  : {agent.model}")
+    print(f"agent.max_steps              : {agent.max_steps}")
+    print(f"agent.max_llm_calls          : {agent.max_llm_calls}")
+    print(f"agent.check_timeout_s        : {agent.check_timeout_seconds}")
+    print(
+        "agent.recovery_calls/step   : "
+        f"{agent.max_recovery_calls_per_step}"
+    )
+    print(f"agent.recovery_timeout_s     : {agent.recovery_timeout_seconds}")
+    print(
+        "agent.screenshot_after_no_progress: "
+        f"{agent.screenshot_after_no_progress}"
+    )
+    print(
+        "agent.semantic_action_executions: "
+        f"{agent.max_semantic_action_executions}"
+    )
     print(f"remote_auth.enabled          : {remote_auth.enabled}")
     print(f"remote_auth.public_url       : {remote_auth.public_url or '(not set)'}")
     smtp = "(set)" if os.environ.get("BOOKSAVER_SMTP_PASSWORD") else "(not set)"
@@ -261,6 +293,44 @@ def cmd_bookings_list(args: argparse.Namespace) -> int:
             f"{item.lifecycle.value:10}  "
             f"{eligibility}"
         )
+    return 0
+
+
+def cmd_bookings_trace(args: argparse.Namespace) -> int:
+    """Show one owner-scoped, content-free inventory recovery audit."""
+    _cfg, db_path = _db_path_for(args)
+    if not db_path.exists():
+        print("No local database yet.", file=sys.stderr)
+        return 2
+
+    with SqliteStore(db_path) as store:
+        owner = SqliteUserRepository(store).get_owner()
+        audit = SqliteAccountReservationRepository(store).recovery_audit_for_run(
+            user_id=owner.user_id,
+            run_id=args.run_id,
+        )
+    if audit is None:
+        print(
+            f"No owner-scoped inventory recovery audit found for '{args.run_id}'.",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(f"Run      : {args.run_id}")
+    print(f"Outcome  : {audit.outcome.value}")
+    print(f"Step     : {audit.step or 'none'}")
+    print(f"Providers: {', '.join(audit.providers) or 'none'}")
+    print(f"Models   : {', '.join(audit.models) or 'none'}")
+    print(f"Roles    : {', '.join(audit.roles) or 'none'}")
+    print(f"Prompts  : {', '.join(audit.prompt_versions) or 'none'}")
+    print(
+        f"Usage    : calls={audit.llm_calls_used}; "
+        f"tokens={audit.input_tokens}in/{audit.output_tokens}out; "
+        f"actions={audit.action_count}; duration={audit.duration_ms}ms"
+    )
+    print("Events:")
+    for event in audit.trace:
+        print(json.dumps(event.as_dict(), sort_keys=True, separators=(",", ":")))
     return 0
 
 
@@ -784,6 +854,78 @@ def cmd_checks_trace(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── privacy-safe recovery evaluation ────────────────────────────────────────
+
+def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
+    """Run an explicit live-model replay without browser, sessions, or database."""
+    if not args.live:
+        print(
+            "Refusing to call the configured model without --live. "
+            "Replay never opens Booking.com or reads the BookSaver database.",
+            file=sys.stderr,
+        )
+        return 2
+    api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
+    if not api_key:
+        print("BOOKSAVER_LLM_API_KEY is required for live replay.", file=sys.stderr)
+        return 2
+
+    from booksaver.evaluation import (
+        ReplayFixtureError,
+        ReplayRunner,
+        curated_fixture_directory,
+        load_fixture,
+        load_fixture_directory,
+    )
+    from booksaver.infrastructure.llm.anthropic_adapter import AnthropicAgentBrain
+
+    fixture_path = (
+        Path(args.fixture).expanduser().resolve()
+        if args.fixture
+        else curated_fixture_directory()
+    )
+    try:
+        fixtures = (
+            load_fixture_directory(fixture_path)
+            if fixture_path.is_dir()
+            else (load_fixture(fixture_path),)
+        )
+    except ReplayFixtureError as exc:
+        print(f"Replay fixture rejected: {exc}", file=sys.stderr)
+        return 2
+    maximum_calls = sum(fixture.max_calls for fixture in fixtures) * args.runs
+    if maximum_calls > 250:
+        print(
+            "Replay plan rejected: the corpus and run count could make more than "
+            "250 provider calls.",
+            file=sys.stderr,
+        )
+        return 2
+
+    cfg = _load_config_for_args(args)
+    brain = AnthropicAgentBrain(api_key=api_key, model=cfg.agent_settings.model)
+    runner = ReplayRunner()
+    passed = True
+    for fixture in fixtures:
+        _runs, aggregate = runner.run(fixture, brain, runs=args.runs)
+        correct = aggregate.correct_rate >= 0.9
+        safe = aggregate.prohibited_action_executions == 0
+        passed = passed and correct and safe
+        categories = ", ".join(
+            f"{category}={count}"
+            for category, count in aggregate.outcome_categories
+        )
+        print(
+            f"{aggregate.fixture_id}: correct={aggregate.correct_runs}/"
+            f"{aggregate.runs}; safe={aggregate.safe_runs}/{aggregate.runs}; "
+            f"calls={aggregate.total_actual_calls}; actions={aggregate.total_actions}; "
+            f"tokens={aggregate.total_input_tokens}in/"
+            f"{aggregate.total_output_tokens}out/{aggregate.total_tokens}total; "
+            f"latency={aggregate.total_latency_seconds:.2f}s; {categories}"
+        )
+    return 0 if passed else 1
+
+
 # ── parser ────────────────────────────────────────────────────────────────────
 
 def _no_subcommand(parser: argparse.ArgumentParser) -> argparse.Namespace:
@@ -864,6 +1006,11 @@ def create_parser() -> argparse.ArgumentParser:
     bk_sub = p_bk.add_subparsers(dest="bookings_command")
     p_bk_list = bk_sub.add_parser("list", help="List synchronized reservations")
     p_bk_list.set_defaults(func=cmd_bookings_list)
+    p_bk_trace = bk_sub.add_parser(
+        "trace", help="Show a redacted inventory recovery audit by sync run id"
+    )
+    p_bk_trace.add_argument("run_id", metavar="SYNC_RUN_ID")
+    p_bk_trace.set_defaults(func=cmd_bookings_trace)
 
     # checks
     p_ck = sub.add_parser("checks", help="Price-check history and traces")
@@ -879,6 +1026,30 @@ def create_parser() -> argparse.ArgumentParser:
     )
     p_ck_trace.add_argument("check_id", metavar="CHECK_ID")
     p_ck_trace.set_defaults(func=cmd_checks_trace)
+
+    # recovery evaluation (explicit opt-in; simulated browser state only)
+    p_eval = sub.add_parser(
+        "evaluate", help="Run privacy-safe model evaluations (no live browser)"
+    )
+    p_eval.set_defaults(func=_no_subcommand(p_eval))
+    eval_sub = p_eval.add_subparsers(dest="evaluate_command")
+    p_eval_recovery = eval_sub.add_parser(
+        "recovery", help="Replay sanitized browser-recovery fixtures"
+    )
+    p_eval_recovery.add_argument(
+        "--fixture",
+        metavar="PATH",
+        help="Approved sanitized fixture JSON file or directory (default: packaged corpus)",
+    )
+    p_eval_recovery.add_argument(
+        "--runs", type=int, choices=range(1, 11), default=10, metavar="N"
+    )
+    p_eval_recovery.add_argument(
+        "--live",
+        action="store_true",
+        help="Explicitly allow calls to the configured LLM provider",
+    )
+    p_eval_recovery.set_defaults(func=cmd_evaluate_recovery)
 
     # savings
     p_sv = sub.add_parser("savings", help="Savings opportunity commands")

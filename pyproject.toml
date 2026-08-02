@@ -38,6 +38,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "booksaver.infrastructure.persistence" = ["schema.sql"]
+"booksaver.evaluation" = ["fixture_data/*.json"]
 
 [tool.ruff]
 src = ["src"]

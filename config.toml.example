@@ -18,9 +18,15 @@ timezone_id = "UTC"
 
 [agent]
 # model = "claude-sonnet-4-6"
+# Outer per-check limits. Recovery episodes stop sooner at the nested limits below.
 max_steps = 15
 max_llm_calls = 20
 check_timeout_seconds = 180
+# Backward-compatible defaults for one failed browser step (ADR-030).
+max_recovery_calls_per_step = 4
+recovery_timeout_seconds = 60
+screenshot_after_no_progress = 2
+max_semantic_action_executions = 2
 
 [telegram_bot]
 enabled = true

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -12,6 +14,7 @@ from enum import Enum
 from typing import Any
 
 from booksaver.application.account_sync import SynchronizeBookingAccount
+from booksaver.application.ports import AgentBrain, InventoryInterpreter
 from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
 from booksaver.application.user_sessions import (
     AuthenticatedSessionProvider,
@@ -21,11 +24,22 @@ from booksaver.domain.account_sync import (
     AccountReservation,
     InventoryCompleteness,
     InventoryDiscoveryResult,
+    InventoryRecoveryAudit,
+    InventoryRecoveryOutcome,
     SynchronizationFailureCode,
     SynchronizationReport,
     SynchronizationTrigger,
 )
+from booksaver.domain.agent import (
+    AgentAction,
+    AgentActionType,
+    AgentBudget,
+    AgentStopReason,
+    AgentTurnContext,
+    BudgetExceeded,
+)
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
+from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.models import Booking, Config
 from booksaver.domain.schedule import (
     ScheduledAdmission,
@@ -56,6 +70,7 @@ from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteStore,
     SqliteUserRepository,
 )
+from booksaver.monitor.browser_agent import BrowserAgent
 from booksaver.monitor.failure_tracker import FailureTracker
 from booksaver.monitor.search_check_job import BookingComSearchMonitor
 from booksaver.monitor.session_manager import SessionManager
@@ -76,6 +91,139 @@ AuthRequiredNotifier = Callable[[int], None]
 InventorySynchronizer = Callable[
     [SqliteStore, Any, int, SynchronizationTrigger], SynchronizationReport
 ]
+
+
+class _InventoryLLMUsage:
+    def __init__(self) -> None:
+        self.actual_calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.action_count = 0
+        self.providers: set[str] = set()
+        self.models: set[str] = set()
+        self.roles: set[str] = set()
+        self.prompt_versions: set[str] = set()
+
+    def record_delegate_call(self, delegate: Any, *, default_role: str) -> None:
+        """Capture bounded provider metadata after one attempted call."""
+        for attribute, target in (
+            ("provider", self.providers),
+            ("model", self.models),
+            ("role", self.roles),
+            ("prompt_version", self.prompt_versions),
+        ):
+            value = getattr(delegate, attribute, None)
+            if isinstance(value, str) and value:
+                target.add(_audit_machine_code(value))
+        self.roles.add(default_role)
+        if not self.providers:
+            self.providers.add("unreported")
+        if not self.models:
+            self.models.add("unreported")
+        if not self.prompt_versions:
+            self.prompt_versions.add("unversioned")
+        provider_usage = getattr(delegate, "last_usage", None)
+        if provider_usage is None:
+            return
+        self.input_tokens += _bounded_usage_count(
+            getattr(provider_usage, "input_tokens", 0)
+        )
+        self.output_tokens += _bounded_usage_count(
+            getattr(provider_usage, "output_tokens", 0)
+        )
+
+    def record_action(self, _action: AgentAction) -> None:
+        self.action_count += 1
+
+
+def _audit_machine_code(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())[:100]
+    if not normalized or not normalized[0].isalnum():
+        return "unreported"
+    return normalized
+
+
+def _bounded_usage_count(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return min(max(0, value), 100_000_000)
+
+class _LazyCountedInventoryBrain:
+    """Resolve caller capability only after deterministic inventory has failed."""
+
+    def __init__(
+        self,
+        factory: Any,
+        user_id: int,
+        counter: DailyCounter,
+        limit: int,
+        usage: _InventoryLLMUsage,
+    ) -> None:
+        self._factory = factory
+        self._user_id = user_id
+        self._counter = counter
+        self._limit = limit
+        self._usage = usage
+        self._delegate: AgentBrain | None = None
+
+    def decide(self, context: AgentTurnContext) -> AgentAction:
+        if self._delegate is None:
+            method = getattr(self._factory, "agent_brain_for_user", None)
+            if method is None:
+                raise RuntimeError("user-scoped navigation agent is unavailable")
+            self._delegate = method(self._user_id, role="navigation_agent")
+            if self._delegate is None:
+                raise RuntimeError("user-scoped navigation agent is unavailable")
+        if not self._counter.try_increment(self._user_id, self._limit):
+            return AgentAction(
+                AgentActionType.GIVE_UP,
+                value="daily LLM allowance exhausted",
+                stop_reason=AgentStopReason.BUDGET_EXHAUSTED,
+            )
+        self._usage.actual_calls += 1
+        try:
+            return self._delegate.decide(context)
+        finally:
+            self._usage.record_delegate_call(
+                self._delegate, default_role="navigation_agent"
+            )
+
+
+class _LazyCountedInventoryInterpreter:
+    def __init__(
+        self,
+        factory: Any,
+        user_id: int,
+        counter: DailyCounter,
+        limit: int,
+        usage: _InventoryLLMUsage,
+    ) -> None:
+        self._factory = factory
+        self._user_id = user_id
+        self._counter = counter
+        self._limit = limit
+        self._usage = usage
+        self._delegate: InventoryInterpreter | None = None
+
+    def interpret(
+        self, page_text: str, source_url: str
+    ) -> tuple[Any, ...]:
+        if self._delegate is None:
+            method = getattr(self._factory, "inventory_interpreter_for_user", None)
+            if method is None:
+                raise RuntimeError("user-scoped inventory interpreter is unavailable")
+            self._delegate = method(self._user_id, role="inventory_interpreter")
+            if self._delegate is None:
+                raise RuntimeError("user-scoped inventory interpreter is unavailable")
+        if not self._counter.try_increment(self._user_id, self._limit):
+            raise BudgetExceeded("daily LLM allowance exhausted")
+        self._usage.actual_calls += 1
+        try:
+            return self._delegate.interpret(page_text, source_url)
+        finally:
+            self._usage.record_delegate_call(
+                self._delegate, default_role="inventory_interpreter"
+            )
 
 
 class _UnavailableLegacySessionRepository:
@@ -312,6 +460,37 @@ class CheckCoordinator:
                 "Booking.com inventory synchronization failed for Telegram user %s",
                 telegram_user_id,
             )
+            try:
+                with SqliteStore(self._db_path) as store:
+                    user = SqliteUserRepository(store).get_by_telegram_id(
+                        telegram_user_id
+                    )
+                    if user is not None and user.is_active:
+                        reservations = tuple(
+                            SqliteAccountReservationRepository(store).list_for_user(
+                                user.user_id
+                            )
+                        )
+                        completion = InventoryCompletion(
+                            SynchronizationReport(
+                                run_id=str(uuid.uuid4()),
+                                completeness=InventoryCompleteness.FAILED,
+                                discovered=0,
+                                eligible=0,
+                                ineligible=0,
+                                failure_code=SynchronizationFailureCode.UNKNOWN,
+                                failure_detail=(
+                                    "Booking.com reservation refresh was unavailable due to "
+                                    "an unexpected error. The last safe inventory was preserved."
+                                ),
+                            ),
+                            reservations,
+                        )
+            except Exception:
+                logger.warning(
+                    "Could not load preserved inventory after synchronization failure",
+                    exc_info=True,
+                )
         finally:
             self._execution_gate.release()
             try:
@@ -674,13 +853,151 @@ class CheckCoordinator:
 
         snapshot = resolution.snapshot
         browser.restore_cookies(snapshot.cookies)
-        report = SynchronizeBookingAccount(
-            BookingComAccountInventorySource(), repository
-        ).execute(
-            browser=browser,
-            user_id=user_id,
-            trigger=trigger,
-            session_revision=snapshot.metadata.revision_id,
+        trace_recorder = TraceRecorder("inventory")
+        synchronization_started = time.monotonic()
+        daily_limit = self._config.limits_settings.max_llm_calls_per_user_per_day
+        remaining_llm = max(
+            0,
+            daily_limit - self._llm_calls_today.count(user_id),
+        )
+        usage = _InventoryLLMUsage()
+        budget = AgentBudget(self._config.agent_settings)
+        source: BookingComAccountInventorySource
+        if remaining_llm == 0:
+            source = BookingComAccountInventorySource(
+                check_time=budget.check_time,
+                recovery_unavailable_detail=(
+                    "Daily LLM allowance is exhausted; the deterministic inventory "
+                    "result was preserved."
+                )
+            )
+        else:
+            factory = self._llm_factory_builder(self._config, store)
+            settings = replace(
+                self._config.agent_settings,
+                max_llm_calls=min(
+                    self._config.agent_settings.max_llm_calls,
+                    remaining_llm,
+                ),
+            )
+            budget = AgentBudget(settings)
+            brain = _LazyCountedInventoryBrain(
+                factory,
+                user_id,
+                self._llm_calls_today,
+                daily_limit,
+                usage,
+            )
+            interpreter = _LazyCountedInventoryInterpreter(
+                factory,
+                user_id,
+                self._llm_calls_today,
+                daily_limit,
+                usage,
+            )
+
+            def _recovery_factory(guarded_browser: Any) -> BrowserAgent:
+                return BrowserAgent(
+                    guarded_browser,
+                    brain,
+                    budget,
+                    trace_recorder,
+                    recovery_policy=settings.recovery_policy,
+                )
+
+            source = BookingComAccountInventorySource(
+                recovery_factory=_recovery_factory,
+                interpreter=interpreter,
+                consume_interpreter_call=budget.consume_llm_call,
+                check_time=budget.check_time,
+                llm_calls_used=lambda: usage.actual_calls,
+                action_observer=usage.record_action,
+            )
+        try:
+            report = SynchronizeBookingAccount(source, repository).execute(
+                browser=browser,
+                user_id=user_id,
+                trigger=trigger,
+                session_revision=snapshot.metadata.revision_id,
+            )
+        except UserKeyInvalidError:
+            result = InventoryDiscoveryResult(
+                observations=(),
+                completeness=InventoryCompleteness.FAILED,
+                failure_code=SynchronizationFailureCode.USER_KEY_INVALID,
+                failure_detail=(
+                    "Your personal LLM key could not be used. Send /setkey to replace "
+                    "it, or /deletekey to use the shared key."
+                ),
+                recovery_outcome=InventoryRecoveryOutcome.UNAVAILABLE,
+                recovery_step="inventory_llm_key",
+                recovery_detail="Caller-scoped LLM key resolution failed closed.",
+                llm_calls_used=usage.actual_calls,
+            )
+            report = repository.reconcile(
+                user_id=user_id,
+                run_id=str(uuid.uuid4()),
+                trigger=trigger,
+                session_revision=snapshot.metadata.revision_id,
+                result=result,
+                observed_at=datetime.now(UTC),
+            )
+            report = replace(
+                report,
+                recovery_outcome=result.recovery_outcome,
+                recovery_step=result.recovery_step,
+                recovery_detail=result.recovery_detail,
+                llm_calls_used=result.llm_calls_used,
+            )
+        duration_seconds = time.monotonic() - synchronization_started
+        if report.recovery_outcome is not InventoryRecoveryOutcome.NOT_NEEDED:
+            audit = InventoryRecoveryAudit.from_operational_events(
+                outcome=report.recovery_outcome,
+                step=report.recovery_step,
+                providers=tuple(sorted(usage.providers)),
+                models=tuple(sorted(usage.models)),
+                roles=tuple(sorted(usage.roles)),
+                prompt_versions=tuple(sorted(usage.prompt_versions)),
+                llm_calls_used=usage.actual_calls,
+                input_tokens=min(usage.input_tokens, 100_000_000),
+                output_tokens=min(usage.output_tokens, 100_000_000),
+                action_count=usage.action_count,
+                duration_ms=min(3_600_000, max(0, round(duration_seconds * 1000))),
+                operational_events=trace_recorder.export_operational_events(),
+            )
+            try:
+                repository.attach_recovery_audit(
+                    user_id=user_id,
+                    run_id=report.run_id,
+                    audit=audit,
+                )
+                report = replace(report, recovery_audit=audit)
+            except Exception:
+                logger.warning(
+                    "Could not persist inventory recovery audit run=%s",
+                    report.run_id,
+                    exc_info=True,
+                )
+        logger.info(
+            "Booking.com inventory synchronization user=%s trigger=%s "
+            "run=%s completeness=%s recovery=%s step=%s llm_calls=%s "
+            "actions=%s input_tokens=%s output_tokens=%s duration_ms=%s "
+            "providers=%s models=%s roles=%s prompts=%s",
+            user_id,
+            trigger.value,
+            report.run_id,
+            report.completeness.value,
+            report.recovery_outcome.value,
+            report.recovery_step or "none",
+            report.llm_calls_used,
+            usage.action_count,
+            usage.input_tokens,
+            usage.output_tokens,
+            max(0, round(duration_seconds * 1000)),
+            ",".join(sorted(usage.providers)) or "none",
+            ",".join(sorted(usage.models)) or "none",
+            ",".join(sorted(usage.roles)) or "none",
+            ",".join(sorted(usage.prompt_versions)) or "none",
         )
         if report.failure_code is SynchronizationFailureCode.AUTH_REQUIRED:
             provider.mark_reauth_required(user_id, snapshot.metadata.revision_id)
