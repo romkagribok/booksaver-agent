@@ -1,8 +1,8 @@
 ---
 intent: 021-booking-browser-llm-recovery
 phase: inception
-status: units-decomposed
-updated: 2026-08-02T18:07:49Z
+status: stories-defined
+updated: 2026-08-10T16:36:20Z
 ---
 
 # Booking Browser LLM Recovery - Unit Decomposition
@@ -18,6 +18,7 @@ updated: 2026-08-02T18:07:49Z
 - **FR-7**: Preserve authoritative completeness and safety boundaries → `002-agent-assisted-booking-inventory`
 - **FR-8**: Evaluate and audit recovery behavior reproducibly → `001-shared-booking-browser-recovery`
 - **FR-9**: Present inventory recovery outcomes clearly → `002-agent-assisted-booking-inventory`
+- **FR-10**: Recover initial inventory navigation from current evidence → `002-agent-assisted-booking-inventory`
 
 Every functional requirement is assigned exactly once.
 
@@ -50,6 +51,7 @@ Telegram freshness, and daily LLM accounting.
 - `001-recover-complete-booking-inventory-discovery`
 - `002-preserve-completeness-and-safety-under-agent-assistance`
 - `003-explain-and-observe-inventory-recovery`
+- `004-recover-initial-inventory-navigation-from-current-evidence`
 
 **Dependencies**: Unit 1 plus existing account synchronization core and synchronized interface.
 
@@ -74,3 +76,4 @@ Telegram freshness, and daily LLM accounting.
 2. Preserve price-check behavior under the hardened loop.
 3. Integrate caller-scoped LLM recovery and interpretation into account inventory.
 4. Verify completeness, safety, accounting, Telegram, and end-to-end trigger invariants.
+5. Correct the post-navigation recovery handoff and prove current-page fail-closed diagnostics.

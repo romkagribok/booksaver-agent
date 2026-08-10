@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import replace
@@ -28,6 +29,8 @@ from booksaver.domain.agent import (
 )
 from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.value_objects import Money, Occupancy
+
+logger = logging.getLogger(__name__)
 
 _INVENTORY_URL = "https://secure.booking.com/myreservations.html"
 _MAX_PAGES = 20
@@ -612,18 +615,32 @@ class BookingComAccountInventorySource:
         trigger: Exception,
         before: Observation | None,
     ) -> PageContent | None:
-        observation = before or _safe_observe(browser)
+        preflight_step = f"inventory_{scope}_{work_kind}"
+        observation = _safe_observe(browser)
+        destination_category = (
+            "unavailable"
+            if observation is None
+            else "approved"
+            if _allowlisted(observation.url)
+            else "unapproved"
+        )
+        logger.warning(
+            "Booking.com inventory recovery handoff step=%s trigger=%s destination=%s",
+            preflight_step,
+            type(trigger).__name__,
+            destination_category,
+        )
         if observation is None:
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.UNAVAILABLE,
-                f"inventory_{scope}_{work_kind}",
+                preflight_step,
                 "Booking.com inventory recovery had no safe page evidence.",
             )
             return None
         if _CAPTCHA_MARKERS.search(observation.text):
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.BLOCKED,
-                f"inventory_{scope}_{work_kind}",
+                preflight_step,
                 "Booking.com presented a bot-verification wall; retry later.",
                 failure_code=SynchronizationFailureCode.BOT_WALL,
             )
@@ -631,7 +648,7 @@ class BookingComAccountInventorySource:
         if _AUTH_MARKERS.search(observation.text) or not browser.is_authenticated():
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.BLOCKED,
-                f"inventory_{scope}_{work_kind}",
+                preflight_step,
                 "Booking.com authentication is required; send /connect and retry.",
                 failure_code=SynchronizationFailureCode.AUTH_REQUIRED,
             )
@@ -639,14 +656,14 @@ class BookingComAccountInventorySource:
         if not _allowlisted(observation.url):
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.BLOCKED,
-                f"inventory_{scope}_{work_kind}",
+                preflight_step,
                 "Booking.com inventory recovery left the approved reservation pages.",
             )
             return None
         if self._recovery_factory is None:
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.UNAVAILABLE,
-                f"inventory_{scope}_{work_kind}",
+                preflight_step,
                 self._recovery_unavailable_detail
                 or (
                     "LLM inventory recovery is unavailable; retry after restoring "
@@ -657,6 +674,7 @@ class BookingComAccountInventorySource:
 
         recovery_kind = _navigation_kind(work_kind, target)
         step = f"inventory_{scope}_{recovery_kind}"
+        verification_baseline = before or observation
         try:
             self._check_time()
             agent = self._recovery_factory(
@@ -674,7 +692,7 @@ class BookingComAccountInventorySource:
                     "its reservation list, explicit empty state, or reservation-detail links."
                 ),
                 verify=lambda: _inventory_recovery_verified(
-                    browser, target, scope, recovery_kind, observation
+                    browser, target, scope, recovery_kind, verification_baseline
                 ),
                 trigger=type(trigger).__name__,
                 screenshot_first=True,
