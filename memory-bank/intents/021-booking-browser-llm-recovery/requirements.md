@@ -3,7 +3,7 @@ intent: 021-booking-browser-llm-recovery
 phase: construction
 status: complete
 created: 2026-08-02T18:07:49.000Z
-updated: 2026-08-02T19:24:50.000Z
+updated: 2026-08-10T16:36:20.000Z
 ---
 
 # Requirements: Booking Browser LLM Recovery
@@ -245,6 +245,30 @@ privacy, or human-only action boundaries.
 - **Priority**: Must
 - **Related Stories**: US-128
 
+### FR-10: Recover initial inventory navigation from current evidence
+
+- **Description**: When the first authenticated inventory navigation raises after changing browser
+  state, recovery must classify and operate from a fresh post-failure observation rather than the
+  pre-navigation page.
+- **Acceptance Criteria**:
+  - Recovery obtains a new bounded observation after an entry/readiness exception and uses it for
+    authentication, captcha, and reservation-page allowlist decisions.
+  - A stale pre-navigation `about:blank` observation never overrides an available current
+    Booking.com reservation-page observation.
+  - The pre-navigation observation may remain the progress baseline for deterministic verification,
+    but it is never treated as authoritative evidence of the current destination.
+  - If the current page cannot be observed, recovery fails unavailable without invoking the LLM or
+    acting from stale evidence.
+  - A current authentication, captcha, external, or prohibited destination still fails closed before
+    any LLM call or browser action.
+  - Content-free diagnostics identify the named step, exception class, and approved/unapproved/
+    unavailable destination category without logging URLs, queries, page text, reservation identity,
+    cookies, or provider content.
+  - Deterministic offline tests reproduce the production fresh-browser `about:blank` handoff and the
+    unavailable/unapproved current-page boundaries.
+- **Priority**: Must
+- **Related Stories**: US-129
+
 ## Non-Functional Requirements
 
 ### Reliability
@@ -283,6 +307,8 @@ privacy, or human-only action boundaries.
 - **Determinism**: Offline tests inject clocks, brains, observations, and browser outcomes.
 - **Compatibility**: Existing configs and Anthropic keys continue to work; new recovery-policy fields
   have validated defaults.
+- **Navigation diagnostics**: Entry/readiness exceptions emit bounded machine-readable categories;
+  raw destinations, exception messages, and account content remain excluded.
 
 ## Constraints
 
@@ -300,7 +326,8 @@ privacy, or human-only action boundaries.
 - BookSaver remains self-hosted and informational.
 - Final reservation, cancellation, modification, payment, and purchase actions remain human-only in
   Booking.com.
-- This intent stops before commit, push, merge, deployment, or production live-model execution.
+- Commit, push, and pull-request preparation are authorized for this corrective bolt. Merge and
+  deployment remain explicit review gates, and production live-model execution remains human-only.
 
 ## Assumptions
 
@@ -313,5 +340,5 @@ privacy, or human-only action boundaries.
 
 ## Open Questions
 
-No blocking questions remain. The product owner approved autonomous progression through AI-DLC
-documentation, construction, and verification, with review required before any merge.
+No blocking questions remain. The product owner approved autonomous progression through AI-DLC,
+commit, push, and pull-request preparation, with review required immediately before merge.

@@ -421,7 +421,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Unit | Stories | Status |
 |------|---------|--------|
 | `001-shared-booking-browser-recovery` | 4 stories | Complete (bolt 038) |
-| `002-agent-assisted-booking-inventory` | 3 stories | Complete (bolt 039; 1225 tests at final verification) |
+| `002-agent-assisted-booking-inventory` | 4 stories | Complete (bolts 039–040) |
 
 ### 001-shared-booking-browser-recovery: Shared Booking Browser Recovery
 
@@ -439,6 +439,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-126` | Recover complete booking inventory discovery | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/001-recover-complete-booking-inventory-discovery.md` |
 | `US-127` | Preserve completeness and safety under agent assistance | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/002-preserve-completeness-and-safety-under-agent-assistance.md` |
 | `US-128` | Explain and observe inventory recovery | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/003-explain-and-observe-inventory-recovery.md` |
+| `US-129` | Recover initial inventory navigation from current evidence | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/004-recover-initial-inventory-navigation-from-current-evidence.md` |
 
 ## Summary
 
@@ -464,7 +465,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `018-conclusive-rebook-opportunity-lifecycle` | 1 | 3 | Complete (bolt 033; 937 tests) |
 | `019-booking-account-synchronization` | 2 | 7 | Complete (bolts 034–036; 959 tests) |
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
-| `021-booking-browser-llm-recovery` | 2 | 7 | Complete (bolts 038–039; 1225 tests) |
+| `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 
-All 128 stories (126 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
+All 129 stories (127 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
 exactly once.

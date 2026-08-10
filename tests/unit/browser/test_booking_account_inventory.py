@@ -954,6 +954,215 @@ def test_pagination_and_detail_drift_attempt_named_recovery(
     assert attempted_steps == [expected_step]
 
 
+def test_navigation_exception_recovers_from_fresh_current_observation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    attempted_steps: list[str] = []
+    recovery_urls: list[str] = []
+    verification_results: list[bool] = []
+
+    class Browser:
+        def __init__(self) -> None:
+            self.current = Observation("about:blank", "", "", ())
+
+        def open_page(self, _url: str) -> PageContent:
+            self.current = Observation(
+                "https://secure.booking.com/mytrips.html?private=reservation-secret",
+                "Trips",
+                "Upcoming Hotel confirmation ABC123",
+                (),
+            )
+            raise TimeoutError("private readiness detail reservation-secret")
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def observe(self) -> Observation:
+            return self.current
+
+    class Agent:
+        def complete_step(self, step: str, **_kwargs: object) -> EscalationResult:
+            attempted_steps.append(step)
+            verify = _kwargs["verify"]
+            assert callable(verify)
+            verification_results.append(verify())
+            return EscalationResult(
+                ok=False,
+                detail="gave up",
+                stop_reason=AgentStopReason.NO_PROGRESS,
+            )
+
+    def recovery_factory(browser: object) -> Agent:
+        recovery_urls.append(browser.observe().url)  # type: ignore[attr-defined]
+        return Agent()
+
+    with caplog.at_level("WARNING"):
+        result = BookingComAccountInventorySource(
+            recovery_factory=recovery_factory,
+        ).discover(Browser())
+
+    assert result.completeness is InventoryCompleteness.FAILED
+    assert result.recovery_outcome is InventoryRecoveryOutcome.GAVE_UP
+    assert result.recovery_step == "inventory_upcoming_scope"
+    assert attempted_steps == ["inventory_upcoming_scope"]
+    assert verification_results == [True]
+    assert recovery_urls == [
+        "https://secure.booking.com/mytrips.html?private=reservation-secret"
+    ]
+    assert "left the approved reservation pages" not in (result.failure_detail or "")
+    assert (
+        "step=inventory_upcoming_url trigger=TimeoutError destination=approved"
+        in caplog.text
+    )
+    assert "reservation-secret" not in caplog.text
+    assert "mytrips" not in caplog.text
+
+
+def test_navigation_exception_does_not_recover_from_stale_evidence() -> None:
+    factory_called = False
+
+    class Browser:
+        def __init__(self) -> None:
+            self.observe_calls = 0
+
+        def open_page(self, _url: str) -> PageContent:
+            raise TimeoutError("readiness timed out")
+
+        def observe(self) -> Observation:
+            self.observe_calls += 1
+            if self.observe_calls == 1:
+                return Observation(
+                    "https://secure.booking.com/myreservations.html",
+                    "Trips",
+                    "Upcoming reservations",
+                    (),
+                )
+            raise RuntimeError("current page unavailable")
+
+    def recovery_factory(_browser: object) -> object:
+        nonlocal factory_called
+        factory_called = True
+        raise AssertionError("stale evidence reached the recovery factory")
+
+    result = BookingComAccountInventorySource(
+        recovery_factory=recovery_factory,
+    ).discover(Browser())
+
+    assert result.completeness is InventoryCompleteness.FAILED
+    assert result.recovery_outcome is InventoryRecoveryOutcome.UNAVAILABLE
+    assert result.recovery_step == "inventory_upcoming_url"
+    assert result.failure_detail == (
+        "Booking.com inventory recovery had no safe page evidence."
+    )
+    assert not factory_called
+
+
+def test_navigation_exception_blocks_unapproved_current_page_without_private_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    factory_called = False
+
+    class Browser:
+        def __init__(self) -> None:
+            self.current = Observation("about:blank", "", "", ())
+
+        def open_page(self, _url: str) -> PageContent:
+            self.current = Observation(
+                "https://account.booking.com/settings?reservation=reservation-secret",
+                "Account",
+                "Manage account",
+                (),
+            )
+            raise TimeoutError("private readiness detail reservation-secret")
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def observe(self) -> Observation:
+            return self.current
+
+    def recovery_factory(_browser: object) -> object:
+        nonlocal factory_called
+        factory_called = True
+        raise AssertionError("unapproved page reached the recovery factory")
+
+    with caplog.at_level("WARNING"):
+        result = BookingComAccountInventorySource(
+            recovery_factory=recovery_factory,
+        ).discover(Browser())
+
+    assert result.completeness is InventoryCompleteness.FAILED
+    assert result.recovery_outcome is InventoryRecoveryOutcome.BLOCKED
+    assert result.recovery_step == "inventory_upcoming_url"
+    assert result.failure_detail == (
+        "Booking.com inventory recovery left the approved reservation pages."
+    )
+    assert not factory_called
+    assert (
+        "step=inventory_upcoming_url trigger=TimeoutError destination=unapproved"
+        in caplog.text
+    )
+    assert "reservation-secret" not in caplog.text
+    assert "account.booking.com" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("current_text", "expected_code", "expected_detail"),
+    [
+        (
+            "Verify you are human px-captcha",
+            SynchronizationFailureCode.BOT_WALL,
+            "Booking.com presented a bot-verification wall; retry later.",
+        ),
+        (
+            "Sign in to manage your reservations",
+            SynchronizationFailureCode.AUTH_REQUIRED,
+            "Booking.com authentication is required; send /connect and retry.",
+        ),
+    ],
+)
+def test_navigation_exception_classifies_current_authentication_boundaries(
+    current_text: str,
+    expected_code: SynchronizationFailureCode,
+    expected_detail: str,
+) -> None:
+    factory_called = False
+
+    class Browser:
+        def __init__(self) -> None:
+            self.current = Observation("about:blank", "", "", ())
+
+        def open_page(self, _url: str) -> PageContent:
+            self.current = Observation(
+                "https://secure.booking.com/myreservations.html",
+                "Trips",
+                current_text,
+                (),
+            )
+            raise TimeoutError("readiness timed out")
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def observe(self) -> Observation:
+            return self.current
+
+    def recovery_factory(_browser: object) -> object:
+        nonlocal factory_called
+        factory_called = True
+        raise AssertionError("authentication boundary reached the recovery factory")
+
+    result = BookingComAccountInventorySource(
+        recovery_factory=recovery_factory,
+    ).discover(Browser())
+
+    assert result.completeness is InventoryCompleteness.FAILED
+    assert result.recovery_outcome is InventoryRecoveryOutcome.BLOCKED
+    assert result.failure_code is expected_code
+    assert result.failure_detail == expected_detail
+    assert not factory_called
+
+
 @pytest.mark.parametrize("action_type", [AgentActionType.FILL, AgentActionType.SELECT])
 def test_inventory_guard_rejects_all_input_actions(
     action_type: AgentActionType,
