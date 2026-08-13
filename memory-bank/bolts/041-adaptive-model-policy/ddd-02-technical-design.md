@@ -3,7 +3,7 @@ unit: 001-adaptive-model-policy
 bolt: 041-adaptive-model-policy
 stage: design
 status: complete
-updated: 2026-08-13T02:26:50Z
+updated: 2026-08-13T13:53:47Z
 ---
 
 # Technical Design - Adaptive Model Policy
@@ -126,6 +126,20 @@ record_run(profile_pair, prompt_versions, fixture_metrics) -> gate result
 latest_gate(profile_pair, prompt_versions) -> qualified | rejected | missing
 record_owner_override(owner_id, safe reason) -> approved override
 ```
+
+### Qualification Duty Matrix
+
+Packaged live qualification mirrors the production recovery boundary instead of running a
+cross-profile Cartesian product. `QualificationDuty.PRIMARY_RECOVERY` assigns every nonterminal
+fixture to Sonnet 5; `QualificationDuty.TERMINAL_DIAGNOSIS` assigns every terminal-diagnosis fixture
+to Opus 5. Both lanes must be nonempty. Each applicable fixture still runs exactly ten times and
+must pass at least nine, both profile results remain mandatory, and prohibited executions remain
+zero. Exploratory replay retains arbitrary profile/fixture combinations but cannot be persisted.
+
+The plan and shared-ledger admission price only the applicable matrix. Sonnet reservations record
+`initial_ambiguous`; Opus reservations record `unverified_sonnet_exhaustion`. Persisted profile
+identities remain the production `recovery` prompt identities so release lookup is unchanged. The
+packaged qualification contract version changes whenever this assignment policy changes.
 
 ## Coordinator Job Boundaries
 

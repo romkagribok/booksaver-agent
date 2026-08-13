@@ -5,18 +5,27 @@ from types import SimpleNamespace
 import pytest
 
 from booksaver.application.model_policy import BrowserJobCostBudget
-from booksaver.domain.agent import AgentAction, AgentActionType, LLMUsage
+from booksaver.domain.agent import (
+    AgentAction,
+    AgentActionType,
+    AgentDiagnosisReason,
+    AgentStopReason,
+    LLMUsage,
+)
 from booksaver.domain.model_policy import (
     BrowserJobKind,
     CallerKeyRef,
     ModelCostEstimator,
+    QualificationDuty,
     QualificationGate,
     UsdAmount,
 )
 from booksaver.evaluation import (
     ReplayAggregateMetrics,
+    approved_recovery_profiles,
     load_fixture,
     plan_packaged_qualification,
+    plan_profile_replay,
     run_packaged_qualification,
 )
 from booksaver.infrastructure.persistence.model_policy import SqliteSpendLedger
@@ -64,14 +73,22 @@ class _Runner:
 
 
 def test_packaged_plan_prices_both_profiles_before_provider_access() -> None:
-    fixtures = (_fixture("inventory-readiness-drift.json"),)
+    fixtures = (
+        _fixture("inventory-readiness-drift.json"),
+        _fixture("unsupported-layout.json"),
+    )
 
     plan = plan_packaged_qualification(fixtures)
 
-    assert plan.fixture_count == 1
+    assert plan.fixture_count == 2
     assert plan.runs_per_fixture == 10
     assert plan.maximum_provider_calls == 80
     assert plan.maximum_cost.micro_usd > 0
+    cartesian = plan_profile_replay(
+        fixtures, approved_recovery_profiles(), runs_per_fixture=10
+    )
+    assert cartesian.maximum_provider_calls == 160
+    assert plan.maximum_cost < cartesian.maximum_cost
 
 
 def test_qualification_requires_a_positive_explicit_cost_limit() -> None:
@@ -87,7 +104,7 @@ def test_qualification_requires_a_positive_explicit_cost_limit() -> None:
     assert constructed == []
 
 
-def test_qualification_runs_both_profiles_exactly_ten_times_per_fixture() -> None:
+def test_qualification_runs_each_profile_on_its_production_duty_only() -> None:
     fixtures = (
         _fixture("inventory-readiness-drift.json"),
         _fixture("unsupported-layout.json"),
@@ -110,20 +127,34 @@ def test_qualification_runs_both_profiles_exactly_ten_times_per_fixture() -> Non
     }
     assert runner.calls == [
         (fixtures[0].fixture_id, 10, "claude-sonnet-5"),
-        (fixtures[1].fixture_id, 10, "claude-sonnet-5"),
-        (fixtures[0].fixture_id, 10, "claude-opus-5"),
         (fixtures[1].fixture_id, 10, "claude-opus-5"),
     ]
-    assert report.profiles[0].result.metrics.total_actions == 24
-    assert report.profiles[0].result.metrics.estimated_cost.micro_usd == 6_000
+    sonnet, opus = report.profiles
+    assert sonnet.duty is QualificationDuty.PRIMARY_RECOVERY
+    assert opus.duty is QualificationDuty.TERMINAL_DIAGNOSIS
+    assert sonnet.profile_identity == approved_recovery_profiles()[0].identity
+    assert opus.profile_identity == approved_recovery_profiles()[1].identity
+    assert sonnet.result.metrics.total_actions == 12
+    assert sonnet.result.metrics.diagnosis_runs == 0
+    assert sonnet.result.metrics.escalation_count == 0
+    assert opus.result.metrics.diagnosis_runs == 10
+    assert opus.result.metrics.diagnosis_correct_runs == 10
+    assert opus.result.metrics.escalation_count == 10
 
 
-def test_each_fixture_must_pass_nine_of_ten_even_if_aggregate_is_ninety_percent() -> None:
+def test_each_primary_fixture_must_pass_nine_of_ten_even_if_aggregate_passes() -> None:
     fixtures = (
         _fixture("inventory-readiness-drift.json"),
+        _fixture("inventory-scope-drift.json"),
         _fixture("unsupported-layout.json"),
     )
-    runner = _Runner({fixtures[0].fixture_id: 10, fixtures[1].fixture_id: 8})
+    runner = _Runner(
+        {
+            fixtures[0].fixture_id: 10,
+            fixtures[1].fixture_id: 8,
+            fixtures[2].fixture_id: 10,
+        }
+    )
 
     report = run_packaged_qualification(
         fixtures,
@@ -137,27 +168,59 @@ def test_each_fixture_must_pass_nine_of_ten_even_if_aggregate_is_ninety_percent(
     assert not report.passed
 
 
-def test_profile_report_is_aggregate_only() -> None:
-    fixture = _fixture("unsupported-layout.json")
-    runner = _Runner({fixture.fixture_id: 10})
+def test_terminal_diagnosis_fixture_must_pass_nine_of_ten() -> None:
+    fixtures = (
+        _fixture("inventory-readiness-drift.json"),
+        _fixture("unsupported-layout.json"),
+    )
+    runner = _Runner({fixtures[0].fixture_id: 10, fixtures[1].fixture_id: 8})
 
     report = run_packaged_qualification(
-        (fixture,),
+        fixtures,
+        lambda profile: SimpleNamespace(model=profile.model_id),
+        evaluation_cost_limit=UsdAmount(100_000_000),
+        runner=runner,
+    )
+
+    assert report.profiles[0].result.gate is QualificationGate.PASSED
+    assert report.profiles[1].result.gate is QualificationGate.FAILED
+    assert not report.passed
+
+
+def test_packaged_qualification_requires_nonempty_production_duties() -> None:
+    with pytest.raises(ValueError, match="terminal-diagnosis"):
+        plan_packaged_qualification((_fixture("inventory-readiness-drift.json"),))
+    with pytest.raises(ValueError, match="primary-recovery"):
+        plan_packaged_qualification((_fixture("unsupported-layout.json"),))
+
+
+def test_profile_report_is_aggregate_only() -> None:
+    fixtures = (
+        _fixture("inventory-readiness-drift.json"),
+        _fixture("unsupported-layout.json"),
+    )
+    runner = _Runner({fixture.fixture_id: 10 for fixture in fixtures})
+
+    report = run_packaged_qualification(
+        fixtures,
         lambda profile: SimpleNamespace(model=profile.model_id),
         evaluation_cost_limit=UsdAmount(100_000_000),
         runner=runner,
     )
 
     rendered = repr(report)
-    assert fixture.goal not in rendered
-    assert fixture.verification_condition not in rendered
+    assert all(fixture.goal not in rendered for fixture in fixtures)
+    assert all(fixture.verification_condition not in rendered for fixture in fixtures)
     assert "booking.com" not in rendered.casefold()
 
 
 def test_shared_spend_ledger_stops_with_partial_failed_report_before_provider_call(
     tmp_path: Path,
 ) -> None:
-    fixture = _fixture("inventory-readiness-drift.json")
+    fixtures = (
+        _fixture("inventory-readiness-drift.json"),
+        _fixture("unsupported-layout.json"),
+    )
 
     class _MustNotRun:
         def decide(self, context):
@@ -174,7 +237,7 @@ def test_shared_spend_ledger_stops_with_partial_failed_report_before_provider_ca
             preserve_opus_diagnostic=False,
         )
         report = run_packaged_qualification(
-            (fixture,),
+            fixtures,
             lambda _profile: _MustNotRun(),
             evaluation_cost_limit=UsdAmount(1),
             budget=budget,
@@ -191,7 +254,10 @@ def test_shared_spend_ledger_stops_with_partial_failed_report_before_provider_ca
 
 
 def test_every_live_qualification_call_is_reserved_and_reconciled(tmp_path: Path) -> None:
-    fixture = _fixture("inventory-readiness-drift.json")
+    fixtures = (
+        _fixture("inventory-readiness-drift.json"),
+        _fixture("unsupported-layout.json"),
+    )
 
     class _SuccessfulBrain:
         provider = "anthropic"
@@ -204,6 +270,14 @@ def test_every_live_qualification_call_is_reserved_and_reconciled(tmp_path: Path
 
         def decide(self, context):
             self.last_usage = LLMUsage(100, 10)
+            if context.terminal_diagnosis_required:
+                return AgentAction(
+                    type=AgentActionType.GIVE_UP,
+                    value="Expected registered structure is absent.",
+                    stop_reason=AgentStopReason.UNKNOWN,
+                    diagnosis_reason=AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED,
+                    diagnosis_confidence=0.9,
+                )
             return AgentAction(type=AgentActionType.CLICK, ref="e3")
 
     with SqliteStore(tmp_path / "booksaver.db") as store:
@@ -217,7 +291,7 @@ def test_every_live_qualification_call_is_reserved_and_reconciled(tmp_path: Path
             preserve_opus_diagnostic=False,
         )
         report = run_packaged_qualification(
-            (fixture,),
+            fixtures,
             lambda profile: _SuccessfulBrain(profile.model_id),
             evaluation_cost_limit=UsdAmount(10_000_000),
             budget=budget,
@@ -225,7 +299,7 @@ def test_every_live_qualification_call_is_reserved_and_reconciled(tmp_path: Path
 
         assert report.passed
         attempts = store.conn.execute(
-            "SELECT model, status, input_tokens, output_tokens "
+            "SELECT model, trigger, outcome, status, input_tokens, output_tokens "
             "FROM llm_cost_reservations ORDER BY attempt_ordinal"
         ).fetchall()
         assert len(attempts) == 20
@@ -236,3 +310,9 @@ def test_every_live_qualification_call_is_reserved_and_reconciled(tmp_path: Path
         assert all(row["status"] == "charged" for row in attempts)
         assert all(row["input_tokens"] == 100 for row in attempts)
         assert all(row["output_tokens"] == 10 for row in attempts)
+        assert {row["trigger"] for row in attempts[:10]} == {"initial_ambiguous"}
+        assert {row["outcome"] for row in attempts[:10]} == {"completed"}
+        assert {row["trigger"] for row in attempts[10:]} == {
+            "unverified_sonnet_exhaustion"
+        }
+        assert {row["outcome"] for row in attempts[10:]} == {"diagnosed"}

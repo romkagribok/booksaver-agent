@@ -3,7 +3,7 @@ unit: 001-adaptive-model-policy
 bolt: 041-adaptive-model-policy
 stage: model
 status: complete
-updated: 2026-08-13T02:25:43Z
+updated: 2026-08-13T13:53:47Z
 ---
 
 # Static Model - Adaptive Model Policy
@@ -28,7 +28,7 @@ provider output remains untrusted.
 | `ModelAttempt` | attempt ID, job ID, caller ID, role, profile, trigger, ordered position, reservation, result, usage, latency | Attempt belongs to exactly one caller/job; order is append-only; one result/charge reconciliation maximum |
 | `BrowserJobSpend` | job ID, kind, started time, USD limit, reserved amount, charged amount, Opus reserve | One coordinator admission owns one ledger; reserved plus charged exposure cannot exceed USD 1 |
 | `DeploymentSpendDay` | UTC date, USD limit, reserved amount, charged amount, version | One aggregate per UTC deployment day; transactionally admits all callers; exposure cannot exceed USD 10 |
-| `QualificationRun` | run ID, portfolio, fixture profile, run count, metrics, gate result, override | Live qualification never opens Booking.com; default gate is 9/10 correctness and zero prohibited actions |
+| `QualificationRun` | run ID, portfolio, production duty, applicable fixtures, run count, metrics, gate result, override | Live qualification never opens Booking.com; every applicable fixture requires 9/10 correctness and zero prohibited executions |
 | `QualificationOverride` | profile identity, owner decision, reason, created time | Owner-only, local, explicit, auditable; never silently created by runtime routing |
 
 ## Value Objects
@@ -44,6 +44,7 @@ provider output remains untrusted.
 | `CostReservation` | reservation ID, profile, maximum USD, state | Must fit both job/day ledgers atomically before a provider call starts |
 | `ReportedUsage` | input tokens, output tokens, provider status | Charged once; missing/interrupted usage uses the full conservative reservation |
 | `QualificationMetrics` | correctness, diagnosis accuracy, schema validity, prohibited actions, escalation rate, calls, latency, tokens, USD | No page/session/account content; gate fields are deterministic aggregates |
+| `QualificationDuty` | primary recovery or terminal diagnosis | Sonnet owns nonterminal recovery/safety fixtures; Opus owns terminal diagnosis fixtures; both duties must be nonempty and pass independently |
 | `CallerKeyRef` | caller ID, funding mode, opaque key provenance | Never contains plaintext key; escalation cannot change caller/funding source |
 
 ## Aggregates
@@ -53,7 +54,7 @@ provider output remains untrusted.
 | `AdaptiveModelPortfolio` | primary/escalation `ModelProfile`, routing policy, price-table version | Exactly Sonnet 5 → Opus 5; no Fable or cross-provider route; diagnostic authority remains advisory |
 | `BrowserJobSpend` | reservations and ordered attempts for one coordinator admission | Maximum USD 1 exposure; once an ambiguous DOM episode begins, preserve sufficient Opus diagnostic reserve until terminal/ineligible; no duplicate reconciliation |
 | `DeploymentSpendDay` | all outstanding/completed reservations for one UTC date | Maximum USD 10 exposure across restart/callers; admission and reservation are transactional; old exhausted date cannot reopen on clock rollback |
-| `QualificationRun` | fixture outcomes and optional owner override | Ten runs per required fixture; at least nine correct; zero prohibited actions; failed gate cannot be production-selected without recorded owner override |
+| `QualificationRun` | duty-applicable fixture outcomes and optional owner override | Ten runs per applicable required fixture; at least nine correct; zero prohibited executions; both profile duties must pass independently |
 
 ## Domain Events
 
@@ -102,6 +103,8 @@ provider output remains untrusted.
 10. Production selection requires a passed qualification or explicit locally recorded owner override.
 11. Routing/audit fields never contain prompts, page content, provider reasoning, secrets, URLs, or
     reservation identity.
+12. Qualification mirrors runtime authority: Sonnet is evaluated only as primary recovery and Opus
+    only as terminal diagnosis; a fixture belongs to exactly one nonempty duty lane.
 
 ## Story Coverage
 
@@ -125,3 +128,4 @@ provider output remains untrusted.
 | Deployment day | Persisted UTC date shared by all callers and keys for the USD 10 cap |
 | Ordered attempt history | Append-only safe metadata showing which role/model ran, why, and how it ended |
 | Qualified profile | Model/prompt pair that meets replay correctness and safety gates or has explicit owner override |
+| Qualification duty | The production authority being measured: Sonnet primary recovery or Opus terminal diagnosis |

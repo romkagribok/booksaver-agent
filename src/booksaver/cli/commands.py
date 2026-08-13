@@ -1113,6 +1113,7 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
         curated_fixture_directory,
         load_fixture,
         load_fixture_directory,
+        plan_packaged_qualification,
         plan_profile_replay,
         run_packaged_qualification,
     )
@@ -1145,7 +1146,11 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    plan = plan_profile_replay(fixtures, profiles, runs_per_fixture=args.runs)
+    plan = (
+        plan_packaged_qualification(fixtures)
+        if args.qualify
+        else plan_profile_replay(fixtures, profiles, runs_per_fixture=args.runs)
+    )
     if not args.qualify and plan.maximum_cost > evaluation_cost_limit:
         print(
             "Replay plan rejected before provider access: conservative maximum is "
@@ -1220,7 +1225,8 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
         for profile in report.profiles:
             metrics = profile.result.metrics
             print(
-                f"{profile.model}: gate={profile.result.gate.value}; "
+                f"{profile.model}: duty={profile.duty.value}; "
+                f"gate={profile.result.gate.value}; "
                 f"accuracy={metrics.correct_runs}/{metrics.runs}; "
                 f"diagnosis={metrics.diagnosis_correct_runs}/"
                 f"{metrics.diagnosis_runs}; "

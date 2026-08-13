@@ -106,6 +106,13 @@ class QualificationGate(Enum):
     FAILED = "failed"
 
 
+class QualificationDuty(Enum):
+    """Production duty a model/prompt profile must prove during qualification."""
+
+    PRIMARY_RECOVERY = "primary_recovery"
+    TERMINAL_DIAGNOSIS = "terminal_diagnosis"
+
+
 @dataclass(frozen=True, order=True, slots=True)
 class UsdAmount:
     """An exact non-negative amount represented as integer microdollars."""

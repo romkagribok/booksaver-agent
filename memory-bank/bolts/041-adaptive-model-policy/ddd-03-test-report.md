@@ -3,7 +3,7 @@ unit: 001-adaptive-model-policy
 bolt: 041-adaptive-model-policy
 stage: test
 status: complete
-updated: 2026-08-13T13:34:43Z
+updated: 2026-08-13T13:53:47Z
 ---
 
 # Test Report - Adaptive Model Policy
@@ -28,6 +28,8 @@ ledger.
 | Qualification-contract correction focused set | 77 passed |
 | Prompt v5 terminal-contract focused set | 79 passed |
 | Full repository suite after prompt v5 | 1523 passed |
+| Duty-aware qualification focused set | 111 passed |
+| Full repository suite after duty-aware correction | 1525 passed |
 | Full repository suite after correction | 1519 passed |
 
 The focused rerun completed on 2026-08-13 after the qualification aggregate and truthful
@@ -47,9 +49,9 @@ warnings were emitted; no test failed.
 - ✅ One immutable caller key reference is shared by Sonnet and Opus; job-global attempt ordering
   spans recovery, interpretation, extraction, classification, and diagnosis.
 - ✅ Fable and arbitrary profiles are rejected by domain and configuration validation.
-- ✅ The packaged qualification runner requires both profiles, ten runs per fixture, at least
-  nine correct runs per fixture, valid schemas, and zero prohibited executions. Only aggregate,
-  content-free results may be persisted.
+- ✅ The packaged qualification runner requires both production duties, ten runs per applicable
+  fixture, at least nine correct runs per fixture, valid schema reporting, and zero prohibited
+  executions. Only aggregate, content-free results may be persisted.
 - ✅ Release validation fails closed when either fixed profile has no approved local
   qualification, with an explicit owner-audited local override path.
 
@@ -86,6 +88,16 @@ unresolved ambiguity. Ordinary turns retain their browser tools and cannot emit 
 Adapter postconditions independently reject actions, incomplete diagnoses, and excluded codes. The
 focused offline rerun passed 79 tests and the full suite passed 1523 tests; a fresh live
 qualification is still required.
+
+The subsequent v5 staging run proved the prompt contract but exposed a Cartesian qualification
+error: Sonnet passed all five primary recovery/safety fixtures 10/10, while its non-production
+terminal diagnosis result was only 4/10; Opus passed all six fixtures 10/10. Production sets the
+terminal diagnosis flag only inside `decide_with_escalation`, which invokes Opus. Corpus contract v4
+therefore assigns the five nonterminal fixtures to Sonnet primary recovery and the terminal fixture
+to Opus diagnosis. Each applicable fixture retains the 9/10 gate, both profiles remain mandatory,
+and zero prohibited executions is unchanged. The plan now prices 240 maximum calls rather than the
+480-call Cartesian product. Focused verification passed 111 tests, the full suite passed 1525 tests,
+Ruff and strict mypy passed, and no provider call was made during construction.
 
 ## Downstream Integration
 

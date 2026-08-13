@@ -24,6 +24,8 @@ from booksaver.domain.model_policy import (
     ModelCostEstimator,
     ModelProfile,
     ModelRole,
+    ModelTier,
+    QualificationDuty,
     QualificationEvaluator,
     QualificationMetrics,
     QualificationResult,
@@ -38,7 +40,7 @@ from booksaver.infrastructure.llm.anthropic_adapter import (
 from .fixtures import ReplayFixture
 from .replay import ReplayAggregateMetrics, ReplayExecutionStopped, ReplayRunner
 
-PACKAGED_QUALIFICATION_VERSION = "browser-recovery-v3"
+PACKAGED_QUALIFICATION_VERSION = "browser-recovery-v4"
 QUALIFICATION_RUNS_PER_FIXTURE = 10
 
 # Covers the current system message, tool schemas, API framing, and the fixture's
@@ -60,6 +62,7 @@ class QualificationPlan:
 class ProfileQualificationReport:
     profile_identity: str
     model: str
+    duty: QualificationDuty
     fixture_version: str
     fixtures: tuple[ReplayAggregateMetrics, ...]
     total_actions: int
@@ -88,6 +91,13 @@ class PortfolioQualificationReport:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _QualificationLane:
+    profile: ModelProfile
+    duty: QualificationDuty
+    fixtures: tuple[ReplayFixture, ...]
+
+
 def approved_recovery_profiles() -> tuple[ModelProfile, ModelProfile]:
     """Return the only two profiles eligible for production qualification."""
     portfolio = AdaptiveModelPortfolio()
@@ -100,11 +110,65 @@ def approved_recovery_profiles() -> tuple[ModelProfile, ModelProfile]:
 def plan_packaged_qualification(
     fixtures: Sequence[ReplayFixture],
 ) -> QualificationPlan:
-    """Price a conservative upper bound for the complete two-profile run."""
-    return plan_profile_replay(
-        fixtures,
-        approved_recovery_profiles(),
+    """Price the production-duty matrix rather than a cross-profile Cartesian run."""
+    lanes = _packaged_qualification_lanes(fixtures)
+    estimator = ModelCostEstimator()
+    maximum_cost = UsdAmount()
+    maximum_calls = 0
+    for lane in lanes:
+        for fixture in lane.fixtures:
+            call_count = fixture.max_calls * QUALIFICATION_RUNS_PER_FIXTURE
+            maximum_calls += call_count
+            maximum_cost += UsdAmount(
+                estimator.estimate(
+                    lane.profile, _fixture_call_envelope(fixture)
+                ).micro_usd
+                * call_count
+            )
+    return QualificationPlan(
+        fixture_count=sum(len(lane.fixtures) for lane in lanes),
         runs_per_fixture=QUALIFICATION_RUNS_PER_FIXTURE,
+        maximum_provider_calls=maximum_calls,
+        maximum_cost=maximum_cost,
+    )
+
+
+def _packaged_qualification_lanes(
+    fixtures: Sequence[ReplayFixture],
+) -> tuple[_QualificationLane, _QualificationLane]:
+    if not fixtures:
+        raise ValueError("packaged qualification requires fixtures")
+    fixture_ids = tuple(fixture.fixture_id for fixture in fixtures)
+    if len(fixture_ids) != len(set(fixture_ids)):
+        raise ValueError("packaged qualification fixture ids must be unique")
+    sonnet, opus = approved_recovery_profiles()
+    if sonnet.tier is not ModelTier.SONNET or opus.tier is not ModelTier.OPUS:
+        raise ValueError("packaged qualification portfolio duties are invalid")
+    recovery = tuple(
+        fixture for fixture in fixtures if not fixture.terminal_diagnosis_required
+    )
+    diagnosis = tuple(
+        fixture for fixture in fixtures if fixture.terminal_diagnosis_required
+    )
+    if not recovery:
+        raise ValueError(
+            "packaged qualification requires a primary-recovery fixture"
+        )
+    if not diagnosis:
+        raise ValueError(
+            "packaged qualification requires a terminal-diagnosis fixture"
+        )
+    return (
+        _QualificationLane(
+            profile=sonnet,
+            duty=QualificationDuty.PRIMARY_RECOVERY,
+            fixtures=recovery,
+        ),
+        _QualificationLane(
+            profile=opus,
+            duty=QualificationDuty.TERMINAL_DIAGNOSIS,
+            fixtures=diagnosis,
+        ),
     )
 
 
@@ -162,15 +226,16 @@ def run_packaged_qualification(
     evaluator = QualificationEvaluator()
     reports: list[ProfileQualificationReport] = []
     stopped_reason: str | None = None
-    for profile in approved_recovery_profiles():
+    for lane in _packaged_qualification_lanes(fixtures):
+        profile = lane.profile
         delegate = brain_factory(profile)
         brain: AgentBrain = (
-            BudgetedQualificationBrain(delegate, profile, budget)
+            BudgetedQualificationBrain(delegate, profile, lane.duty, budget)
             if budget is not None
             else delegate
         )
         aggregates_list: list[ReplayAggregateMetrics] = []
-        for fixture in fixtures:
+        for fixture in lane.fixtures:
             aggregate = replay_runner.run(
                 fixture,
                 brain,
@@ -183,15 +248,15 @@ def run_packaged_qualification(
                 break
         aggregates = tuple(aggregates_list)
         total_runs = sum(item.runs for item in aggregates)
-        diagnosis_correct = sum(
-            item.correct_runs
-            for fixture, item in zip(fixtures, aggregates)
-            if "recovered" not in fixture.expected_outcome_categories
+        diagnosis_runs = (
+            total_runs
+            if lane.duty is QualificationDuty.TERMINAL_DIAGNOSIS
+            else 0
         )
-        diagnosis_runs = sum(
-            item.runs
-            for fixture, item in zip(fixtures, aggregates)
-            if "recovered" not in fixture.expected_outcome_categories
+        diagnosis_correct = (
+            sum(item.correct_runs for item in aggregates)
+            if lane.duty is QualificationDuty.TERMINAL_DIAGNOSIS
+            else 0
         )
         metrics = QualificationMetrics(
             runs=total_runs,
@@ -206,7 +271,9 @@ def run_packaged_qualification(
                 item.prohibited_action_executions for item in aggregates
             ),
             escalation_count=(
-                total_runs if profile.model_id == AdaptiveModelPortfolio().escalation_model else 0
+                total_runs
+                if lane.duty is QualificationDuty.TERMINAL_DIAGNOSIS
+                else 0
             ),
             total_calls=sum(item.total_actual_calls for item in aggregates),
             total_actions=sum(item.total_actions for item in aggregates),
@@ -233,13 +300,14 @@ def run_packaged_qualification(
                     ),
                     (0, 0),
                 )
-                for fixture in fixtures
+                for fixture in lane.fixtures
             ),
         )
         reports.append(
             ProfileQualificationReport(
                 profile_identity=profile.identity,
                 model=profile.model_id,
+                duty=lane.duty,
                 fixture_version=PACKAGED_QUALIFICATION_VERSION,
                 fixtures=aggregates,
                 total_actions=metrics.total_actions,
@@ -270,10 +338,12 @@ class BudgetedQualificationBrain:
         self,
         delegate: AgentBrain,
         profile: ModelProfile,
+        duty: QualificationDuty,
         budget: BrowserJobCostBudget,
     ) -> None:
         self._delegate = delegate
         self._profile = profile
+        self._duty = duty
         self._budget = budget
         self.last_usage: LLMUsage | None = None
         self.terminal_replay_stop = False
@@ -289,7 +359,11 @@ class BudgetedQualificationBrain:
             ModelAttemptPlan(
                 ordinal=1,
                 profile=self._profile,
-                trigger=EscalationTrigger.INITIAL_AMBIGUOUS,
+                trigger=(
+                    EscalationTrigger.INITIAL_AMBIGUOUS
+                    if self._duty is QualificationDuty.PRIMARY_RECOVERY
+                    else EscalationTrigger.UNVERIFIED_SONNET_EXHAUSTION
+                ),
             ),
             envelope,
         )
@@ -323,7 +397,11 @@ class BudgetedQualificationBrain:
             admission.attempt,
             usage=self.last_usage,
             latency_ms=round((time.perf_counter() - started) * 1_000),
-            outcome=ModelAttemptOutcome.DIAGNOSED,
+            outcome=(
+                ModelAttemptOutcome.COMPLETED
+                if self._duty is QualificationDuty.PRIMARY_RECOVERY
+                else ModelAttemptOutcome.DIAGNOSED
+            ),
         )
         return action
 

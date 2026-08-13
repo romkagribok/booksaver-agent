@@ -2,7 +2,7 @@
 unit: 001-adaptive-model-policy
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T02:25:43Z
-last_updated: 2026-08-13T13:34:43Z
+last_updated: 2026-08-13T13:53:47Z
 ---
 
 # Construction Log: Adaptive Model Policy
@@ -39,6 +39,7 @@ last_updated: 2026-08-13T13:34:43Z
 | 2026-08-13T13:02:52Z | `041-adaptive-model-policy` | corrected | Failed staging qualification exposed stale fixture/scoring contracts; production-shaped diagnosis corpus and visibility corrected before merge |
 | 2026-08-13T13:20:00Z | `041-adaptive-model-policy` | corrected | Outcome-visible rerun exposed optional diagnosis schema ambiguity; prompt v4 and corpus v3 now encode strict primary/diagnostic fields and conservative early no-progress |
 | 2026-08-13T13:34:43Z | `041-adaptive-model-policy` | corrected | Staging v4 isolated terminal schema and taxonomy ambiguity; prompt v5 now forces a closed registered-step diagnosis tool with adapter postcondition defense |
+| 2026-08-13T13:53:47Z | `041-adaptive-model-policy` | corrected | V5 staging proved Sonnet primary and Opus diagnosis quality; corpus v4 now gates each fixed profile only on its nonempty production-duty fixture lane |
 
 ## Execution Summary
 
