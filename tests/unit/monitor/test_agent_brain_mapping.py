@@ -116,7 +116,9 @@ class TestActionFromToolCall:
         assert action.stop_reason is AgentStopReason.PROVIDER_ERROR
 
 
-def _context(*, screenshot_forced: bool = True) -> AgentTurnContext:
+def _context(
+    *, screenshot_forced: bool = True, terminal_diagnosis_required: bool = False
+) -> AgentTurnContext:
     observation = Observation(
         url="https://www.booking.com/mytrips",
         title="My trips",
@@ -143,6 +145,7 @@ def _context(*, screenshot_forced: bool = True) -> AgentTurnContext:
         no_progress_count=2,
         screenshot_forced=screenshot_forced,
         seconds_remaining=41.5,
+        terminal_diagnosis_required=terminal_diagnosis_required,
     )
 
 
@@ -247,6 +250,106 @@ def test_agent_brain_records_usage_for_successful_call() -> None:
     assert "every visible route relevant to the goal" in system
     assert "outside the controller's reach" in system
     assert "unsupported DOM, not a browser capability failure" in system
-    assert "omit both optional diagnosis fields" in system
-    assert "diagnose code_maintenance_required" in system
+    assert "diagnosis fields are unavailable" in system
+    assert "code_maintenance_required for absent or changed registered" in system
     assert "failed target is sufficient to stop conservatively" in system
+    assert calls[0]["tool_choice"] == {"type": "any"}
+    assert len(calls[0]["tools"]) > 1
+    ordinary_give_up = next(
+        tool for tool in calls[0]["tools"] if tool["name"] == "give_up"
+    )
+    assert "diagnosis_code" not in ordinary_give_up["input_schema"]["properties"]
+    assert "diagnosis_confidence" not in ordinary_give_up["input_schema"]["properties"]
+
+
+def test_terminal_turn_forces_closed_registered_step_diagnosis_contract() -> None:
+    calls = []
+
+    class _Messages:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                content=[
+                    ToolUseBlock(
+                        type="tool_use",
+                        id="tool-1",
+                        name="give_up",
+                        input={
+                            "reason_code": "unknown",
+                            "explanation": "Expected registered structure is absent.",
+                            "diagnosis_code": "code_maintenance_required",
+                            "diagnosis_confidence": 0.9,
+                        },
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=400, output_tokens=25),
+            )
+
+    brain = AnthropicAgentBrain.__new__(AnthropicAgentBrain)
+    brain._client = SimpleNamespace(messages=_Messages())  # noqa: SLF001
+    brain._model = "test-model"  # noqa: SLF001
+
+    action = brain.decide(
+        _context(screenshot_forced=False, terminal_diagnosis_required=True)
+    )
+
+    assert action.diagnosis_reason is AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED
+    assert calls[0]["tool_choice"] == {"type": "tool", "name": "give_up"}
+    assert [tool["name"] for tool in calls[0]["tools"]] == ["give_up"]
+    schema = calls[0]["tools"][0]["input_schema"]
+    assert schema["required"] == [
+        "reason_code",
+        "explanation",
+        "diagnosis_code",
+        "diagnosis_confidence",
+    ]
+    assert schema["properties"]["diagnosis_code"]["enum"] == [
+        "unresolved_ambiguity",
+        "code_maintenance_required",
+    ]
+    assert "approved registered BookSaver step" in calls[0]["messages"][0]["content"][0][
+        "text"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "tool_input"),
+    [
+        ("click", {"ref": "e9"}),
+        (
+            "give_up",
+            {"reason_code": "unknown", "explanation": "No recognized structure."},
+        ),
+        (
+            "give_up",
+            {
+                "reason_code": "unknown",
+                "explanation": "This looks like another page.",
+                "diagnosis_code": "unsupported_page",
+                "diagnosis_confidence": 0.8,
+            },
+        ),
+    ],
+)
+def test_terminal_turn_rejects_actions_incomplete_or_out_of_context_diagnoses(
+    name: str, tool_input: dict[str, object]
+) -> None:
+    class _Messages:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                content=[
+                    ToolUseBlock(
+                        type="tool_use", id="tool-1", name=name, input=tool_input
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=20, output_tokens=10),
+            )
+
+    brain = AnthropicAgentBrain.__new__(AnthropicAgentBrain)
+    brain._client = SimpleNamespace(messages=_Messages())  # noqa: SLF001
+    brain._model = "test-model"  # noqa: SLF001
+
+    with pytest.raises(LLMProviderError) as raised:
+        brain.decide(_context(terminal_diagnosis_required=True))
+
+    assert raised.value.kind is LLMFailureKind.INVALID_RESPONSE

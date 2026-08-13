@@ -369,7 +369,7 @@ class LazyAdaptiveAnthropicRuntimeFactory:
             lambda: self._resolved_runtime().agent_brain(**kwargs),
             provider="anthropic",
             role="navigation_agent",
-            prompt_version=kwargs.get("prompt_version", "booking-browser-recovery-v4"),
+            prompt_version=kwargs.get("prompt_version", "booking-browser-recovery-v5"),
         )
 
     def inventory_interpreter(self, **kwargs: Any) -> Any:

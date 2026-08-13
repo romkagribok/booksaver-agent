@@ -3,7 +3,7 @@ unit: 002-dom-resilient-browser-workflows
 bolt: 043-dom-resilient-browser-workflows
 stage: test
 status: complete
-updated: 2026-08-13T13:02:52Z
+updated: 2026-08-13T13:34:43Z
 ---
 
 # Test Report - Guarded Adaptive Browser Workflows
@@ -29,6 +29,8 @@ not spend a diagnosis call.
 | Ruff across `src` and `tests` | Passed |
 | Strict mypy across `src` (117 files) | Passed |
 | Diff whitespace validation | Passed |
+| Prompt v5 terminal-contract focused set | 79 passed |
+| Full repository suite after prompt v5 | 1523 passed |
 
 The full suite emitted only the existing `schedule.check_interval` deprecation warnings.
 
@@ -48,15 +50,16 @@ The full suite emitted only the existing `schedule.check_interval` deprecation w
   outcomes, including `no_equivalent_offer`, without an LLM explanation.
 - ✅ Measured semantic no-progress and a rejected unsafe Sonnet proposal may request one Opus turn;
   proposed unsafe actions never execute.
-- ✅ Opus recovery success records positive provenance; unverified Opus output returns a bounded
-  typed ambiguity, unsupported-page, or code-maintenance diagnosis with no action authority.
+- ✅ Opus recovery success records positive provenance; an unverified registered-step Opus turn
+  has only diagnosis authority and returns bounded ambiguity or code-maintenance.
 - ✅ Remote-auth ambiguity is debounced, a model candidate can only trigger the fixed read-only
   inventory probe, and cookies require deterministic strong proof.
 - ✅ Assisted diagnoses propagate through inventory/search results into the coordinator; exact
   auth/MFA/captcha/provider/budget stops retain their specific reason.
-- ✅ Recovery prompt v4 distinguishes unsafe-only visible routes, confirmed-but-unreachable
-  controls, and unsupported DOM; an unsupported registered layout requests the maintenance
-  diagnosis that drives owner incident notification.
+- ✅ Recovery prompt v5 distinguishes unsafe-only visible routes, confirmed-but-unreachable
+  controls, and unsupported DOM. Its terminal contract forces actionless `give_up`, requires all
+  diagnosis fields, and excludes `unsupported_page` after registered-step admission; changed or
+  absent registered structure requests the maintenance diagnosis that drives owner notification.
 
 ## Preserved Human Boundary
 

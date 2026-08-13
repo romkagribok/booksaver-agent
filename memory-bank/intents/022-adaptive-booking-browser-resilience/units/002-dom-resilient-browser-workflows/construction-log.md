@@ -2,7 +2,7 @@
 unit: 002-dom-resilient-browser-workflows
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T02:39:01Z
-last_updated: 2026-08-13T13:02:52Z
+last_updated: 2026-08-13T13:34:43Z
 ---
 
 # Construction Log: DOM-Resilient Browser Workflows
@@ -37,6 +37,7 @@ last_updated: 2026-08-13T13:02:52Z
 | 2026-08-13T03:30:09Z | `043-dom-resilient-browser-workflows` | completed | Guarded recovery, semantic interpretation, exact diagnosis, and verification complete |
 | 2026-08-13T13:02:52Z | `043-dom-resilient-browser-workflows` | corrected | Recovery taxonomy clarified and prompt version advanced after staging qualification exposed obsolete ambiguity expectations |
 | 2026-08-13T13:20:00Z | `043-dom-resilient-browser-workflows` | corrected | Prompt v4 requires complete diagnosis fields only on diagnostic turns and permits fail-closed no-progress after one measured ineffective target |
+| 2026-08-13T13:34:43Z | `043-dom-resilient-browser-workflows` | corrected | Prompt v5 separates ordinary action authority from registered-step terminal diagnosis authority and rejects unsupported-page diagnoses after trusted admission |
 
 ## Execution Summary
 

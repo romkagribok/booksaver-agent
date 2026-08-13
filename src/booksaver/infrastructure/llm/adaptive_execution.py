@@ -344,7 +344,7 @@ class AdaptiveAnthropicRuntimeFactory:
     def agent_brain(
         self,
         *,
-        prompt_version: str = "booking-browser-recovery-v4",
+        prompt_version: str = "booking-browser-recovery-v5",
         envelope: TokenEnvelope = _AGENT_ENVELOPE,
     ) -> AdaptiveAgentBrain:
         executor = self.role_executor(
