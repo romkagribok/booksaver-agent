@@ -67,6 +67,10 @@
         {
           "action": {"type": "click", "role": "button", "label": "View details"},
           "next_state": "forced-visual-link-button"
+        },
+        {
+          "action": {"type": "give_up", "stop_reason": "no_progress"},
+          "terminal_category": "no-progress"
         }
       ]
     },
@@ -97,6 +101,10 @@
         {
           "action": {"type": "click", "role": "link", "label": "View details"},
           "next_state": "forced-visual-button-link"
+        },
+        {
+          "action": {"type": "give_up", "stop_reason": "no_progress"},
+          "terminal_category": "no-progress"
         }
       ]
     },

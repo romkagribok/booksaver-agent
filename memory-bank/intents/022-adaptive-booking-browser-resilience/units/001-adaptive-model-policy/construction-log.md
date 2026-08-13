@@ -37,6 +37,7 @@ last_updated: 2026-08-13T13:02:52Z
 | 2026-08-13T02:30:30Z | `041-adaptive-model-policy` | stage-complete | ADR Analysis → Implement; ADR-031 accepted |
 | 2026-08-13T03:00:53Z | `041-adaptive-model-policy` | completed | Implementation and verification complete; test report recorded |
 | 2026-08-13T13:02:52Z | `041-adaptive-model-policy` | corrected | Failed staging qualification exposed stale fixture/scoring contracts; production-shaped diagnosis corpus and visibility corrected before merge |
+| 2026-08-13T13:20:00Z | `041-adaptive-model-policy` | corrected | Outcome-visible rerun exposed optional diagnosis schema ambiguity; prompt v4 and corpus v3 now encode strict primary/diagnostic fields and conservative early no-progress |
 
 ## Execution Summary
 

@@ -1136,7 +1136,7 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
     if args.qualify:
         profiles = approved_recovery_profiles()
     else:
-        profiles = (portfolio.primary(ModelRole.RECOVERY, "booking-browser-recovery-v3"),)
+        profiles = (portfolio.primary(ModelRole.RECOVERY, "booking-browser-recovery-v4"),)
     maximum_calls = sum(fixture.max_calls for fixture in fixtures) * args.runs
     if not args.qualify and maximum_calls > 250:
         print(

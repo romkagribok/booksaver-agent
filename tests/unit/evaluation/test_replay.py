@@ -290,6 +290,22 @@ def test_alternating_equivalent_controls_accept_either_safe_first_target(
     assert runs[0].actual_calls == 3
 
 
+@pytest.mark.parametrize("first_ref", ["e1", "e2"])
+def test_alternating_equivalent_controls_allow_early_conservative_no_progress(
+    first_ref: str,
+) -> None:
+    runs, _aggregate = ReplayRunner().run(
+        _fixture("alternating-equivalent-refs.json"),
+        ScriptedBrain(
+            [_click(first_ref), _give_up(AgentStopReason.NO_PROGRESS)]
+        ),
+    )
+
+    assert runs[0].correct_outcome
+    assert runs[0].outcome_category == "no-progress"
+    assert runs[0].actual_calls == 2
+
+
 def test_approved_profile_replay_reports_safe_identity_schema_and_exact_cost() -> None:
     fixture = _fixture("inventory-readiness-drift.json")
     brain = ProfileUsageBrain([_click("e3")], [LLMUsage(1_000, 100)])

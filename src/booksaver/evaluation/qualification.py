@@ -38,7 +38,7 @@ from booksaver.infrastructure.llm.anthropic_adapter import (
 from .fixtures import ReplayFixture
 from .replay import ReplayAggregateMetrics, ReplayExecutionStopped, ReplayRunner
 
-PACKAGED_QUALIFICATION_VERSION = "browser-recovery-v2"
+PACKAGED_QUALIFICATION_VERSION = "browser-recovery-v3"
 QUALIFICATION_RUNS_PER_FIXTURE = 10
 
 # Covers the current system message, tool schemas, API framing, and the fixture's

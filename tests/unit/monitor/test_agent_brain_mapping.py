@@ -247,4 +247,6 @@ def test_agent_brain_records_usage_for_successful_call() -> None:
     assert "every visible route relevant to the goal" in system
     assert "outside the controller's reach" in system
     assert "unsupported DOM, not a browser capability failure" in system
-    assert "either semantic target may be tried first" in system
+    assert "omit both optional diagnosis fields" in system
+    assert "diagnose code_maintenance_required" in system
+    assert "failed target is sufficient to stop conservatively" in system

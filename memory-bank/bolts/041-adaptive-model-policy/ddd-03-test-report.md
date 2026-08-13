@@ -25,8 +25,8 @@ ledger.
 | Ruff across `src` and `tests` at completion of the policy implementation | Passed |
 | Strict mypy across `src` at completion of the policy implementation | Passed |
 | Diff whitespace validation | Passed |
-| Qualification-contract correction focused set | 75 passed |
-| Full repository suite after correction | 1517 passed |
+| Qualification-contract correction focused set | 77 passed |
+| Full repository suite after correction | 1519 passed |
 
 The focused rerun completed on 2026-08-13 after the qualification aggregate and truthful
 `completed` provider outcome were added. Expected legacy `schedule.check_interval` deprecation
@@ -69,10 +69,11 @@ browser capabilities.
 
 Construction was reopened before merge. The corpus now accepts either distinct safe-control order
 while preserving both measured failures, unsupported layout requires a bounded
-`code_maintenance_required` diagnosis, the prompt owns disjoint stop categories under
-`booking-browser-recovery-v3`, the corrected corpus is versioned `browser-recovery-v2`, and
+`code_maintenance_required` diagnosis, the prompt owns disjoint stop categories and strict
+optional-diagnosis field rules under `booking-browser-recovery-v4`, the corrected corpus is
+versioned `browser-recovery-v3`, and
 aggregate output includes content-free outcome counts. The
-corrected offline gate is 75 focused tests plus 1517 full-suite tests; a fresh live qualification
+corrected offline gate is 77 focused tests plus 1519 full-suite tests; a fresh live qualification
 remains mandatory before production promotion.
 
 ## Downstream Integration

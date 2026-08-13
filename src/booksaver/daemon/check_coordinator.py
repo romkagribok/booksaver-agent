@@ -337,7 +337,7 @@ class AdaptiveBrowserJobContext:
             usage.roles.add(attempt.role)
             usage.prompt_versions.add(
                 {
-                    "recovery": "booking-browser-recovery-v3",
+                    "recovery": "booking-browser-recovery-v4",
                     "interpretation": "booking-inventory-interpretation-v1",
                     "extraction": "booking-offer-extraction-v1",
                     "classification": "booking-page-state-v1",

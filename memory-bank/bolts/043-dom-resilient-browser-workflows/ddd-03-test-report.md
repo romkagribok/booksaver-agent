@@ -25,7 +25,7 @@ not spend a diagnosis call.
 | Search/adaptive extraction focused set | 108 passed |
 | Final cross-browser resilience focused set | 258 passed |
 | Broader browser/monitor set during integration | 438 passed |
-| Full repository suite | 1517 passed |
+| Full repository suite | 1519 passed |
 | Ruff across `src` and `tests` | Passed |
 | Strict mypy across `src` (117 files) | Passed |
 | Diff whitespace validation | Passed |
@@ -54,7 +54,7 @@ The full suite emitted only the existing `schedule.check_interval` deprecation w
   inventory probe, and cookies require deterministic strong proof.
 - ✅ Assisted diagnoses propagate through inventory/search results into the coordinator; exact
   auth/MFA/captcha/provider/budget stops retain their specific reason.
-- ✅ Recovery prompt v3 distinguishes unsafe-only visible routes, confirmed-but-unreachable
+- ✅ Recovery prompt v4 distinguishes unsafe-only visible routes, confirmed-but-unreachable
   controls, and unsupported DOM; an unsupported registered layout requests the maintenance
   diagnosis that drives owner incident notification.
 

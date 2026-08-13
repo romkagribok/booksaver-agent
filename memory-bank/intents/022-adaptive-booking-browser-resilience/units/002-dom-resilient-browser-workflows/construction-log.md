@@ -36,6 +36,7 @@ last_updated: 2026-08-13T13:02:52Z
 | 2026-08-13T03:30:09Z | `042-dom-resilient-browser-workflows` | completed | Protected-first registry/classifier implementation and verification complete |
 | 2026-08-13T03:30:09Z | `043-dom-resilient-browser-workflows` | completed | Guarded recovery, semantic interpretation, exact diagnosis, and verification complete |
 | 2026-08-13T13:02:52Z | `043-dom-resilient-browser-workflows` | corrected | Recovery taxonomy clarified and prompt version advanced after staging qualification exposed obsolete ambiguity expectations |
+| 2026-08-13T13:20:00Z | `043-dom-resilient-browser-workflows` | corrected | Prompt v4 requires complete diagnosis fields only on diagnostic turns and permits fail-closed no-progress after one measured ineffective target |
 
 ## Execution Summary
 
