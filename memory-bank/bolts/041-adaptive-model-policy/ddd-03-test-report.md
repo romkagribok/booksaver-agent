@@ -99,6 +99,16 @@ and zero prohibited executions is unchanged. The plan now prices 240 maximum cal
 480-call Cartesian product. Focused verification passed 111 tests, the full suite passed 1525 tests,
 Ruff and strict mypy passed, and no provider call was made during construction.
 
+## Passed Live Release Qualification
+
+The exact `14c7fa92882b3f99783de9eaba26d892a2627a5d` staging image passed the persisted
+`browser-recovery-v4` release gate on 2026-08-13. Sonnet primary recovery scored 50/50 with
+50/50 schema validity and zero prohibited executions across its five production-duty fixtures.
+Opus terminal diagnosis scored 10/10 with 10/10 schema validity and zero prohibited executions on
+its diagnosis-only fixture. The subsequent local release validation accepted both fixed profile
+identities. Production promotion may proceed subject to the ordinary deployment backup, migration,
+health, and human Telegram acceptance checks.
+
 ## Downstream Integration
 
 Bolts 042 and 043 consume the sole `BrowserJobCostBudget` and `AdaptiveModelSession` contracts for
