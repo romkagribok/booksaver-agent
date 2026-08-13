@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from booksaver.daemon.check_coordinator import (
     CheckCoordinator,
@@ -43,6 +44,48 @@ from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCom
 
 Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
+
+
+class IncidentStatusProjection(Protocol):
+    """Content-free deployment status exposed only to the configured owner."""
+
+    @property
+    def open_incidents(self) -> int: ...
+
+    @property
+    def pending_alerts(self) -> int: ...
+
+    @property
+    def failed_alerts(self) -> int: ...
+
+    @property
+    def unavailable_evidence(self) -> int: ...
+
+
+@dataclass(frozen=True, slots=True)
+class IncidentStatusCounts:
+    """Validated concrete projection returned by persistence adapters."""
+
+    open_incidents: int
+    pending_alerts: int
+    failed_alerts: int
+    unavailable_evidence: int
+
+    def __post_init__(self) -> None:
+        counts = (
+            self.open_incidents,
+            self.pending_alerts,
+            self.failed_alerts,
+            self.unavailable_evidence,
+        )
+        if any(
+            not isinstance(count, int) or isinstance(count, bool) or count < 0
+            for count in counts
+        ):
+            raise ValueError("incident status counts must be non-negative integers")
+
+
+IncidentStatusProvider = Callable[[], IncidentStatusProjection]
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +148,28 @@ def _format_price_source(source: PriceSourceProvenance) -> str:
     return detail
 
 
+def _format_incident_status(status: IncidentStatusProjection) -> list[str]:
+    counts = (
+        status.open_incidents,
+        status.pending_alerts,
+        status.failed_alerts,
+        status.unavailable_evidence,
+    )
+    if any(
+        not isinstance(count, int) or isinstance(count, bool) or count < 0
+        for count in counts
+    ):
+        raise ValueError("incident status counts must be non-negative integers")
+    return [
+        f"DOM maintenance incidents: {status.open_incidents} open",
+        (
+            "DOM maintenance alerts: "
+            f"{status.pending_alerts} pending, {status.failed_alerts} failed"
+        ),
+        f"DOM diagnostic evidence unavailable: {status.unavailable_evidence}",
+    ]
+
+
 def register_readonly_commands(
     router: CommandRouter,
     reply: Reply,
@@ -116,6 +181,7 @@ def register_readonly_commands(
     send: Send | None = None,
     is_owner: Callable[[int], bool] | None = None,
     check_coordinator: CheckCoordinator | None = None,
+    incident_status_provider: IncidentStatusProvider | None = None,
 ) -> None:
     """Registers /start, /help, /status, /bookings, /savings, /checks (US-036).
 
@@ -131,6 +197,9 @@ def register_readonly_commands(
     parallel bolt-009 worker's access-control layer, not this module.
     `/status` combines daemon health with only the caller's active-booking
     count. It never enumerates exact records or includes another user's count.
+    The configured owner may additionally receive content-free deployment-wide
+    DOM incident counts through an explicitly injected projection; invited
+    users never invoke or observe that provider.
     """
 
     def _resolve_active_user(store: SqliteStore, telegram_user_id: int) -> User | None:
@@ -183,6 +252,18 @@ def register_readonly_commands(
         lines.extend(_format_session_status(session_status, cmd.user_id))
 
         lines.append(f"Your active bookings: {active_booking_count}")
+        if (
+            incident_status_provider is not None
+            and is_owner is not None
+            and is_owner(cmd.chat_id)
+        ):
+            try:
+                lines.extend(_format_incident_status(incident_status_provider()))
+            except Exception:
+                # The status path must not expose a persistence exception or any
+                # incident evidence through Telegram or ordinary logs.
+                logger.warning("Could not read owner DOM-incident status")
+                lines.append("DOM maintenance status: unavailable")
         reply(cmd.chat_id, "\n".join(lines))
 
     def _render_inventory(

@@ -33,7 +33,10 @@ class TestAgentConfig:
         assert cfg.agent_settings.max_steps == defaults.max_steps
         assert cfg.agent_settings.max_llm_calls == 20
         assert cfg.agent_settings.check_timeout_seconds == 180
-        assert cfg.agent_settings.model == "claude-sonnet-4-6"
+        assert cfg.agent_settings.primary_model == "claude-sonnet-5"
+        assert cfg.agent_settings.escalation_model == "claude-opus-5"
+        assert cfg.agent_settings.max_job_cost_micro_usd == 1_000_000
+        assert cfg.agent_settings.max_deployment_daily_cost_micro_usd == 10_000_000
         assert cfg.agent_settings.max_recovery_calls_per_step == 4
         assert cfg.agent_settings.recovery_timeout_seconds == 60
         assert cfg.agent_settings.screenshot_after_no_progress == 2
@@ -57,7 +60,8 @@ class TestAgentConfig:
         assert cfg.agent_settings.max_steps == 5
         assert cfg.agent_settings.max_llm_calls == 8
         assert cfg.agent_settings.check_timeout_seconds == 90
-        assert cfg.agent_settings.model == "claude-haiku-4-5"
+        # The documented legacy default is normalized to the fixed primary.
+        assert cfg.agent_settings.primary_model == "claude-sonnet-5"
         assert cfg.agent_settings.max_recovery_calls_per_step == 3
         assert cfg.agent_settings.recovery_timeout_seconds == 45
         assert cfg.agent_settings.screenshot_after_no_progress == 1
@@ -67,6 +71,33 @@ class TestAgentConfig:
         cfg = load_config(DictSource(_base({"max_steps": 30})))
         assert cfg.agent_settings.max_steps == 30
         assert cfg.agent_settings.max_llm_calls == 20
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("primary_model", "claude-fable-5"),
+            ("primary_model", "some-model"),
+            ("escalation_model", "claude-fable-5"),
+            ("escalation_model", "claude-sonnet-5"),
+        ],
+    )
+    def test_unapproved_portfolio_model_is_rejected(self, field: str, value: str):
+        with pytest.raises(ConfigValidationError, match="not approved"):
+            load_config(DictSource(_base({field: value})))
+
+    def test_explicit_adaptive_cost_settings_are_exact(self):
+        cfg = load_config(
+            DictSource(
+                _base(
+                    {
+                        "max_job_cost_usd": "0.75",
+                        "max_deployment_daily_cost_usd": "8.50",
+                    }
+                )
+            )
+        )
+        assert cfg.agent_settings.max_job_cost_micro_usd == 750_000
+        assert cfg.agent_settings.max_deployment_daily_cost_micro_usd == 8_500_000
 
     def test_zero_steps_rejected(self):
         with pytest.raises(ConfigValidationError, match="max_steps"):

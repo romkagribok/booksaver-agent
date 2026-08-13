@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-02T18:18:46Z
-total_decisions: 30
+last_updated: 2026-08-13T03:12:00Z
+total_decisions: 34
 ---
 
 # Decision Index
@@ -17,6 +17,53 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-034: Owner-only encrypted DOM incident operations
+- **Status**: accepted
+- **Date**: 2026-08-13
+- **Bolt**: 044-dom-drift-incident-operations (dom-drift-incident-operations)
+- **Path**: `bolts/044-dom-drift-incident-operations/adr-034-owner-only-encrypted-dom-incident-operations.md`
+- **Summary**: Maintenance-worthy assisted DOM outcomes need durable owner visibility without
+  exposing page/account data. Correlate content-free fingerprints, notify only the owner after
+  browser cleanup, and retain one sanitized encrypted local bundle for seven days.
+- **Read when**: Changing DOM incident eligibility/correlation, owner alerts, diagnostics,
+  screenshots, retention, user purge, incident CLI/status, or daemon maintenance workers.
+
+### ADR-033: Semantic evidence and guarded popup adoption
+- **Status**: accepted
+- **Date**: 2026-08-13
+- **Bolt**: 043-dom-resilient-browser-workflows (dom-resilient-browser-workflows)
+- **Path**: `bolts/043-dom-resilient-browser-workflows/adr-033-semantic-evidence-and-guarded-popup-adoption.md`
+- **Summary**: Legacy selectors cannot remain the sole verifier after a model finds changed safe
+  controls. Accept only grounded positive semantic evidence under code-owned verification, adopt at
+  most one guarded read-only popup, and preserve a canonical exact terminal diagnosis.
+- **Read when**: Changing browser-agent postconditions, semantic model facts, search/inventory DOM
+  recovery, popup handling, offer extraction, or terminal failure propagation.
+
+### ADR-032: Protected-first page state and exhaustive DOM step registry
+- **Status**: accepted
+- **Date**: 2026-08-13
+- **Bolt**: 042-dom-resilient-browser-workflows (dom-resilient-browser-workflows)
+- **Path**: `bolts/042-dom-resilient-browser-workflows/adr-032-protected-first-page-state-and-dom-step-registry.md`
+- **Summary**: Distributed DOM/auth heuristics can accept weak signed-in chrome and collapse exact
+  model conclusions into generic failures. Register every production DOM step, classify protected
+  states before weak chrome, and use adaptive models only for genuinely ambiguous current state.
+- **Read when**: Changing authentication/session inference, remote auth capture, inventory/search
+  page classification, DOM-step coverage, model-assisted classification, or exact browser failure
+  mapping.
+
+### ADR-031: Adaptive Sonnet/Opus routing and dollar admission
+- **Status**: accepted
+- **Date**: 2026-08-13
+- **Bolt**: 041-adaptive-model-policy (adaptive-model-policy)
+- **Path**: `bolts/041-adaptive-model-policy/adr-031-adaptive-sonnet-opus-routing-and-dollar-admission.md`
+- **Summary**: Single-profile recovery and restart-reset call counters cannot replace an ineffective
+  model or enforce approved dollar limits. Use a fixed Sonnet 5 primary and Opus 5 escalation only
+  for ambiguous DOM work, short-circuit predictable failures without LLM calls, and transactionally
+  enforce USD 1/job and USD 10/deployment UTC-day exposure.
+- **Read when**: Changing model IDs or prompts, extraction/recovery/classification routing,
+  deterministic failure short-circuiting, LLM quality escalation, token pricing, coordinator job
+  scope, daily/provider cost accounting, or replay qualification.
 
 ### ADR-030: Shared progress-aware Booking.com browser recovery
 - **Status**: accepted

@@ -6,7 +6,13 @@ from typing import Any, Protocol, runtime_checkable
 
 from booksaver.domain.account_sync import ReservationObservation
 from booksaver.domain.agent import AgentAction, AgentTurnContext, CheckTrace, Observation
+from booksaver.domain.browser_resilience import (
+    DomStepId,
+    PageStateResolution,
+    PopupAdoptionResult,
+)
 from booksaver.domain.check_result import CheckResult
+from booksaver.domain.model_policy import EscalationTrigger
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.post_rebook import PostRebookContext, PostRebookResult, ReplacementFacts
@@ -145,7 +151,20 @@ class InteractiveBrowser(Protocol):
     def screenshot(self) -> bytes: ...
     def get_cookies(self) -> bytes: ...
     def restore_cookies(self, data: bytes) -> None: ...
+    def verify_authenticated_account(self) -> bool: ...
     def is_authenticated(self) -> bool: ...
+
+
+@runtime_checkable
+class PopupAdoptingBrowser(Protocol):
+    """Optional guarded capability for adopting a popup opened by the last action.
+
+    The caller supplies only the registered DOM step.  The adapter owns page
+    identity, destination inspection, and control transfer; a model can never
+    select a page or URL.
+    """
+
+    def adopt_read_only_popup(self, step_id: DomStepId) -> PopupAdoptionResult: ...
 
 
 @runtime_checkable
@@ -153,6 +172,24 @@ class AgentBrain(Protocol):
     """One LLM decision per agent turn (ADR-016)."""
 
     def decide(self, context: AgentTurnContext) -> AgentAction: ...
+
+
+@runtime_checkable
+class EscalatingAgentBrain(Protocol):
+    """Optional single-turn Opus capability after code-measured quality failure."""
+
+    def decide_with_escalation(
+        self, context: AgentTurnContext, trigger: EscalationTrigger
+    ) -> AgentAction: ...
+
+
+@runtime_checkable
+class RegisteredPageStateResolver(Protocol):
+    """Resolve one registered current-page state without browser authority."""
+
+    def resolve(
+        self, step_id: DomStepId, observation: Observation
+    ) -> PageStateResolution: ...
 
 
 @runtime_checkable

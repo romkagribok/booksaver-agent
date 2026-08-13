@@ -80,7 +80,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 15
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 
@@ -613,6 +613,22 @@ def _migrate_v13(conn: sqlite3.Connection) -> None:
             )
 
 
+def _migrate_v14(conn: sqlite3.Connection) -> None:
+    """Add restart-safe adaptive-model spend and qualification ledgers."""
+    schema = _SCHEMA_SQL.read_text()
+    start = schema.index("CREATE TABLE IF NOT EXISTS llm_spend_days")
+    end = schema.index("-- v15: content-free DOM-drift", start)
+    conn.executescript(schema[start:end])
+
+
+def _migrate_v15(conn: sqlite3.Connection) -> None:
+    """Add content-free DOM-drift incidents and encrypted diagnostics."""
+    schema = _SCHEMA_SQL.read_text()
+    start = schema.index("CREATE TABLE IF NOT EXISTS dom_drift_incidents")
+    end = schema.index("-- v2: finalised by Unit 2", start)
+    conn.executescript(schema[start:end])
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -625,6 +641,8 @@ def _migrate_v13(conn: sqlite3.Connection) -> None:
 # v10 -> v11: destructive booking cutover + authoritative synchronized inventory.
 # v11 -> v12: persisted per-user randomized schedule slots (ADR-029), additive.
 # v12 -> v13: caller-scoped inventory recovery audit columns, additive.
+# v13 -> v14: model spend/qualification ledgers, additive.
+# v14 -> v15: DOM-drift incidents, alert state, and encrypted diagnostics.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -634,6 +652,8 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migrate_v11,
     12: _migrate_v12,
     13: _migrate_v13,
+    14: _migrate_v14,
+    15: _migrate_v15,
 }
 
 
@@ -2447,6 +2467,11 @@ class SqliteUserRepository:
         # CASCADE: purge must remain safe if a legacy connection disabled
         # foreign-key enforcement.
         conn.execute("DELETE FROM scheduled_check_slots WHERE user_id = ?", (user_id,))
+        # Remove caller-linked detail but retain deployment-day aggregates so
+        # privacy purge cannot reopen already consumed allowance.
+        conn.execute(
+            "DELETE FROM llm_cost_reservations WHERE caller_user_id = ?", (user_id,)
+        )
         conn.execute("DELETE FROM invite_codes WHERE used_by = ?", (user_id,))
         conn.execute("UPDATE invite_codes SET issued_by = NULL WHERE issued_by = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))

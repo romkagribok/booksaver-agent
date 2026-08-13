@@ -51,6 +51,7 @@ def _wire(
     usage_provider=None,
     cancel_remote_authentication=None,
     revoke_user_session=None,
+    purge_incident_evidence=None,
 ):
     db_path = tmp_path / "t.db"
     with SqliteStore(db_path):
@@ -67,6 +68,7 @@ def _wire(
         cancel_remote_authentication=cancel_remote_authentication
         or (lambda _telegram_user_id: False),
         revoke_user_session=revoke_user_session or (lambda _user_id: False),
+        purge_incident_evidence=purge_incident_evidence,
     )
     return router, sent, db_path, access_control
 
@@ -94,6 +96,7 @@ def _interactive_wire(
     usage_provider=None,
     cancel_remote_authentication=None,
     revoke_user_session=None,
+    purge_incident_evidence=None,
 ):
     db_path = tmp_path / "interactive.db"
     with SqliteStore(db_path):
@@ -118,6 +121,7 @@ def _interactive_wire(
         cancel_remote_authentication=cancel_remote_authentication
         or (lambda _telegram_user_id: False),
         revoke_user_session=revoke_user_session or (lambda _user_id: False),
+        purge_incident_evidence=purge_incident_evidence,
     )
     return router, callbacks, client, sent, db_path, access_control
 
@@ -432,6 +436,57 @@ class TestPurge:
             remaining = SqliteUserRepository(store).get_by_telegram_id(43)
         assert gone is None
         assert remaining is not None
+
+    def test_purge_removes_incident_evidence_before_user_row(self, tmp_path):
+        cleanup_calls: list[tuple[str, int]] = []
+
+        def purge_evidence(user_id: int) -> None:
+            cleanup_calls.append(("evidence", user_id))
+            with SqliteStore(db_path) as store:
+                assert SqliteUserRepository(store).get_by_id(user_id) is not None
+
+        router, sent, db_path, _ac = _wire(
+            tmp_path,
+            revoke_user_session=lambda user_id: (
+                cleanup_calls.append(("session", user_id)) or False
+            ),
+            purge_incident_evidence=purge_evidence,
+        )
+        with SqliteStore(db_path) as store:
+            target = SqliteUserRepository(store).get_or_create_by_telegram_id(42)
+
+        router.dispatch(
+            _cmd(chat_id=OWNER_CHAT_ID, args=f"purge {target.user_id} confirm")
+        )
+
+        assert cleanup_calls == [
+            ("session", target.user_id),
+            ("evidence", target.user_id),
+        ]
+        assert "purged" in sent[-1][1]
+        with SqliteStore(db_path) as store:
+            assert SqliteUserRepository(store).get_by_id(target.user_id) is None
+
+    def test_incident_evidence_cleanup_failure_retains_user(self, tmp_path, caplog):
+        def fail_evidence(_user_id: int) -> None:
+            raise RuntimeError("PRIVATE diagnostic exception")
+
+        router, sent, db_path, _ac = _wire(
+            tmp_path,
+            purge_incident_evidence=fail_evidence,
+        )
+        with SqliteStore(db_path) as store:
+            target = SqliteUserRepository(store).get_or_create_by_telegram_id(42)
+
+        router.dispatch(
+            _cmd(chat_id=OWNER_CHAT_ID, args=f"purge {target.user_id} confirm")
+        )
+
+        assert "diagnostic cleanup did not finish" in sent[-1][1]
+        assert "PRIVATE" not in sent[-1][1]
+        assert "PRIVATE" not in caplog.text
+        with SqliteStore(db_path) as store:
+            assert SqliteUserRepository(store).get_by_id(target.user_id) is not None
 
     def test_purge_succeeds_when_target_session_is_already_missing(self, tmp_path):
         router, sent, db_path, _ac = _wire(

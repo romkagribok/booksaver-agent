@@ -101,10 +101,11 @@ class BookingComMonitor:
                 self._sessions.mark_reauth_required(session)
                 reauth_flagged = True
 
-        try:
-            self._sessions.save_refreshed(session, self._browser.get_cookies())
-        except Exception as exc:
-            logger.warning("Could not save refreshed cookies: %s", exc)
+        if not reauth_flagged and self._browser.is_authenticated():
+            try:
+                self._sessions.save_refreshed(session, self._browser.get_cookies())
+            except Exception as exc:
+                logger.warning("Could not save refreshed cookies: %s", exc)
 
         return results
 

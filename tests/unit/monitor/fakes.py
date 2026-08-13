@@ -12,6 +12,12 @@ from booksaver.domain.agent import (
     ElementInfo,
     Observation,
 )
+from booksaver.domain.browser_resilience import (
+    DomStepId,
+    PopupAdoptionReceipt,
+    PopupAdoptionResult,
+    PopupRefusalReason,
+)
 from booksaver.domain.check_result import CheckResult
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
@@ -384,7 +390,7 @@ class FakeInteractiveBrowser:
 
     def act(self, action: AgentAction) -> None:
         self.actions.append(("act", f"{action.type.value} ref={action.ref}"))
-        fail_refs = getattr(self, "fail_refs", set())
+        fail_refs: set[str] = getattr(self, "fail_refs", set())
         if action.ref in fail_refs:
             raise RuntimeError(f"element {action.ref} not interactable")
         if action.type is AgentActionType.SCROLL:
@@ -397,6 +403,46 @@ class FakeInteractiveBrowser:
     def screenshot(self) -> bytes:
         self.actions.append(("screenshot", ""))
         return b"\x89PNG-fake"
+
+    def adopt_read_only_popup(self, step_id: DomStepId) -> PopupAdoptionResult:
+        if self.popup_count == 0:
+            return PopupAdoptionResult(
+                refusal_reason=PopupRefusalReason.NONE_OPENED
+            )
+        if self.popup_count != len(self.popup_urls):
+            return PopupAdoptionResult(
+                refusal_reason=PopupRefusalReason.OBSERVATION_UNAVAILABLE
+            )
+        if self.popup_count != 1:
+            return PopupAdoptionResult(
+                refusal_reason=PopupRefusalReason.MULTIPLE_OPENED
+            )
+        popup_url = self.popup_urls[0]
+        if not popup_url.startswith("https://") or "booking.com/" not in popup_url:
+            return PopupAdoptionResult(
+                refusal_reason=PopupRefusalReason.EXTERNAL_ORIGIN
+            )
+        if step_id is DomStepId.PRICE_PROPERTY_OPEN and "/hotel/" not in popup_url:
+            return PopupAdoptionResult(
+                refusal_reason=PopupRefusalReason.UNSUPPORTED_ROUTE
+            )
+        if step_id is DomStepId.INVENTORY_DETAIL and not any(
+            marker in popup_url for marker in ("/confirmation", "trip_id=")
+        ):
+            return PopupAdoptionResult(
+                refusal_reason=PopupRefusalReason.UNSUPPORTED_ROUTE
+            )
+        self.url = popup_url
+        self.popup_count = 0
+        self.popup_urls = ()
+        return PopupAdoptionResult(
+            receipt=PopupAdoptionReceipt(
+                step_id=step_id,
+                observation_id="fake-popup-observation",
+                page_id="fake-popup-page",
+                adopted_at=datetime.now(UTC),
+            )
+        )
 
     def get_cookies(self) -> bytes:
         return b'[{"name": "fresh"}]'

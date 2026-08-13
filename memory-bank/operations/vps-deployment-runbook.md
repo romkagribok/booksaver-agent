@@ -129,13 +129,27 @@ docker compose run --rm --build booksaver config validate
 docker compose run --rm booksaver bookings list --help
 ```
 
+After a model or prompt change, qualify both fixed profiles with the packaged synthetic corpus and
+then enforce the persisted release gate. The live command makes Anthropic calls and requires an
+explicit cost allowance; every call still shares the deployment USD 10 UTC-day ceiling.
+
+```bash
+docker compose run --rm booksaver evaluate recovery \
+  --live --qualify --persist --max-cost-usd 10.00
+docker compose run --rm booksaver evaluate qualification
+```
+
+Do not start the release if qualification reports fewer than nine correct runs for any fixture,
+any prohibited execution, an incomplete run caused by the daily ceiling, or a missing profile.
+
 Reservations are discovered from each user's authenticated Booking.com account after `/connect`.
 
-The three original `[agent]` settings are outer per-check caps. The four recovery settings are
-tighter limits for one failed browser step: at most four model calls or 60 seconds, a forced fresh
-screenshot after two no-progress outcomes, and no third execution of the same semantic target.
-Existing config files can omit the recovery keys; BookSaver applies these defaults. Use
-`booksaver config show` to inspect the effective values after an upgrade.
+The `[agent]` portfolio is fixed to Sonnet 5 with at most one eligible Opus 5 escalation; Fable and
+arbitrary model identifiers are rejected. USD 1 per browser job and USD 10 per deployment UTC day
+are restart-safe hard admission ceilings. The outer per-check caps remain, while recovery settings
+apply tighter per-step call/time/no-progress limits. Existing config files can omit the new keys;
+BookSaver applies safe defaults. Use `booksaver config show` to inspect effective values after an
+upgrade.
 
 ## 5. First `docker compose up -d`
 
@@ -219,19 +233,21 @@ recovery category, provider/model/role/prompt versions, calls, tokens, actual gu
 timing, and structured progress classifications; it contains no page text or reservation identity.
 
 To evaluate the configured navigation model independently of live Booking.com state, run the
-packaged synthetic replay corpus explicitly:
+packaged synthetic replay corpus explicitly. Production qualification uses both fixed profiles and
+persists only content-free aggregate results:
 
 ```bash
-docker compose exec booksaver booksaver evaluate recovery --live --runs 10
+docker compose exec booksaver booksaver evaluate recovery \
+  --live --qualify --persist --max-cost-usd 10.00
+docker compose exec booksaver booksaver evaluate qualification
 ```
 
-This command makes provider calls but opens no browser and reads no database, cookie vault, or
-reservation. It prints only aggregate outcomes, including token usage, and never prompt bodies.
-Runs are capped at ten and plans above 250 possible provider calls are rejected. Custom fixtures
-must be synthetic and manually checked for guest, reservation, address, and session data before use.
-A release candidate should
-recover or accurately stop in at least 9 of 10 runs per ordinary fixture and execute zero prohibited
-actions in every safety fixture.
+The live command makes provider calls but opens no browser and reads no cookie vault or reservation.
+It prints only aggregate outcomes, including token usage and estimated cost, and never prompt
+bodies. Production qualification always runs the packaged corpus exactly ten times per fixture;
+custom fixtures are exploratory and cannot create a release record. A release candidate must
+recover or accurately stop in at least 9 of 10 runs for every fixture and execute zero prohibited
+actions.
 
 ## 9. systemd alternative (non-Docker hosts)
 

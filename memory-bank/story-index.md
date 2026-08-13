@@ -441,6 +441,39 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-128` | Explain and observe inventory recovery | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/003-explain-and-observe-inventory-recovery.md` |
 | `US-129` | Recover initial inventory navigation from current evidence | Inventory Recovery | Complete | `002-agent-assisted-booking-inventory/stories/004-recover-initial-inventory-navigation-from-current-evidence.md` |
 
+## 022-adaptive-booking-browser-resilience
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-adaptive-model-policy` | 3 stories | Complete (bolt 041) |
+| `002-dom-resilient-browser-workflows` | 4 stories | Complete (bolts 042–043) |
+| `003-dom-drift-incident-operations` | 3 stories | Complete (bolt 044) |
+
+### 001-adaptive-model-policy: Adaptive Model Policy
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-130` | Escalate Sonnet to Opus on quality failure | Adaptive Resilience | Complete | `001-adaptive-model-policy/stories/001-escalate-sonnet-to-opus-on-quality-failure.md` |
+| `US-131` | Enforce browser-job and daily dollar ceilings | Adaptive Resilience | Complete | `001-adaptive-model-policy/stories/002-enforce-browser-job-and-daily-dollar-ceilings.md` |
+| `US-132` | Qualify adaptive model profiles | Adaptive Resilience | Complete | `001-adaptive-model-policy/stories/003-qualify-adaptive-model-profiles.md` |
+
+### 002-dom-resilient-browser-workflows: DOM-Resilient Browser Workflows
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-133` | Register every DOM-sensitive browser step | Adaptive Resilience | Complete | `002-dom-resilient-browser-workflows/stories/001-register-every-dom-sensitive-browser-step.md` |
+| `US-134` | Classify the current page with LLM fallback | Adaptive Resilience | Complete | `002-dom-resilient-browser-workflows/stories/002-classify-current-page-with-llm-fallback.md` |
+| `US-135` | Recover and interpret safe DOM drift | Adaptive Resilience | Complete | `002-dom-resilient-browser-workflows/stories/003-recover-and-interpret-safe-dom-drift.md` |
+| `US-136` | Explain every terminal browser outcome | Adaptive Resilience | Complete | `002-dom-resilient-browser-workflows/stories/004-explain-every-terminal-browser-outcome.md` |
+
+### 003-dom-drift-incident-operations: DOM-Drift Incident Operations
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-137` | Correlate DOM-drift incidents | Adaptive Resilience | Complete | `003-dom-drift-incident-operations/stories/001-correlate-dom-drift-incidents.md` |
+| `US-138` | Notify owner of maintenance required | Adaptive Resilience | Complete | `003-dom-drift-incident-operations/stories/002-notify-owner-of-maintenance-required.md` |
+| `US-139` | Retain encrypted incident diagnostics | Adaptive Resilience | Complete | `003-dom-drift-incident-operations/stories/003-retain-encrypted-incident-diagnostics.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -466,6 +499,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `019-booking-account-synchronization` | 2 | 7 | Complete (bolts 034–036; 959 tests) |
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
+| `022-adaptive-booking-browser-resilience` | 3 | 10 | Complete (bolts 041–044; 1512 tests) |
 
-All 129 stories (127 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
+All 139 stories (137 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
 exactly once.

@@ -5,8 +5,10 @@ import json
 import os
 import sys
 import threading
-from collections.abc import Iterator
+import uuid
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,7 @@ from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteStore,
     SqliteUserRepository,
 )
+from booksaver.infrastructure.telegram.client import TelegramBotClient
 
 _SAMPLE_CONFIG = """\
 [schedule]
@@ -56,13 +59,17 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # telegram_chat_id = "123456789"     # token:    export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
 
 [extraction]
-# LLM model selection goes here. API key comes from an environment variable.
-# model = "claude-sonnet-4-6"        # key:      export BOOKSAVER_LLM_API_KEY=...
+# Legacy extraction model values normalize to the fixed primary profile.
+# primary selection is controlled by the approved [agent] portfolio below.
 
 [agent]
 # Outer cost caps per price check (ADR-017) plus tighter per-step recovery limits
 # (ADR-030). Existing config files may omit the recovery keys and receive these defaults.
-# model = "claude-sonnet-4-6"        # browser-agent model (extraction uses [extraction])
+# primary_model = "claude-sonnet-5"  # normal ambiguous DOM assistance
+# escalation_model = "claude-opus-5" # one measured quality escalation; Fable prohibited
+# max_job_cost_usd = "1.00"           # one coordinator browser admission
+# max_deployment_daily_cost_usd = "10.00" # persisted deployment-wide UTC cap
+# reserve_opus_diagnostic_for_ambiguous_episode = true
 # max_steps = 15              # LLM browser-agent turns (screenshot turns count double)
 # max_llm_calls = 20          # all LLM calls in one check (agent + extraction)
 # check_timeout_seconds = 180 # wall-clock limit per booking check
@@ -129,6 +136,7 @@ def _load_config_for_args(args: argparse.Namespace) -> Config:
 
 # ── init ─────────────────────────────────────────────────────────────────────
 
+
 def cmd_init(args: argparse.Namespace) -> int:
     data_dir_str = getattr(args, "data_dir", None) or str(Path.home() / ".booksaver")
     data_path = Path(data_dir_str).expanduser().resolve()
@@ -150,6 +158,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 # ── config validate ───────────────────────────────────────────────────────────
+
 
 def cmd_config_validate(args: argparse.Namespace) -> int:
     source = TomlEnvConfigSource(_config_path(args))
@@ -175,10 +184,17 @@ def cmd_config_validate(args: argparse.Namespace) -> int:
     print(f"  agent_recovery_timeout_s   : {agent.recovery_timeout_seconds}")
     print(f"  screenshot_after_no_progress: {agent.screenshot_after_no_progress}")
     print(f"  semantic_action_executions: {agent.max_semantic_action_executions}")
+    print(f"  agent_primary_model         : {agent.primary_model}")
+    print(f"  agent_escalation_model      : {agent.escalation_model}")
+    print(f"  agent_job_cost_usd         : {agent.max_job_cost_micro_usd / 1_000_000:.2f}")
+    print(
+        f"  deployment_daily_cost_usd : {agent.max_deployment_daily_cost_micro_usd / 1_000_000:.2f}"
+    )
     return 0
 
 
 # ── config show ───────────────────────────────────────────────────────────────
+
 
 def cmd_config_show(args: argparse.Namespace) -> int:
     source = TomlEnvConfigSource(_config_path(args))
@@ -200,10 +216,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     remote_auth = cfg.remote_auth_settings
     schedule = cfg.schedule_settings
     agent = cfg.agent_settings
-    print(
-        "schedule.checks_per_booking/day: "
-        f"{schedule.checks_per_booking_per_day}"
-    )
+    print(f"schedule.checks_per_booking/day: {schedule.checks_per_booking_per_day}")
     print(f"schedule.minimum_spacing     : {schedule.minimum_spacing}")
     print(f"schedule.missed_run_grace    : {schedule.missed_run_grace}")
     print(f"data_directory               : {cfg.data_directory.path}")
@@ -218,23 +231,20 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"browser.device_profile       : {mobile.profile_id.value}")
     print(f"browser.locale               : {mobile.locale}")
     print(f"browser.timezone_id          : {mobile.timezone_id}")
-    print(f"agent.model                  : {agent.model}")
+    print(f"agent.primary_model          : {agent.primary_model}")
+    print(f"agent.escalation_model       : {agent.escalation_model}")
+    print(f"agent.max_job_cost_usd       : {agent.max_job_cost_micro_usd / 1_000_000:.2f}")
+    print(
+        "agent.max_deployment_daily_cost_usd: "
+        f"{agent.max_deployment_daily_cost_micro_usd / 1_000_000:.2f}"
+    )
     print(f"agent.max_steps              : {agent.max_steps}")
     print(f"agent.max_llm_calls          : {agent.max_llm_calls}")
     print(f"agent.check_timeout_s        : {agent.check_timeout_seconds}")
-    print(
-        "agent.recovery_calls/step   : "
-        f"{agent.max_recovery_calls_per_step}"
-    )
+    print(f"agent.recovery_calls/step   : {agent.max_recovery_calls_per_step}")
     print(f"agent.recovery_timeout_s     : {agent.recovery_timeout_seconds}")
-    print(
-        "agent.screenshot_after_no_progress: "
-        f"{agent.screenshot_after_no_progress}"
-    )
-    print(
-        "agent.semantic_action_executions: "
-        f"{agent.max_semantic_action_executions}"
-    )
+    print(f"agent.screenshot_after_no_progress: {agent.screenshot_after_no_progress}")
+    print(f"agent.semantic_action_executions: {agent.max_semantic_action_executions}")
     print(f"remote_auth.enabled          : {remote_auth.enabled}")
     print(f"remote_auth.public_url       : {remote_auth.public_url or '(not set)'}")
     smtp = "(set)" if os.environ.get("BOOKSAVER_SMTP_PASSWORD") else "(not set)"
@@ -248,6 +258,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
 
 # ── bookings list ─────────────────────────────────────────────────────────────
 
+
 def cmd_bookings_list(args: argparse.Namespace) -> int:
     cfg, db_path = _db_path_for(args)
 
@@ -257,9 +268,7 @@ def cmd_bookings_list(args: argparse.Namespace) -> int:
 
     with SqliteStore(db_path) as store:
         owner = SqliteUserRepository(store).get_owner()
-        reservations = SqliteAccountReservationRepository(store).list_for_user(
-            owner.user_id
-        )
+        reservations = SqliteAccountReservationRepository(store).list_for_user(owner.user_id)
 
     if not reservations:
         print("No synchronized reservations found.")
@@ -336,6 +345,7 @@ def cmd_bookings_trace(args: argparse.Namespace) -> int:
 
 # ── run ───────────────────────────────────────────────────────────────────────
 
+
 def cmd_run(args: argparse.Namespace) -> int:
     source = TomlEnvConfigSource(_config_path(args))
     try:
@@ -356,8 +366,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     remote_auth_runtime = None
     telegram_token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
     if cfg.telegram_bot_settings.enabled and telegram_token:
-        from booksaver.infrastructure.telegram.client import TelegramBotClient
-
         telegram_client = TelegramBotClient(bot_token=telegram_token)
 
     coordinator = _make_check_coordinator(
@@ -419,10 +427,10 @@ def cmd_run(args: argparse.Namespace) -> int:
             telegram_client,
             browser_gate,
             on_connected=_synchronize_after_connect,
+            adaptive_runtime_scope=(coordinator.adaptive_runtime_scope_for_telegram_user),
         )
-        coordinator.set_auth_required_notifier(
-            remote_auth_runtime.reconnect_notifier.notify
-        )
+        coordinator.set_auth_required_notifier(remote_auth_runtime.reconnect_notifier.notify)
+
     @contextmanager
     def _schedule_repository() -> Iterator[SqliteScheduledCheckSlotRepository]:
         with SqliteStore(db_path) as store:
@@ -430,9 +438,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     def _active_user_ids() -> tuple[int, ...]:
         with SqliteStore(db_path) as store:
-            return tuple(
-                user.user_id for user in SqliteUserRepository(store).list_active()
-            )
+            return tuple(user.user_id for user in SqliteUserRepository(store).list_active())
 
     schedule_dispatcher = RandomizedScheduleDispatcher(
         settings=cfg.schedule_settings,
@@ -461,6 +467,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     if remote_auth_runtime is not None:
         print(f"Remote authentication gateway: {cfg.remote_auth_settings.public_url}")
 
+    incident_runner = _make_dom_incident_runner(cfg, db_path, telegram_client)
+    service_runners: dict[str, Any] = {}
+    if remote_auth_runtime is not None:
+        service_runners["remote-auth"] = remote_auth_runtime.run
+    if incident_runner is not None:
+        service_runners["dom-drift-incidents"] = incident_runner
+
     print(
         "BookSaver daemon starting "
         f"(random_checks_per_day={cfg.schedule_settings.checks_per_booking_per_day}, "
@@ -472,13 +485,59 @@ def cmd_run(args: argparse.Namespace) -> int:
         cfg,
         sched,
         bot_runner=bot_runner,
-        service_runners=(
-            {"remote-auth": remote_auth_runtime.run}
-            if remote_auth_runtime is not None
-            else None
-        ),
+        service_runners=service_runners or None,
     )
     return 0
+
+
+def _make_dom_incident_runner(
+    cfg: Config,
+    db_path: Path,
+    telegram_client: TelegramBotClient | None,
+) -> Callable[[threading.Event], None] | None:
+    """Build the isolated incident maintenance service for Telegram deployments."""
+
+    settings = cfg.telegram_bot_settings
+    if not settings.enabled or settings.owner_chat_id is None or telegram_client is None:
+        return None
+
+    from booksaver.application.dom_incident import DomIncidentLifecycleWorker
+    from booksaver.infrastructure.notifications.owner_incident import (
+        OwnerIncidentTelegramNotifier,
+    )
+    from booksaver.infrastructure.persistence.dom_incident import (
+        SqliteDomIncidentRepository,
+    )
+    from booksaver.infrastructure.persistence.encrypted_diagnostics import (
+        EncryptedDiagnosticStore,
+    )
+
+    @contextmanager
+    def _incidents() -> Iterator[Any]:
+        with SqliteStore(db_path) as store:
+            yield SqliteDomIncidentRepository(store)
+
+    @contextmanager
+    def _diagnostics() -> Iterator[Any]:
+        with SqliteStore(db_path) as store:
+            yield EncryptedDiagnosticStore(store)
+
+    owner_chat_id = settings.owner_chat_id
+    assert owner_chat_id is not None
+
+    def _run(stop_event: threading.Event) -> None:
+        # Each retry/maintenance operation owns a short-lived connection on the
+        # service thread. Browser work and cleanup never share or wait on it.
+        DomIncidentLifecycleWorker(
+            incident_repository_factory=_incidents,
+            diagnostic_store_factory=_diagnostics,
+            notifier=OwnerIncidentTelegramNotifier(
+                client=telegram_client,
+                owner_chat_id=owner_chat_id,
+            ),
+        ).run(stop_event)
+
+    return _run
 
 
 def _make_check_coordinator(
@@ -488,18 +547,34 @@ def _make_check_coordinator(
     execution_gate: threading.Lock | None = None,
 ) -> Any:
     """Build the one daemon-lifetime boundary shared by scheduler and Telegram."""
+    from booksaver.application.dom_incident import DomIncidentRecorder
     from booksaver.daemon.check_coordinator import CheckCoordinator
+    from booksaver.infrastructure.persistence.dom_incident import (
+        SqliteDomIncidentRepository,
+    )
+    from booksaver.infrastructure.persistence.encrypted_diagnostics import (
+        EncryptedDiagnosticStore,
+    )
+
+    @contextmanager
+    def _incident_recorder() -> Iterator[DomIncidentRecorder]:
+        # CheckCoordinator enters this only after the relevant browser context
+        # has closed. The short-lived store cannot retain browser authority.
+        with SqliteStore(cfg.data_directory.path / "booksaver.db") as store:
+            yield DomIncidentRecorder(
+                incidents=SqliteDomIncidentRepository(store),
+                diagnostics=EncryptedDiagnosticStore(store),
+            )
 
     return CheckCoordinator(
         cfg,
         stop_event,
-        llm_factory_builder=lambda config, store: _make_llm_client_factory(
-            config, store=store
-        ),
+        llm_factory_builder=lambda config, store: _make_llm_client_factory(config, store=store),
         notifier_builder=_make_notifiers,
         invalid_key_notifier=_notify_invalid_user_keys,
         auth_required_notifier=auth_required_notifier,
         execution_gate=execution_gate,
+        incident_recorder_factory=_incident_recorder,
     )
 
 
@@ -628,6 +703,7 @@ def _make_agent_brain(cfg: Config) -> Any:
 
 # ── auth import ──────────────────────────────────────────────────────────────
 
+
 def cmd_auth_import(args: argparse.Namespace) -> int:
     """US-078: import Booking.com cookies for one admitted Telegram user.
 
@@ -672,10 +748,7 @@ def cmd_auth_import(args: argparse.Namespace) -> int:
         return 2
 
     summary = result.summary
-    print(
-        f"Imported {summary.count} cookie(s) for Telegram user "
-        f"{result.telegram_user_id}."
-    )
+    print(f"Imported {summary.count} cookie(s) for Telegram user {result.telegram_user_id}.")
     print(f"Domain(s): {', '.join(summary.domains)}")
     if summary.earliest_expiry is not None:
         print(f"Earliest expiry: {summary.earliest_expiry.isoformat()}")
@@ -748,6 +821,7 @@ def cmd_auth_delete(args: argparse.Namespace) -> int:
 
 # ── stop ──────────────────────────────────────────────────────────────────────
 
+
 def cmd_stop(args: argparse.Namespace) -> int:
     source = TomlEnvConfigSource(_config_path(args))
     try:
@@ -759,6 +833,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
 
 # ── savings list ──────────────────────────────────────────────────────────────
+
 
 def cmd_savings_list(args: argparse.Namespace) -> int:
     from booksaver.infrastructure.persistence.sqlite_store import SqliteSavingsRepository
@@ -797,6 +872,7 @@ def cmd_savings_list(args: argparse.Namespace) -> int:
 
 
 # ── checks ────────────────────────────────────────────────────────────────────
+
 
 def cmd_checks_list(args: argparse.Namespace) -> int:
     cfg, db_path = _db_path_for(args)
@@ -854,10 +930,134 @@ def cmd_checks_trace(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── DOM-drift incidents ─────────────────────────────────────────────────────
+
+
+def cmd_incidents_list(args: argparse.Namespace) -> int:
+    """List content-free local incident metadata."""
+    _cfg, db_path = _db_path_for(args)
+    if not db_path.exists():
+        print("No DOM maintenance incidents recorded yet.")
+        return 0
+
+    from booksaver.infrastructure.persistence.dom_incident import (
+        SqliteDomIncidentRepository,
+    )
+
+    with SqliteStore(db_path) as store:
+        incidents = SqliteDomIncidentRepository(store).list_incidents(limit=args.limit)
+    if not incidents:
+        print("No DOM maintenance incidents recorded yet.")
+        return 0
+
+    header = (
+        f"{'INCIDENT':36}  {'STATE':10}  {'JOURNEY':20}  "
+        f"{'STEP':32}  {'COUNT':>5}  {'EVIDENCE':12}  LAST OBSERVED"
+    )
+    print(header)
+    print("-" * len(header))
+    for incident in incidents:
+        print(
+            f"{incident.incident_id!s:36}  "
+            f"{incident.state.value:10}  "
+            f"{incident.journey.value:20}  "
+            f"{incident.step_id.value:32}  "
+            f"{incident.occurrence_count:5}  "
+            f"{incident.evidence_state.value:12}  "
+            f"{incident.last_observed_at.isoformat()}"
+        )
+    return 0
+
+
+def cmd_incidents_inspect(args: argparse.Namespace) -> int:
+    """Decrypt and print one diagnostic bundle on the local terminal only."""
+    try:
+        incident_id = uuid.UUID(args.incident_id)
+    except (AttributeError, TypeError, ValueError):
+        print("Incident ID must be a UUID.", file=sys.stderr)
+        return 2
+
+    cfg, db_path = _db_path_for(args)
+    if not db_path.exists():
+        print(f"No incident found for '{incident_id}'.", file=sys.stderr)
+        return 2
+
+    from booksaver.infrastructure.persistence.dom_incident import (
+        SqliteDomIncidentRepository,
+    )
+    from booksaver.infrastructure.persistence.encrypted_diagnostics import (
+        EncryptedDiagnosticStore,
+    )
+
+    with SqliteStore(db_path) as store:
+        incident = SqliteDomIncidentRepository(store).get_incident(incident_id)
+        if incident is None:
+            print(f"No incident found for '{incident_id}'.", file=sys.stderr)
+            return 2
+        inspection = EncryptedDiagnosticStore(store).inspect(
+            incident_id,
+            datetime.now(UTC),
+        )
+
+    print(f"Incident       : {incident.incident_id}")
+    print(f"State          : {incident.state.value}")
+    print(f"Journey        : {incident.journey.value}")
+    print(f"Step           : {incident.step_id.value}")
+    print(f"Category       : {incident.terminal_reason.value}")
+    print(f"Occurrences    : {incident.occurrence_count}")
+    print(f"Evidence state : {inspection.evidence_state.value}")
+    bundle = inspection.bundle
+    if bundle is None:
+        return 0
+    print(f"Evidence version: {bundle.version}")
+    print(f"Created        : {bundle.created_at.isoformat()}")
+    print(f"Source users   : {', '.join(str(value) for value in bundle.source_user_ids)}")
+    print(f"Structure roles: {', '.join(bundle.structural_roles) or 'none'}")
+    print(f"Action outcomes: {', '.join(bundle.action_outcomes) or 'none'}")
+    print(f"Terminal reason: {bundle.terminal_reason.value}")
+    print(f"Model roles    : {', '.join(role.value for role in bundle.model_roles)}")
+    attempts = bundle.model_attempts
+    print(f"Model attempts : {len(attempts)}")
+    if attempts:
+        total_input = sum(attempt.input_tokens or 0 for attempt in attempts)
+        total_output = sum(attempt.output_tokens or 0 for attempt in attempts)
+        total_latency = sum(attempt.latency_ms or 0 for attempt in attempts)
+        total_reserved = sum(attempt.reserved_micro_usd for attempt in attempts)
+        total_charged = sum(attempt.charged_micro_usd or 0 for attempt in attempts)
+        print(
+            "Attempt totals : "
+            f"input={total_input} output={total_output} latency_ms={total_latency} "
+            f"reserved_micro_usd={total_reserved} charged_micro_usd={total_charged}"
+        )
+        for attempt in attempts:
+            print(
+                f"Attempt {attempt.ordinal:>2}    : "
+                f"provider={attempt.provider.value} model={attempt.model} "
+                f"role={attempt.role.value} trigger={attempt.trigger.value} "
+                f"outcome={attempt.outcome.value if attempt.outcome else 'none'} "
+                f"status={attempt.status.value} "
+                f"input={attempt.input_tokens if attempt.input_tokens is not None else 'none'} "
+                f"output={attempt.output_tokens if attempt.output_tokens is not None else 'none'} "
+                f"latency_ms={attempt.latency_ms if attempt.latency_ms is not None else 'none'} "
+                f"reserved_micro_usd={attempt.reserved_micro_usd} "
+                "charged_micro_usd="
+                f"{attempt.charged_micro_usd if attempt.charged_micro_usd is not None else 'none'}"
+            )
+    print(f"Provider state : {bundle.provider_state.value}")
+    print(f"Budget state   : {bundle.budget_state.value}")
+    print(
+        f"Structural image: {len(bundle.structural_image)} bytes"
+        if bundle.structural_image is not None
+        else "Structural image: unavailable"
+    )
+    return 0
+
+
 # ── privacy-safe recovery evaluation ────────────────────────────────────────
 
+
 def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
-    """Run an explicit live-model replay without browser, sessions, or database."""
+    """Run an explicit live-model replay without opening a browser."""
     if not args.live:
         print(
             "Refusing to call the configured model without --live. "
@@ -870,19 +1070,57 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
         print("BOOKSAVER_LLM_API_KEY is required for live replay.", file=sys.stderr)
         return 2
 
+    from booksaver.domain.model_policy import (
+        AdaptiveModelPortfolio,
+        BrowserJobKind,
+        CallerKeyRef,
+        ModelCostEstimator,
+        ModelProfile,
+        ModelRole,
+        UsdAmount,
+    )
+
+    try:
+        evaluation_cost_limit = UsdAmount.from_decimal_string(args.max_cost_usd or "")
+    except ValueError:
+        print(
+            "An explicit --max-cost-usd decimal limit is required for live replay.",
+            file=sys.stderr,
+        )
+        return 2
+    if evaluation_cost_limit.micro_usd == 0:
+        print("--max-cost-usd must be greater than zero.", file=sys.stderr)
+        return 2
+    if args.persist and not args.qualify:
+        print("--persist is only valid with --qualify.", file=sys.stderr)
+        return 2
+    if args.qualify and args.fixture:
+        print(
+            "Qualification only accepts the packaged fixture corpus; custom fixtures "
+            "are exploratory and cannot be recorded.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.qualify and args.runs != 10:
+        print("Qualification requires exactly 10 runs per packaged fixture.", file=sys.stderr)
+        return 2
+
     from booksaver.evaluation import (
+        PACKAGED_QUALIFICATION_VERSION,
         ReplayFixtureError,
         ReplayRunner,
+        approved_recovery_profiles,
         curated_fixture_directory,
         load_fixture,
         load_fixture_directory,
+        plan_packaged_qualification,
+        plan_profile_replay,
+        run_packaged_qualification,
     )
     from booksaver.infrastructure.llm.anthropic_adapter import AnthropicAgentBrain
 
     fixture_path = (
-        Path(args.fixture).expanduser().resolve()
-        if args.fixture
-        else curated_fixture_directory()
+        Path(args.fixture).expanduser().resolve() if args.fixture else curated_fixture_directory()
     )
     try:
         fixtures = (
@@ -893,17 +1131,140 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
     except ReplayFixtureError as exc:
         print(f"Replay fixture rejected: {exc}", file=sys.stderr)
         return 2
+    cfg = _load_config_for_args(args)
+    portfolio = AdaptiveModelPortfolio()
+    profiles: tuple[ModelProfile, ...]
+    if args.qualify:
+        profiles = approved_recovery_profiles()
+    else:
+        profiles = (portfolio.primary(ModelRole.RECOVERY, "booking-browser-recovery-v5"),)
     maximum_calls = sum(fixture.max_calls for fixture in fixtures) * args.runs
-    if maximum_calls > 250:
+    if not args.qualify and maximum_calls > 250:
         print(
             "Replay plan rejected: the corpus and run count could make more than "
             "250 provider calls.",
             file=sys.stderr,
         )
         return 2
+    plan = (
+        plan_packaged_qualification(fixtures)
+        if args.qualify
+        else plan_profile_replay(fixtures, profiles, runs_per_fixture=args.runs)
+    )
+    if not args.qualify and plan.maximum_cost > evaluation_cost_limit:
+        print(
+            "Replay plan rejected before provider access: conservative maximum is "
+            f"{plan.maximum_cost.micro_usd} microUSD, above the explicit "
+            f"{evaluation_cost_limit.micro_usd} microUSD limit.",
+            file=sys.stderr,
+        )
+        return 2
 
-    cfg = _load_config_for_args(args)
-    brain = AnthropicAgentBrain(api_key=api_key, model=cfg.agent_settings.model)
+    if args.qualify:
+        from booksaver.application.model_policy import BrowserJobCostBudget
+        from booksaver.infrastructure.persistence.model_policy import (
+            SqliteQualificationRepository,
+            SqliteSpendLedger,
+        )
+
+        daily_limit = UsdAmount(cfg.agent_settings.max_deployment_daily_cost_micro_usd)
+        if evaluation_cost_limit > daily_limit:
+            print(
+                "--max-cost-usd cannot exceed the configured deployment UTC-day "
+                f"limit ({daily_limit.micro_usd} microUSD).",
+                file=sys.stderr,
+            )
+            return 2
+        db_path = cfg.data_directory.path / "booksaver.db"
+        with SqliteStore(db_path) as store:
+            owner = SqliteUserRepository(store).get_owner()
+            budget = BrowserJobCostBudget(
+                job_id=f"qualification-{uuid.uuid4().hex}",
+                job_kind=BrowserJobKind.QUALIFICATION,
+                caller_key_ref=CallerKeyRef(
+                    caller_user_id=owner.user_id,
+                    funding_mode="shared",
+                    provenance="owner_env",
+                ),
+                ledger=SqliteSpendLedger(store),
+                estimator=ModelCostEstimator(),
+                job_limit=evaluation_cost_limit,
+                day_limit=daily_limit,
+                preserve_opus_diagnostic=False,
+            )
+            report = run_packaged_qualification(
+                fixtures,
+                lambda profile: AnthropicAgentBrain(api_key=api_key, model=profile.model_id),
+                evaluation_cost_limit=evaluation_cost_limit,
+                budget=budget,
+            )
+            qualification_ids = (
+                tuple(
+                    SqliteQualificationRepository(store).save(profile.result)
+                    for profile in report.profiles
+                )
+                if args.persist
+                else ()
+            )
+        print(
+            "qualification-plan: "
+            f"corpus={PACKAGED_QUALIFICATION_VERSION}; "
+            f"fixtures={report.plan.fixture_count}; "
+            f"runs_per_fixture={report.plan.runs_per_fixture}; "
+            f"max_calls={report.plan.maximum_provider_calls}; "
+            f"max_cost_micro_usd={report.plan.maximum_cost.micro_usd}"
+        )
+        if report.plan.maximum_cost > evaluation_cost_limit:
+            print(
+                "qualification-plan-warning: conservative full-plan maximum exceeds "
+                "the explicit allowance; per-call admission will stop with a partial "
+                "failed report if actual progress consumes the allowance."
+            )
+        if report.stopped_reason is not None:
+            print(f"qualification-stopped: {report.stopped_reason}")
+        for profile in report.profiles:
+            metrics = profile.result.metrics
+            print(
+                f"{profile.model}: duty={profile.duty.value}; "
+                f"gate={profile.result.gate.value}; "
+                f"accuracy={metrics.correct_runs}/{metrics.runs}; "
+                f"diagnosis={metrics.diagnosis_correct_runs}/"
+                f"{metrics.diagnosis_runs}; "
+                f"schema={metrics.schema_valid_runs}/{metrics.runs}; "
+                f"prohibited={metrics.prohibited_action_executions}; "
+                f"calls={metrics.total_calls}; actions={metrics.total_actions}; "
+                f"latency_ms={metrics.latency_ms}; "
+                f"tokens={metrics.input_tokens}in/{metrics.output_tokens}out; "
+                f"estimated_cost_micro_usd={metrics.estimated_cost.micro_usd}"
+            )
+            for fixture_metrics in profile.fixtures:
+                outcomes = ",".join(
+                    f"{category}:{count}"
+                    for category, count in fixture_metrics.outcome_categories
+                )
+                print(
+                    f"  {fixture_metrics.fixture_id}: "
+                    f"accuracy={fixture_metrics.correct_runs}/"
+                    f"{fixture_metrics.runs}; "
+                    f"schema={fixture_metrics.schema_valid_runs}/"
+                    f"{fixture_metrics.runs}; "
+                    f"safe={fixture_metrics.safe_runs}/{fixture_metrics.runs}; "
+                    f"calls={fixture_metrics.total_actual_calls}; "
+                    f"actions={fixture_metrics.total_actions}; "
+                    f"latency_ms="
+                    f"{round(fixture_metrics.total_latency_seconds * 1_000)}; "
+                    f"tokens={fixture_metrics.total_input_tokens}in/"
+                    f"{fixture_metrics.total_output_tokens}out; "
+                    f"estimated_cost_micro_usd="
+                    f"{fixture_metrics.estimated_micro_usd}; "
+                    f"outcomes={outcomes}"
+                )
+        if qualification_ids:
+            print("qualification-recorded: " + ",".join(qualification_ids))
+        return 0 if report.passed else 1
+
+    model = getattr(cfg.agent_settings, "primary_model", cfg.agent_settings.model)
+    brain = AnthropicAgentBrain(api_key=api_key, model=model)
     runner = ReplayRunner()
     passed = True
     for fixture in fixtures:
@@ -912,8 +1273,7 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
         safe = aggregate.prohibited_action_executions == 0
         passed = passed and correct and safe
         categories = ", ".join(
-            f"{category}={count}"
-            for category, count in aggregate.outcome_categories
+            f"{category}={count}" for category, count in aggregate.outcome_categories
         )
         print(
             f"{aggregate.fixture_id}: correct={aggregate.correct_runs}/"
@@ -921,17 +1281,78 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
             f"calls={aggregate.total_actual_calls}; actions={aggregate.total_actions}; "
             f"tokens={aggregate.total_input_tokens}in/"
             f"{aggregate.total_output_tokens}out/{aggregate.total_tokens}total; "
-            f"latency={aggregate.total_latency_seconds:.2f}s; {categories}"
+            f"latency={aggregate.total_latency_seconds:.2f}s; "
+            f"estimated_cost_micro_usd={aggregate.estimated_micro_usd}; {categories}"
         )
     return 0 if passed else 1
 
 
+def cmd_validate_model_qualification(args: argparse.Namespace) -> int:
+    """Fail release validation unless both fixed profiles are locally approved."""
+    from booksaver.evaluation import (
+        PACKAGED_QUALIFICATION_VERSION,
+        approved_recovery_profiles,
+    )
+    from booksaver.infrastructure.persistence.model_policy import (
+        SqliteQualificationRepository,
+    )
+
+    cfg = _load_config_for_args(args)
+    db_path = cfg.data_directory.path / "booksaver.db"
+    if not db_path.exists():
+        print("Model qualification missing: no local database.", file=sys.stderr)
+        return 1
+    override_id = getattr(args, "override", None)
+    override_reason = getattr(args, "reason", None)
+    if bool(override_id) != bool(override_reason):
+        print(
+            "Qualification override requires both --override and --reason.",
+            file=sys.stderr,
+        )
+        return 2
+    failures: list[str] = []
+    with SqliteStore(db_path) as store:
+        repository = SqliteQualificationRepository(store)
+        if override_id:
+            assert isinstance(override_reason, str)
+            owner = SqliteUserRepository(store).get_owner()
+            try:
+                repository.record_owner_override(
+                    override_id,
+                    owner_user_id=owner.user_id,
+                    reason=override_reason,
+                    overridden_at=datetime.now(UTC),
+                )
+            except (KeyError, PermissionError, ValueError) as exc:
+                print(f"Qualification override rejected: {exc}", file=sys.stderr)
+                return 2
+            print(f"Qualification override recorded locally: {override_id}")
+        for profile in approved_recovery_profiles():
+            result = repository.latest(profile.identity, PACKAGED_QUALIFICATION_VERSION)
+            if result is None:
+                failures.append(f"{profile.model_id}=missing")
+            elif not result.is_approved:
+                failures.append(f"{profile.model_id}=failed")
+    if failures:
+        print(
+            "Model qualification rejected: " + ", ".join(failures),
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"Model qualification is valid for Sonnet 5 and Opus 5 ({PACKAGED_QUALIFICATION_VERSION})."
+    )
+    return 0
+
+
 # ── parser ────────────────────────────────────────────────────────────────────
+
 
 def _no_subcommand(parser: argparse.ArgumentParser) -> argparse.Namespace:
     def _help(args: argparse.Namespace) -> int:
         parser.print_help()
         return 1
+
     return _help  # type: ignore[return-value]
 
 
@@ -947,8 +1368,9 @@ def create_parser() -> argparse.ArgumentParser:
 
     # init
     p_init = sub.add_parser("init", help="Create data directory and sample config")
-    p_init.add_argument("--data-dir", metavar="PATH", dest="data_dir",
-                        help="Data directory (default: ~/.booksaver)")
+    p_init.add_argument(
+        "--data-dir", metavar="PATH", dest="data_dir", help="Data directory (default: ~/.booksaver)"
+    )
     p_init.set_defaults(func=cmd_init)
 
     # config
@@ -1017,8 +1439,9 @@ def create_parser() -> argparse.ArgumentParser:
     p_ck.set_defaults(func=_no_subcommand(p_ck))
     ck_sub = p_ck.add_subparsers(dest="checks_command")
     p_ck_list = ck_sub.add_parser("list", help="List recent checks for a booking")
-    p_ck_list.add_argument("booking_id", metavar="BOOKING_ID",
-                           help="Booking id (see: booksaver bookings list)")
+    p_ck_list.add_argument(
+        "booking_id", metavar="BOOKING_ID", help="Booking id (see: booksaver bookings list)"
+    )
     p_ck_list.add_argument("--limit", type=int, default=10, metavar="N")
     p_ck_list.set_defaults(func=cmd_checks_list)
     p_ck_trace = ck_sub.add_parser(
@@ -1027,10 +1450,23 @@ def create_parser() -> argparse.ArgumentParser:
     p_ck_trace.add_argument("check_id", metavar="CHECK_ID")
     p_ck_trace.set_defaults(func=cmd_checks_trace)
 
-    # recovery evaluation (explicit opt-in; simulated browser state only)
-    p_eval = sub.add_parser(
-        "evaluate", help="Run privacy-safe model evaluations (no live browser)"
+    # DOM-drift incidents (local-only operator diagnostics)
+    p_incidents = sub.add_parser("incidents", help="Inspect local DOM-maintenance incidents")
+    p_incidents.set_defaults(func=_no_subcommand(p_incidents))
+    incidents_sub = p_incidents.add_subparsers(dest="incidents_command")
+    p_incidents_list = incidents_sub.add_parser("list", help="List content-free incident metadata")
+    p_incidents_list.add_argument(
+        "--limit", type=int, choices=range(1, 501), default=50, metavar="N"
     )
+    p_incidents_list.set_defaults(func=cmd_incidents_list)
+    p_incidents_inspect = incidents_sub.add_parser(
+        "inspect", help="Decrypt one incident diagnostic locally"
+    )
+    p_incidents_inspect.add_argument("incident_id", metavar="INCIDENT_ID")
+    p_incidents_inspect.set_defaults(func=cmd_incidents_inspect)
+
+    # recovery evaluation (explicit opt-in; simulated browser state only)
+    p_eval = sub.add_parser("evaluate", help="Run privacy-safe model evaluations (no live browser)")
     p_eval.set_defaults(func=_no_subcommand(p_eval))
     eval_sub = p_eval.add_subparsers(dest="evaluate_command")
     p_eval_recovery = eval_sub.add_parser(
@@ -1041,15 +1477,42 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Approved sanitized fixture JSON file or directory (default: packaged corpus)",
     )
-    p_eval_recovery.add_argument(
-        "--runs", type=int, choices=range(1, 11), default=10, metavar="N"
-    )
+    p_eval_recovery.add_argument("--runs", type=int, choices=range(1, 11), default=10, metavar="N")
     p_eval_recovery.add_argument(
         "--live",
         action="store_true",
         help="Explicitly allow calls to the configured LLM provider",
     )
+    p_eval_recovery.add_argument(
+        "--max-cost-usd",
+        metavar="USD",
+        help="Required exact upper cost limit for this live evaluation",
+    )
+    p_eval_recovery.add_argument(
+        "--qualify",
+        action="store_true",
+        help="Run both approved profiles on the packaged corpus (10 runs each)",
+    )
+    p_eval_recovery.add_argument(
+        "--persist",
+        action="store_true",
+        help="Persist aggregate qualification results locally (requires --qualify)",
+    )
     p_eval_recovery.set_defaults(func=cmd_evaluate_recovery)
+    p_eval_qualification = eval_sub.add_parser(
+        "qualification",
+        help="Validate the locally recorded Sonnet/Opus release gate",
+    )
+    p_eval_qualification.add_argument(
+        "--override",
+        metavar="QUALIFICATION_ID",
+        help="Explicitly override one local failed qualification record",
+    )
+    p_eval_qualification.add_argument(
+        "--reason",
+        help="Required owner audit reason when --override is used",
+    )
+    p_eval_qualification.set_defaults(func=cmd_validate_model_qualification)
 
     # savings
     p_sv = sub.add_parser("savings", help="Savings opportunity commands")

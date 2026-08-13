@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from contextlib import AbstractContextManager
 from datetime import UTC, date, datetime, timedelta
@@ -9,8 +10,10 @@ from typing import Any
 
 import pytest
 
+from booksaver.application.model_policy import AdaptiveModelSession
 from booksaver.application.ports import PageContent
 from booksaver.daemon.check_coordinator import (
+    AdaptiveBrowserJobContext,
     CheckCoordinator,
     ImmediateAdmission,
     ImmediateCompletion,
@@ -26,9 +29,37 @@ from booksaver.domain.account_sync import (
     SynchronizationReport,
     SynchronizationTrigger,
 )
-from booksaver.domain.agent import AgentSettings
-from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
+from booksaver.domain.agent import (
+    AgentSettings,
+    CheckTrace,
+    ElementInfo,
+    Observation,
+    TraceEvent,
+    TraceKind,
+)
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomStepId,
+    OperatorAction,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
+)
+from booksaver.domain.check_result import (
+    CheckResult,
+    ExtractionMethod,
+    FailureCode,
+    FailureReason,
+)
 from booksaver.domain.errors import UserKeyInvalidError
+from booksaver.domain.model_policy import (
+    BrowserJobKind,
+    CallerKeyRef,
+    ModelAttemptAudit,
+    ModelRole,
+    ReservationStatus,
+    TokenEnvelope,
+    UsdAmount,
+)
 from booksaver.domain.models import Config
 from booksaver.domain.schedule import (
     ScheduledAdmission,
@@ -166,9 +197,7 @@ def _coordinator(
 
 def _add(tmp_path: Path, telegram_id: int, count: int = 1) -> tuple[int, list[Any]]:
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
-            telegram_id, UserRole.USER
-        )
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(telegram_id, UserRole.USER)
         bookings = [
             make_booking(f"{index:08d}-1111-4111-8111-111111111111")
             for index in range(1, count + 1)
@@ -192,9 +221,7 @@ def _scheduled_slot(tmp_path: Path, user_id: int, planned_at: datetime) -> SlotI
         planned_at=planned_at,
     )
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        return SqliteScheduledCheckSlotRepository(store).insert_daily_schedule(
-            (slot,)
-        )[0].identity
+        return SqliteScheduledCheckSlotRepository(store).insert_daily_schedule((slot,))[0].identity
 
 
 def test_scheduled_slot_is_not_claimed_until_shared_gate_is_available(
@@ -229,13 +256,11 @@ def test_scheduled_slot_runs_only_its_user_and_completes_durably(
     coordinator = _coordinator(tmp_path, checks=10)
     selected_user_id, selected_bookings = _add(tmp_path, 101, count=2)
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        foreign_user_id = SqliteUserRepository(store).get_or_create_by_telegram_id(
-            202, UserRole.USER
-        ).user_id
-        foreign_bookings = [make_booking("99999999-1111-4111-8111-111111111111")]
-        SqliteBookingRepository(store).add(
-            foreign_bookings[0], user_id=foreign_user_id
+        foreign_user_id = (
+            SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER).user_id
         )
+        foreign_bookings = [make_booking("99999999-1111-4111-8111-111111111111")]
+        SqliteBookingRepository(store).add(foreign_bookings[0], user_id=foreign_user_id)
     planned_at = datetime.now(UTC) - timedelta(seconds=1)
     identity = _scheduled_slot(tmp_path, selected_user_id, planned_at)
     ran: list[str] = []
@@ -260,6 +285,119 @@ def test_scheduled_slot_runs_only_its_user_and_completes_durably(
             selected_user_id, planned_at.date()
         )[0]
     assert persisted.status is SlotStatus.COMPLETED
+
+
+def test_check_now_shares_one_lazy_adaptive_job_across_sync_and_search(
+    tmp_path: Path,
+) -> None:
+    runtime = object()
+    budgets: list[Any] = []
+
+    class AdaptiveFactory:
+        def caller_key_ref_for_user(self, user_id: int) -> CallerKeyRef:
+            return CallerKeyRef(user_id, "shared", "owner_env")
+
+        def adaptive_runtime_for_user(self, _user_id: int, budget: Any) -> object:
+            budgets.append(budget)
+            return runtime
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: AdaptiveFactory(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+    )
+    _user_id, bookings = _add(tmp_path, 101)
+    seen: list[Any] = []
+    completed = threading.Event()
+
+    def fake_sync(
+        self: CheckCoordinator,
+        _store: Any,
+        _browser: Any,
+        _owner: int,
+        _trigger: Any,
+    ) -> SynchronizationReport:
+        seen.append(self._current_adaptive_job().runtime)  # noqa: SLF001
+        return _complete_sync(_store, _browser, _owner, _trigger)
+
+    def fake_run(
+        self: CheckCoordinator,
+        _store: Any,
+        _browser: Any,
+        _owner: int,
+        booking: Any,
+    ) -> CheckResult:
+        seen.append(self._current_adaptive_job().runtime)  # noqa: SLF001
+        return _failure(booking.booking_id)
+
+    coordinator._synchronize_user = MethodType(fake_sync, coordinator)  # type: ignore[method-assign]
+    coordinator._run_booking = MethodType(fake_run, coordinator)  # type: ignore[method-assign]
+
+    assert (
+        coordinator.request_immediate(
+            101,
+            bookings[0].booking_id,
+            lambda _outcome: completed.set(),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert seen == [runtime, runtime]
+    assert len(budgets) == 1
+    assert budgets[0].job_kind is BrowserJobKind.CHECK_NOW
+    assert coordinator.llm_calls_today == {}
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        rows = store.conn.execute("SELECT COUNT(*) FROM llm_cost_reservations").fetchone()[0]
+    assert rows == 0
+
+
+def test_adaptive_job_charges_legacy_counter_for_each_physical_reservation(
+    tmp_path: Path,
+) -> None:
+    calls = DailyCounter()
+
+    class AdaptiveFactory:
+        def caller_key_ref_for_user(self, user_id: int) -> CallerKeyRef:
+            return CallerKeyRef(user_id, "shared", "owner_env")
+
+        def adaptive_runtime_for_user(self, _user_id: int, _budget: Any) -> object:
+            return object()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: AdaptiveFactory(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        llm_calls_today=calls,
+    )
+    user_id, _bookings = _add(tmp_path, 101)
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        context = coordinator._build_adaptive_job_context(  # noqa: SLF001
+            store,
+            user_id,
+            BrowserJobKind.BOOKINGS_SYNC,
+        )
+        assert context is not None
+        first = AdaptiveModelSession(
+            role=ModelRole.INTERPRETATION,
+            prompt_version="inventory-test-v1",
+            budget=context.budget,
+        ).start(TokenEnvelope(1, 1))
+        second = AdaptiveModelSession(
+            role=ModelRole.RECOVERY,
+            prompt_version="recovery-test-v1",
+            budget=context.budget,
+        ).start(TokenEnvelope(1, 1))
+
+    assert first.attempt is not None
+    assert second.attempt is not None
+    assert calls.count(user_id) == 2
 
 
 def test_scheduled_slot_terminalizes_after_unexpected_check_failure(
@@ -310,9 +448,10 @@ def test_immediate_check_runs_in_background_and_shares_global_gate(tmp_path: Pat
     assert admission is ImmediateAdmission.ACCEPTED
     assert entered.wait(1)
 
-    assert coordinator.request_immediate(
-        101, bookings[0].booking_id, lambda _outcome: None
-    ) is ImmediateAdmission.BUSY
+    assert (
+        coordinator.request_immediate(101, bookings[0].booking_id, lambda _outcome: None)
+        is ImmediateAdmission.BUSY
+    )
     coordinator.run_scheduled()  # non-blocking skip while the manual worker owns the gate
     release.set()
     assert completed.wait(1)
@@ -327,11 +466,14 @@ def test_worker_reauthorizes_and_refuses_foreign_booking_without_count(tmp_path:
     completed = threading.Event()
     outcomes: list[ImmediateCompletion] = []
 
-    assert coordinator.request_immediate(
-        101,
-        bookings[0].booking_id,
-        lambda outcome: (outcomes.append(outcome), completed.set()),
-    ) is ImmediateAdmission.ACCEPTED
+    assert (
+        coordinator.request_immediate(
+            101,
+            bookings[0].booking_id,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
     assert completed.wait(1)
 
     assert outcomes == [ImmediateCompletion(ImmediateCompletionKind.UNAVAILABLE)]
@@ -346,11 +488,14 @@ def test_immediate_check_reports_scoped_auth_required_when_session_is_missing(
     completed = threading.Event()
     outcomes: list[ImmediateCompletion] = []
 
-    assert coordinator.request_immediate(
-        101,
-        bookings[0].booking_id,
-        lambda outcome: (outcomes.append(outcome), completed.set()),
-    ) is ImmediateAdmission.ACCEPTED
+    assert (
+        coordinator.request_immediate(
+            101,
+            bookings[0].booking_id,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
     assert completed.wait(1)
 
     result = outcomes[0].result
@@ -365,9 +510,7 @@ def test_completion_rechecks_booking_after_long_running_check(tmp_path: Path) ->
     completed = threading.Event()
     outcomes: list[ImmediateCompletion] = []
 
-    def delete_during_run(
-        self: Any, store: Any, browser: Any, owner: int, booking: Any
-    ) -> Any:
+    def delete_during_run(self: Any, store: Any, browser: Any, owner: int, booking: Any) -> Any:
         SqliteBookingRepository(store).delete(booking.booking_id)
         return _failure(booking.booking_id)
 
@@ -498,9 +641,7 @@ def test_scheduled_queue_skips_user_revoked_after_plan_without_cap_result(
         self: Any, store: SqliteStore, browser: Any, owner: int, booking: Any
     ) -> CheckResult:
         ran.append(booking.booking_id)
-        SqliteUserRepository(store).set_access_state(
-            user_id, UserAccessState.REVOKED
-        )
+        SqliteUserRepository(store).set_access_state(user_id, UserAccessState.REVOKED)
         return _failure(booking.booking_id)
 
     coordinator._run_booking = MethodType(  # type: ignore[method-assign]
@@ -512,9 +653,7 @@ def test_scheduled_queue_skips_user_revoked_after_plan_without_cap_result(
     assert coordinator.checks_today == {user_id: 1}
     unrun = next(booking for booking in bookings if booking.booking_id not in ran)
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        second_history = SqliteCheckHistoryRepository(store).get_recent(
-            unrun.booking_id
-        )
+        second_history = SqliteCheckHistoryRepository(store).get_recent(unrun.booking_id)
     assert second_history == []
 
 
@@ -524,9 +663,7 @@ def test_one_users_missing_session_does_not_stop_another_users_scheduled_check(
     sessions = _session_repo(tmp_path)
     first_user_id, first_bookings = _add(tmp_path, 101)
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        second_user = SqliteUserRepository(store).get_or_create_by_telegram_id(
-            202, UserRole.USER
-        )
+        second_user = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER)
         second_booking = make_booking("99999999-1111-4111-8111-111111111111")
         SqliteBookingRepository(store).add(second_booking, user_id=second_user.user_id)
     _seed_session(sessions, second_user.user_id)
@@ -566,12 +703,10 @@ def test_one_users_missing_session_does_not_stop_another_users_scheduled_check(
 
     assert ran == [second_user.user_id]
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        first_result = SqliteCheckHistoryRepository(store).get_recent(
-            first_bookings[0].booking_id
-        )[0]
-        second_result = SqliteCheckHistoryRepository(store).get_recent(
-            second_booking.booking_id
-        )[0]
+        first_result = SqliteCheckHistoryRepository(store).get_recent(first_bookings[0].booking_id)[
+            0
+        ]
+        second_result = SqliteCheckHistoryRepository(store).get_recent(second_booking.booking_id)[0]
     assert first_result.failure_reason is not None
     assert first_result.failure_reason.code is FailureCode.AUTH_REQUIRED
     assert second_result.failure_reason is not None
@@ -579,9 +714,7 @@ def test_one_users_missing_session_does_not_stop_another_users_scheduled_check(
     assert first_user_id != second_user.user_id
 
 
-def test_revoked_plan_snapshot_never_starts_browser(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_revoked_plan_snapshot_never_starts_browser(tmp_path: Path, monkeypatch: Any) -> None:
     user_id, _bookings = _add(tmp_path, 101)
     planned = threading.Event()
     browser_entries = 0
@@ -589,9 +722,7 @@ def test_revoked_plan_snapshot_never_starts_browser(
     def revoke_after_plan(**kwargs: Any) -> Any:
         plan = build_check_plan(**kwargs)
         with SqliteStore(tmp_path / "booksaver.db") as store:
-            SqliteUserRepository(store).set_access_state(
-                user_id, UserAccessState.REVOKED
-            )
+            SqliteUserRepository(store).set_access_state(user_id, UserAccessState.REVOKED)
         planned.set()
         return plan
 
@@ -604,9 +735,7 @@ def test_revoked_plan_snapshot_never_starts_browser(
         def __exit__(self, *args: object) -> None:
             return None
 
-    monkeypatch.setattr(
-        "booksaver.daemon.check_coordinator.build_check_plan", revoke_after_plan
-    )
+    monkeypatch.setattr("booksaver.daemon.check_coordinator.build_check_plan", revoke_after_plan)
     coordinator = CheckCoordinator(
         _config(tmp_path),
         threading.Event(),
@@ -645,11 +774,11 @@ def test_midflight_revocation_keeps_history_but_suppresses_post_check_effects(
             return None
 
         def run_authenticated(self, booking: Any, _snapshot: Any) -> CheckResult:
-                result = _failure(booking.booking_id)
-                self.history.add(result)
-                history_written.set()
-                assert revoked.wait(2)
-                return result
+            result = _failure(booking.booking_id)
+            self.history.add(result)
+            history_written.set()
+            assert revoked.wait(2)
+            return result
 
     monkeypatch.setattr(
         "booksaver.daemon.check_coordinator.BookingComSearchMonitor",
@@ -673,9 +802,7 @@ def test_midflight_revocation_keeps_history_but_suppresses_post_check_effects(
     def revoke_after_history() -> None:
         assert history_written.wait(2)
         with SqliteStore(tmp_path / "booksaver.db") as store:
-            SqliteUserRepository(store).set_access_state(
-                user_id, UserAccessState.REVOKED
-            )
+            SqliteUserRepository(store).set_access_state(user_id, UserAccessState.REVOKED)
         revoked.set()
 
     revoker = threading.Thread(target=revoke_after_history)
@@ -693,9 +820,7 @@ def test_midflight_revocation_keeps_history_but_suppresses_post_check_effects(
     assert len(history) == 1
 
 
-def test_capped_notice_is_suppressed_for_revoked_user(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_capped_notice_is_suppressed_for_revoked_user(tmp_path: Path, monkeypatch: Any) -> None:
     coordinator = _coordinator(tmp_path)
     user_id, _bookings = _add(tmp_path, 101)
     with SqliteStore(tmp_path / "booksaver.db") as store:
@@ -714,9 +839,7 @@ def test_capped_notice_is_suppressed_for_revoked_user(
         coordinator._send_capped_notice(store, user_id)
 
 
-def test_llm_allowance_caps_monitor_then_disables_llm(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_llm_allowance_caps_monitor_then_disables_llm(tmp_path: Path, monkeypatch: Any) -> None:
     llm_counter = DailyCounter()
     coordinator = _coordinator(tmp_path, llm_calls=5, llm_counter=llm_counter)
     user_id, bookings = _add(tmp_path, 101)
@@ -743,9 +866,7 @@ def test_llm_allowance_caps_monitor_then_disables_llm(
             self.history.add(result)
             return result
 
-    monkeypatch.setattr(
-        "booksaver.daemon.check_coordinator.BookingComSearchMonitor", FakeMonitor
-    )
+    monkeypatch.setattr("booksaver.daemon.check_coordinator.BookingComSearchMonitor", FakeMonitor)
     with SqliteStore(tmp_path / "booksaver.db") as store:
         coordinator._run_booking(store, object(), user_id, bookings[0])
         coordinator._run_booking(store, object(), user_id, bookings[0])
@@ -806,9 +927,7 @@ def test_scheduled_and_manual_boundary_uses_normal_history_trace_and_savings_pip
 ) -> None:
     browser = FakeInteractiveBrowser(
         titles=["Hotel Test"],
-        page_text=(
-            "Standard Double\n€ 350.00\nFree cancellation before 30 August 2026"
-        ),
+        page_text=("Standard Double\n€ 350.00\nFree cancellation before 30 August 2026"),
     )
     browser.property_url = (
         "https://www.booking.com/hotel/test.html?checkin=2026-09-01&"
@@ -854,9 +973,10 @@ def test_stopping_refuses_new_immediate_work(tmp_path: Path) -> None:
         inventory_synchronizer=_complete_sync,
     )
 
-    assert coordinator.request_immediate(
-        101, "booking", lambda _outcome: None
-    ) is ImmediateAdmission.STOPPING
+    assert (
+        coordinator.request_immediate(101, "booking", lambda _outcome: None)
+        is ImmediateAdmission.STOPPING
+    )
 
 
 def test_bookings_request_discovers_and_projects_authenticated_inventory(
@@ -864,9 +984,7 @@ def test_bookings_request_discovers_and_projects_authenticated_inventory(
 ) -> None:
     sessions = _session_repo(tmp_path)
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
-            101, UserRole.USER
-        )
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(101, UserRole.USER)
     _seed_session(sessions, user.user_id)
 
     class InventoryBrowser:
@@ -915,20 +1033,274 @@ def test_bookings_request_discovers_and_projects_authenticated_inventory(
     completed = threading.Event()
     outcomes: list[InventoryCompletion] = []
 
-    assert coordinator.request_inventory(
-        101,
-        lambda outcome: (outcomes.append(outcome), completed.set()),
-    ) is ImmediateAdmission.ACCEPTED
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
     assert completed.wait(1)
 
     assert outcomes[0].report is not None and outcomes[0].report.succeeded
-    assert outcomes[0].reservations[0].observation.property_name == (
-        "Synchronized Hotel"
-    )
+    assert outcomes[0].reservations[0].observation.property_name == ("Synchronized Hotel")
     with SqliteStore(tmp_path / "booksaver.db") as store:
         projected = SqliteBookingRepository(store).list_active_for_user(user.user_id)
     assert len(projected) == 1
     assert coordinator.llm_calls_today == {}
+
+
+def test_incident_resolution_runs_only_after_inventory_browser_closes(
+    tmp_path: Path,
+) -> None:
+    _add(tmp_path, 101)
+    browser_closed = threading.Event()
+    recorded: list[Any] = []
+
+    class ClosingBrowserContext(AbstractContextManager[object]):
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, *args: object) -> None:
+            browser_closed.set()
+
+    class Recorder:
+        def resolve_deterministic_success(self, **kwargs: Any) -> int:
+            assert browser_closed.is_set()
+            recorded.append(kwargs["step_id"])
+            return 0
+
+        def record_safely(self, _draft: Any) -> None:
+            raise AssertionError("deterministic success must not create a draft")
+
+    class RecorderContext(AbstractContextManager[Recorder]):
+        def __enter__(self) -> Recorder:
+            assert browser_closed.is_set()
+            return Recorder()
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=ClosingBrowserContext,
+        inventory_synchronizer=_complete_sync,
+        incident_recorder_factory=RecorderContext,
+    )
+    completed = threading.Event()
+    outcomes: list[InventoryCompletion] = []
+
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert outcomes[0].report is not None and outcomes[0].report.succeeded
+    assert recorded
+    assert coordinator.llm_calls_today == {}
+
+
+def test_incident_factory_failure_never_changes_inventory_completion(
+    tmp_path: Path,
+) -> None:
+    _add(tmp_path, 101)
+    browser_closed = threading.Event()
+
+    class ClosingBrowserContext(AbstractContextManager[object]):
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, *args: object) -> None:
+            browser_closed.set()
+
+    def failing_incident_factory() -> AbstractContextManager[Any]:
+        assert browser_closed.is_set()
+        raise RuntimeError("incident store unavailable")
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=ClosingBrowserContext,
+        inventory_synchronizer=_complete_sync,
+        incident_recorder_factory=failing_incident_factory,
+    )
+    completed = threading.Event()
+    outcomes: list[InventoryCompletion] = []
+
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert outcomes[0].report is not None and outcomes[0].report.succeeded
+    assert browser_closed.is_set()
+
+
+def test_predictable_inventory_failure_does_not_open_incident_sink(
+    tmp_path: Path,
+) -> None:
+    _add(tmp_path, 101)
+
+    def predictable_failure(
+        _store: Any,
+        _browser: Any,
+        _user_id: int,
+        _trigger: Any,
+    ) -> SynchronizationReport:
+        return SynchronizationReport(
+            run_id="known-auth",
+            completeness=InventoryCompleteness.FAILED,
+            discovered=0,
+            eligible=0,
+            ineligible=0,
+            failure_code=SynchronizationFailureCode.AUTH_REQUIRED,
+            failure_detail="send /connect",
+        )
+
+    def forbidden_factory() -> AbstractContextManager[Any]:
+        raise AssertionError("predictable failure must not reach the incident sink")
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        inventory_synchronizer=predictable_failure,
+        incident_recorder_factory=forbidden_factory,
+    )
+    completed = threading.Event()
+    outcomes: list[InventoryCompletion] = []
+
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert outcomes[0].report is not None
+    assert outcomes[0].report.failure_code is SynchronizationFailureCode.AUTH_REQUIRED
+
+
+def test_model_assisted_success_builds_one_sanitized_step_draft() -> None:
+    diagnosis = TerminalBrowserDiagnosis(
+        reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+        step_id=DomStepId.PRICE_PROPERTY_OPEN,
+        provenance=DiagnosisProvenance.SONNET_RECOVERED,
+        confidence=1.0,
+        evidence=frozenset(),
+        operator_action=OperatorAction.NONE,
+    )
+    attempt = ModelAttemptAudit(
+        reservation_id="reservation-test",
+        job_id="job-test",
+        ordinal=1,
+        provider="anthropic",
+        model="claude-sonnet-5",
+        role=ModelRole.RECOVERY.value,
+        trigger="initial_ambiguous",
+        outcome="recovered",
+        status=ReservationStatus.CHARGED,
+        reserved_cost=UsdAmount(1),
+        charged_cost=UsdAmount(1),
+        usage=None,
+        latency_ms=1,
+    )
+
+    class Budget:
+        def ordered_attempts(self) -> tuple[ModelAttemptAudit, ...]:
+            return (attempt,)
+
+    result = CheckResult.success(
+        booking_id="booking-test",
+        checked_at=datetime.now(UTC),
+        live_price=Money.of("100", "USD"),
+        extraction_method=ExtractionMethod.AGENT,
+        assisted_diagnoses=(diagnosis,),
+    )
+    observed_at = datetime.now(UTC)
+
+    class EvidenceBrowser:
+        def observe(self) -> Observation:
+            return Observation(
+                url="https://private.example/reservation?token=secret",
+                title="Secret property",
+                text="confirmation 123456789",
+                elements=(
+                    ElementInfo(
+                        ref="e1",
+                        role="button",
+                        label="Secret reservation",
+                        href="https://private.example/reservation/123",
+                    ),
+                    ElementInfo(ref="e2", role="input", label="Private confirmation"),
+                    ElementInfo(ref="e3", role="reservation-card", label="Private card"),
+                ),
+                screenshot=b"raw image must never cross the boundary",
+            )
+
+    evidence = CheckCoordinator._capture_incident_evidence(  # noqa: SLF001
+        browser=EvidenceBrowser(),
+        adaptive_job=AdaptiveBrowserJobContext(7, object(), Budget()),  # type: ignore[arg-type]
+        check_result=result,
+        check_trace=CheckTrace(
+            check_id=result.check_id,
+            booking_id=result.booking_id,
+            created_at=observed_at,
+            events=(
+                TraceEvent(
+                    seq=0,
+                    at=observed_at,
+                    kind=TraceKind.AGENT_OUTCOME,
+                    detail=json.dumps(
+                        {
+                            "outcome": "executed",
+                            "verified": True,
+                            "detail": "private rendered content",
+                        }
+                    ),
+                ),
+            ),
+        ),
+    )
+    drafts, resolved = CheckCoordinator._incident_handoffs(  # noqa: SLF001
+        user_id=7,
+        adaptive_job=AdaptiveBrowserJobContext(7, object(), Budget()),  # type: ignore[arg-type]
+        inventory_report=None,
+        check_result=result,
+        evidence=evidence,
+    )
+
+    assert evidence.structural_roles == ("button", "textbox")
+    assert evidence.action_outcomes == ("executed", "verified")
+    assert "private" not in repr(evidence).casefold()
+    assert "secret" not in repr(evidence).casefold()
+    assert len(drafts) == 1
+    assert drafts[0].occurrence.step_id is DomStepId.PRICE_PROPERTY_OPEN
+    assert drafts[0].diagnostic_bundle is not None
+    assert drafts[0].diagnostic_bundle.structural_roles == ("button", "textbox")
+    assert drafts[0].diagnostic_bundle.action_outcomes == ("executed", "verified")
+    assert drafts[0].diagnostic_bundle.structural_image is None
+    assert all(step is not DomStepId.PRICE_PROPERTY_OPEN for _journey, step, _at in resolved)
 
 
 def test_inventory_interpreter_call_is_charged_to_requesting_user(
@@ -936,9 +1308,7 @@ def test_inventory_interpreter_call_is_charged_to_requesting_user(
 ) -> None:
     sessions = _session_repo(tmp_path)
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
-            101, UserRole.USER
-        )
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(101, UserRole.USER)
     _seed_session(sessions, user.user_id)
 
     class InventoryBrowser:
@@ -959,9 +1329,7 @@ def test_inventory_interpreter_call_is_charged_to_requesting_user(
             return b"[]"
 
     class Interpreter:
-        def interpret(
-            self, _page_text: str, source_url: str
-        ) -> tuple[ReservationObservation, ...]:
+        def interpret(self, _page_text: str, source_url: str) -> tuple[ReservationObservation, ...]:
             return (
                 ReservationObservation(
                     remote_id="remote-assisted",
@@ -1000,10 +1368,13 @@ def test_inventory_interpreter_call_is_charged_to_requesting_user(
     completed = threading.Event()
     outcomes: list[InventoryCompletion] = []
 
-    assert coordinator.request_inventory(
-        101,
-        lambda outcome: (outcomes.append(outcome), completed.set()),
-    ) is ImmediateAdmission.ACCEPTED
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
     assert completed.wait(1)
 
     assert outcomes[0].report is not None
@@ -1022,9 +1393,7 @@ def test_inventory_with_no_daily_allowance_stays_deterministic_only(
 ) -> None:
     sessions = _session_repo(tmp_path)
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
-            101, UserRole.USER
-        )
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(101, UserRole.USER)
     _seed_session(sessions, user.user_id)
     cfg = _config(tmp_path)
     calls = DailyCounter()
@@ -1059,10 +1428,13 @@ def test_inventory_with_no_daily_allowance_stays_deterministic_only(
         llm_calls_today=calls,
     )
 
-    assert coordinator.request_inventory(
-        101,
-        lambda outcome: (outcomes.append(outcome), completed.set()),
-    ) is ImmediateAdmission.ACCEPTED
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
     assert completed.wait(1)
 
     assert outcomes[0].report is not None
@@ -1076,9 +1448,7 @@ def test_inventory_personal_key_failure_is_preserved_with_setkey_guidance(
 ) -> None:
     sessions = _session_repo(tmp_path)
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        user = SqliteUserRepository(store).get_or_create_by_telegram_id(
-            101, UserRole.USER
-        )
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(101, UserRole.USER)
     _seed_session(sessions, user.user_id)
 
     class Browser:
@@ -1114,10 +1484,13 @@ def test_inventory_personal_key_failure_is_preserved_with_setkey_guidance(
         session_repository=sessions,
     )
 
-    assert coordinator.request_inventory(
-        101,
-        lambda outcome: (outcomes.append(outcome), completed.set()),
-    ) is ImmediateAdmission.ACCEPTED
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda outcome: (outcomes.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
     assert completed.wait(1)
 
     report = outcomes[0].report
@@ -1151,16 +1524,12 @@ def test_check_now_synchronizes_before_resolving_booking(tmp_path: Path) -> None
     _user_id, bookings = _add(tmp_path, 101)
     completed = threading.Event()
 
-    def fake_run(
-        self: Any, store: Any, browser: Any, owner: int, booking: Any
-    ) -> CheckResult:
+    def fake_run(self: Any, store: Any, browser: Any, owner: int, booking: Any) -> CheckResult:
         events.append("price_check")
         return _failure(booking.booking_id)
 
     coordinator._run_booking = MethodType(fake_run, coordinator)  # type: ignore[method-assign]
-    coordinator.request_immediate(
-        101, bookings[0].booking_id, lambda _outcome: completed.set()
-    )
+    coordinator.request_immediate(101, bookings[0].booking_id, lambda _outcome: completed.set())
     assert completed.wait(1)
 
     assert events == [SynchronizationTrigger.CHECK_NOW.value, "price_check"]

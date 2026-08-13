@@ -9,11 +9,19 @@ from dataclasses import dataclass, replace
 from typing import cast
 from urllib.parse import urlsplit
 
-from booksaver.application.ports import AgentBrain, InteractiveBrowser
+from booksaver.application.model_policy import AdaptiveModelStopped
+from booksaver.application.ports import (
+    AgentBrain,
+    EscalatingAgentBrain,
+    InteractiveBrowser,
+    PopupAdoptingBrowser,
+    RegisteredPageStateResolver,
+)
 from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
     AgentBudget,
+    AgentDiagnosisReason,
     AgentHistoryEvent,
     AgentHistoryOutcome,
     AgentStopReason,
@@ -26,13 +34,45 @@ from booksaver.domain.agent import (
     blocked_action_reason,
     blocked_url_reason,
 )
-from booksaver.domain.check_result import FailureCode
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomStepId,
+    EvidenceCategory,
+    PageStateResolution,
+    PageStateSource,
+    PopupAdoptionResult,
+    PopupRefusalReason,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
+    operator_action_for_reason,
+)
+from booksaver.domain.check_result import FailureCode, failure_code_for_terminal
 from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.journey import JourneyStep
+from booksaver.domain.model_policy import EscalationTrigger, ModelStopReason
 
 from .trace import TraceRecorder, redact
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER_MODEL_STOPS = frozenset(
+    {
+        ModelStopReason.PROVIDER_AUTHENTICATION,
+        ModelStopReason.PROVIDER_UNAVAILABLE,
+        ModelStopReason.PROVIDER_RATE_LIMIT,
+        ModelStopReason.INVALID_PROVIDER_RESPONSE,
+    }
+)
+_BUDGET_MODEL_STOPS = frozenset(
+    {
+        ModelStopReason.TIME_LIMIT,
+        ModelStopReason.JOB_COST_LIMIT,
+        ModelStopReason.DAILY_COST_LIMIT,
+        ModelStopReason.MODEL_PRICING_UNAVAILABLE,
+        ModelStopReason.COST_ACCOUNTING_ERROR,
+        ModelStopReason.CLOCK_ROLLBACK,
+    }
+)
 
 _CAPTCHA_PAGE_PATTERN = re.compile(
     r"(are you a human|verify you are human|hcaptcha|px-captcha|unusual traffic)",
@@ -41,6 +81,12 @@ _CAPTCHA_PAGE_PATTERN = re.compile(
 _AUTH_PAGE_PATTERN = re.compile(
     r"(sign in to manage|log in to your account|enter your password|"
     r"verification code|two-factor authentication|multi-factor authentication)",
+    re.IGNORECASE,
+)
+_MFA_PAGE_PATTERN = re.compile(
+    r"(verification code|security code|one[- ]time (?:code|password)|"
+    r"two[- ]factor|multi-factor authentication|passkey|"
+    r"approve (?:this )?(?:sign[- ]?in|login))",
     re.IGNORECASE,
 )
 
@@ -62,6 +108,7 @@ class BrowserAgent:
         budget: AgentBudget,
         recorder: TraceRecorder,
         recovery_policy: RecoveryPolicy | None = None,
+        page_state_resolver: RegisteredPageStateResolver | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._browser = browser
@@ -69,12 +116,13 @@ class BrowserAgent:
         self._budget = budget
         self._recorder = recorder
         self._policy = recovery_policy or RecoveryPolicy()
+        self._page_state_resolver = page_state_resolver
         self._clock = clock
         self.last_screenshot: bytes | None = None
 
     def complete_step(
         self,
-        step: JourneyStep | str,
+        step: JourneyStep | DomStepId,
         goal: str,
         verify: Callable[[], bool],
         trigger: str,
@@ -83,9 +131,11 @@ class BrowserAgent:
     ) -> EscalationResult:
         """Recover one operation and return only after authoritative verification.
 
-        ``step`` accepts a stable string so account-inventory operations can use
-        the same controller without expanding the search-journey enum.
+        Account-inventory callers pass the registered ``DomStepId`` directly;
+        search callers retain their closed journey-step mapping.  Arbitrary
+        strings are deliberately rejected before observation or provider work.
         """
+        dom_step_id = _dom_step_id(step)
         trace_step = _trace_step(step)
         step_name = trace_step.value
         safe_trigger = _safe_detail(trigger)
@@ -109,6 +159,11 @@ class BrowserAgent:
         forced_reorientation_pending = False
         screenshot_requests = 0
         used_screenshot = False
+        popup_adopted = False
+        opus_pending = False
+        opus_trigger = EscalationTrigger.UNVERIFIED_SONNET_EXHAUSTION
+        opus_used = False
+        active_provenance = DiagnosisProvenance.SONNET_RECOVERED
         started_at = self._clock()
 
         try:
@@ -125,10 +180,15 @@ class BrowserAgent:
         preflight_problem = _observation_safety_problem(preflight)
         if preflight_problem is not None:
             detail, failure_code, stop_reason = preflight_problem
-            return self._stop(
-                trace_step, detail, failure_code, used_screenshot, stop_reason
+            return self._safety_stop(
+                trace_step,
+                dom_step_id,
+                preflight,
+                detail,
+                failure_code,
+                used_screenshot,
+                stop_reason,
             )
-
         # A verifier may read browser state, so it is only called after the
         # controllable page and every popup have passed the same destination
         # guards used before provider calls and actions.
@@ -147,8 +207,14 @@ class BrowserAgent:
             safety_problem = _observation_safety_problem(verified_state)
             if safety_problem is not None:
                 detail, failure_code, stop_reason = safety_problem
-                return self._stop(
-                    trace_step, detail, failure_code, used_screenshot, stop_reason
+                return self._safety_stop(
+                    trace_step,
+                    dom_step_id,
+                    verified_state,
+                    detail,
+                    failure_code,
+                    used_screenshot,
+                    stop_reason,
                 )
             self._recorder.agent_result(
                 cast("JourneyStep", trace_step),
@@ -158,6 +224,30 @@ class BrowserAgent:
                 ok=True,
                 detail=f"agent found {step_name} already complete",
             )
+
+        if self._page_state_resolver is not None and dom_step_id is not None:
+            try:
+                page_resolution = self._page_state_resolver.resolve(
+                    dom_step_id, preflight
+                )
+            except Exception:
+                return self._terminal_stop(
+                    trace_step,
+                    dom_step_id,
+                    TerminalBrowserReason.INFRASTRUCTURE_FAILURE,
+                    DiagnosisProvenance.INFRASTRUCTURE_STOP,
+                    used_screenshot,
+                )
+            if page_resolution.terminal_reason not in {
+                TerminalBrowserReason.POSTCONDITION_SATISFIED,
+                TerminalBrowserReason.CODE_VERIFICATION_REQUIRED,
+            }:
+                return self._page_state_stop(
+                    trace_step,
+                    dom_step_id,
+                    page_resolution,
+                    used_screenshot,
+                )
 
         try:
             while True:
@@ -196,8 +286,14 @@ class BrowserAgent:
                 safety_problem = _observation_safety_problem(observation)
                 if safety_problem is not None:
                     detail, failure_code, stop_reason = safety_problem
-                    return self._stop(
-                        trace_step, detail, failure_code, used_screenshot, stop_reason
+                    return self._safety_stop(
+                        trace_step,
+                        dom_step_id,
+                        observation,
+                        detail,
+                        failure_code,
+                        used_screenshot,
+                        stop_reason,
                     )
 
                 forced_screenshot_turn = forced_reorientation_pending
@@ -234,19 +330,38 @@ class BrowserAgent:
                     verification_condition=verification_condition,
                 )
                 self._budget.consume_llm_call()
+                is_opus_turn = False
                 try:
-                    action = self._brain.decide(context)
+                    if opus_pending:
+                        escalating_brain = cast("EscalatingAgentBrain", self._brain)
+                        action = escalating_brain.decide_with_escalation(
+                            context,
+                            opus_trigger,
+                        )
+                        opus_pending = False
+                        opus_used = True
+                        is_opus_turn = True
+                        active_provenance = DiagnosisProvenance.OPUS_RECOVERED
+                    else:
+                        action = self._brain.decide(context)
                 except UserKeyInvalidError:
                     raise
+                except AdaptiveModelStopped as exc:
+                    return self._model_stop(
+                        trace_step,
+                        dom_step_id,
+                        exc.reason,
+                        used_screenshot,
+                    )
                 except Exception as exc:
                     safe_error = _safe_error(exc, include_message=False)
                     logger.warning("Browser-agent provider call failed: %s", safe_error)
-                    return self._stop(
+                    return self._terminal_stop(
                         trace_step,
-                        f"browser-agent provider failed at {step_name}: {safe_error}",
-                        FailureCode.LLM_ERROR,
+                        dom_step_id,
+                        TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+                        DiagnosisProvenance.PROVIDER_STOP,
                         used_screenshot,
-                        AgentStopReason.PROVIDER_ERROR,
                     )
                 step_llm_calls += 1
                 self._budget.check_time()
@@ -281,13 +396,39 @@ class BrowserAgent:
                 if action.type is AgentActionType.GIVE_UP:
                     reason = _safe_detail(action.value or "no reason given")
                     stop_reason = action.stop_reason or _infer_stop_reason(reason)
+                    if is_opus_turn:
+                        return self._opus_diagnosis_stop(
+                            trace_step,
+                            dom_step_id,
+                            action,
+                            used_screenshot,
+                        )
+                    if stop_reason is AgentStopReason.PROVIDER_ERROR:
+                        return self._model_stop(
+                            trace_step,
+                            dom_step_id,
+                            ModelStopReason.INVALID_PROVIDER_RESPONSE,
+                            used_screenshot,
+                        )
+                    if (
+                        not opus_used
+                        and not opus_pending
+                        and stop_reason
+                        in {
+                            AgentStopReason.NO_PROGRESS,
+                            AgentStopReason.UNKNOWN,
+                        }
+                        and _has_measured_no_progress(history)
+                        and _supports_opus_escalation(self._brain)
+                    ):
+                        opus_pending = True
+                        opus_trigger = EscalationTrigger.SEMANTIC_NO_PROGRESS
+                        continue
                     return self._stop(
                         trace_step,
                         f"agent gave up at {step_name}: {reason}",
                         (
-                            FailureCode.LLM_ERROR
-                            if stop_reason is AgentStopReason.PROVIDER_ERROR
-                            else FailureCode.BUDGET_EXCEEDED
+                            FailureCode.BUDGET_EXCEEDED
                             if stop_reason is AgentStopReason.BUDGET_EXHAUSTED
                             else FailureCode.AGENT_NO_PROGRESS
                             if stop_reason is AgentStopReason.NO_PROGRESS
@@ -313,6 +454,13 @@ class BrowserAgent:
                         self._recorder.agent_outcome(
                             cast("JourneyStep", trace_step), event
                         )
+                        if is_opus_turn:
+                            return self._opus_diagnosis_stop(
+                                trace_step,
+                                dom_step_id,
+                                action,
+                                used_screenshot,
+                            )
                         continue
                     screenshot_requests += 1
                     tier2_pending = True
@@ -326,6 +474,13 @@ class BrowserAgent:
                     self._recorder.agent_outcome(
                         cast("JourneyStep", trace_step), event
                     )
+                    if is_opus_turn:
+                        return self._opus_diagnosis_stop(
+                            trace_step,
+                            dom_step_id,
+                            action,
+                            used_screenshot,
+                        )
                     continue
 
                 semantic_target = _semantic_action_key(action, observation)
@@ -352,7 +507,22 @@ class BrowserAgent:
                         no_progress_count=no_progress_count,
                         semantic_execution_count=executions,
                     )
+                    if is_opus_turn:
+                        return self._opus_diagnosis_stop(
+                            trace_step,
+                            dom_step_id,
+                            action,
+                            used_screenshot,
+                        )
                     if forced_screenshot_turn:
+                        if (
+                            not opus_used
+                            and not opus_pending
+                            and _supports_opus_escalation(self._brain)
+                        ):
+                            opus_pending = True
+                            opus_trigger = EscalationTrigger.SEMANTIC_NO_PROGRESS
+                            continue
                         return self._stop(
                             trace_step,
                             f"agent made no progress after screenshot reorientation "
@@ -371,12 +541,31 @@ class BrowserAgent:
                     self._recorder.agent_blocked(
                         cast("JourneyStep", trace_step), blocked
                     )
-                    return self._stop(
+                    history.append(
+                        event := AgentHistoryEvent(
+                            outcome=AgentHistoryOutcome.REFUSED,
+                            detail="proposed action was rejected by the code guard",
+                            action=action,
+                            semantic_target=semantic_target,
+                        )
+                    )
+                    self._recorder.agent_outcome(
+                        cast("JourneyStep", trace_step), event
+                    )
+                    if (
+                        not is_opus_turn
+                        and not opus_pending
+                        and _supports_opus_escalation(self._brain)
+                    ):
+                        opus_pending = True
+                        opus_trigger = EscalationTrigger.UNSAFE_PROPOSAL_REJECTED
+                        continue
+                    return self._terminal_stop(
                         trace_step,
-                        f"action refused by guard: {blocked}",
-                        FailureCode.BLOCKED_ACTION,
+                        dom_step_id,
+                        TerminalBrowserReason.PROHIBITED_ACTION,
+                        DiagnosisProvenance.POLICY_STOP,
                         used_screenshot,
-                        AgentStopReason.UNSAFE_ACTION,
                     )
 
                 semantic_executions[semantic_target] = executions + 1
@@ -394,14 +583,57 @@ class BrowserAgent:
                     execution_error = execution_error or _safe_error(exc)
                 self._budget.check_time()
 
+                popup_opened = _popup_opened(observation, after)
+                if popup_opened:
+                    if popup_adopted:
+                        return self._stop(
+                            trace_step,
+                            "browser opened an additional popup after control transfer",
+                            FailureCode.BLOCKED_ACTION,
+                            used_screenshot,
+                            AgentStopReason.UNSAFE_ACTION,
+                        )
+                    adoption = _adopt_popup(self._browser, dom_step_id)
+                    if not adoption.is_adopted:
+                        detail, failure_code, stop_reason = _popup_refusal_stop(adoption)
+                        self._recorder.agent_blocked(
+                            cast("JourneyStep", trace_step), detail
+                        )
+                        return self._stop(
+                            trace_step,
+                            detail,
+                            failure_code,
+                            used_screenshot,
+                            stop_reason,
+                        )
+                    popup_adopted = True
+                    try:
+                        after = self._browser.observe()
+                    except Exception as exc:
+                        return self._stop(
+                            trace_step,
+                            f"adopted popup could not be inspected safely at {step_name}: "
+                            f"{_safe_error(exc, include_message=False)}",
+                            FailureCode.AGENT_GAVE_UP,
+                            used_screenshot,
+                            AgentStopReason.MISSING_BROWSER_CAPABILITY,
+                        )
+                    self._budget.check_time()
+
                 safety_problem = _observation_safety_problem(after)
                 if safety_problem is not None:
                     detail, failure_code, stop_reason = safety_problem
                     self._recorder.agent_blocked(
                         cast("JourneyStep", trace_step), detail
                     )
-                    return self._stop(
-                        trace_step, detail, failure_code, used_screenshot, stop_reason
+                    return self._safety_stop(
+                        trace_step,
+                        dom_step_id,
+                        after,
+                        detail,
+                        failure_code,
+                        used_screenshot,
+                        stop_reason,
                     )
 
                 goal_verified = _safe_verify(verify)
@@ -420,8 +652,10 @@ class BrowserAgent:
                     safety_problem = _observation_safety_problem(verified_state)
                     if safety_problem is not None:
                         detail, failure_code, stop_reason = safety_problem
-                        return self._stop(
+                        return self._safety_stop(
                             trace_step,
+                            dom_step_id,
+                            verified_state,
                             detail,
                             failure_code,
                             used_screenshot,
@@ -434,6 +668,7 @@ class BrowserAgent:
                     after=after,
                     goal_verified=goal_verified,
                     execution_error=execution_error,
+                    popup_opened_override=popup_opened,
                 )
                 history.append(event)
                 next_no_progress = 0 if event.made_progress else no_progress_count + 1
@@ -452,6 +687,19 @@ class BrowserAgent:
                         ok=True,
                         detail=f"agent completed {step_name}",
                         used_screenshot=used_screenshot,
+                        diagnosis=(
+                            _recovery_diagnosis(dom_step_id, active_provenance)
+                            if dom_step_id is not None
+                            else None
+                        ),
+                    )
+
+                if is_opus_turn:
+                    return self._opus_diagnosis_stop(
+                        trace_step,
+                        dom_step_id,
+                        action,
+                        used_screenshot,
                     )
 
                 if event.made_progress:
@@ -461,6 +709,14 @@ class BrowserAgent:
 
                 no_progress_count += 1
                 if forced_screenshot_turn and observation.screenshot is not None:
+                    if (
+                        not opus_used
+                        and not opus_pending
+                        and _supports_opus_escalation(self._brain)
+                    ):
+                        opus_pending = True
+                        opus_trigger = EscalationTrigger.SEMANTIC_NO_PROGRESS
+                        continue
                     return self._stop(
                         trace_step,
                         f"agent made no progress after screenshot reorientation at "
@@ -470,6 +726,14 @@ class BrowserAgent:
                         AgentStopReason.NO_PROGRESS,
                     )
                 if no_progress_count >= self._policy.no_progress_before_screenshot:
+                    if opus_used:
+                        return self._stop(
+                            trace_step,
+                            f"Opus did not verify {step_name}",
+                            FailureCode.DOM_AMBIGUITY,
+                            used_screenshot,
+                            AgentStopReason.NO_PROGRESS,
+                        )
                     tier2_pending = True
                     forced_reorientation_pending = True
 
@@ -489,6 +753,9 @@ class BrowserAgent:
         failure_code: FailureCode,
         used_screenshot: bool,
         stop_reason: AgentStopReason,
+        *,
+        model_stop_reason: ModelStopReason | None = None,
+        diagnosis: TerminalBrowserDiagnosis | None = None,
     ) -> EscalationResult:
         self._recorder.agent_outcome(
             cast("JourneyStep", step),
@@ -505,6 +772,175 @@ class BrowserAgent:
             failure_code=failure_code,
             used_screenshot=used_screenshot,
             stop_reason=stop_reason,
+            model_stop_reason=model_stop_reason,
+            diagnosis=diagnosis,
+        )
+
+    def _model_stop(
+        self,
+        step: _TraceStep,
+        dom_step_id: DomStepId | None,
+        model_stop: ModelStopReason,
+        used_screenshot: bool,
+    ) -> EscalationResult:
+        failure_code, agent_stop, reason, provenance = _model_stop_outcome(model_stop)
+        diagnosis = (
+            TerminalBrowserDiagnosis(
+                reason=reason,
+                step_id=dom_step_id,
+                provenance=provenance,
+                confidence=1.0,
+                evidence=frozenset(),
+                operator_action=operator_action_for_reason(reason),
+                model_stop_reason=model_stop,
+            )
+            if dom_step_id is not None
+            else None
+        )
+        return self._stop(
+            step,
+            f"adaptive model stopped at {step.value}: {model_stop.value}",
+            failure_code,
+            used_screenshot,
+            agent_stop,
+            model_stop_reason=model_stop,
+            diagnosis=diagnosis,
+        )
+
+    def _opus_diagnosis_stop(
+        self,
+        step: _TraceStep,
+        dom_step_id: DomStepId,
+        action: AgentAction,
+        used_screenshot: bool,
+    ) -> EscalationResult:
+        """Turn the sole unverified Opus response into a bounded diagnosis.
+
+        An actionless Opus ``give_up`` may return the strict advisory diagnosis
+        fields.  A safe action that still fails the code verifier is diagnosed
+        as unresolved ambiguity; it is never mislabeled as a deterministic
+        business failure or a generic policy stop.
+        """
+
+        reason = {
+            AgentDiagnosisReason.UNSUPPORTED_PAGE: TerminalBrowserReason.UNSUPPORTED_PAGE,
+            AgentDiagnosisReason.UNRESOLVED_AMBIGUITY: (
+                TerminalBrowserReason.UNRESOLVED_AMBIGUITY
+            ),
+            AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED: (
+                TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
+            ),
+            None: TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+        }[action.diagnosis_reason]
+        return self._terminal_stop(
+            step,
+            dom_step_id,
+            reason,
+            DiagnosisProvenance.OPUS_DIAGNOSED,
+            used_screenshot,
+            confidence=(
+                action.diagnosis_confidence
+                if action.diagnosis_confidence is not None
+                else 0.5
+            ),
+        )
+
+    def _safety_stop(
+        self,
+        step: _TraceStep,
+        dom_step_id: DomStepId | None,
+        observation: Observation,
+        detail: str,
+        failure_code: FailureCode,
+        used_screenshot: bool,
+        agent_stop: AgentStopReason,
+    ) -> EscalationResult:
+        if dom_step_id is None:
+            return self._stop(
+                step, detail, failure_code, used_screenshot, agent_stop
+            )
+        return self._terminal_stop(
+            step,
+            dom_step_id,
+            _terminal_reason_for_safety(observation, agent_stop),
+            DiagnosisProvenance.DETERMINISTIC,
+            used_screenshot,
+        )
+
+    def _page_state_stop(
+        self,
+        step: _TraceStep,
+        dom_step_id: DomStepId,
+        resolution: PageStateResolution,
+        used_screenshot: bool,
+    ) -> EscalationResult:
+        if resolution.model_stop_reason is not None:
+            return self._model_stop(
+                step,
+                dom_step_id,
+                resolution.model_stop_reason,
+                used_screenshot,
+            )
+        source = (
+            resolution.classification.source
+            if resolution.classification is not None
+            else None
+        )
+        provenance = {
+            None: DiagnosisProvenance.INFRASTRUCTURE_STOP,
+            PageStateSource.DETERMINISTIC: DiagnosisProvenance.DETERMINISTIC,
+            PageStateSource.SONNET: DiagnosisProvenance.SONNET_DIAGNOSED,
+            PageStateSource.OPUS: DiagnosisProvenance.OPUS_DIAGNOSED,
+        }[source]
+        confidence = (
+            resolution.classification.confidence
+            if resolution.classification is not None
+            else 1.0
+        )
+        evidence = (
+            resolution.classification.evidence
+            if resolution.classification is not None
+            else frozenset()
+        )
+        return self._terminal_stop(
+            step,
+            dom_step_id,
+            resolution.terminal_reason,
+            provenance,
+            used_screenshot,
+            confidence=confidence,
+            evidence=evidence,
+        )
+
+    def _terminal_stop(
+        self,
+        step: _TraceStep,
+        dom_step_id: DomStepId,
+        reason: TerminalBrowserReason,
+        provenance: DiagnosisProvenance,
+        used_screenshot: bool,
+        *,
+        confidence: float = 1.0,
+        evidence: frozenset[EvidenceCategory] = frozenset(),
+    ) -> EscalationResult:
+        diagnosis = TerminalBrowserDiagnosis(
+            reason=reason,
+            step_id=dom_step_id,
+            provenance=provenance,
+            confidence=confidence,
+            evidence=evidence,
+            operator_action=operator_action_for_reason(reason),
+            code_maintenance_required=(
+                reason is TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
+            ),
+        )
+        return self._stop(
+            step,
+            f"registered page-state resolution stopped at {step.value}: {reason.value}",
+            failure_code_for_terminal(reason),
+            used_screenshot,
+            _agent_stop_for_terminal(reason),
+            diagnosis=diagnosis,
         )
 
     def _with_screenshot(self, observation: Observation) -> Observation:
@@ -518,8 +954,217 @@ class BrowserAgent:
             return observation
 
 
-def _trace_step(step: JourneyStep | str) -> _TraceStep:
-    return _TraceStep(step.value if isinstance(step, JourneyStep) else step)
+def _trace_step(step: JourneyStep | DomStepId) -> _TraceStep:
+    return _TraceStep(step.value)
+
+
+def _supports_opus_escalation(brain: AgentBrain) -> bool:
+    return isinstance(brain, EscalatingAgentBrain)
+
+
+def _has_measured_no_progress(history: list[AgentHistoryEvent]) -> bool:
+    """Whether code observed an attempted operation without semantic progress."""
+
+    return any(
+        event.action is not None
+        and event.outcome
+        in {
+            AgentHistoryOutcome.EXECUTED,
+            AgentHistoryOutcome.FAILED,
+            AgentHistoryOutcome.REFUSED,
+        }
+        and not event.made_progress
+        for event in history
+    )
+
+
+def _recovery_diagnosis(
+    step_id: DomStepId,
+    provenance: DiagnosisProvenance,
+) -> TerminalBrowserDiagnosis:
+    return TerminalBrowserDiagnosis(
+        reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+        step_id=step_id,
+        provenance=provenance,
+        confidence=1.0,
+        evidence=frozenset(),
+        operator_action=operator_action_for_reason(
+            TerminalBrowserReason.POSTCONDITION_SATISFIED
+        ),
+    )
+
+
+def _model_stop_outcome(
+    stop: ModelStopReason,
+) -> tuple[
+    FailureCode,
+    AgentStopReason,
+    TerminalBrowserReason,
+    DiagnosisProvenance,
+]:
+    reason = {
+        ModelStopReason.AUTHENTICATION_REQUIRED: TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+        ModelStopReason.MFA_REQUIRED: TerminalBrowserReason.MFA_REQUIRED,
+        ModelStopReason.CAPTCHA: TerminalBrowserReason.BOT_WALL,
+        ModelStopReason.BOT_WALL: TerminalBrowserReason.BOT_WALL,
+        ModelStopReason.PROTECTED_DESTINATION: TerminalBrowserReason.BLOCKED_DESTINATION,
+        ModelStopReason.PROHIBITED_ACTION: TerminalBrowserReason.PROHIBITED_ACTION,
+        ModelStopReason.DETERMINISTIC_REJECTION: TerminalBrowserReason.DETERMINISTIC_REJECTION,
+        ModelStopReason.OBSERVATION_UNAVAILABLE: TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+        ModelStopReason.PROVIDER_AUTHENTICATION: TerminalBrowserReason.PROVIDER_AUTHENTICATION,
+        ModelStopReason.PROVIDER_UNAVAILABLE: TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+        ModelStopReason.PROVIDER_RATE_LIMIT: TerminalBrowserReason.PROVIDER_RATE_LIMIT,
+        ModelStopReason.CALLER_REVOKED: TerminalBrowserReason.CALLER_REVOKED,
+        ModelStopReason.TIME_LIMIT: TerminalBrowserReason.TIME_LIMIT,
+        ModelStopReason.JOB_COST_LIMIT: TerminalBrowserReason.JOB_COST_LIMIT,
+        ModelStopReason.DAILY_COST_LIMIT: TerminalBrowserReason.DAILY_COST_LIMIT,
+        ModelStopReason.MODEL_PRICING_UNAVAILABLE: (
+            TerminalBrowserReason.MODEL_PRICING_UNAVAILABLE
+        ),
+        ModelStopReason.MODEL_PROFILE_UNQUALIFIED: (
+            TerminalBrowserReason.MODEL_PROFILE_UNQUALIFIED
+        ),
+        ModelStopReason.MODEL_NOT_APPROVED: TerminalBrowserReason.MODEL_NOT_APPROVED,
+        ModelStopReason.INVALID_PROVIDER_RESPONSE: (
+            TerminalBrowserReason.INVALID_PROVIDER_RESPONSE
+        ),
+        ModelStopReason.OPUS_EXHAUSTED: TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+        ModelStopReason.COST_ACCOUNTING_ERROR: TerminalBrowserReason.COST_ACCOUNTING_ERROR,
+        ModelStopReason.CLOCK_ROLLBACK: TerminalBrowserReason.CLOCK_ROLLBACK,
+    }[stop]
+    if stop in _PROVIDER_MODEL_STOPS:
+        return (
+            failure_code_for_terminal(reason),
+            AgentStopReason.PROVIDER_ERROR,
+            reason,
+            DiagnosisProvenance.PROVIDER_STOP,
+        )
+    if stop in _BUDGET_MODEL_STOPS:
+        return (
+            failure_code_for_terminal(reason),
+            AgentStopReason.BUDGET_EXHAUSTED,
+            reason,
+            DiagnosisProvenance.BUDGET_STOP,
+        )
+    if stop in {ModelStopReason.MODEL_PROFILE_UNQUALIFIED, ModelStopReason.MODEL_NOT_APPROVED}:
+        return (
+            failure_code_for_terminal(reason),
+            AgentStopReason.PROVIDER_ERROR,
+            reason,
+            DiagnosisProvenance.POLICY_STOP,
+        )
+    if stop is ModelStopReason.CALLER_REVOKED:
+        return (
+            failure_code_for_terminal(reason),
+            AgentStopReason.PROVIDER_ERROR,
+            reason,
+            DiagnosisProvenance.POLICY_STOP,
+        )
+    if stop in {
+        ModelStopReason.AUTHENTICATION_REQUIRED,
+        ModelStopReason.MFA_REQUIRED,
+    }:
+        return (
+            failure_code_for_terminal(reason),
+            AgentStopReason.AUTHENTICATION_REQUIRED,
+            reason,
+            DiagnosisProvenance.POLICY_STOP,
+        )
+    if stop in {ModelStopReason.CAPTCHA, ModelStopReason.BOT_WALL}:
+        return (
+            failure_code_for_terminal(reason),
+            AgentStopReason.CAPTCHA,
+            reason,
+            DiagnosisProvenance.POLICY_STOP,
+        )
+    if stop in {
+        ModelStopReason.PROTECTED_DESTINATION,
+        ModelStopReason.PROHIBITED_ACTION,
+    }:
+        return (
+            failure_code_for_terminal(reason),
+            AgentStopReason.UNSAFE_ACTION,
+            reason,
+            DiagnosisProvenance.POLICY_STOP,
+        )
+    if stop is ModelStopReason.OBSERVATION_UNAVAILABLE:
+        return (
+            failure_code_for_terminal(reason),
+            AgentStopReason.MISSING_BROWSER_CAPABILITY,
+            reason,
+            DiagnosisProvenance.INFRASTRUCTURE_STOP,
+        )
+    return (
+        failure_code_for_terminal(reason),
+        AgentStopReason.NO_PROGRESS,
+        reason,
+        DiagnosisProvenance.POLICY_STOP,
+    )
+
+
+def _agent_stop_for_terminal(reason: TerminalBrowserReason) -> AgentStopReason:
+    if reason in {
+        TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+        TerminalBrowserReason.MFA_REQUIRED,
+    }:
+        return AgentStopReason.AUTHENTICATION_REQUIRED
+    if reason is TerminalBrowserReason.BOT_WALL:
+        return AgentStopReason.CAPTCHA
+    if reason in {
+        TerminalBrowserReason.BLOCKED_DESTINATION,
+        TerminalBrowserReason.PROHIBITED_ACTION,
+        TerminalBrowserReason.POPUP_REFUSED,
+    }:
+        return AgentStopReason.UNSAFE_ACTION
+    if reason in {
+        TerminalBrowserReason.PROVIDER_AUTHENTICATION,
+        TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+        TerminalBrowserReason.PROVIDER_RATE_LIMIT,
+        TerminalBrowserReason.MODEL_PRICING_UNAVAILABLE,
+        TerminalBrowserReason.MODEL_PROFILE_UNQUALIFIED,
+        TerminalBrowserReason.MODEL_NOT_APPROVED,
+        TerminalBrowserReason.INVALID_PROVIDER_RESPONSE,
+        TerminalBrowserReason.CALLER_REVOKED,
+    }:
+        return AgentStopReason.PROVIDER_ERROR
+    if reason in {
+        TerminalBrowserReason.TIME_LIMIT,
+        TerminalBrowserReason.JOB_COST_LIMIT,
+        TerminalBrowserReason.DAILY_COST_LIMIT,
+        TerminalBrowserReason.COST_ACCOUNTING_ERROR,
+        TerminalBrowserReason.CLOCK_ROLLBACK,
+    }:
+        return AgentStopReason.BUDGET_EXHAUSTED
+    if reason in {
+        TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+        TerminalBrowserReason.INFRASTRUCTURE_FAILURE,
+    }:
+        return AgentStopReason.MISSING_BROWSER_CAPABILITY
+    if reason is TerminalBrowserReason.EXPLICIT_UNAVAILABLE:
+        return AgentStopReason.EXPLICIT_UNAVAILABLE
+    return AgentStopReason.NO_PROGRESS
+
+
+def _terminal_reason_for_safety(
+    observation: Observation, stop: AgentStopReason
+) -> TerminalBrowserReason:
+    if stop is AgentStopReason.AUTHENTICATION_REQUIRED:
+        visible = f"{observation.title}\n{observation.text[:30_000]}"
+        return (
+            TerminalBrowserReason.MFA_REQUIRED
+            if _MFA_PAGE_PATTERN.search(visible)
+            else TerminalBrowserReason.AUTHENTICATION_REQUIRED
+        )
+    if stop is AgentStopReason.CAPTCHA:
+        return TerminalBrowserReason.BOT_WALL
+    if stop is AgentStopReason.MISSING_BROWSER_CAPABILITY:
+        return TerminalBrowserReason.OBSERVATION_UNAVAILABLE
+    if any(
+        blocked_url_reason(candidate) is not None
+        for candidate in (observation.url, *observation.popup_urls)
+    ):
+        return TerminalBrowserReason.PROHIBITED_ACTION
+    return TerminalBrowserReason.BLOCKED_DESTINATION
 
 
 def _target_for(action: AgentAction, observation: Observation) -> ElementInfo | None:
@@ -658,6 +1303,95 @@ def _semantic_action_key(action: AgentAction, observation: Observation) -> str:
     return f"{action.type.value}:{digest}"
 
 
+_JOURNEY_DOM_STEPS = {
+    JourneyStep.OPEN_HOME: DomStepId.PRICE_SEARCH_QUERY_SUBMISSION,
+    JourneyStep.DISMISS_OVERLAYS: DomStepId.PRICE_CONSENT_OVERLAY,
+    JourneyStep.FILL_SEARCH: DomStepId.PRICE_SEARCH_QUERY_SUBMISSION,
+    JourneyStep.SUBMIT_SEARCH: DomStepId.PRICE_SEARCH_QUERY_SUBMISSION,
+    JourneyStep.LOCATE_PROPERTY: DomStepId.PRICE_PROPERTY_LOCATE,
+    JourneyStep.OPEN_PROPERTY: DomStepId.PRICE_PROPERTY_OPEN,
+    JourneyStep.VERIFY_CONTEXT: DomStepId.PRICE_CONTEXT_VERIFY,
+    JourneyStep.READ_ROOM_TABLE: DomStepId.PRICE_ROOM_RATE_READINESS,
+    JourneyStep.ALIGN_CURRENCY: DomStepId.PRICE_CURRENCY_ALIGN,
+}
+
+
+def _dom_step_id(step: JourneyStep | DomStepId) -> DomStepId:
+    if isinstance(step, DomStepId):
+        return step
+    if isinstance(step, JourneyStep):
+        return _JOURNEY_DOM_STEPS[step]
+    raise TypeError("browser recovery requires a registered DOM step")
+
+
+def _popup_opened(before: Observation, after: Observation) -> bool:
+    return after.popup_count > before.popup_count or bool(
+        set(after.popup_urls) - set(before.popup_urls)
+    )
+
+
+def _adopt_popup(
+    browser: InteractiveBrowser, step_id: DomStepId | None
+) -> PopupAdoptionResult:
+    if step_id is None:
+        return PopupAdoptionResult(
+            refusal_reason=PopupRefusalReason.IRRELEVANT_TO_STEP
+        )
+    if not isinstance(browser, PopupAdoptingBrowser):
+        return PopupAdoptionResult(
+            refusal_reason=PopupRefusalReason.OBSERVATION_UNAVAILABLE
+        )
+    try:
+        return browser.adopt_read_only_popup(step_id)
+    except Exception:
+        return PopupAdoptionResult(
+            refusal_reason=PopupRefusalReason.OBSERVATION_UNAVAILABLE
+        )
+
+
+def _popup_refusal_stop(
+    result: PopupAdoptionResult,
+) -> tuple[str, FailureCode, AgentStopReason]:
+    reason = result.refusal_reason or PopupRefusalReason.OBSERVATION_UNAVAILABLE
+    details = {
+        PopupRefusalReason.NONE_OPENED: "browser popup was no longer available to adopt",
+        PopupRefusalReason.MULTIPLE_OPENED: (
+            "browser opened multiple or additional popups; none was adopted"
+        ),
+        PopupRefusalReason.EXTERNAL_ORIGIN: (
+            "browser popup left the approved Booking.com web origin"
+        ),
+        PopupRefusalReason.PROTECTED_DESTINATION: (
+            "browser popup opened a protected authentication or challenge page"
+        ),
+        PopupRefusalReason.MUTATING_DESTINATION: (
+            "browser popup opened a reservation-mutating destination"
+        ),
+        PopupRefusalReason.IRRELEVANT_TO_STEP: (
+            "browser popup was not relevant to the registered recovery step"
+        ),
+        PopupRefusalReason.UNSUPPORTED_ROUTE: (
+            "browser popup route is not approved for the registered recovery step"
+        ),
+        PopupRefusalReason.OBSERVATION_UNAVAILABLE: (
+            "browser popup could not be inspected or adopted safely"
+        ),
+    }
+    missing = reason in {
+        PopupRefusalReason.NONE_OPENED,
+        PopupRefusalReason.OBSERVATION_UNAVAILABLE,
+    }
+    return (
+        details[reason],
+        FailureCode.AGENT_GAVE_UP if missing else FailureCode.BLOCKED_ACTION,
+        (
+            AgentStopReason.MISSING_BROWSER_CAPABILITY
+            if missing
+            else AgentStopReason.UNSAFE_ACTION
+        ),
+    )
+
+
 def _history_event(
     *,
     action: AgentAction,
@@ -666,6 +1400,7 @@ def _history_event(
     after: Observation,
     goal_verified: bool,
     execution_error: str | None,
+    popup_opened_override: bool = False,
 ) -> AgentHistoryEvent:
     target = _target_for(action, before)
     target_signature = _element_signature(target) if target is not None else None
@@ -685,9 +1420,7 @@ def _history_event(
         if target_signature is not None
         else 0
     )
-    popup_opened = after.popup_count > before.popup_count or bool(
-        set(after.popup_urls) - set(before.popup_urls)
-    )
+    popup_opened = popup_opened_override or _popup_opened(before, after)
     return AgentHistoryEvent(
         outcome=(
             AgentHistoryOutcome.FAILED

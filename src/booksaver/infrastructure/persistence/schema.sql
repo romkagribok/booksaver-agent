@@ -168,6 +168,165 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_slots_due
 CREATE INDEX IF NOT EXISTS idx_scheduled_slots_user_next
     ON scheduled_check_slots(user_id, status, planned_at);
 
+-- v14: restart-safe deployment-wide adaptive-model spend and aggregate-only
+-- qualification results (ADR-031).  Reservation rows contain only bounded
+-- machine metadata; no page content, prompts, URLs, booking identity, or keys.
+CREATE TABLE IF NOT EXISTS llm_spend_days (
+    utc_date TEXT PRIMARY KEY,
+    reserved_micro_usd INTEGER NOT NULL CHECK(reserved_micro_usd >= 0),
+    charged_micro_usd INTEGER NOT NULL CHECK(charged_micro_usd >= 0),
+    limit_micro_usd INTEGER NOT NULL
+        CHECK(limit_micro_usd > 0 AND limit_micro_usd <= 10000000),
+    price_table_version TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS llm_cost_reservations (
+    reservation_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    job_kind TEXT NOT NULL CHECK(job_kind IN (
+        'bookings_sync', 'check_now', 'scheduled_slot', 'remote_auth', 'qualification'
+    )),
+    caller_user_id INTEGER NOT NULL REFERENCES users(user_id),
+    utc_date TEXT NOT NULL REFERENCES llm_spend_days(utc_date),
+    attempt_ordinal INTEGER NOT NULL CHECK(attempt_ordinal >= 1),
+    provider TEXT NOT NULL CHECK(provider = 'anthropic'),
+    model TEXT NOT NULL CHECK(model IN ('claude-sonnet-5', 'claude-opus-5')),
+    role TEXT NOT NULL CHECK(role IN (
+        'recovery', 'interpretation', 'extraction', 'classification', 'diagnostic'
+    )),
+    prompt_version TEXT NOT NULL,
+    trigger TEXT NOT NULL CHECK(trigger IN (
+        'initial_ambiguous', 'semantic_no_progress', 'repeated_invalid_schema',
+        'unsafe_proposal_rejected', 'unresolved_low_confidence',
+        'unverified_sonnet_exhaustion'
+    )),
+    outcome TEXT CHECK(outcome IS NULL OR outcome IN (
+        'completed', 'recovered', 'diagnosed', 'quality_failed', 'provider_failed', 'stopped'
+    )),
+    reserved_micro_usd INTEGER NOT NULL CHECK(reserved_micro_usd >= 0),
+    charged_micro_usd INTEGER CHECK(charged_micro_usd IS NULL OR charged_micro_usd >= 0),
+    status TEXT NOT NULL CHECK(status IN ('reserved', 'charged', 'conservative')),
+    input_tokens INTEGER CHECK(input_tokens IS NULL OR input_tokens >= 0),
+    output_tokens INTEGER CHECK(output_tokens IS NULL OR output_tokens >= 0),
+    latency_ms INTEGER CHECK(latency_ms IS NULL OR latency_ms >= 0),
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    UNIQUE(job_id, attempt_ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_reservations_day_status
+    ON llm_cost_reservations(utc_date, status);
+CREATE INDEX IF NOT EXISTS idx_llm_reservations_job_ordinal
+    ON llm_cost_reservations(job_id, attempt_ordinal);
+CREATE INDEX IF NOT EXISTS idx_llm_reservations_caller
+    ON llm_cost_reservations(caller_user_id);
+
+CREATE TABLE IF NOT EXISTS llm_profile_qualifications (
+    qualification_id TEXT PRIMARY KEY,
+    profile_identity TEXT NOT NULL,
+    fixture_version TEXT NOT NULL,
+    runs INTEGER NOT NULL CHECK(runs >= 0),
+    correct_runs INTEGER NOT NULL CHECK(correct_runs >= 0 AND correct_runs <= runs),
+    diagnosis_runs INTEGER NOT NULL CHECK(diagnosis_runs >= 0 AND diagnosis_runs <= runs),
+    diagnosis_correct_runs INTEGER NOT NULL
+        CHECK(diagnosis_correct_runs >= 0 AND diagnosis_correct_runs <= diagnosis_runs),
+    schema_valid_runs INTEGER NOT NULL
+        CHECK(schema_valid_runs >= 0 AND schema_valid_runs <= runs),
+    prohibited_action_proposals INTEGER NOT NULL CHECK(prohibited_action_proposals >= 0),
+    prohibited_action_executions INTEGER NOT NULL CHECK(prohibited_action_executions >= 0),
+    escalation_count INTEGER NOT NULL CHECK(escalation_count >= 0),
+    total_calls INTEGER NOT NULL CHECK(total_calls >= 0),
+    total_actions INTEGER NOT NULL CHECK(total_actions >= 0),
+    input_tokens INTEGER NOT NULL CHECK(input_tokens >= 0),
+    output_tokens INTEGER NOT NULL CHECK(output_tokens >= 0),
+    latency_ms INTEGER NOT NULL CHECK(latency_ms >= 0),
+    estimated_micro_usd INTEGER NOT NULL CHECK(estimated_micro_usd >= 0),
+    gate_result TEXT NOT NULL CHECK(gate_result IN ('passed', 'failed')),
+    completed_at TEXT NOT NULL,
+    override_owner_user_id INTEGER REFERENCES users(user_id),
+    override_reason TEXT,
+    overridden_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_qualifications_profile_fixture
+    ON llm_profile_qualifications(profile_identity, fixture_version, completed_at DESC);
+
+-- v15: content-free DOM-drift incident correlation, durable owner-alert state,
+-- and short-lived encrypted diagnostics (ADR-034).  Caller identity and page
+-- content never appear in these metadata tables.  The only caller linkage is
+-- inside dom_drift_diagnostics.ciphertext so user purge can remain private.
+CREATE TABLE IF NOT EXISTS dom_drift_incidents (
+    incident_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL UNIQUE CHECK(length(fingerprint) = 64),
+    journey TEXT NOT NULL CHECK(length(journey) BETWEEN 1 AND 64),
+    registered_step TEXT NOT NULL CHECK(length(registered_step) BETWEEN 1 AND 96),
+    terminal_class TEXT NOT NULL CHECK(length(terminal_class) BETWEEN 1 AND 64),
+    verifier_category TEXT NOT NULL CHECK(length(verifier_category) BETWEEN 1 AND 128),
+    structural_digest TEXT NOT NULL CHECK(length(structural_digest) = 64),
+    model_roles_json TEXT NOT NULL CHECK(length(model_roles_json) <= 256),
+    provider_state TEXT NOT NULL CHECK(length(provider_state) BETWEEN 1 AND 64),
+    budget_state TEXT NOT NULL CHECK(length(budget_state) BETWEEN 1 AND 64),
+    provenance TEXT NOT NULL CHECK(provenance IN (
+        'sonnet_assisted', 'opus_assisted', 'model_diagnosed',
+        'code_maintenance_required'
+    )),
+    state TEXT NOT NULL CHECK(state IN ('observing', 'open', 'resolved')),
+    severity TEXT NOT NULL CHECK(severity IN ('observing', 'maintenance_required')),
+    recovered INTEGER NOT NULL CHECK(recovered IN (0, 1)),
+    occurrence_count INTEGER NOT NULL CHECK(occurrence_count >= 1),
+    window_occurrence_count INTEGER NOT NULL CHECK(window_occurrence_count >= 1),
+    window_started_at TEXT NOT NULL,
+    first_observed_at TEXT NOT NULL,
+    last_observed_at TEXT NOT NULL,
+    opened_at TEXT,
+    resolved_at TEXT,
+    alert_suppressed_until TEXT,
+    evidence_state TEXT NOT NULL CHECK(evidence_state IN (
+        'pending', 'available', 'unavailable', 'expired', 'purged',
+        'corrupt', 'undecryptable', 'oversized'
+    ))
+);
+
+CREATE INDEX IF NOT EXISTS idx_dom_drift_incidents_state_last
+    ON dom_drift_incidents(state, last_observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dom_drift_incidents_step_state
+    ON dom_drift_incidents(journey, registered_step, state);
+
+CREATE TABLE IF NOT EXISTS dom_drift_alerts (
+    alert_id TEXT PRIMARY KEY,
+    incident_id TEXT NOT NULL REFERENCES dom_drift_incidents(incident_id),
+    generation INTEGER NOT NULL CHECK(generation >= 1),
+    severity TEXT NOT NULL CHECK(severity IN ('observing', 'maintenance_required')),
+    delivery_state TEXT NOT NULL CHECK(delivery_state IN (
+        'pending', 'in_flight', 'delivered', 'retryable_failed', 'failed',
+        'delivery_unknown', 'suppressed'
+    )),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    next_attempt_at TEXT,
+    claimed_at TEXT,
+    delivered_at TEXT,
+    failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code) <= 64),
+    created_at TEXT NOT NULL,
+    UNIQUE(incident_id, generation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dom_drift_alerts_due
+    ON dom_drift_alerts(delivery_state, next_attempt_at, created_at);
+
+CREATE TABLE IF NOT EXISTS dom_drift_diagnostics (
+    incident_id TEXT PRIMARY KEY REFERENCES dom_drift_incidents(incident_id),
+    envelope_version INTEGER NOT NULL CHECK(envelope_version >= 1),
+    ciphertext BLOB NOT NULL,
+    byte_size INTEGER NOT NULL CHECK(byte_size > 0 AND byte_size <= 1048576),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL CHECK(expires_at > created_at),
+    evidence_state TEXT NOT NULL CHECK(evidence_state = 'available')
+);
+
+CREATE INDEX IF NOT EXISTS idx_dom_drift_diagnostics_expiry
+    ON dom_drift_diagnostics(expires_at);
+
 -- v2: finalised by Unit 2 (booking-com-price-monitor)
 -- v5: extraction_method also allows 'agent' (bolt 007 agent-assisted checks)
 CREATE TABLE IF NOT EXISTS check_history (

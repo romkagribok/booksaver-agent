@@ -6,8 +6,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from .value_objects import Money, Occupancy
+
+if TYPE_CHECKING:
+    from .browser_resilience import TerminalBrowserDiagnosis
 
 
 class InventoryCompleteness(Enum):
@@ -114,9 +118,7 @@ _AUDIT_TRACE_FIELDS = frozenset(
 
 def _validate_audit_code(value: str, *, field_name: str) -> None:
     if not isinstance(value, str) or not _AUDIT_CODE_PATTERN.fullmatch(value):
-        raise ValueError(
-            f"Inventory recovery {field_name} must be a bounded machine code"
-        )
+        raise ValueError(f"Inventory recovery {field_name} must be a bounded machine code")
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,17 +153,13 @@ class InventoryRecoveryTraceEvent:
                 raise TypeError("Inventory recovery trace values must be safe scalars")
 
     @classmethod
-    def from_mapping(
-        cls, event: Mapping[str, str | bool | int]
-    ) -> InventoryRecoveryTraceEvent:
+    def from_mapping(cls, event: Mapping[str, str | bool | int]) -> InventoryRecoveryTraceEvent:
         kind = event.get("kind")
         if not isinstance(kind, str):
             raise ValueError("Inventory recovery trace event requires a kind")
         return cls(
             kind=kind,
-            fields=tuple(
-                sorted((key, value) for key, value in event.items() if key != "kind")
-            ),
+            fields=tuple(sorted((key, value) for key, value in event.items() if key != "kind")),
         )
 
     def as_dict(self) -> dict[str, str | bool | int]:
@@ -199,9 +197,7 @@ class InventoryRecoveryAudit:
             if not isinstance(codes, tuple):
                 raise TypeError(f"Inventory recovery {field_name} must be a tuple")
             if len(codes) > _MAX_AUDIT_METADATA_VALUES:
-                raise ValueError(
-                    f"Inventory recovery {field_name} exceed the bounded limit"
-                )
+                raise ValueError(f"Inventory recovery {field_name} exceed the bounded limit")
             if len(set(codes)) != len(codes):
                 raise ValueError(f"Inventory recovery {field_name} must be unique")
             for code in codes:
@@ -214,13 +210,9 @@ class InventoryRecoveryAudit:
             ("duration", self.duration_ms, _MAX_AUDIT_DURATION_MS),
         ):
             if type(counter) is not int:
-                raise TypeError(
-                    f"Inventory recovery {counter_name} must be an integer"
-                )
+                raise TypeError(f"Inventory recovery {counter_name} must be an integer")
             if not 0 <= counter <= maximum:
-                raise ValueError(
-                    f"Inventory recovery {counter_name} are out of bounds"
-                )
+                raise ValueError(f"Inventory recovery {counter_name} are out of bounds")
         if not isinstance(self.trace, tuple) or not all(
             isinstance(event, InventoryRecoveryTraceEvent) for event in self.trace
         ):
@@ -233,9 +225,7 @@ class InventoryRecoveryAudit:
                     "Inventory recovery LLM usage requires provider and model metadata"
                 )
             if not self.roles or not self.prompt_versions:
-                raise ValueError(
-                    "Inventory recovery LLM usage requires role and prompt metadata"
-                )
+                raise ValueError("Inventory recovery LLM usage requires role and prompt metadata")
         elif any(
             (
                 bool(self.providers),
@@ -288,8 +278,7 @@ class InventoryRecoveryAudit:
             action_count=action_count,
             duration_ms=duration_ms,
             trace=tuple(
-                InventoryRecoveryTraceEvent.from_mapping(event)
-                for event in operational_events
+                InventoryRecoveryTraceEvent.from_mapping(event) for event in operational_events
             ),
         )
 
@@ -331,8 +320,13 @@ class InventoryDiscoveryResult:
     recovery_step: str | None = None
     recovery_detail: str | None = None
     llm_calls_used: int = 0
+    terminal_diagnosis: TerminalBrowserDiagnosis | None = None
+    assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...] = ()
 
     def __post_init__(self) -> None:
+        from .browser_resilience import validate_assisted_diagnoses
+
+        validate_assisted_diagnoses(self.assisted_diagnoses)
         if self.completeness is InventoryCompleteness.FAILED and self.failure_code is None:
             raise ValueError("Failed inventory discovery requires a failure code")
         if self.completeness is InventoryCompleteness.COMPLETE and self.failure_code is not None:
@@ -341,9 +335,7 @@ class InventoryDiscoveryResult:
             raise ValueError("Inventory LLM call usage cannot be negative")
 
     @classmethod
-    def failed(
-        cls, code: SynchronizationFailureCode, detail: str
-    ) -> InventoryDiscoveryResult:
+    def failed(cls, code: SynchronizationFailureCode, detail: str) -> InventoryDiscoveryResult:
         return cls((), InventoryCompleteness.FAILED, code, detail)
 
 
@@ -384,6 +376,13 @@ class SynchronizationReport:
     recovery_detail: str | None = None
     llm_calls_used: int = 0
     recovery_audit: InventoryRecoveryAudit | None = None
+    terminal_diagnosis: TerminalBrowserDiagnosis | None = None
+    assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...] = ()
+
+    def __post_init__(self) -> None:
+        from .browser_resilience import validate_assisted_diagnoses
+
+        validate_assisted_diagnoses(self.assisted_diagnoses)
 
     @property
     def succeeded(self) -> bool:
@@ -442,8 +441,6 @@ def evaluate_eligibility(
     )
 
 
-def _append_once(
-    reasons: list[EligibilityReason], reason: EligibilityReason
-) -> None:
+def _append_once(reasons: list[EligibilityReason], reason: EligibilityReason) -> None:
     if reason not in reasons:
         reasons.append(reason)

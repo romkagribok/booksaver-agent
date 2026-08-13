@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from booksaver.domain.remote_auth import (
     AttemptLaunch,
@@ -18,6 +18,9 @@ from booksaver.domain.remote_auth import (
     ViewerGrant,
     ViewerState,
 )
+
+if TYPE_CHECKING:
+    from booksaver.domain.browser_resilience import TerminalBrowserDiagnosis
 
 
 class RemoteAuthError(RuntimeError):
@@ -50,6 +53,7 @@ class RemoteBrowserResult:
     status: RemoteAuthStatus
     cookies_json: str | None = None
     failure: RemoteAuthFailure | None = None
+    terminal_diagnosis: TerminalBrowserDiagnosis | None = None
 
     def __post_init__(self) -> None:
         if not self.status.is_terminal:
@@ -58,6 +62,8 @@ class RemoteBrowserResult:
             raise ValueError("Successful remote browser result requires cookies")
         if self.status is not RemoteAuthStatus.SUCCEEDED and self.cookies_json is not None:
             raise ValueError("Only successful remote browser results may contain cookies")
+        if self.status is not RemoteAuthStatus.FAILED and self.terminal_diagnosis is not None:
+            raise ValueError("Only failed remote browser results may carry a terminal diagnosis")
 
 
 class RemoteBrowserRunner(Protocol):

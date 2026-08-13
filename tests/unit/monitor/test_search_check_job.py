@@ -3,12 +3,28 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import booksaver.monitor.search_check_job as search_check_job
+from booksaver.application.dom_incident import is_dom_incident_eligible
 from booksaver.domain.agent import AgentAction, AgentActionType, ElementInfo
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomStepId,
+    OperatorAction,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
+)
 from booksaver.domain.check_result import CheckOutcome, ExtractionMethod, FailureCode
+from booksaver.domain.journey import JourneyResult, JourneyStep, StepOutcome
+from booksaver.domain.model_policy import (
+    AdaptiveModelPortfolio,
+    ModelRole,
+    ModelStopReason,
+)
 from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.savings import SavingsOpportunity, detect_savings
 from booksaver.domain.user_session import UserSessionMetadata, UserSessionSnapshot
 from booksaver.domain.value_objects import Money, Platform
+from booksaver.infrastructure.llm.adaptive_execution import AdaptiveModelStopped
 from booksaver.monitor.failure_tracker import FailureTracker
 from booksaver.monitor.search_check_job import BookingComSearchMonitor
 from booksaver.monitor.session_manager import SessionManager
@@ -89,11 +105,47 @@ class TestOccupancyGuard:
 
 
 class TestScriptedHappyPath:
+    def test_assisted_journey_diagnosis_reaches_successful_check_result(
+        self, monkeypatch
+    ):
+        diagnosis = TerminalBrowserDiagnosis(
+            reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+            step_id=DomStepId.PRICE_SEARCH_QUERY_SUBMISSION,
+            provenance=DiagnosisProvenance.OPUS_RECOVERED,
+            confidence=0.9,
+            evidence=frozenset(),
+            operator_action=OperatorAction.NONE,
+        )
+
+        class AssistedJourney:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def run(self, booking):
+                return JourneyResult(
+                    outcomes=(
+                        StepOutcome.success(
+                            JourneyStep.SUBMIT_SEARCH, "recovered changed DOM"
+                        ),
+                    ),
+                    agent_assisted=True,
+                    assisted_diagnoses=(diagnosis,),
+                )
+
+        monkeypatch.setattr(search_check_job, "SearchJourney", AssistedJourney)
+        monitor, _ = _monitor(_happy_browser())
+
+        result = monitor.run_check(make_booking())
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert result.assisted_diagnoses == (diagnosis,)
+
     def test_dom_exact_match_success_without_llm(self):
         monitor, _ = _monitor(_happy_browser())
         result = monitor.run_check(make_booking())
         assert result.outcome is CheckOutcome.SUCCESS
         assert result.extraction_method is ExtractionMethod.DOM
+        assert result.assisted_diagnoses == ()
         assert result.live_price == Money(amount=Decimal("350.00"), currency="EUR")
         assert result.refund_indicators.is_refundable is True
 
@@ -141,6 +193,29 @@ class TestAuthenticatedMobileWeb:
         assert result.outcome is CheckOutcome.SUCCESS
         assert result.price_source is not None
         assert result.price_source.genius_evidence.value == "not_observed"
+
+    def test_authenticated_check_runs_code_owned_account_probe_before_search(self):
+        browser = _happy_browser()
+        probes: list[bool] = []
+        browser.verify_authenticated_account = lambda: (probes.append(True) or True)  # type: ignore[attr-defined]
+        monitor, _ = _monitor(browser)
+
+        result = monitor.run_authenticated(make_booking(), _user_snapshot())
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert probes == [True]
+
+    def test_failed_account_probe_never_runs_the_price_search(self):
+        browser = _happy_browser()
+        browser.verify_authenticated_account = lambda: False  # type: ignore[attr-defined]
+        monitor, history = _monitor(browser)
+
+        result = monitor.run_authenticated(make_booking(), _user_snapshot())
+
+        assert result.failure_reason is not None
+        assert result.failure_reason.code is FailureCode.AUTH_REQUIRED
+        assert browser.actions == []
+        assert history.results == [result]
 
     def test_signed_out_render_fails_closed_without_an_accepted_price(self):
         browser = _happy_browser()
@@ -197,12 +272,303 @@ class TestLLMFallback:
         detection = detect_savings(booking, result)
         assert isinstance(detection, SavingsOpportunity)
 
-    def test_no_candidates_at_all_is_extraction_failed(self):
+    def test_adaptive_runtime_supplies_both_search_roles_once(self):
+        browser = _happy_browser()
+        runtime_calls: list[str] = []
+
+        class Runtime:
+            def extractor(self):
+                runtime_calls.append("extractor")
+                return FakeLLMExtractor()
+
+            def agent_brain(self):
+                runtime_calls.append("agent")
+                return None
+
+            def page_state_resolver(self):
+                runtime_calls.append("resolver")
+                return None
+
+        history = FakeCheckHistoryRepository()
+        monitor = BookingComSearchMonitor(
+            browser=browser,
+            session_manager=SessionManager(FakeSessionRepository(make_session())),
+            check_history=history,
+            booking_repo=FakeBookingRepository([]),
+            failure_tracker=FailureTracker(history),
+            adaptive_runtime_factory=lambda booking: Runtime(),  # type: ignore[arg-type,return-value]
+        )
+
+        result = monitor.run_check(make_booking())
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert runtime_calls == ["extractor", "agent", "resolver"]
+
+    def test_adaptive_extractor_stop_preserves_exact_terminal_diagnosis(self):
+        browser = _happy_browser()
+        browser.page_text = "Nothing that looks like a rate table"
+
+        class StoppedExtractor(FakeLLMExtractor):
+            def extract_offers(self, page_text, booking):
+                raise AdaptiveModelStopped(ModelStopReason.PROVIDER_RATE_LIMIT)
+
+        class Runtime:
+            def extractor(self):
+                return StoppedExtractor()
+
+            def agent_brain(self):
+                return None
+
+            def page_state_resolver(self):
+                return None
+
+        history = FakeCheckHistoryRepository()
+        monitor = BookingComSearchMonitor(
+            browser=browser,
+            session_manager=SessionManager(FakeSessionRepository(make_session())),
+            check_history=history,
+            booking_repo=FakeBookingRepository([]),
+            failure_tracker=FailureTracker(history),
+            adaptive_runtime_factory=lambda booking: Runtime(),  # type: ignore[arg-type,return-value]
+        )
+
+        result = monitor.run_check(make_booking())
+
+        assert result.failure_reason is not None
+        assert result.failure_reason.code is FailureCode.PROVIDER_RATE_LIMIT
+        assert result.terminal_diagnosis is not None
+        assert result.terminal_diagnosis.reason.value == "provider_rate_limit"
+        assert (
+            result.terminal_diagnosis.model_stop_reason
+            is ModelStopReason.PROVIDER_RATE_LIMIT
+        )
+
+    def test_sonnet_extraction_success_records_recovery_receipt(self):
+        browser = _happy_browser()
+        browser.page_text = "Nothing that looks like a rate table"
+        recovered = OfferCandidate(
+            room_label="Standard Double",
+            total=Money(amount=Decimal("345.00"), currency="EUR"),
+            is_refundable=True,
+            cancellation_text="Free cancellation",
+            matches_room=True,
+            match_confidence=1.0,
+        )
+        profile = AdaptiveModelPortfolio().primary(
+            ModelRole.EXTRACTION, "booking-offer-extraction-v1"
+        )
+
+        class AdaptiveExtractor:
+            last_profile = profile
+
+            def extract_offers(self, page_text, booking):
+                return [recovered]
+
+        class Runtime:
+            def extractor(self):
+                return AdaptiveExtractor()
+
+            def agent_brain(self):
+                return None
+
+            def page_state_resolver(self):
+                return None
+
+        history = FakeCheckHistoryRepository()
+        monitor = BookingComSearchMonitor(
+            browser=browser,
+            session_manager=SessionManager(FakeSessionRepository(make_session())),
+            check_history=history,
+            booking_repo=FakeBookingRepository([]),
+            failure_tracker=FailureTracker(history),
+            adaptive_runtime_factory=lambda booking: Runtime(),  # type: ignore[arg-type,return-value]
+        )
+
+        result = monitor.run_check(make_booking())
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert result.live_price == recovered.total
+        assert len(result.assisted_diagnoses) == 1
+        assert result.assisted_diagnoses[0].step_id is DomStepId.PRICE_OFFER_EXTRACTION
+        assert (
+            result.assisted_diagnoses[0].provenance
+            is DiagnosisProvenance.SONNET_RECOVERED
+        )
+
+    def test_empty_sonnet_extraction_uses_one_opus_quality_escalation(self):
+        browser = _happy_browser()
+        browser.page_text = "Nothing that looks like a rate table"
+        calls: list[str] = []
+        recovered = OfferCandidate(
+            room_label="Standard Double",
+            total=Money(amount=Decimal("345.00"), currency="EUR"),
+            is_refundable=True,
+            cancellation_text="Free cancellation",
+            matches_room=True,
+            match_confidence=1.0,
+        )
+        portfolio = AdaptiveModelPortfolio()
+
+        class AdaptiveExtractor:
+            last_profile = None
+
+            def extract_offers(self, page_text, booking):
+                calls.append("sonnet")
+                self.last_profile = portfolio.primary(
+                    ModelRole.EXTRACTION, "booking-offer-extraction-v1"
+                )
+                return []
+
+            def extract_offers_with_escalation(self, page_text, booking, trigger):
+                calls.append(f"opus:{trigger.value}")
+                self.last_profile = portfolio.escalation(
+                    ModelRole.EXTRACTION, "booking-offer-extraction-v1"
+                )
+                return [recovered]
+
+        class Runtime:
+            def extractor(self):
+                return AdaptiveExtractor()
+
+            def agent_brain(self):
+                return None
+
+            def page_state_resolver(self):
+                return None
+
+        history = FakeCheckHistoryRepository()
+        monitor = BookingComSearchMonitor(
+            browser=browser,
+            session_manager=SessionManager(FakeSessionRepository(make_session())),
+            check_history=history,
+            booking_repo=FakeBookingRepository([]),
+            failure_tracker=FailureTracker(history),
+            adaptive_runtime_factory=lambda booking: Runtime(),  # type: ignore[arg-type,return-value]
+        )
+
+        result = monitor.run_check(make_booking())
+
+        assert result.outcome is CheckOutcome.SUCCESS
+        assert result.live_price == recovered.total
+        assert calls == ["sonnet", "opus:unresolved_low_confidence"]
+        assert len(result.assisted_diagnoses) == 1
+        assert result.assisted_diagnoses[0].step_id is DomStepId.PRICE_OFFER_EXTRACTION
+        assert (
+            result.assisted_diagnoses[0].provenance
+            is DiagnosisProvenance.OPUS_RECOVERED
+        )
+
+    def test_no_candidates_at_all_remains_typed_ambiguity(self):
         browser = _happy_browser()
         browser.page_text = "Nothing that looks like a rate table"
         monitor, _ = _monitor(browser, llm=FakeLLMExtractor(offers=[]))
         result = monitor.run_check(make_booking())
-        assert result.failure_reason.code is FailureCode.EXTRACTION_FAILED
+        assert result.failure_reason.code is FailureCode.DOM_AMBIGUITY
+        assert result.terminal_diagnosis is not None
+        assert result.terminal_diagnosis.step_id.value == "price_search.offer_extraction"
+
+    def test_empty_sonnet_and_opus_extraction_is_incident_eligible_ambiguity(self):
+        browser = _happy_browser()
+        browser.page_text = "Nothing that looks like a rate table"
+        calls: list[str] = []
+        portfolio = AdaptiveModelPortfolio()
+
+        class AdaptiveExtractor:
+            last_profile = None
+
+            def extract_offers(self, page_text, booking):
+                calls.append("sonnet")
+                self.last_profile = portfolio.primary(
+                    ModelRole.EXTRACTION, "booking-offer-extraction-v1"
+                )
+                return []
+
+            def extract_offers_with_escalation(self, page_text, booking, trigger):
+                calls.append(f"opus:{trigger.value}")
+                self.last_profile = portfolio.escalation(
+                    ModelRole.EXTRACTION, "booking-offer-extraction-v1"
+                )
+                return []
+
+        class Runtime:
+            def extractor(self):
+                return AdaptiveExtractor()
+
+            def agent_brain(self):
+                return None
+
+            def page_state_resolver(self):
+                return None
+
+        history = FakeCheckHistoryRepository()
+        monitor = BookingComSearchMonitor(
+            browser=browser,
+            session_manager=SessionManager(FakeSessionRepository(make_session())),
+            check_history=history,
+            booking_repo=FakeBookingRepository([]),
+            failure_tracker=FailureTracker(history),
+            adaptive_runtime_factory=lambda booking: Runtime(),  # type: ignore[arg-type,return-value]
+        )
+
+        result = monitor.run_check(make_booking())
+
+        assert calls == ["sonnet", "opus:unresolved_low_confidence"]
+        assert result.failure_reason is not None
+        assert result.failure_reason.code is FailureCode.DOM_AMBIGUITY
+        diagnosis = result.terminal_diagnosis
+        assert diagnosis is not None
+        assert diagnosis.reason is TerminalBrowserReason.UNRESOLVED_AMBIGUITY
+        assert diagnosis.step_id is DomStepId.PRICE_OFFER_EXTRACTION
+        assert diagnosis.provenance is DiagnosisProvenance.OPUS_DIAGNOSED
+        assert diagnosis.model_stop_reason is ModelStopReason.OPUS_EXHAUSTED
+        assert is_dom_incident_eligible(diagnosis)
+
+    def test_grounded_llm_candidates_rejected_by_code_remain_no_equivalent(self):
+        browser = _happy_browser()
+        browser.page_text = "Nothing that looks like a rate table"
+        excluded = OfferCandidate(
+            room_label="Standard Double",
+            total=Money(amount=Decimal("345.00"), currency="EUR"),
+            is_refundable=False,
+            cancellation_text="Non-refundable",
+            matches_room=True,
+            match_confidence=1.0,
+        )
+        profile = AdaptiveModelPortfolio().primary(
+            ModelRole.EXTRACTION, "booking-offer-extraction-v1"
+        )
+
+        class AdaptiveExtractor:
+            last_profile = profile
+
+            def extract_offers(self, page_text, booking):
+                return [excluded]
+
+        class Runtime:
+            def extractor(self):
+                return AdaptiveExtractor()
+
+            def agent_brain(self):
+                return None
+
+            def page_state_resolver(self):
+                return None
+
+        history = FakeCheckHistoryRepository()
+        monitor = BookingComSearchMonitor(
+            browser=browser,
+            session_manager=SessionManager(FakeSessionRepository(make_session())),
+            check_history=history,
+            booking_repo=FakeBookingRepository([]),
+            failure_tracker=FailureTracker(history),
+            adaptive_runtime_factory=lambda booking: Runtime(),  # type: ignore[arg-type,return-value]
+        )
+
+        result = monitor.run_check(make_booking())
+
+        assert result.failure_reason is not None
+        assert result.failure_reason.code is FailureCode.NO_EQUIVALENT_OFFER
+        assert result.terminal_diagnosis is None
 
     def test_candidates_but_none_equivalent_is_no_equivalent_offer(self):
         browser = _happy_browser()
@@ -229,7 +595,7 @@ class TestLLMFallback:
 
         result = monitor.run_check(make_booking())
 
-        assert result.failure_reason.code is FailureCode.EXTRACTION_FAILED
+        assert result.failure_reason.code is FailureCode.DOM_AMBIGUITY
         assert llm.offer_calls == []
         assert monitor.last_llm_calls_used == 0
 
@@ -349,12 +715,12 @@ class TestCurrencyAlignmentRecovery:
 
 
 class TestJourneyFailureMapping:
-    def test_failed_step_lands_in_failure_detail(self):
+    def test_unrecognized_result_titles_land_as_ambiguous_step_failure(self):
         browser = _happy_browser()
         browser.titles = ["Wrong Hotel"]
         monitor, _ = _monitor(browser)
         result = monitor.run_check(make_booking())
-        assert result.failure_reason.code is FailureCode.PROPERTY_NOT_FOUND
+        assert result.failure_reason.code is FailureCode.DOM_AMBIGUITY
         assert "step=locate_property" in result.failure_reason.detail
 
     def test_auth_required_detail_points_at_cookie_import(self):
@@ -397,6 +763,24 @@ class TestRunAllActive:
         assert results[0].outcome is CheckOutcome.SUCCESS
         assert history.results[0].check_id == results[0].check_id
         assert session_repo.saved  # refreshed cookies persisted
+
+    def test_auth_required_marks_reauth_without_refreshing_cookies(self):
+        session_repo = FakeSessionRepository(make_session(b"original-session"))
+        browser = _happy_browser()
+        browser.page_text = "Log in to your account to continue"
+        browser.fail_selectors.add("property-card")
+        monitor, _ = _monitor(
+            browser,
+            bookings=[make_booking("b-1")],
+            session=session_repo,
+        )
+
+        results = monitor.run_all_active()
+
+        assert results[0].failure_reason is not None
+        assert results[0].failure_reason.code is FailureCode.AUTH_REQUIRED
+        assert session_repo.saved[-1].status.value == "requires_reauth"
+        assert all(item.cookies != b'[{"name": "fresh"}]' for item in session_repo.saved)
 
     def test_mixed_bookings_one_missing_occupancy(self):
         bookings = [make_booking("b-1", occupancy=None), make_booking("b-2")]

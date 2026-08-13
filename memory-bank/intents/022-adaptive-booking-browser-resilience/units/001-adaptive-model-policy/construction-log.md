@@ -1,0 +1,60 @@
+---
+unit: 001-adaptive-model-policy
+intent: 022-adaptive-booking-browser-resilience
+created: 2026-08-13T02:25:43Z
+last_updated: 2026-08-13T13:53:47Z
+---
+
+# Construction Log: Adaptive Model Policy
+
+## Original Plan
+
+**From Inception**: 1 bolt planned
+**Planned Date**: 2026-08-13
+
+| Bolt ID | Stories | Type |
+|---------|---------|------|
+| `041-adaptive-model-policy` | US-130–US-132 | DDD construction |
+
+## Replanning History
+
+| Date | Action | Change | Reason | Approved |
+|------|--------|--------|--------|----------|
+
+## Current Bolt Structure
+
+| Bolt ID | Stories | Status | Changed |
+|---------|---------|--------|---------|
+| `041-adaptive-model-policy` | US-130–US-132 | Complete | - |
+
+## Execution History
+
+| Date | Bolt | Event | Details |
+|------|------|-------|---------|
+| 2026-08-13T02:25:43Z | `041-adaptive-model-policy` | started | Stage 1: Domain Model |
+| 2026-08-13T02:26:50Z | `041-adaptive-model-policy` | stage-complete | Domain Model → Technical Design |
+| 2026-08-13T02:29:33Z | `041-adaptive-model-policy` | stage-complete | Technical Design → ADR Analysis |
+| 2026-08-13T02:30:30Z | `041-adaptive-model-policy` | stage-complete | ADR Analysis → Implement; ADR-031 accepted |
+| 2026-08-13T03:00:53Z | `041-adaptive-model-policy` | completed | Implementation and verification complete; test report recorded |
+| 2026-08-13T13:02:52Z | `041-adaptive-model-policy` | corrected | Failed staging qualification exposed stale fixture/scoring contracts; production-shaped diagnosis corpus and visibility corrected before merge |
+| 2026-08-13T13:20:00Z | `041-adaptive-model-policy` | corrected | Outcome-visible rerun exposed optional diagnosis schema ambiguity; prompt v4 and corpus v3 now encode strict primary/diagnostic fields and conservative early no-progress |
+| 2026-08-13T13:34:43Z | `041-adaptive-model-policy` | corrected | Staging v4 isolated terminal schema and taxonomy ambiguity; prompt v5 now forces a closed registered-step diagnosis tool with adapter postcondition defense |
+| 2026-08-13T13:53:47Z | `041-adaptive-model-policy` | corrected | V5 staging proved Sonnet primary and Opus diagnosis quality; corpus v4 now gates each fixed profile only on its nonempty production-duty fixture lane |
+| 2026-08-13T14:02:46Z | `041-adaptive-model-policy` | verified | Exact staging image `14c7fa9` passed persisted corpus-v4 qualification: Sonnet 50/50 primary recovery, Opus 10/10 terminal diagnosis, zero prohibited executions |
+
+## Execution Summary
+
+| Metric | Value |
+|--------|-------|
+| Original bolts planned | 1 |
+| Current bolt count | 1 |
+| Bolts completed | 1 |
+| Bolts in progress | 0 |
+| Bolts remaining | 0 |
+| Replanning events | 0 |
+
+## Notes
+
+The owner approved Inception Checkpoints 3 and 4 and pre-authorized progression through all
+construction and verification stages to the final pre-merge review gate, conditional on no material
+uncertainty. Merge and deployment remain outside this construction authorization.

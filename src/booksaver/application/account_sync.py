@@ -69,4 +69,6 @@ class SynchronizeBookingAccount:
             recovery_step=result.recovery_step,
             recovery_detail=result.recovery_detail,
             llm_calls_used=result.llm_calls_used,
+            terminal_diagnosis=result.terminal_diagnosis,
+            assisted_diagnoses=result.assisted_diagnoses,
         )

@@ -2,6 +2,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
 from booksaver.application.ports import PageContent
 from booksaver.domain.account_sync import (
     InventoryCompleteness,
@@ -22,7 +23,20 @@ from booksaver.domain.agent import (
     EscalationResult,
     Observation,
 )
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomStepId,
+    OperatorAction,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
+)
 from booksaver.domain.errors import UserKeyInvalidError
+from booksaver.domain.model_policy import (
+    AdaptiveModelPortfolio,
+    EscalationTrigger,
+    ModelRole,
+    ModelStopReason,
+)
 from booksaver.domain.value_objects import Money, Occupancy
 from booksaver.infrastructure.browser.booking_account_inventory import (
     BookingComAccountInventorySource,
@@ -32,6 +46,7 @@ from booksaver.infrastructure.browser.booking_account_inventory import (
 from booksaver.infrastructure.browser.playwright_adapter import (
     PlaywrightInteractiveBrowser,
 )
+from booksaver.infrastructure.llm.adaptive_execution import AdaptiveModelStopped
 from booksaver.monitor.browser_agent import BrowserAgent
 from booksaver.monitor.trace import TraceRecorder
 
@@ -156,9 +171,7 @@ def test_traverses_supported_past_and_cancelled_inventory_tabs() -> None:
         "",
     )
 
-    result = BookingComAccountInventorySource().discover(
-        _Browser([first, cancelled, past])
-    )
+    result = BookingComAccountInventorySource().discover(_Browser([first, cancelled, past]))
 
     assert result.completeness is InventoryCompleteness.COMPLETE
     assert {item.lifecycle for item in result.observations} == {
@@ -188,9 +201,7 @@ def test_scope_links_are_discovered_from_control_text_not_testid() -> None:
         "",
     )
 
-    result = BookingComAccountInventorySource().discover(
-        _Browser([upcoming, cancelled, past])
-    )
+    result = BookingComAccountInventorySource().discover(_Browser([upcoming, cancelled, past]))
 
     assert result.completeness is InventoryCompleteness.COMPLETE
 
@@ -235,9 +246,7 @@ def test_booking_status_links_are_not_mistaken_for_inventory_tabs() -> None:
         "Confirmed",
     )
 
-    result = BookingComAccountInventorySource().discover(
-        _Browser([page, confirmation])
-    )
+    result = BookingComAccountInventorySource().discover(_Browser([page, confirmation]))
 
     assert result.completeness is InventoryCompleteness.COMPLETE
     assert result.failure_code is None
@@ -396,6 +405,11 @@ def test_visible_unidentified_card_cannot_prove_empty_inventory() -> None:
 
 def test_interpreted_unidentified_card_cannot_prove_complete_inventory() -> None:
     class Interpreter:
+        last_profile = AdaptiveModelPortfolio().primary(
+            ModelRole.INTERPRETATION,
+            "booking-inventory-interpretation-v1",
+        )
+
         def interpret(
             self, _page_text: str, _source_url: str
         ) -> tuple[ReservationObservation, ...]:
@@ -416,6 +430,128 @@ def test_interpreted_unidentified_card_cannot_prove_complete_inventory() -> None
     assert result.completeness is InventoryCompleteness.INCOMPLETE
     assert result.failure_code is SynchronizationFailureCode.EXTRACTION_AMBIGUOUS
     assert result.observations[0].remote_id == "llm-remote-1"
+    assert len(result.assisted_diagnoses) == 1
+    assert result.assisted_diagnoses[0].step_id is DomStepId.INVENTORY_EXTRACTION
+    assert (
+        result.assisted_diagnoses[0].provenance
+        is DiagnosisProvenance.SONNET_RECOVERED
+    )
+
+
+def test_empty_sonnet_inventory_interpretation_escalates_to_grounded_opus() -> None:
+    portfolio = AdaptiveModelPortfolio()
+
+    class Interpreter:
+        last_profile = portfolio.primary(
+            ModelRole.INTERPRETATION,
+            "booking-inventory-interpretation-v1",
+        )
+
+        def interpret(
+            self, _page_text: str, _source_url: str
+        ) -> tuple[ReservationObservation, ...]:
+            return ()
+
+        def interpret_with_escalation(
+            self,
+            _page_text: str,
+            _source_url: str,
+            trigger: object,
+        ) -> tuple[ReservationObservation, ...]:
+            assert trigger is EscalationTrigger.UNVERIFIED_SONNET_EXHAUSTION
+            self.last_profile = portfolio.escalation(
+                ModelRole.INTERPRETATION,
+                "booking-inventory-interpretation-v1",
+            )
+            return (_interpreted_observation(),)
+
+    page = PageContent(
+        "https://secure.booking.com/myreservations.html",
+        "<main data-testid='bookings-list' data-inventory-complete='true'>"
+        "<article data-testid='reservation-card'>llm-remote-1</article></main>",
+        "Reservation llm-remote-1",
+    )
+
+    result = BookingComAccountInventorySource(interpreter=Interpreter()).discover(
+        _Browser([page])
+    )
+
+    assert result.observations[0].remote_id == "llm-remote-1"
+    assert len(result.assisted_diagnoses) == 1
+    assert result.assisted_diagnoses[0].provenance is DiagnosisProvenance.OPUS_RECOVERED
+
+
+def test_empty_opus_inventory_interpretation_returns_maintenance_diagnosis() -> None:
+    portfolio = AdaptiveModelPortfolio()
+
+    class Interpreter:
+        last_profile = portfolio.primary(
+            ModelRole.INTERPRETATION,
+            "booking-inventory-interpretation-v1",
+        )
+
+        def interpret(
+            self, _page_text: str, _source_url: str
+        ) -> tuple[ReservationObservation, ...]:
+            return ()
+
+        def interpret_with_escalation(
+            self,
+            _page_text: str,
+            _source_url: str,
+            trigger: object,
+        ) -> tuple[ReservationObservation, ...]:
+            assert trigger is EscalationTrigger.UNVERIFIED_SONNET_EXHAUSTION
+            self.last_profile = portfolio.escalation(
+                ModelRole.INTERPRETATION,
+                "booking-inventory-interpretation-v1",
+            )
+            return ()
+
+    page = PageContent(
+        "https://secure.booking.com/myreservations.html",
+        "<main data-testid='bookings-list'>"
+        "<article data-testid='reservation-card'>Unknown reservation</article></main>",
+        "Unknown reservation",
+    )
+
+    result = BookingComAccountInventorySource(interpreter=Interpreter()).discover(
+        _Browser([page])
+    )
+
+    assert result.failure_code is SynchronizationFailureCode.EXTRACTION_AMBIGUOUS
+    assert result.terminal_diagnosis is not None
+    assert (
+        result.terminal_diagnosis.reason
+        is TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
+    )
+    assert result.terminal_diagnosis.provenance is DiagnosisProvenance.OPUS_DIAGNOSED
+
+
+@pytest.mark.parametrize(
+    "page_text",
+    ["Sign in to manage your reservations", "Verify you are human"],
+)
+def test_known_inventory_interpretation_stop_never_calls_model(page_text: str) -> None:
+    calls = 0
+
+    class Interpreter:
+        def interpret(
+            self, _page_text: str, _source_url: str
+        ) -> tuple[ReservationObservation, ...]:
+            nonlocal calls
+            calls += 1
+            return ()
+
+    page = PageContent(
+        "https://secure.booking.com/myreservations.html",
+        "<main data-testid='bookings-list'></main>",
+        page_text,
+    )
+
+    BookingComAccountInventorySource(interpreter=Interpreter()).discover(_Browser([page]))
+
+    assert calls == 0
 
 
 def test_button_only_pagination_requires_guarded_recovery() -> None:
@@ -439,7 +575,15 @@ def test_button_only_pagination_requires_guarded_recovery() -> None:
 
 
 def test_button_only_pagination_runs_named_recovery_to_terminal_page() -> None:
-    attempted_steps: list[str] = []
+    attempted_steps: list[DomStepId] = []
+    diagnosis = TerminalBrowserDiagnosis(
+        reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+        step_id=DomStepId.INVENTORY_PAGINATION,
+        provenance=DiagnosisProvenance.SONNET_RECOVERED,
+        confidence=0.95,
+        evidence=frozenset(),
+        operator_action=OperatorAction.NONE,
+    )
 
     class Browser:
         def __init__(self) -> None:
@@ -471,26 +615,25 @@ def test_button_only_pagination_runs_named_recovery_to_terminal_page() -> None:
                 "https://secure.booking.com/myreservations.html",
                 "Trips",
                 "No upcoming reservations" if self.terminal else "Hotel One",
-                ()
-                if self.terminal
-                else (ElementInfo("e0", "button", "Load more reservations"),),
+                () if self.terminal else (ElementInfo("e0", "button", "Load more reservations"),),
             )
 
     browser = Browser()
 
     class Agent:
-        def complete_step(self, step: str, **_kwargs: object) -> EscalationResult:
+        def complete_step(self, step: DomStepId, **_kwargs: object) -> EscalationResult:
             attempted_steps.append(step)
             browser.terminal = True
-            return EscalationResult(ok=True, detail="done")
+            return EscalationResult(ok=True, detail="done", diagnosis=diagnosis)
 
     result = BookingComAccountInventorySource(
         recovery_factory=lambda _browser: Agent(),
     ).discover(browser)
 
     assert result.completeness is InventoryCompleteness.COMPLETE
-    assert attempted_steps == ["inventory_upcoming_pagination"]
+    assert attempted_steps == [DomStepId.INVENTORY_PAGINATION]
     assert [item.remote_id for item in result.observations] == ["remote-1"]
+    assert result.assisted_diagnoses == (diagnosis,)
 
 
 def test_inventory_discovery_checks_outer_time_budget_between_pages() -> None:
@@ -591,9 +734,7 @@ def test_logged_out_inventory_fails_as_auth_required() -> None:
         "",
     )
 
-    result = BookingComAccountInventorySource().discover(
-        _Browser([page], authenticated=False)
-    )
+    result = BookingComAccountInventorySource().discover(_Browser([page], authenticated=False))
 
     assert result.failure_code is SynchronizationFailureCode.AUTH_REQUIRED
 
@@ -642,11 +783,7 @@ def test_negative_interpreter_claim_is_rejected() -> None:
         def interpret(
             self, _page_text: str, _source_url: str
         ) -> tuple[ReservationObservation, ...]:
-            return (
-                _interpreted_observation(
-                    lifecycle=ReservationLifecycle.CANCELLED
-                ),
-            )
+            return (_interpreted_observation(lifecycle=ReservationLifecycle.CANCELLED),)
 
     page = PageContent(
         "https://secure.booking.com/myreservations.html",
@@ -797,9 +934,7 @@ def test_persistent_scope_aliases_do_not_false_prove_requested_scope() -> None:
         entry.text,
     )
 
-    result = BookingComAccountInventorySource().discover(
-        _Browser([entry, aliased, aliased])
-    )
+    result = BookingComAccountInventorySource().discover(_Browser([entry, aliased, aliased]))
 
     assert result.completeness is InventoryCompleteness.INCOMPLETE
     assert result.failure_code is SynchronizationFailureCode.PAGINATION_INCOMPLETE
@@ -836,7 +971,7 @@ def test_unchanged_nearby_scope_words_do_not_verify_recovery() -> None:
 
 
 def test_changed_scope_label_still_attempts_named_recovery() -> None:
-    attempted_steps: list[str] = []
+    attempted_steps: list[DomStepId] = []
 
     class Browser:
         def open_page(self, url: str) -> PageContent:
@@ -854,7 +989,7 @@ def test_changed_scope_label_still_attempts_named_recovery() -> None:
             )
 
     class Agent:
-        def complete_step(self, step: str, **_kwargs: object) -> EscalationResult:
+        def complete_step(self, step: DomStepId, **_kwargs: object) -> EscalationResult:
             attempted_steps.append(step)
             return EscalationResult(
                 ok=False,
@@ -867,7 +1002,7 @@ def test_changed_scope_label_still_attempts_named_recovery() -> None:
     ).discover(Browser())
 
     assert result.completeness is InventoryCompleteness.INCOMPLETE
-    assert attempted_steps == ["inventory_cancelled_scope"]
+    assert attempted_steps == [DomStepId.INVENTORY_SCOPE]
 
 
 @pytest.mark.parametrize(
@@ -891,7 +1026,7 @@ def test_changed_scope_label_still_attempts_named_recovery() -> None:
                     "Reservation layout changed",
                 ),
             ],
-            "inventory_upcoming_pagination",
+            "inventory.pagination",
         ),
         (
             [
@@ -911,7 +1046,7 @@ def test_changed_scope_label_still_attempts_named_recovery() -> None:
                     "Changed detail view",
                 ),
             ],
-            "inventory_upcoming_detail",
+            "inventory.detail",
         ),
     ],
 )
@@ -919,7 +1054,7 @@ def test_pagination_and_detail_drift_attempt_named_recovery(
     pages: list[PageContent],
     expected_step: str,
 ) -> None:
-    attempted_steps: list[str] = []
+    attempted_steps: list[DomStepId] = []
 
     class Browser:
         def __init__(self) -> None:
@@ -938,7 +1073,7 @@ def test_pagination_and_detail_drift_attempt_named_recovery(
             return Observation(current.url, "Trips", current.text, ())
 
     class Agent:
-        def complete_step(self, step: str, **_kwargs: object) -> EscalationResult:
+        def complete_step(self, step: DomStepId, **_kwargs: object) -> EscalationResult:
             attempted_steps.append(step)
             return EscalationResult(
                 ok=False,
@@ -951,13 +1086,13 @@ def test_pagination_and_detail_drift_attempt_named_recovery(
     ).discover(Browser())
 
     assert result.completeness is InventoryCompleteness.INCOMPLETE
-    assert attempted_steps == [expected_step]
+    assert attempted_steps == [DomStepId(expected_step)]
 
 
 def test_navigation_exception_recovers_from_fresh_current_observation(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    attempted_steps: list[str] = []
+    attempted_steps: list[DomStepId] = []
     recovery_urls: list[str] = []
     verification_results: list[bool] = []
 
@@ -981,7 +1116,7 @@ def test_navigation_exception_recovers_from_fresh_current_observation(
             return self.current
 
     class Agent:
-        def complete_step(self, step: str, **_kwargs: object) -> EscalationResult:
+        def complete_step(self, step: DomStepId, **_kwargs: object) -> EscalationResult:
             attempted_steps.append(step)
             verify = _kwargs["verify"]
             assert callable(verify)
@@ -1003,17 +1138,12 @@ def test_navigation_exception_recovers_from_fresh_current_observation(
 
     assert result.completeness is InventoryCompleteness.FAILED
     assert result.recovery_outcome is InventoryRecoveryOutcome.GAVE_UP
-    assert result.recovery_step == "inventory_upcoming_scope"
-    assert attempted_steps == ["inventory_upcoming_scope"]
+    assert result.recovery_step == "inventory.entry"
+    assert attempted_steps == [DomStepId.INVENTORY_ENTRY]
     assert verification_results == [True]
-    assert recovery_urls == [
-        "https://secure.booking.com/mytrips.html?private=reservation-secret"
-    ]
+    assert recovery_urls == ["https://secure.booking.com/mytrips.html?private=reservation-secret"]
     assert "left the approved reservation pages" not in (result.failure_detail or "")
-    assert (
-        "step=inventory_upcoming_url trigger=TimeoutError destination=approved"
-        in caplog.text
-    )
+    assert "step=inventory.entry trigger=TimeoutError destination=approved" in caplog.text
     assert "reservation-secret" not in caplog.text
     assert "mytrips" not in caplog.text
 
@@ -1050,10 +1180,8 @@ def test_navigation_exception_does_not_recover_from_stale_evidence() -> None:
 
     assert result.completeness is InventoryCompleteness.FAILED
     assert result.recovery_outcome is InventoryRecoveryOutcome.UNAVAILABLE
-    assert result.recovery_step == "inventory_upcoming_url"
-    assert result.failure_detail == (
-        "Booking.com inventory recovery had no safe page evidence."
-    )
+    assert result.recovery_step == "inventory.entry"
+    assert result.failure_detail == ("Booking.com inventory recovery had no safe page evidence.")
     assert not factory_called
 
 
@@ -1093,31 +1221,36 @@ def test_navigation_exception_blocks_unapproved_current_page_without_private_log
 
     assert result.completeness is InventoryCompleteness.FAILED
     assert result.recovery_outcome is InventoryRecoveryOutcome.BLOCKED
-    assert result.recovery_step == "inventory_upcoming_url"
+    assert result.recovery_step == "inventory.entry"
     assert result.failure_detail == (
         "Booking.com inventory recovery left the approved reservation pages."
     )
     assert not factory_called
-    assert (
-        "step=inventory_upcoming_url trigger=TimeoutError destination=unapproved"
-        in caplog.text
-    )
+    assert "step=inventory.entry trigger=TimeoutError destination=unapproved" in caplog.text
     assert "reservation-secret" not in caplog.text
     assert "account.booking.com" not in caplog.text
 
 
 @pytest.mark.parametrize(
-    ("current_text", "expected_code", "expected_detail"),
+    ("current_text", "expected_code", "expected_detail", "expected_reason"),
     [
         (
             "Verify you are human px-captcha",
             SynchronizationFailureCode.BOT_WALL,
             "Booking.com presented a bot-verification wall; retry later.",
+            TerminalBrowserReason.BOT_WALL,
         ),
         (
             "Sign in to manage your reservations",
             SynchronizationFailureCode.AUTH_REQUIRED,
             "Booking.com authentication is required; send /connect and retry.",
+            TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+        ),
+        (
+            "Enter the verification code to approve this login",
+            SynchronizationFailureCode.AUTH_REQUIRED,
+            "Booking.com authentication is required; send /connect and retry.",
+            TerminalBrowserReason.MFA_REQUIRED,
         ),
     ],
 )
@@ -1125,6 +1258,7 @@ def test_navigation_exception_classifies_current_authentication_boundaries(
     current_text: str,
     expected_code: SynchronizationFailureCode,
     expected_detail: str,
+    expected_reason: TerminalBrowserReason,
 ) -> None:
     factory_called = False
 
@@ -1160,7 +1294,157 @@ def test_navigation_exception_classifies_current_authentication_boundaries(
     assert result.recovery_outcome is InventoryRecoveryOutcome.BLOCKED
     assert result.failure_code is expected_code
     assert result.failure_detail == expected_detail
+    assert result.terminal_diagnosis is not None
+    assert result.terminal_diagnosis.reason is expected_reason
     assert not factory_called
+
+
+def test_model_authentication_diagnosis_preserves_exact_reconnect_outcome() -> None:
+    class Browser:
+        def open_page(self, _url: str) -> PageContent:
+            raise TimeoutError("changed inventory readiness")
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def observe(self) -> Observation:
+            return Observation(
+                "https://secure.booking.com/myreservations.html",
+                "Trips",
+                "A redesigned account page with no recognized controls",
+                (),
+            )
+
+    class Agent:
+        def complete_step(self, _step: str, **_kwargs: object) -> EscalationResult:
+            return EscalationResult(
+                ok=False,
+                detail="model classified the current page as signed out",
+                failure_code=None,
+                stop_reason=AgentStopReason.AUTHENTICATION_REQUIRED,
+            )
+
+    result = BookingComAccountInventorySource(
+        recovery_factory=lambda _browser: Agent(),
+    ).discover(Browser())
+
+    assert result.completeness is InventoryCompleteness.FAILED
+    assert result.failure_code is SynchronizationFailureCode.AUTH_REQUIRED
+    assert result.recovery_outcome is InventoryRecoveryOutcome.BLOCKED
+    assert result.failure_detail == (
+        "Booking.com authentication is required; send /connect and retry."
+    )
+    assert result.terminal_diagnosis is not None
+    assert result.terminal_diagnosis.reason is TerminalBrowserReason.AUTHENTICATION_REQUIRED
+    assert result.terminal_diagnosis.step_id is DomStepId.INVENTORY_ENTRY
+
+
+@pytest.mark.parametrize(
+    ("stop", "reason"),
+    [
+        (ModelStopReason.MFA_REQUIRED, TerminalBrowserReason.MFA_REQUIRED),
+        (
+            ModelStopReason.PROVIDER_AUTHENTICATION,
+            TerminalBrowserReason.PROVIDER_AUTHENTICATION,
+        ),
+        (
+            ModelStopReason.PROVIDER_RATE_LIMIT,
+            TerminalBrowserReason.PROVIDER_RATE_LIMIT,
+        ),
+        (ModelStopReason.TIME_LIMIT, TerminalBrowserReason.TIME_LIMIT),
+        (ModelStopReason.JOB_COST_LIMIT, TerminalBrowserReason.JOB_COST_LIMIT),
+        (ModelStopReason.DAILY_COST_LIMIT, TerminalBrowserReason.DAILY_COST_LIMIT),
+        (
+            ModelStopReason.OBSERVATION_UNAVAILABLE,
+            TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+        ),
+        (
+            ModelStopReason.PROHIBITED_ACTION,
+            TerminalBrowserReason.PROHIBITED_ACTION,
+        ),
+    ],
+)
+def test_adaptive_inventory_stop_preserves_exact_terminal_diagnosis(
+    stop: ModelStopReason,
+    reason: TerminalBrowserReason,
+) -> None:
+    class Browser:
+        def open_page(self, _url: str) -> PageContent:
+            raise TimeoutError("changed inventory readiness")
+
+        def is_authenticated(self) -> bool:
+            return True
+
+        def observe(self) -> Observation:
+            return Observation(
+                "https://secure.booking.com/myreservations.html",
+                "Trips",
+                "A redesigned account page with no recognized controls",
+                (),
+            )
+
+    class Agent:
+        def complete_step(self, _step: str, **_kwargs: object) -> EscalationResult:
+            return EscalationResult(
+                ok=False,
+                detail="typed adaptive stop",
+                model_stop_reason=stop,
+            )
+
+    result = BookingComAccountInventorySource(
+        recovery_factory=lambda _browser: Agent(),
+    ).discover(Browser())
+
+    assert result.terminal_diagnosis is not None
+    assert result.terminal_diagnosis.reason is reason
+    assert result.terminal_diagnosis.model_stop_reason is stop
+    assert result.terminal_diagnosis.step_id is DomStepId.INVENTORY_ENTRY
+
+
+def test_adaptive_interpreter_factory_stays_lazy_for_deterministic_inventory() -> None:
+    created = False
+
+    def factory() -> object:
+        nonlocal created
+        created = True
+        raise AssertionError("deterministic inventory resolved an adaptive interpreter")
+
+    page = PageContent(
+        "https://secure.booking.com/myreservations.html",
+        "<main data-testid='bookings-empty-state' "
+        "data-inventory-complete='true'>No reservations</main>",
+        "No reservations",
+    )
+
+    result = BookingComAccountInventorySource(
+        interpreter_factory=factory,  # type: ignore[arg-type]
+    ).discover(_Browser([page]))
+
+    assert result.completeness is InventoryCompleteness.COMPLETE
+    assert not created
+
+
+def test_adaptive_interpreter_stop_is_not_collapsed_to_extraction_failure() -> None:
+    class Interpreter:
+        def interpret(
+            self, _page_text: str, _source_url: str
+        ) -> tuple[ReservationObservation, ...]:
+            raise AdaptiveModelStopped(ModelStopReason.PROVIDER_RATE_LIMIT)
+
+    page = PageContent(
+        "https://secure.booking.com/myreservations.html",
+        "<main>Redesigned reservation card</main>",
+        "A future stay is visible in a redesigned account page.",
+    )
+
+    result = BookingComAccountInventorySource(
+        interpreter_factory=Interpreter,
+    ).discover(_Browser([page]))
+
+    assert result.terminal_diagnosis is not None
+    assert result.terminal_diagnosis.reason is TerminalBrowserReason.PROVIDER_RATE_LIMIT
+    assert result.terminal_diagnosis.step_id is DomStepId.INVENTORY_EXTRACTION
+    assert result.recovery_outcome is InventoryRecoveryOutcome.PROVIDER_ERROR
 
 
 @pytest.mark.parametrize("action_type", [AgentActionType.FILL, AgentActionType.SELECT])
@@ -1253,6 +1537,91 @@ def test_inventory_guard_allows_scope_labels_with_counts(label: str) -> None:
 
     action = AgentAction(AgentActionType.CLICK, ref="e0")
     guarded = _InventoryGuardedBrowser(Browser())
+    guarded.observe()
+    guarded.act(action)
+
+    assert executed == [action]
+
+
+def test_inventory_guard_uses_registered_capability_for_renamed_scope_control() -> None:
+    executed: list[AgentAction] = []
+
+    class Browser:
+        def observe(self) -> Observation:
+            return Observation(
+                url="https://secure.booking.com/myreservations.html",
+                title="Trips",
+                text="",
+                elements=(ElementInfo("e0", "button", "Journey archive"),),
+            )
+
+        def act(self, action: AgentAction) -> None:
+            executed.append(action)
+
+    action = AgentAction(AgentActionType.CLICK, ref="e0")
+    guarded = _InventoryGuardedBrowser(
+        Browser(),
+        step=DOM_STEP_REGISTRY.definition(DomStepId.INVENTORY_SCOPE),
+    )
+    guarded.observe()
+    guarded.act(action)
+
+    assert executed == [action]
+
+
+def test_inventory_guard_uses_registered_capability_for_renamed_pagination_control() -> None:
+    executed: list[AgentAction] = []
+
+    class Browser:
+        def observe(self) -> Observation:
+            return Observation(
+                url="https://secure.booking.com/myreservations.html",
+                title="Trips",
+                text="",
+                elements=(ElementInfo("e0", "button", "Older journeys"),),
+            )
+
+        def act(self, action: AgentAction) -> None:
+            executed.append(action)
+
+    action = AgentAction(AgentActionType.CLICK, ref="e0")
+    guarded = _InventoryGuardedBrowser(
+        Browser(),
+        step=DOM_STEP_REGISTRY.definition(DomStepId.INVENTORY_PAGINATION),
+    )
+    guarded.observe()
+    guarded.act(action)
+
+    assert executed == [action]
+
+
+def test_inventory_guard_allows_renamed_approved_detail_link() -> None:
+    executed: list[AgentAction] = []
+
+    class Browser:
+        def observe(self) -> Observation:
+            return Observation(
+                url="https://secure.booking.com/myreservations.html",
+                title="Trips",
+                text="",
+                elements=(
+                    ElementInfo(
+                        "e0",
+                        "link",
+                        "Open stay",
+                        "/confirmation.en-us.html?reservation=opaque",
+                    ),
+                ),
+            )
+
+        def act(self, action: AgentAction) -> None:
+            executed.append(action)
+
+    action = AgentAction(AgentActionType.CLICK, ref="e0")
+    guarded = _InventoryGuardedBrowser(
+        Browser(),
+        step=DOM_STEP_REGISTRY.definition(DomStepId.INVENTORY_DETAIL),
+    )
     guarded.observe()
     guarded.act(action)
 

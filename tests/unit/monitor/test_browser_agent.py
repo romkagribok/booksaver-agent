@@ -9,20 +9,60 @@ from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
     AgentBudget,
+    AgentDiagnosisReason,
     AgentHistoryOutcome,
     AgentSettings,
     AgentStopReason,
+    AgentTurnContext,
     ElementInfo,
+    Observation,
     RecoveryPolicy,
     TraceKind,
+)
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomStepId,
+    PageStateResolution,
+    TerminalBrowserReason,
 )
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
 from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.journey import JourneyStep
+from booksaver.domain.model_policy import EscalationTrigger, ModelStopReason
+from booksaver.infrastructure.llm.adaptive_execution import AdaptiveModelStopped
 from booksaver.monitor.browser_agent import BrowserAgent
 from booksaver.monitor.trace import TraceRecorder
 
 from .fakes import FakeAgentBrain, FakeInteractiveBrowser
+
+
+class _PageStateResolver:
+    def __init__(self, result: PageStateResolution) -> None:
+        self.result = result
+        self.calls: list[tuple[DomStepId, Observation]] = []
+
+    def resolve(
+        self, step_id: DomStepId, observation: Observation
+    ) -> PageStateResolution:
+        self.calls.append((step_id, observation))
+        return self.result
+
+
+class _EscalatingBrain(FakeAgentBrain):
+    def __init__(
+        self, script: list[AgentAction], escalation_script: list[AgentAction]
+    ) -> None:
+        super().__init__(script)
+        self.escalation_script = list(escalation_script)
+        self.escalations: list[tuple[AgentTurnContext, EscalationTrigger]] = []
+
+    def decide_with_escalation(
+        self,
+        context: AgentTurnContext,
+        trigger: EscalationTrigger,
+    ) -> AgentAction:
+        self.escalations.append((context, trigger))
+        return self.escalation_script.pop(0)
 
 
 def _click(ref: str = "e0") -> AgentAction:
@@ -62,6 +102,401 @@ class TestScreenshotRequestCap:
         assert result.stop_reason is AgentStopReason.NO_PROGRESS
         assert result.used_screenshot
         assert len(brain.decisions) == 4
+
+
+class TestRegisteredPageStateResolution:
+    @pytest.mark.parametrize(
+        "step_id",
+        [
+            DomStepId.INVENTORY_ENTRY,
+            DomStepId.INVENTORY_READINESS,
+            DomStepId.INVENTORY_SCOPE,
+            DomStepId.INVENTORY_PAGINATION,
+            DomStepId.INVENTORY_DETAIL,
+            DomStepId.INVENTORY_EXTRACTION,
+            DomStepId.INVENTORY_COMPLETENESS,
+        ],
+    )
+    def test_every_inventory_step_reaches_resolver_by_registered_id(
+        self, step_id: DomStepId
+    ) -> None:
+        browser = _browser()
+        brain = FakeAgentBrain([_click()])
+        resolver = _PageStateResolver(
+            PageStateResolution(
+                classification=None,
+                terminal_reason=TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+            )
+        )
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+            page_state_resolver=resolver,
+        )
+
+        result = agent.complete_step(
+            step_id, "goal", verify=lambda: False, trigger="selector changed"
+        )
+
+        assert result.failure_code is FailureCode.AUTH_REQUIRED
+        assert resolver.calls[0][0] is step_id
+        assert not brain.decisions
+
+    def test_unknown_dynamic_step_is_rejected_before_browser_or_model(self) -> None:
+        browser = _browser()
+        agent, brain, _ = _agent(browser, [_click()])
+
+        with pytest.raises(
+            TypeError, match="browser recovery requires a registered DOM step"
+        ):
+            agent.complete_step(  # type: ignore[arg-type]
+                "inventory.unknown",
+                "goal",
+                verify=lambda: False,
+                trigger="selector changed",
+            )
+
+        assert not browser.actions
+        assert not brain.decisions
+
+    def test_code_verifier_success_skips_page_classifier(self) -> None:
+        browser = _browser()
+        brain = FakeAgentBrain([_click()])
+        resolver = _PageStateResolver(
+            PageStateResolution(
+                classification=None,
+                terminal_reason=TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+            )
+        )
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+            page_state_resolver=resolver,
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: True, trigger="boom"
+        )
+
+        assert result.ok
+        assert not resolver.calls
+        assert not brain.decisions
+
+    def test_known_auth_stops_before_recovery_brain(self) -> None:
+        browser = _browser()
+        brain = FakeAgentBrain([_click()])
+        resolver = _PageStateResolver(
+            PageStateResolution(
+                classification=None,
+                terminal_reason=TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+            )
+        )
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+            page_state_resolver=resolver,
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
+        )
+
+        assert result.failure_code is FailureCode.AUTH_REQUIRED
+        assert result.diagnosis is not None
+        assert result.diagnosis.reason is TerminalBrowserReason.AUTHENTICATION_REQUIRED
+        assert not brain.decisions
+        assert resolver.calls[0][0] is DomStepId.PRICE_SEARCH_QUERY_SUBMISSION
+
+    def test_known_mfa_is_exact_and_uses_no_model(self) -> None:
+        browser = _browser()
+        browser.page_text = "Enter the verification code to approve this sign-in"
+        brain = FakeAgentBrain([_click()])
+        resolver = _PageStateResolver(
+            PageStateResolution(
+                classification=None,
+                terminal_reason=TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+            )
+        )
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+            page_state_resolver=resolver,
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
+        )
+
+        assert result.failure_code is FailureCode.AUTH_REQUIRED
+        assert result.diagnosis is not None
+        assert result.diagnosis.reason is TerminalBrowserReason.MFA_REQUIRED
+        assert not resolver.calls
+        assert not brain.decisions
+
+    def test_authenticated_candidate_continues_guarded_recovery(self) -> None:
+        browser = _browser()
+        give_up = AgentAction(
+            type=AgentActionType.GIVE_UP,
+            stop_reason=AgentStopReason.NO_PROGRESS,
+        )
+        brain = FakeAgentBrain([give_up])
+        resolver = _PageStateResolver(
+            PageStateResolution(
+                classification=None,
+                terminal_reason=TerminalBrowserReason.CODE_VERIFICATION_REQUIRED,
+            )
+        )
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+            page_state_resolver=resolver,
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
+        )
+
+        assert result.failure_code is FailureCode.AGENT_NO_PROGRESS
+        assert len(brain.decisions) == 1
+
+
+class TestOpusRecovery:
+    def test_sonnet_recovery_returns_positive_receipt(self) -> None:
+        browser = _browser()
+
+        def _complete(b: FakeInteractiveBrowser, _action: AgentAction) -> None:
+            b.page_text = "search complete"
+
+        browser.on_act = _complete
+        agent, _, _ = _agent(browser, [_click()])
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH,
+            "goal",
+            verify=lambda: browser.page_text == "search complete",
+            trigger="selector changed",
+        )
+
+        assert result.ok
+        assert result.diagnosis is not None
+        assert result.diagnosis.provenance is DiagnosisProvenance.SONNET_RECOVERED
+
+    def test_code_measured_sonnet_exhaustion_uses_one_opus_turn(self) -> None:
+        browser = _browser()
+
+        def _complete_on_second(
+            b: FakeInteractiveBrowser, _action: AgentAction
+        ) -> None:
+            if b.actions.count(("act", "click ref=e0")) >= 2:
+                b.page_text = "search complete"
+
+        browser.on_act = _complete_on_second
+        sonnet_give_up = AgentAction(
+            type=AgentActionType.GIVE_UP,
+            value="no progress",
+            stop_reason=AgentStopReason.NO_PROGRESS,
+        )
+        brain = _EscalatingBrain([_click(), sonnet_give_up], [_click()])
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH,
+            "goal",
+            verify=lambda: browser.page_text == "search complete",
+            trigger="selector changed",
+        )
+
+        assert result.ok
+        assert result.diagnosis is not None
+        assert result.diagnosis.provenance is DiagnosisProvenance.OPUS_RECOVERED
+        assert len(brain.escalations) == 1
+        assert brain.escalations[0][1] is EscalationTrigger.SEMANTIC_NO_PROGRESS
+
+    def test_actionless_opus_response_returns_typed_maintenance_diagnosis(
+        self,
+    ) -> None:
+        browser = _browser()
+        sonnet_give_up = AgentAction(
+            type=AgentActionType.GIVE_UP,
+            value="The verified state did not change.",
+            stop_reason=AgentStopReason.NO_PROGRESS,
+        )
+        opus_diagnosis = AgentAction(
+            type=AgentActionType.GIVE_UP,
+            value="The registered page structure is no longer recognizable.",
+            stop_reason=AgentStopReason.NO_PROGRESS,
+            diagnosis_reason=AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED,
+            diagnosis_confidence=0.91,
+        )
+        brain = _EscalatingBrain([_click(), sonnet_give_up], [opus_diagnosis])
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+        )
+
+        result = agent.complete_step(
+            DomStepId.INVENTORY_SCOPE,
+            "goal",
+            verify=lambda: False,
+            trigger="selector changed",
+        )
+
+        assert not result.ok
+        assert result.failure_code is FailureCode.DOM_MAINTENANCE_REQUIRED
+        assert result.diagnosis is not None
+        assert result.diagnosis.reason is TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
+        assert result.diagnosis.provenance is DiagnosisProvenance.OPUS_DIAGNOSED
+        assert result.diagnosis.confidence == 0.91
+        assert result.diagnosis.code_maintenance_required
+        assert len(brain.escalations) == 1
+
+    def test_unverified_opus_action_returns_canonical_ambiguity_diagnosis(
+        self,
+    ) -> None:
+        browser = _browser()
+        sonnet_give_up = AgentAction(
+            type=AgentActionType.GIVE_UP,
+            value="The verified state did not change.",
+            stop_reason=AgentStopReason.NO_PROGRESS,
+        )
+        brain = _EscalatingBrain([_click(), sonnet_give_up], [_click()])
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+        )
+
+        result = agent.complete_step(
+            DomStepId.INVENTORY_SCOPE,
+            "goal",
+            verify=lambda: False,
+            trigger="selector changed",
+        )
+
+        assert not result.ok
+        assert result.failure_code is FailureCode.DOM_AMBIGUITY
+        assert result.diagnosis is not None
+        assert result.diagnosis.reason is TerminalBrowserReason.UNRESOLVED_AMBIGUITY
+        assert result.diagnosis.provenance is DiagnosisProvenance.OPUS_DIAGNOSED
+        assert len(brain.escalations) == 1
+
+    def test_unmeasured_sonnet_give_up_does_not_spend_opus(self) -> None:
+        browser = _browser()
+        brain = _EscalatingBrain(
+            [
+                AgentAction(
+                    type=AgentActionType.GIVE_UP,
+                    value="No progress.",
+                    stop_reason=AgentStopReason.NO_PROGRESS,
+                )
+            ],
+            [_click()],
+        )
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH,
+            "goal",
+            verify=lambda: False,
+            trigger="selector changed",
+        )
+
+        assert result.failure_code is FailureCode.AGENT_NO_PROGRESS
+        assert not brain.escalations
+
+    def test_rejected_sonnet_unsafe_proposal_gets_one_guarded_opus_turn(
+        self,
+    ) -> None:
+        browser = _browser()
+        browser.on_act = lambda current, _action: setattr(
+            current, "page_text", "search complete"
+        )
+        brain = _EscalatingBrain([_click("e1")], [_click("e0")])
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH,
+            "goal",
+            verify=lambda: browser.page_text == "search complete",
+            trigger="selector changed",
+        )
+
+        assert result.ok
+        assert result.diagnosis is not None
+        assert result.diagnosis.provenance is DiagnosisProvenance.OPUS_RECOVERED
+        assert len(brain.escalations) == 1
+        assert brain.escalations[0][1] is EscalationTrigger.UNSAFE_PROPOSAL_REJECTED
+        executed = [detail for kind, detail in browser.actions if kind == "act"]
+        assert executed == ["click ref=e0"]
+
+    def test_second_unsafe_proposal_stops_without_execution(self) -> None:
+        browser = _browser()
+        brain = _EscalatingBrain([_click("e1")], [_click("e1")])
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH,
+            "goal",
+            verify=lambda: False,
+            trigger="selector changed",
+        )
+
+        assert result.failure_code is FailureCode.BLOCKED_ACTION
+        assert result.stop_reason is AgentStopReason.UNSAFE_ACTION
+        assert len(brain.escalations) == 1
+        assert not [detail for kind, detail in browser.actions if kind == "act"]
+
+    def test_predictable_auth_never_uses_opus(self) -> None:
+        browser = _browser()
+        browser.page_text = "Sign in to manage your booking"
+        brain = _EscalatingBrain([], [_click()])
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
+        )
+
+        assert result.failure_code is FailureCode.AUTH_REQUIRED
+        assert not brain.decisions
+        assert not brain.escalations
 
 
 class TestLoopDetection:
@@ -236,7 +671,10 @@ class TestLoopOutcomes:
         agent, brain, _ = _agent(_browser(), [_click()])
 
         result = agent.complete_step(
-            "inventory_upcoming", "goal", verify=lambda: True, trigger="late timeout"
+            DomStepId.INVENTORY_ENTRY,
+            "goal",
+            verify=lambda: True,
+            trigger="late timeout",
         )
 
         assert result.ok
@@ -254,10 +692,57 @@ class TestLoopOutcomes:
             JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
         )
 
-        assert result.failure_code is FailureCode.LLM_ERROR
+        assert result.failure_code is FailureCode.PROVIDER_UNAVAILABLE
         assert result.stop_reason is AgentStopReason.PROVIDER_ERROR
+        assert result.diagnosis is not None
+        assert result.diagnosis.reason is TerminalBrowserReason.PROVIDER_UNAVAILABLE
         assert "abcdefghijklmnop" not in result.detail
         assert "secret payload" not in result.detail
+
+    @pytest.mark.parametrize(
+        ("model_stop", "failure_code", "agent_stop"),
+        [
+            (
+                ModelStopReason.PROVIDER_RATE_LIMIT,
+                FailureCode.PROVIDER_RATE_LIMIT,
+                AgentStopReason.PROVIDER_ERROR,
+            ),
+            (
+                ModelStopReason.DAILY_COST_LIMIT,
+                FailureCode.DAILY_COST_LIMIT,
+                AgentStopReason.BUDGET_EXHAUSTED,
+            ),
+            (
+                ModelStopReason.TIME_LIMIT,
+                FailureCode.TIME_LIMIT,
+                AgentStopReason.BUDGET_EXHAUSTED,
+            ),
+        ],
+    )
+    def test_adaptive_stop_preserves_exact_reason_and_diagnosis(
+        self,
+        model_stop: ModelStopReason,
+        failure_code: FailureCode,
+        agent_stop: AgentStopReason,
+    ) -> None:
+        browser = _browser()
+        brain = FakeAgentBrain([], raise_error=AdaptiveModelStopped(model_stop))
+        agent = BrowserAgent(
+            browser,
+            brain,
+            AgentBudget(AgentSettings()),
+            TraceRecorder("b-1"),
+        )
+
+        result = agent.complete_step(
+            JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
+        )
+
+        assert result.failure_code is failure_code
+        assert result.stop_reason is agent_stop
+        assert result.model_stop_reason is model_stop
+        assert result.diagnosis is not None
+        assert result.diagnosis.model_stop_reason is model_stop
 
     def test_personal_key_error_remains_typed_for_caller_guidance(self):
         browser = _browser()
@@ -289,8 +774,10 @@ class TestLoopOutcomes:
             JourneyStep.FILL_SEARCH, "goal", verify=lambda: False, trigger="boom"
         )
 
-        assert result.failure_code is FailureCode.LLM_ERROR
+        assert result.failure_code is FailureCode.INVALID_PROVIDER_RESPONSE
         assert result.stop_reason is AgentStopReason.PROVIDER_ERROR
+        assert result.diagnosis is not None
+        assert result.diagnosis.reason is TerminalBrowserReason.INVALID_PROVIDER_RESPONSE
 
     def test_model_coded_no_progress_uses_distinct_failure(self):
         action = AgentAction(
@@ -343,10 +830,14 @@ class TestLoopOutcomes:
 
 
 class TestPopupOutcomes:
-    def test_known_booking_popup_is_no_progress_and_visible_to_next_turn(self):
+    def test_known_booking_popup_is_adopted_and_verified(self):
         browser = _browser()
+        opened = {"once": False}
 
         def _popup(b: FakeInteractiveBrowser, action: AgentAction) -> None:
+            if opened["once"]:
+                return
+            opened["once"] = True
             b.popup_count = 1
             b.popup_urls = ("https://www.booking.com/hotel/test.html",)
 
@@ -354,11 +845,15 @@ class TestPopupOutcomes:
         agent, brain, _ = _agent(browser, [_click(), _click(), _click()])
 
         result = agent.complete_step(
-            JourneyStep.OPEN_PROPERTY, "goal", verify=lambda: False, trigger="boom"
+            JourneyStep.OPEN_PROPERTY,
+            "goal",
+            verify=lambda: "/hotel/test.html" in browser.url,
+            trigger="boom",
         )
 
-        assert result.failure_code is FailureCode.AGENT_NO_PROGRESS
-        assert brain.contexts[1].history[-1].popup_opened
+        assert result.ok
+        assert browser.url == "https://www.booking.com/hotel/test.html"
+        assert len(brain.decisions) == 1
 
     def test_uninspectable_popup_fails_closed(self):
         browser = _browser()
@@ -377,6 +872,25 @@ class TestPopupOutcomes:
         assert result.failure_code is FailureCode.AGENT_GAVE_UP
         assert result.stop_reason is AgentStopReason.MISSING_BROWSER_CAPABILITY
         assert len(brain.decisions) == 1
+
+    def test_additional_popup_after_adoption_is_blocked(self):
+        browser = _browser()
+
+        def _popup(b: FakeInteractiveBrowser, action: AgentAction) -> None:
+            b.popup_count = 1
+            b.popup_urls = ("https://www.booking.com/hotel/test.html",)
+
+        browser.on_act = _popup
+        agent, brain, _ = _agent(browser, [_click(), _click()])
+
+        result = agent.complete_step(
+            JourneyStep.OPEN_PROPERTY, "goal", verify=lambda: False, trigger="boom"
+        )
+
+        assert result.failure_code is FailureCode.BLOCKED_ACTION
+        assert result.stop_reason is AgentStopReason.UNSAFE_ACTION
+        assert "additional popup" in result.detail
+        assert len(brain.decisions) == 2
 
     def test_external_popup_is_blocked(self):
         browser = _browser()

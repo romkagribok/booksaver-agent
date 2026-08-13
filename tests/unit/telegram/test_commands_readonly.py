@@ -360,6 +360,77 @@ def test_status_refuses_unrecognized_sender_even_when_other_users_exist(
     assert sent[0][1] == "You're not recognized by this bot."
 
 
+def test_status_shows_content_free_incident_counts_only_to_owner(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    _register_caller(db_path, telegram_id=1)
+    _register_caller(db_path, telegram_id=2)
+    router = CommandRouter()
+    sent: list[tuple[int, str]] = []
+    provider_calls = 0
+
+    class Status:
+        open_incidents = 2
+        pending_alerts = 1
+        failed_alerts = 3
+        unavailable_evidence = 4
+
+    def incident_status_provider() -> Status:
+        nonlocal provider_calls
+        provider_calls += 1
+        return Status()
+
+    register_readonly_commands(
+        router=router,
+        reply=lambda chat_id, text: sent.append((chat_id, text)),
+        db_path=db_path,
+        scheduler=Scheduler(),
+        is_owner=lambda chat_id: chat_id == 1,
+        incident_status_provider=incident_status_provider,
+    )
+
+    router.dispatch(_cmd("/status", chat_id=1))
+    owner_text = sent[-1][1]
+    assert "DOM maintenance incidents: 2 open" in owner_text
+    assert "DOM maintenance alerts: 1 pending, 3 failed" in owner_text
+    assert "DOM diagnostic evidence unavailable: 4" in owner_text
+    assert provider_calls == 1
+
+    router.dispatch(_cmd("/status", chat_id=2))
+    invited_text = sent[-1][1]
+    assert "DOM maintenance" not in invited_text
+    assert "DOM diagnostic" not in invited_text
+    assert provider_calls == 1
+
+
+def test_status_incident_projection_failure_is_owner_safe(
+    tmp_path: Path, caplog
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    _register_caller(db_path, telegram_id=1)
+    router = CommandRouter()
+    sent: list[tuple[int, str]] = []
+
+    def fail_with_private_text():
+        raise RuntimeError("https://example.test?confirmation=PRIVATE")
+
+    register_readonly_commands(
+        router=router,
+        reply=lambda chat_id, text: sent.append((chat_id, text)),
+        db_path=db_path,
+        scheduler=Scheduler(),
+        is_owner=lambda chat_id: chat_id == 1,
+        incident_status_provider=fail_with_private_text,
+    )
+
+    router.dispatch(_cmd("/status", chat_id=1))
+
+    assert "DOM maintenance status: unavailable" in sent[-1][1]
+    assert "PRIVATE" not in sent[-1][1]
+    assert "PRIVATE" not in caplog.text
+
+
 def test_bookings_lists_active_bookings(tmp_path: Path) -> None:
     db_path, router, sent, _sched = _setup(tmp_path)
     user_id = _register_caller(db_path, telegram_id=1)

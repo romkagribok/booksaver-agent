@@ -11,6 +11,7 @@ from booksaver.domain.account_sync import ReservationLifecycle
 from booksaver.domain.agent import LLMUsage
 from booksaver.infrastructure.llm.anthropic_adapter import (
     AnthropicInventoryInterpreter,
+    LLMFailureKind,
     LLMProviderError,
     has_non_authoritative_inventory_negative_claims,
     parse_inventory_response,
@@ -186,5 +187,6 @@ def test_inventory_provider_exception_fails_closed() -> None:
         interpreter.interpret("visible booking facts", SOURCE_URL)
 
     assert str(raised.value) == "inventory interpreter provider call failed"
+    assert raised.value.kind is LLMFailureKind.TRANSPORT
     assert "sensitive provider detail" not in str(raised.value)
     assert interpreter.last_usage is None

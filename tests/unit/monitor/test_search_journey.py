@@ -191,13 +191,27 @@ class TestStepFailures:
         assert result.failure_code is FailureCode.NAVIGATION_ERROR
         assert result.failed_step.step is JourneyStep.SUBMIT_SEARCH
 
-    def test_property_absent_from_results_is_property_not_found(self):
+    def test_property_redirect_to_another_hotel_does_not_verify_identity(self):
+        browser = _happy_browser()
+        browser.property_redirect_url = (
+            "https://www.booking.com/hotel/different.html"
+            "?checkin=2026-09-01&checkout=2026-09-05&group_adults=2"
+            "&group_children=0&no_rooms=1"
+        )
+
+        result = SearchJourney(browser).run(make_booking())
+
+        assert result.failure_code is FailureCode.STEP_FAILED
+        assert result.failed_step.step is JourneyStep.OPEN_PROPERTY
+        assert "requested identity" in result.failed_step.detail
+
+    def test_unrecognized_property_titles_are_ambiguous_not_proven_absent(self):
         browser = _happy_browser()
         browser.titles = ["Wrong Hotel", "Another Wrong Hotel"]
 
         result = SearchJourney(browser).run(make_booking())
 
-        assert result.failure_code is FailureCode.PROPERTY_NOT_FOUND
+        assert result.failure_code is FailureCode.STEP_FAILED
         assert result.failed_step.step is JourneyStep.LOCATE_PROPERTY
         assert "Hotel Test" in result.failed_step.detail
 

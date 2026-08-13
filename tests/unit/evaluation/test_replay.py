@@ -8,6 +8,7 @@ import pytest
 from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
+    AgentDiagnosisReason,
     AgentStopReason,
     AgentTurnContext,
     LLMUsage,
@@ -48,6 +49,13 @@ class UsageBrain(ScriptedBrain):
         return action
 
 
+class ProfileUsageBrain(UsageBrain):
+    provider = "anthropic"
+    model = "claude-sonnet-5"
+    role = "recovery"
+    prompt_version = "recovery-v1"
+
+
 def _fixture(name: str) -> ReplayFixture:
     return load_fixture(FIXTURE_DIRECTORY / name)
 
@@ -56,11 +64,16 @@ def _click(ref: str) -> AgentAction:
     return AgentAction(type=AgentActionType.CLICK, ref=ref)
 
 
-def _give_up(reason: AgentStopReason) -> AgentAction:
+def _give_up(
+    reason: AgentStopReason,
+    diagnosis: AgentDiagnosisReason | None = None,
+) -> AgentAction:
     return AgentAction(
         type=AgentActionType.GIVE_UP,
         value="bounded synthetic explanation",
         stop_reason=reason,
+        diagnosis_reason=diagnosis,
+        diagnosis_confidence=0.9 if diagnosis is not None else None,
     )
 
 
@@ -128,12 +141,46 @@ def test_inventory_drift_replays_recover_deterministically(
 def test_unsupported_layout_records_accurate_give_up() -> None:
     runs, _aggregate = ReplayRunner().run(
         _fixture("unsupported-layout.json"),
-        ScriptedBrain([_give_up(AgentStopReason.UNKNOWN)]),
+        ScriptedBrain(
+            [
+                _give_up(
+                    AgentStopReason.UNKNOWN,
+                    AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED,
+                )
+            ]
+        ),
     )
 
     assert runs[0].correct_outcome
     assert runs[0].outcome_category == "unsupported-layout"
     assert runs[0].action_count == 0
+
+
+def test_unsupported_layout_requires_a_terminal_maintenance_diagnosis() -> None:
+    fixture = _fixture("unsupported-layout.json")
+    brain = ScriptedBrain(
+        [
+            _give_up(
+                AgentStopReason.MISSING_BROWSER_CAPABILITY,
+                AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED,
+            )
+        ]
+    )
+
+    runs, _aggregate = ReplayRunner().run(fixture, brain)
+
+    assert brain.contexts[0].terminal_diagnosis_required
+    assert runs[0].correct_outcome
+
+
+def test_unsupported_layout_rejects_an_actionless_stop_without_diagnosis() -> None:
+    runs, _aggregate = ReplayRunner().run(
+        _fixture("unsupported-layout.json"),
+        ScriptedBrain([_give_up(AgentStopReason.UNKNOWN)]),
+    )
+
+    assert not runs[0].correct_outcome
+    assert runs[0].outcome_category == "incorrect-action"
 
 
 def test_prohibited_control_is_refused_without_execution() -> None:
@@ -222,6 +269,56 @@ def test_usage_is_reported_per_run_and_aggregated_across_calls_and_runs() -> Non
     assert aggregate.total_input_tokens == 60
     assert aggregate.total_output_tokens == 20
     assert aggregate.total_tokens == 80
+
+
+@pytest.mark.parametrize(
+    "actions",
+    [
+        [_click("e1"), _click("e8"), _give_up(AgentStopReason.NO_PROGRESS)],
+        [_click("e2"), _click("e7"), _give_up(AgentStopReason.NO_PROGRESS)],
+    ],
+)
+def test_alternating_equivalent_controls_accept_either_safe_first_target(
+    actions: list[AgentAction],
+) -> None:
+    runs, _aggregate = ReplayRunner().run(
+        _fixture("alternating-equivalent-refs.json"), ScriptedBrain(actions)
+    )
+
+    assert runs[0].correct_outcome
+    assert runs[0].outcome_category == "no-progress"
+    assert runs[0].actual_calls == 3
+
+
+@pytest.mark.parametrize("first_ref", ["e1", "e2"])
+def test_alternating_equivalent_controls_allow_early_conservative_no_progress(
+    first_ref: str,
+) -> None:
+    runs, _aggregate = ReplayRunner().run(
+        _fixture("alternating-equivalent-refs.json"),
+        ScriptedBrain(
+            [_click(first_ref), _give_up(AgentStopReason.NO_PROGRESS)]
+        ),
+    )
+
+    assert runs[0].correct_outcome
+    assert runs[0].outcome_category == "no-progress"
+    assert runs[0].actual_calls == 2
+
+
+def test_approved_profile_replay_reports_safe_identity_schema_and_exact_cost() -> None:
+    fixture = _fixture("inventory-readiness-drift.json")
+    brain = ProfileUsageBrain([_click("e3")], [LLMUsage(1_000, 100)])
+
+    runs, aggregate = ReplayRunner().run(fixture, brain)
+
+    assert runs[0].schema_valid
+    assert aggregate.schema_valid_runs == 1
+    assert aggregate.provider == "anthropic"
+    assert aggregate.model == "claude-sonnet-5"
+    assert aggregate.role == "recovery"
+    assert aggregate.prompt_version == "recovery-v1"
+    assert aggregate.estimated_micro_usd == 3_000
 
 
 def test_llm_usage_rejects_negative_counts() -> None:

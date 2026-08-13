@@ -7,6 +7,12 @@ change.
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from booksaver.domain.model_policy import (
+    AdaptiveModelPortfolio,
+    BrowserJobKind,
+    ModelCostEstimator,
+    ModelRole,
+)
 from booksaver.domain.models import Config
 from booksaver.domain.value_objects import CheckInterval, DataDirectory, NotificationSettings
 from booksaver.infrastructure.llm.client_factory import AnthropicLLMClientFactory
@@ -70,8 +76,10 @@ class _FakeKeyStore:
     def __init__(self, plaintext: str | None = None, raise_error: bool = False) -> None:
         self._plaintext = plaintext
         self._raise = raise_error
+        self.decrypt_calls = 0
 
     def decrypt(self, ciphertext: bytes) -> str:
+        self.decrypt_calls += 1
         if self._raise:
             from booksaver.domain.errors import SecretKeyError
 
@@ -87,9 +95,7 @@ def _user(encrypted_key: bytes | None, *, active: bool = True):
         user_id=1,
         telegram_user_id=42,
         role=UserRole.USER,
-        access_state=(
-            UserAccessState.ACTIVE if active else UserAccessState.REVOKED
-        ),
+        access_state=(UserAccessState.ACTIVE if active else UserAccessState.REVOKED),
         created_at=datetime.now(UTC),
         encrypted_key=encrypted_key,
     )
@@ -186,7 +192,7 @@ class TestExplicitUserRoleResolution:
         assert brain.provider == "anthropic"
         assert brain.role == "navigation_agent"
         assert brain.model == _config().agent_settings.model
-        assert brain.prompt_version == "booking-browser-recovery-v2"
+        assert brain.prompt_version == "booking-browser-recovery-v5"
 
     def test_builds_positive_inventory_interpreter_for_active_user(self):
         factory = AnthropicLLMClientFactory(
@@ -275,3 +281,62 @@ class TestExplicitUserRoleResolution:
         )
 
         assert factory.agent_brain_for_booking(make_booking()) is None
+
+
+class TestAdaptiveCallerBinding:
+    def test_job_identity_and_role_proxies_do_not_decrypt_personal_key(self):
+        from booksaver.application.model_policy import BrowserJobCostBudget
+
+        class _Ledger:
+            def reserve_call(self, _request):
+                raise AssertionError("deterministic setup must not reserve model spend")
+
+            def reconcile_call(self, _request):
+                raise AssertionError("deterministic setup must not reconcile model spend")
+
+            def list_attempts(self, _job_id):
+                return ()
+
+        key_store = _FakeKeyStore(plaintext="sk-personal-key")
+        factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=b"ciphertext")),
+            key_store=key_store,
+        )
+
+        key_ref = factory.caller_key_ref_for_user(1)
+        assert key_ref is not None
+        budget = BrowserJobCostBudget(
+            job_id="check-now-test",
+            job_kind=BrowserJobKind.CHECK_NOW,
+            caller_key_ref=key_ref,
+            ledger=_Ledger(),
+            estimator=ModelCostEstimator(),
+        )
+        runtime = factory.adaptive_runtime_for_user(1, budget)
+        assert runtime is not None
+
+        runtime.agent_brain()
+        runtime.inventory_interpreter()
+        runtime.extractor()
+        runtime.page_state_resolver()
+
+        assert key_store.decrypt_calls == 0
+
+    def test_page_classifier_rejects_non_classification_profile(self):
+        import pytest
+
+        bound = factory = AnthropicLLMClientFactory(
+            _config(),
+            api_key="sk-owner-key",
+            user_repo=_FakeUserRepo(_user(encrypted_key=None)),
+        ).bind_for_user(1)
+        assert bound is not None
+        profile = AdaptiveModelPortfolio().primary(
+            ModelRole.EXTRACTION,
+            "booking-offer-extraction-v1",
+        )
+
+        with pytest.raises(ValueError, match="classification profile"):
+            factory.page_classifier(profile)

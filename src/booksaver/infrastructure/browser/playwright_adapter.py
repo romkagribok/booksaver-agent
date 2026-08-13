@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qs, urljoin, urlsplit, urlunsplit
+from uuid import uuid4
 
+from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
 from booksaver.application.ports import PageContent, PageSnapshot
 from booksaver.domain.agent import (
     AgentAction,
@@ -14,28 +17,31 @@ from booksaver.domain.agent import (
     Observation,
     blocked_url_reason,
 )
+from booksaver.domain.browser_resilience import (
+    DomCapability,
+    DomStepId,
+    PageState,
+    PopupAdoptionReceipt,
+    PopupAdoptionResult,
+    PopupRefusalReason,
+)
 from booksaver.domain.mobile_web import MobileWebSettings
+from booksaver.infrastructure.browser.page_state import (
+    assess_page_state,
+    assessment_is_protected,
+    assessment_proves_authenticated,
+)
 
 logger = logging.getLogger(__name__)
 
-_SIGN_IN_MARKERS = re.compile(
-    r"(sign in to manage|log in to your account|create an account|sign in or register)",
-    re.I,
-)
-_SIGNED_IN_MARKERS = re.compile(
-    r"(Genius\s+(?:Level|discount|deal|rate)|Bookings\s*(?:&|and)\s*Trips|"
-    r"Manage account|My account|Sign out)",
-    re.I,
-)
-_SIGNED_IN_SELECTORS = (
-    '[data-testid="header-profile"]',
-    '[data-testid="header-profile-menu"]',
-    '[data-testid="header-bookings-link"]',
-    'a[href*="myreservations"]',
-)
+# Structural coverage declaration for the production session-validation seam.
+# Keep this domain-only tuple next to the workflow that owns the DOM dependency;
+# tests compose workflow declarations and compare them with the central policy.
+DOM_STEPS: tuple[DomStepId, ...] = (DomStepId.SESSION_VALIDATION,)
 
 _PAGE_TIMEOUT_MS = 45_000
 _ACTION_TIMEOUT_MS = 15_000
+_ACCOUNT_VERIFICATION_URL = "https://secure.booking.com/myreservations.html"
 _INVENTORY_STABLE_MS = 750
 _INVENTORY_READY_SCRIPT = """
 () => {
@@ -107,20 +113,8 @@ _OPAQUE_PATH_SEGMENT = re.compile(
 
 
 def has_authenticated_account_context(page: Any, text: str) -> bool:
-    """Require positive rendered account evidence; absence of a login CTA is insufficient."""
-    if _SIGN_IN_MARKERS.search(text):
-        return False
-    if _SIGNED_IN_MARKERS.search(text):
-        return True
-    for selector in _SIGNED_IN_SELECTORS:
-        try:
-            locator = page.locator(selector)
-            for index in range(locator.count()):
-                if locator.nth(index).is_visible():
-                    return True
-        except Exception:
-            continue
-    return False
+    """Require fresh strong supported-page proof, never weak account chrome."""
+    return assessment_proves_authenticated(assess_page_state(page, text))
 
 
 def new_mobile_context(
@@ -194,6 +188,54 @@ def _agent_destination_problem(raw_url: str) -> str | None:
     return None
 
 
+def _popup_destination_refusal(
+    step_id: DomStepId, raw_url: str
+) -> PopupRefusalReason | None:
+    """Validate a raw child destination against the code-selected step."""
+    try:
+        parsed = urlsplit(raw_url)
+    except ValueError:
+        return PopupRefusalReason.OBSERVATION_UNAVAILABLE
+    hostname = (parsed.hostname or "").casefold().rstrip(".")
+    if parsed.scheme.casefold() != "https" or not (
+        hostname == "booking.com" or hostname.endswith(".booking.com")
+    ):
+        return PopupRefusalReason.EXTERNAL_ORIGIN
+    if blocked_url_reason(raw_url) is not None:
+        return PopupRefusalReason.MUTATING_DESTINATION
+
+    path = parsed.path.casefold()
+    if step_id is DomStepId.PRICE_PROPERTY_OPEN:
+        return (
+            None
+            if path.startswith("/hotel/")
+            else PopupRefusalReason.UNSUPPORTED_ROUTE
+        )
+    if step_id is DomStepId.INVENTORY_DETAIL:
+        is_detail = path.startswith("/confirmation") or "trip_id" in parse_qs(
+            parsed.query
+        )
+        return None if is_detail else PopupRefusalReason.UNSUPPORTED_ROUTE
+    return PopupRefusalReason.IRRELEVANT_TO_STEP
+
+
+def _popup_assessment_refusal(state: PageState) -> PopupRefusalReason | None:
+    if state is PageState.OBSERVATION_UNAVAILABLE:
+        return PopupRefusalReason.OBSERVATION_UNAVAILABLE
+    if state is PageState.EXTERNAL:
+        return PopupRefusalReason.EXTERNAL_ORIGIN
+    if state is PageState.PROHIBITED:
+        return PopupRefusalReason.MUTATING_DESTINATION
+    if state in {
+        PageState.AUTHENTICATION_REQUIRED,
+        PageState.MFA_REQUIRED,
+        PageState.CAPTCHA,
+        PageState.BOT_WALL,
+    }:
+        return PopupRefusalReason.PROTECTED_DESTINATION
+    return None
+
+
 def _wait_for_account_inventory(page: Any) -> None:
     """Wait for a stable rendered inventory signal, not only initial HTML."""
     try:
@@ -251,7 +293,8 @@ class PlaywrightBrowserSession:
             page.wait_for_load_state("networkidle", timeout=_PAGE_TIMEOUT_MS)
             html = page.content()
             text = page.inner_text("body")
-            self._authenticated = has_authenticated_account_context(page, text)
+            assessment = assess_page_state(page, text)
+            self._authenticated = assessment_proves_authenticated(assessment)
             return PageContent(url=page.url, html=html, text=text)
         finally:
             page.close()
@@ -304,6 +347,8 @@ class PlaywrightInteractiveBrowser:
         self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
+        self._authenticated_verified = False
+        self._last_action_pages: tuple[Any, ...] | None = None
 
     def _ensure_page(self) -> Any:
         if self._page is not None:
@@ -339,6 +384,7 @@ class PlaywrightInteractiveBrowser:
             _wait_for_account_inventory(page)
         html = page.content()
         text = page.inner_text("body")
+        self._record_page_assessment(page, text)
         return PageContent(url=page.url, html=html, text=text)
 
     def open_inventory_scope(self, scope: str) -> PageContent:
@@ -357,10 +403,12 @@ class PlaywrightInteractiveBrowser:
         tab.click(timeout=_ACTION_TIMEOUT_MS)
         page.evaluate("delete window.__booksaverInventoryReady")
         _wait_for_account_inventory(page)
+        text = page.inner_text("body")
+        self._record_page_assessment(page, text)
         return PageContent(
             url=page.url,
             html=page.content(),
-            text=page.inner_text("body"),
+            text=text,
         )
 
     def click(self, selector: str) -> None:
@@ -530,6 +578,7 @@ class PlaywrightInteractiveBrowser:
         handle = getattr(self, "_ref_map", {}).get(action.ref or "")
         if handle is None:
             raise RuntimeError(f"Unknown or stale element ref: {action.ref!r}")
+        self._last_action_pages = self._current_pages()
         if action.type is AgentActionType.CLICK:
             handle.click()
         elif action.type is AgentActionType.FILL:
@@ -538,6 +587,106 @@ class PlaywrightInteractiveBrowser:
             handle.select_option(action.value or "")
         else:
             raise RuntimeError(f"Action {action.type.value} is not a browser action")
+
+    def adopt_read_only_popup(self, step_id: DomStepId) -> PopupAdoptionResult:
+        """Adopt one safe popup created by the immediately preceding action.
+
+        Page identity and route selection remain entirely adapter-owned.  The
+        model supplies neither the child page nor a URL; its guarded click only
+        creates browser evidence that this method can accept or refuse.
+        """
+        definition = DOM_STEP_REGISTRY.definition(step_id)
+        if (
+            DomCapability.ADOPT_APPROVED_READ_ONLY_POPUP
+            not in definition.safe_capabilities
+        ):
+            return self._popup_refusal(PopupRefusalReason.IRRELEVANT_TO_STEP)
+
+        baseline = self._last_action_pages
+        current = self._current_pages()
+        if baseline is None or current is None:
+            return self._popup_refusal(PopupRefusalReason.OBSERVATION_UNAVAILABLE)
+        if self._page not in baseline or any(page is not self._page for page in baseline):
+            return self._popup_refusal(PopupRefusalReason.MULTIPLE_OPENED)
+
+        new_pages = [
+            page for page in current if not any(page is prior for prior in baseline)
+        ]
+        if not new_pages:
+            return self._popup_refusal(PopupRefusalReason.NONE_OPENED)
+        if len(new_pages) != 1:
+            return self._popup_refusal(
+                PopupRefusalReason.MULTIPLE_OPENED, close_pages=new_pages
+            )
+
+        popup = new_pages[0]
+        try:
+            wait = getattr(popup, "wait_for_load_state", None)
+            if callable(wait):
+                wait("domcontentloaded", timeout=_ACTION_TIMEOUT_MS)
+            raw_url = str(popup.url)
+        except Exception:
+            return self._popup_refusal(
+                PopupRefusalReason.OBSERVATION_UNAVAILABLE, close_pages=(popup,)
+            )
+
+        destination_refusal = _popup_destination_refusal(step_id, raw_url)
+        if destination_refusal is not None:
+            return self._popup_refusal(destination_refusal, close_pages=(popup,))
+
+        try:
+            text = popup.inner_text("body")
+            assessment = assess_page_state(popup, text)
+        except Exception:
+            return self._popup_refusal(
+                PopupRefusalReason.OBSERVATION_UNAVAILABLE, close_pages=(popup,)
+            )
+        protected_refusal = _popup_assessment_refusal(assessment.state)
+        if protected_refusal is not None:
+            return self._popup_refusal(protected_refusal, close_pages=(popup,))
+
+        previous = self._page
+        try:
+            popup.set_default_timeout(_ACTION_TIMEOUT_MS)
+            previous.close()
+        except Exception:
+            return self._popup_refusal(
+                PopupRefusalReason.OBSERVATION_UNAVAILABLE, close_pages=(popup,)
+            )
+
+        self._page = popup
+        self._last_action_pages = None
+        self._authenticated_verified = False
+        return PopupAdoptionResult(
+            receipt=PopupAdoptionReceipt(
+                step_id=step_id,
+                observation_id=f"popup-{uuid4().hex}",
+                page_id=f"page-{uuid4().hex}",
+                adopted_at=datetime.now(UTC),
+            )
+        )
+
+    def _current_pages(self) -> tuple[Any, ...] | None:
+        if self._context is None:
+            return None
+        try:
+            return tuple(self._context.pages)
+        except Exception:
+            return None
+
+    def _popup_refusal(
+        self,
+        reason: PopupRefusalReason,
+        *,
+        close_pages: tuple[Any, ...] | list[Any] = (),
+    ) -> PopupAdoptionResult:
+        for page in close_pages:
+            try:
+                page.close()
+            except Exception:
+                pass
+        self._last_action_pages = None
+        return PopupAdoptionResult(refusal_reason=reason)
 
     def screenshot(self) -> bytes:
         page = self._ensure_page()
@@ -554,15 +703,39 @@ class PlaywrightInteractiveBrowser:
     def restore_cookies(self, data: bytes) -> None:
         self._ensure_page()
         self._context.add_cookies(json.loads(data.decode("utf-8")))
+        self._authenticated_verified = False
+        self._last_action_pages = None
+
+    def verify_authenticated_account(self) -> bool:
+        """Run one fixed read-only account probe and retain only code proof."""
+        try:
+            page = self._ensure_page()
+            page.goto(
+                _ACCOUNT_VERIFICATION_URL,
+                timeout=_PAGE_TIMEOUT_MS,
+                wait_until="domcontentloaded",
+            )
+            _wait_for_account_inventory(page)
+            self._record_page_assessment(page, page.inner_text("body"))
+            return self._authenticated_verified
+        except Exception:
+            self._authenticated_verified = False
+            return False
 
     def is_authenticated(self) -> bool:
         try:
             page = self._ensure_page()
-            return has_authenticated_account_context(
-                page, page.inner_text("body")
-            )
+            self._record_page_assessment(page, page.inner_text("body"))
+            return self._authenticated_verified
         except Exception:
             return False
+
+    def _record_page_assessment(self, page: Any, text: str) -> None:
+        assessment = assess_page_state(page, text)
+        if assessment_is_protected(assessment):
+            self._authenticated_verified = False
+        elif assessment_proves_authenticated(assessment):
+            self._authenticated_verified = True
 
     def close(self) -> None:
         for attr in ("_page", "_context", "_browser"):
@@ -576,6 +749,8 @@ class PlaywrightInteractiveBrowser:
         if self._playwright is not None:
             self._playwright.stop()
             self._playwright = None
+        self._authenticated_verified = False
+        self._last_action_pages = None
 
     def __enter__(self) -> PlaywrightInteractiveBrowser:
         return self

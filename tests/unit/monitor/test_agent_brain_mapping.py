@@ -8,6 +8,7 @@ from anthropic.types import ToolUseBlock
 from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
+    AgentDiagnosisReason,
     AgentHistoryEvent,
     AgentHistoryOutcome,
     AgentStopReason,
@@ -19,6 +20,7 @@ from booksaver.domain.agent import (
 from booksaver.infrastructure.llm.anthropic_adapter import (
     AGENT_PROMPT_VERSION,
     AnthropicAgentBrain,
+    LLMFailureKind,
     LLMProviderError,
     action_from_tool_call,
     render_agent_turn_context,
@@ -64,6 +66,32 @@ class TestActionFromToolCall:
         assert action.type is AgentActionType.GIVE_UP
         assert action.stop_reason is AgentStopReason.PROVIDER_ERROR
 
+    def test_give_up_can_carry_bounded_terminal_dom_diagnosis(self):
+        action = action_from_tool_call(
+            "give_up",
+            {
+                "reason_code": "no_progress",
+                "explanation": "The known structure no longer verifies.",
+                "diagnosis_code": "code_maintenance_required",
+                "diagnosis_confidence": 0.88,
+            },
+        )
+
+        assert action.diagnosis_reason is AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED
+        assert action.diagnosis_confidence == 0.88
+
+    def test_diagnosis_requires_bounded_confidence(self):
+        action = action_from_tool_call(
+            "give_up",
+            {
+                "reason_code": "no_progress",
+                "explanation": "The known structure no longer verifies.",
+                "diagnosis_code": "unresolved_ambiguity",
+            },
+        )
+
+        assert action.stop_reason is AgentStopReason.PROVIDER_ERROR
+
     def test_model_cannot_claim_controller_owned_provider_error(self):
         action = action_from_tool_call(
             "give_up",
@@ -88,7 +116,9 @@ class TestActionFromToolCall:
         assert action.stop_reason is AgentStopReason.PROVIDER_ERROR
 
 
-def _context(*, screenshot_forced: bool = True) -> AgentTurnContext:
+def _context(
+    *, screenshot_forced: bool = True, terminal_diagnosis_required: bool = False
+) -> AgentTurnContext:
     observation = Observation(
         url="https://www.booking.com/mytrips",
         title="My trips",
@@ -115,6 +145,7 @@ def _context(*, screenshot_forced: bool = True) -> AgentTurnContext:
         no_progress_count=2,
         screenshot_forced=screenshot_forced,
         seconds_remaining=41.5,
+        terminal_diagnosis_required=terminal_diagnosis_required,
     )
 
 
@@ -156,6 +187,7 @@ def test_provider_exception_becomes_coded_provider_error() -> None:
         brain.decide(_context(screenshot_forced=False))
 
     assert str(raised.value) == "agent provider call failed"
+    assert raised.value.kind is LLMFailureKind.TRANSPORT
     assert "sensitive provider detail" not in str(raised.value)
     assert brain.last_usage is None
 
@@ -183,6 +215,7 @@ def test_malformed_provider_tool_call_becomes_typed_schema_error() -> None:
         brain.decide(_context(screenshot_forced=False))
 
     assert str(raised.value) == "agent provider schema validation failed"
+    assert raised.value.kind is LLMFailureKind.INVALID_RESPONSE
     assert brain.last_usage == LLMUsage(input_tokens=123, output_tokens=17)
 
 
@@ -213,3 +246,110 @@ def test_agent_brain_records_usage_for_successful_call() -> None:
     assert action == AgentAction(type=AgentActionType.CLICK, ref="e9")
     assert brain.last_usage == LLMUsage(input_tokens=400, output_tokens=25)
     assert calls[0]["timeout"] == 20.0
+    system = calls[0]["system"]
+    assert "every visible route relevant to the goal" in system
+    assert "outside the controller's reach" in system
+    assert "unsupported DOM, not a browser capability failure" in system
+    assert "diagnosis fields are unavailable" in system
+    assert "code_maintenance_required for absent or changed registered" in system
+    assert "failed target is sufficient to stop conservatively" in system
+    assert calls[0]["tool_choice"] == {"type": "any"}
+    assert len(calls[0]["tools"]) > 1
+    ordinary_give_up = next(
+        tool for tool in calls[0]["tools"] if tool["name"] == "give_up"
+    )
+    assert "diagnosis_code" not in ordinary_give_up["input_schema"]["properties"]
+    assert "diagnosis_confidence" not in ordinary_give_up["input_schema"]["properties"]
+
+
+def test_terminal_turn_forces_closed_registered_step_diagnosis_contract() -> None:
+    calls = []
+
+    class _Messages:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                content=[
+                    ToolUseBlock(
+                        type="tool_use",
+                        id="tool-1",
+                        name="give_up",
+                        input={
+                            "reason_code": "unknown",
+                            "explanation": "Expected registered structure is absent.",
+                            "diagnosis_code": "code_maintenance_required",
+                            "diagnosis_confidence": 0.9,
+                        },
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=400, output_tokens=25),
+            )
+
+    brain = AnthropicAgentBrain.__new__(AnthropicAgentBrain)
+    brain._client = SimpleNamespace(messages=_Messages())  # noqa: SLF001
+    brain._model = "test-model"  # noqa: SLF001
+
+    action = brain.decide(
+        _context(screenshot_forced=False, terminal_diagnosis_required=True)
+    )
+
+    assert action.diagnosis_reason is AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED
+    assert calls[0]["tool_choice"] == {"type": "tool", "name": "give_up"}
+    assert [tool["name"] for tool in calls[0]["tools"]] == ["give_up"]
+    schema = calls[0]["tools"][0]["input_schema"]
+    assert schema["required"] == [
+        "reason_code",
+        "explanation",
+        "diagnosis_code",
+        "diagnosis_confidence",
+    ]
+    assert schema["properties"]["diagnosis_code"]["enum"] == [
+        "unresolved_ambiguity",
+        "code_maintenance_required",
+    ]
+    assert "approved registered BookSaver step" in calls[0]["messages"][0]["content"][0][
+        "text"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "tool_input"),
+    [
+        ("click", {"ref": "e9"}),
+        (
+            "give_up",
+            {"reason_code": "unknown", "explanation": "No recognized structure."},
+        ),
+        (
+            "give_up",
+            {
+                "reason_code": "unknown",
+                "explanation": "This looks like another page.",
+                "diagnosis_code": "unsupported_page",
+                "diagnosis_confidence": 0.8,
+            },
+        ),
+    ],
+)
+def test_terminal_turn_rejects_actions_incomplete_or_out_of_context_diagnoses(
+    name: str, tool_input: dict[str, object]
+) -> None:
+    class _Messages:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                content=[
+                    ToolUseBlock(
+                        type="tool_use", id="tool-1", name=name, input=tool_input
+                    )
+                ],
+                usage=SimpleNamespace(input_tokens=20, output_tokens=10),
+            )
+
+    brain = AnthropicAgentBrain.__new__(AnthropicAgentBrain)
+    brain._client = SimpleNamespace(messages=_Messages())  # noqa: SLF001
+    brain._model = "test-model"  # noqa: SLF001
+
+    with pytest.raises(LLMProviderError) as raised:
+        brain.decide(_context(terminal_diagnosis_required=True))
+
+    assert raised.value.kind is LLMFailureKind.INVALID_RESPONSE
