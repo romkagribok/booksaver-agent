@@ -192,7 +192,7 @@ class TestExplicitUserRoleResolution:
         assert brain.provider == "anthropic"
         assert brain.role == "navigation_agent"
         assert brain.model == _config().agent_settings.model
-        assert brain.prompt_version == "booking-browser-recovery-v2"
+        assert brain.prompt_version == "booking-browser-recovery-v3"
 
     def test_builds_positive_inventory_interpreter_for_active_user(self):
         factory = AnthropicLLMClientFactory(

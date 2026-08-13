@@ -243,3 +243,8 @@ def test_agent_brain_records_usage_for_successful_call() -> None:
     assert action == AgentAction(type=AgentActionType.CLICK, ref="e9")
     assert brain.last_usage == LLMUsage(input_tokens=400, output_tokens=25)
     assert calls[0]["timeout"] == 20.0
+    system = calls[0]["system"]
+    assert "every visible route relevant to the goal" in system
+    assert "outside the controller's reach" in system
+    assert "unsupported DOM, not a browser capability failure" in system
+    assert "either semantic target may be tried first" in system

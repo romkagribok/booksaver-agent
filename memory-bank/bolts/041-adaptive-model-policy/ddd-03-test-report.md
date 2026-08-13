@@ -3,7 +3,7 @@ unit: 001-adaptive-model-policy
 bolt: 041-adaptive-model-policy
 stage: test
 status: complete
-updated: 2026-08-13T03:00:30Z
+updated: 2026-08-13T13:02:52Z
 ---
 
 # Test Report - Adaptive Model Policy
@@ -25,6 +25,8 @@ ledger.
 | Ruff across `src` and `tests` at completion of the policy implementation | Passed |
 | Strict mypy across `src` at completion of the policy implementation | Passed |
 | Diff whitespace validation | Passed |
+| Qualification-contract correction focused set | 75 passed |
+| Full repository suite after correction | 1517 passed |
 
 The focused rerun completed on 2026-08-13 after the qualification aggregate and truthful
 `completed` provider outcome were added. Expected legacy `schedule.check_interval` deprecation
@@ -55,6 +57,23 @@ Construction tests use deterministic provider doubles and do not spend money or 
 Recording a real profile qualification is an explicit operator action with `--live`, the packaged
 corpus, an exact cost allowance, and the same persisted USD 10 deployment-day ceiling. A missing
 live aggregate therefore leaves release validation closed rather than silently approving a model.
+
+## First Live Release Qualification
+
+The first explicit staging qualification on 2026-08-13 correctly blocked release. Both profiles
+returned valid schemas and executed zero prohibited actions, but stale corpus expectations scored
+safe modern behavior incorrectly: an equivalent-control fixture required one arbitrary click order,
+the unsupported-layout fixture accepted only the legacy `unknown` stop without the now-required
+maintenance diagnosis, and the prompt taxonomy overlapped unsafe-only routes with unreachable
+browser capabilities.
+
+Construction was reopened before merge. The corpus now accepts either distinct safe-control order
+while preserving both measured failures, unsupported layout requires a bounded
+`code_maintenance_required` diagnosis, the prompt owns disjoint stop categories under
+`booking-browser-recovery-v3`, the corrected corpus is versioned `browser-recovery-v2`, and
+aggregate output includes content-free outcome counts. The
+corrected offline gate is 75 focused tests plus 1517 full-suite tests; a fresh live qualification
+remains mandatory before production promotion.
 
 ## Downstream Integration
 

@@ -38,7 +38,7 @@ from booksaver.infrastructure.llm.anthropic_adapter import (
 from .fixtures import ReplayFixture
 from .replay import ReplayAggregateMetrics, ReplayExecutionStopped, ReplayRunner
 
-PACKAGED_QUALIFICATION_VERSION = "browser-recovery-v1"
+PACKAGED_QUALIFICATION_VERSION = "browser-recovery-v2"
 QUALIFICATION_RUNS_PER_FIXTURE = 10
 
 # Covers the current system message, tool schemas, API framing, and the fixture's
@@ -342,6 +342,7 @@ def _fixture_call_envelope(fixture: ReplayFixture) -> TokenEnvelope:
                     screenshot_forced=state.screenshot_forced,
                     seconds_remaining=fixture.timeout_seconds,
                     verification_condition=fixture.verification_condition,
+                    terminal_diagnosis_required=fixture.terminal_diagnosis_required,
                 )
             ).encode("utf-8")
         )
@@ -361,6 +362,3 @@ def _context_call_envelope(context: AgentTurnContext) -> TokenEnvelope:
         ),
         maximum_output_tokens=_MAX_OUTPUT_TOKENS_PER_CALL,
     )
-    EscalationTrigger,
-    ModelAttemptOutcome,
-    ModelAttemptPlan,

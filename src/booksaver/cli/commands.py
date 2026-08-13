@@ -1136,7 +1136,7 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
     if args.qualify:
         profiles = approved_recovery_profiles()
     else:
-        profiles = (portfolio.primary(ModelRole.RECOVERY, "booking-browser-recovery-v2"),)
+        profiles = (portfolio.primary(ModelRole.RECOVERY, "booking-browser-recovery-v3"),)
     maximum_calls = sum(fixture.max_calls for fixture in fixtures) * args.runs
     if not args.qualify and maximum_calls > 250:
         print(
@@ -1232,6 +1232,10 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
                 f"estimated_cost_micro_usd={metrics.estimated_cost.micro_usd}"
             )
             for fixture_metrics in profile.fixtures:
+                outcomes = ",".join(
+                    f"{category}:{count}"
+                    for category, count in fixture_metrics.outcome_categories
+                )
                 print(
                     f"  {fixture_metrics.fixture_id}: "
                     f"accuracy={fixture_metrics.correct_runs}/"
@@ -1246,7 +1250,8 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
                     f"tokens={fixture_metrics.total_input_tokens}in/"
                     f"{fixture_metrics.total_output_tokens}out; "
                     f"estimated_cost_micro_usd="
-                    f"{fixture_metrics.estimated_micro_usd}"
+                    f"{fixture_metrics.estimated_micro_usd}; "
+                    f"outcomes={outcomes}"
                 )
         if qualification_ids:
             print("qualification-recorded: " + ",".join(qualification_ids))

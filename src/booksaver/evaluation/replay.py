@@ -191,6 +191,7 @@ class ReplayRunner:
                 screenshot_forced=state.screenshot_forced,
                 seconds_remaining=max(0.0, fixture.timeout_seconds - elapsed),
                 verification_condition=fixture.verification_condition,
+                terminal_diagnosis_required=fixture.terminal_diagnosis_required,
             )
             try:
                 action = brain.decide(context)

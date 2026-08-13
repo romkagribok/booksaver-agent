@@ -124,6 +124,16 @@ def test_loader_rejects_unknown_fields(tmp_path: Path) -> None:
         load_fixture(_write_fixture(tmp_path, raw))
 
 
+def test_loader_preserves_terminal_diagnosis_contract() -> None:
+    fixture = load_fixture(FIXTURE_DIRECTORY / "unsupported-layout.json")
+
+    assert fixture.terminal_diagnosis_required
+    assert all(
+        transition.expectation.diagnosis_reason is not None
+        for transition in fixture.states[0].transitions
+    )
+
+
 def test_loader_rejects_dangling_state_transition(tmp_path: Path) -> None:
     raw = _raw_fixture("inventory-scope-drift.json")
     transition = raw["states"][0]["transitions"][0]

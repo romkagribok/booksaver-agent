@@ -48,7 +48,7 @@ def _aggregate(fixture_id: str, correct: int) -> ReplayAggregateMetrics:
         provider="anthropic",
         model="claude-sonnet-5",
         role="navigation_agent",
-        prompt_version="booking-browser-recovery-v2",
+        prompt_version="booking-browser-recovery-v3",
         estimated_micro_usd=3_000,
     )
 
@@ -196,7 +196,7 @@ def test_every_live_qualification_call_is_reserved_and_reconciled(tmp_path: Path
     class _SuccessfulBrain:
         provider = "anthropic"
         role = "navigation_agent"
-        prompt_version = "booking-browser-recovery-v2"
+        prompt_version = "booking-browser-recovery-v3"
 
         def __init__(self, model: str) -> None:
             self.model = model

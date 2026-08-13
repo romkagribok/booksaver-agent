@@ -2,7 +2,7 @@
 unit: 002-dom-resilient-browser-workflows
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T02:39:01Z
-last_updated: 2026-08-13T12:43:21Z
+last_updated: 2026-08-13T13:02:52Z
 ---
 
 # Construction Log: DOM-Resilient Browser Workflows
@@ -35,6 +35,7 @@ last_updated: 2026-08-13T12:43:21Z
 | 2026-08-13T03:08:00Z | `043-dom-resilient-browser-workflows` | started | Domain Model through ADR Analysis completed; ADR-033 accepted; implementation started |
 | 2026-08-13T03:30:09Z | `042-dom-resilient-browser-workflows` | completed | Protected-first registry/classifier implementation and verification complete |
 | 2026-08-13T03:30:09Z | `043-dom-resilient-browser-workflows` | completed | Guarded recovery, semantic interpretation, exact diagnosis, and verification complete |
+| 2026-08-13T13:02:52Z | `043-dom-resilient-browser-workflows` | corrected | Recovery taxonomy clarified and prompt version advanced after staging qualification exposed obsolete ambiguity expectations |
 
 ## Execution Summary
 

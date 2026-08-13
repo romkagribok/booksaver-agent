@@ -2,7 +2,7 @@
 unit: 001-adaptive-model-policy
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T02:25:43Z
-last_updated: 2026-08-13T12:43:21Z
+last_updated: 2026-08-13T13:02:52Z
 ---
 
 # Construction Log: Adaptive Model Policy
@@ -36,6 +36,7 @@ last_updated: 2026-08-13T12:43:21Z
 | 2026-08-13T02:29:33Z | `041-adaptive-model-policy` | stage-complete | Technical Design → ADR Analysis |
 | 2026-08-13T02:30:30Z | `041-adaptive-model-policy` | stage-complete | ADR Analysis → Implement; ADR-031 accepted |
 | 2026-08-13T03:00:53Z | `041-adaptive-model-policy` | completed | Implementation and verification complete; test report recorded |
+| 2026-08-13T13:02:52Z | `041-adaptive-model-policy` | corrected | Failed staging qualification exposed stale fixture/scoring contracts; production-shaped diagnosis corpus and visibility corrected before merge |
 
 ## Execution Summary
 

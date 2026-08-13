@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_AGENT_MODEL = "claude-sonnet-5"
-AGENT_PROMPT_VERSION = "booking-browser-recovery-v2"
+AGENT_PROMPT_VERSION = "booking-browser-recovery-v3"
 AGENT_PROVIDER = "anthropic"
 NAVIGATION_AGENT_ROLE = "navigation_agent"
 INVENTORY_INTERPRETER_ROLE = "inventory_interpreter"
@@ -630,11 +630,17 @@ attached for forced reorientation, use its evidence now rather than requesting
 another screenshot.
 
 Use captcha for a captcha or bot wall, authentication_required for login or
-credential/MFA controls, explicit_unavailable for a clearly unavailable/sold-out
-result, unsafe_action for a goal that would cross the read-only boundary,
-missing_browser_capability when the necessary page/control cannot be reached,
-no_progress after the evidence shows repeated ineffectiveness, and unknown only
-when no more specific code is supportable."""
+credential/MFA controls, and explicit_unavailable for a clearly unavailable or
+sold-out result. Use unsafe_action when every visible route relevant to the goal
+would cross the read-only boundary, even when the stated goal itself is safe.
+Use missing_browser_capability only when evidence confirms that the needed page
+or control exists but is outside the controller's reach, such as an inaccessible
+popup. When deterministic structure recognition failed on an approved Booking.com
+page and no relevant supported evidence or control is present, use unknown; that
+is unsupported DOM, not a browser capability failure. Use no_progress after the
+evidence shows repeated semantic ineffectiveness. Never choose between equivalent
+safe controls merely by transient ref; either semantic target may be tried first,
+then try a distinct target at most once before no_progress."""
 
 _MODEL_STOP_REASONS = (
     AgentStopReason.CAPTCHA,

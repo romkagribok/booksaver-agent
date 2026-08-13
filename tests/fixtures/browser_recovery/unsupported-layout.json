@@ -8,6 +8,7 @@
   "start_state": "unknown-layout",
   "max_calls": 4,
   "timeout_seconds": 60,
+  "terminal_diagnosis_required": true,
   "expected_outcome_categories": ["unsupported-layout"],
   "states": [
     {
@@ -30,7 +31,15 @@
       "screenshot_forced": true,
       "transitions": [
         {
-          "action": {"type": "give_up", "stop_reason": "unknown"},
+          "action": {"type": "give_up", "stop_reason": "unknown", "diagnosis_reason": "code_maintenance_required"},
+          "terminal_category": "unsupported-layout"
+        },
+        {
+          "action": {"type": "give_up", "stop_reason": "missing_browser_capability", "diagnosis_reason": "code_maintenance_required"},
+          "terminal_category": "unsupported-layout"
+        },
+        {
+          "action": {"type": "give_up", "stop_reason": "no_progress", "diagnosis_reason": "code_maintenance_required"},
           "terminal_category": "unsupported-layout"
         }
       ]

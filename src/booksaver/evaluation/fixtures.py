@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
+    AgentDiagnosisReason,
     AgentHistoryEvent,
     AgentHistoryOutcome,
     AgentStopReason,
@@ -63,11 +64,17 @@ class ActionExpectation:
     href: str | None = None
     value: str | None = None
     stop_reason: AgentStopReason | None = None
+    diagnosis_reason: AgentDiagnosisReason | None = None
 
     def matches(self, action: AgentAction, observation: Observation) -> bool:
         if action.type is not self.action_type:
             return False
         if self.stop_reason is not None and action.stop_reason is not self.stop_reason:
+            return False
+        if (
+            self.diagnosis_reason is not None
+            and action.diagnosis_reason is not self.diagnosis_reason
+        ):
             return False
         if self.value is not None and _normalize(action.value) != _normalize(self.value):
             return False
@@ -110,6 +117,7 @@ class ReplayFixture:
     start_state: str
     max_calls: int
     timeout_seconds: float
+    terminal_diagnosis_required: bool
     expected_outcome_categories: frozenset[str]
     states: tuple[ReplayState, ...]
 
@@ -153,6 +161,7 @@ def load_fixture(path: Path) -> ReplayFixture:
             "expected_outcome_categories",
             "states",
         },
+        optional={"terminal_diagnosis_required"},
     )
     if _integer(root["schema_version"], "$.schema_version") != _SCHEMA_VERSION:
         raise ReplayFixtureError(f"$.schema_version must be {_SCHEMA_VERSION}")
@@ -171,6 +180,10 @@ def load_fixture(path: Path) -> ReplayFixture:
     timeout_seconds = _number(root["timeout_seconds"], "$.timeout_seconds")
     if not 0 < timeout_seconds <= 300:
         raise ReplayFixtureError("$.timeout_seconds must be greater than 0 and at most 300")
+    terminal_diagnosis_required = _optional_boolean(
+        root.get("terminal_diagnosis_required"),
+        "$.terminal_diagnosis_required",
+    )
 
     expected_raw = _sequence(root["expected_outcome_categories"], "$.expected_outcome_categories")
     expected_categories = frozenset(
@@ -208,6 +221,7 @@ def load_fixture(path: Path) -> ReplayFixture:
         start_state=start_state,
         max_calls=max_calls,
         timeout_seconds=timeout_seconds,
+        terminal_diagnosis_required=bool(terminal_diagnosis_required),
         expected_outcome_categories=expected_categories,
         states=states,
     )
@@ -373,7 +387,14 @@ def _parse_transition(value: object, path: str) -> ReplayTransition:
 
 def _parse_action_expectation(value: object, path: str) -> ActionExpectation:
     raw = _mapping(value, path)
-    optional = {"role", "label", "href", "value", "stop_reason"}
+    optional = {
+        "role",
+        "label",
+        "href",
+        "value",
+        "stop_reason",
+        "diagnosis_reason",
+    }
     _keys(raw, path, required={"type"}, optional=optional)
     try:
         action_type = AgentActionType(_bounded_string(raw["type"], f"{path}.type", 40))
@@ -388,6 +409,21 @@ def _parse_action_expectation(value: object, path: str) -> ActionExpectation:
         )
     except ValueError as exc:
         raise ReplayFixtureError(f"{path}.stop_reason is not supported") from exc
+    diagnosis_reason_raw = raw.get("diagnosis_reason")
+    try:
+        diagnosis_reason = (
+            None
+            if diagnosis_reason_raw is None
+            else AgentDiagnosisReason(
+                _bounded_string(
+                    diagnosis_reason_raw,
+                    f"{path}.diagnosis_reason",
+                    40,
+                )
+            )
+        )
+    except ValueError as exc:
+        raise ReplayFixtureError(f"{path}.diagnosis_reason is not supported") from exc
     href_raw = raw.get("href")
     href = None if href_raw is None else _booking_url(href_raw, f"{path}.href")
     return ActionExpectation(
@@ -397,6 +433,7 @@ def _parse_action_expectation(value: object, path: str) -> ActionExpectation:
         href=href,
         value=_optional_string(raw.get("value"), f"{path}.value", 300),
         stop_reason=stop_reason,
+        diagnosis_reason=diagnosis_reason,
     )
 
 
