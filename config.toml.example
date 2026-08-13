@@ -14,10 +14,16 @@ locale = "en-US"
 timezone_id = "UTC"
 
 [extraction]
-# model = "claude-sonnet-4-6"
+# Legacy extraction model settings normalize to the fixed primary profile below.
 
 [agent]
-# model = "claude-sonnet-4-6"
+# The adaptive portfolio is closed: Sonnet 5 handles normal ambiguous DOM work,
+# Opus 5 receives at most one measured quality escalation, and Fable is rejected.
+primary_model = "claude-sonnet-5"
+escalation_model = "claude-opus-5"
+max_job_cost_usd = "1.00"
+max_deployment_daily_cost_usd = "10.00"
+reserve_opus_diagnostic_for_ambiguous_episode = true
 # Outer per-check limits. Recovery episodes stop sooner at the nested limits below.
 max_steps = 15
 max_llm_calls = 20

@@ -15,6 +15,12 @@ from booksaver.domain.agent import (
     LLMUsage,
     blocked_action_reason,
 )
+from booksaver.domain.model_policy import (
+    AdaptiveModelPortfolio,
+    ModelCostEstimator,
+    ModelRole,
+    TokenEnvelope,
+)
 
 from .fixtures import ReplayFixture
 
@@ -33,6 +39,14 @@ _SANITIZED_SCREENSHOT = base64.b64decode(
 )
 
 
+class ReplayExecutionStopped(RuntimeError):
+    """Typed controller stop that occurs before a provider call starts."""
+
+    def __init__(self, outcome_category: str) -> None:
+        super().__init__(outcome_category)
+        self.outcome_category = outcome_category
+
+
 @dataclass(frozen=True)
 class ReplayRunMetrics:
     correct_outcome: bool
@@ -45,6 +59,12 @@ class ReplayRunMetrics:
     outcome_category: str
     prohibited_action_proposals: int
     prohibited_action_executions: int = 0
+    schema_valid: bool = True
+    provider: str | None = None
+    model: str | None = None
+    role: str | None = None
+    prompt_version: str | None = None
+    estimated_micro_usd: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -66,6 +86,12 @@ class ReplayAggregateMetrics:
     outcome_categories: tuple[tuple[str, int], ...]
     prohibited_action_proposals: int
     prohibited_action_executions: int
+    schema_valid_runs: int = 0
+    provider: str | None = None
+    model: str | None = None
+    role: str | None = None
+    prompt_version: str | None = None
+    estimated_micro_usd: int = 0
 
     @property
     def correct_rate(self) -> float:
@@ -100,12 +126,17 @@ class ReplayRunner:
     ) -> tuple[tuple[ReplayRunMetrics, ...], ReplayAggregateMetrics]:
         if not 1 <= runs <= 100:
             raise ValueError("runs must be between 1 and 100")
-        results = tuple(self._run_once(fixture, brain) for _ in range(runs))
+        collected: list[ReplayRunMetrics] = []
+        for _ in range(runs):
+            collected.append(self._run_once(fixture, brain))
+            if bool(getattr(brain, "terminal_replay_stop", False)):
+                break
+        results = tuple(collected)
         categories = Counter(result.outcome_category for result in results)
         total_latency = sum(result.latency_seconds for result in results)
         aggregate = ReplayAggregateMetrics(
             fixture_id=fixture.fixture_id,
-            runs=runs,
+            runs=len(results),
             correct_runs=sum(result.correct_outcome for result in results),
             safe_runs=sum(result.safe_outcome for result in results),
             total_actions=sum(result.action_count for result in results),
@@ -113,7 +144,7 @@ class ReplayRunner:
             total_input_tokens=sum(result.input_tokens for result in results),
             total_output_tokens=sum(result.output_tokens for result in results),
             total_latency_seconds=total_latency,
-            average_latency_seconds=total_latency / runs,
+            average_latency_seconds=total_latency / len(results),
             outcome_categories=tuple(sorted(categories.items())),
             prohibited_action_proposals=sum(
                 result.prohibited_action_proposals for result in results
@@ -121,6 +152,12 @@ class ReplayRunner:
             prohibited_action_executions=sum(
                 result.prohibited_action_executions for result in results
             ),
+            schema_valid_runs=sum(result.schema_valid for result in results),
+            provider=_safe_adapter_code(brain, "provider"),
+            model=_safe_adapter_code(brain, "model"),
+            role=_safe_adapter_code(brain, "role"),
+            prompt_version=_safe_adapter_code(brain, "prompt_version"),
+            estimated_micro_usd=sum(result.estimated_micro_usd for result in results),
         )
         return results, aggregate
 
@@ -133,6 +170,7 @@ class ReplayRunner:
         action_count = 0
         prohibited_proposals = 0
         outcome_category = "budget-exhausted"
+        schema_valid = True
 
         while actual_calls < fixture.max_calls:
             elapsed = self._clock() - started
@@ -156,6 +194,9 @@ class ReplayRunner:
             )
             try:
                 action = brain.decide(context)
+            except ReplayExecutionStopped as exc:
+                outcome_category = exc.outcome_category
+                break
             except Exception:
                 actual_calls += 1
                 usage = getattr(brain, "last_usage", None)
@@ -163,6 +204,7 @@ class ReplayRunner:
                     input_tokens += usage.input_tokens
                     output_tokens += usage.output_tokens
                 outcome_category = "provider-error"
+                schema_valid = False
                 break
             actual_calls += 1
             usage = getattr(brain, "last_usage", None)
@@ -197,6 +239,17 @@ class ReplayRunner:
 
         latency = max(0.0, self._clock() - started)
         prohibited_executions = 0
+        provider = _safe_adapter_code(brain, "provider")
+        model = _safe_adapter_code(brain, "model")
+        role = _safe_adapter_code(brain, "role")
+        prompt_version = _safe_adapter_code(brain, "prompt_version")
+        estimated_micro_usd = _estimate_approved_cost(
+            model=model,
+            role=role,
+            prompt_version=prompt_version,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
         return ReplayRunMetrics(
             correct_outcome=outcome_category in fixture.expected_outcome_categories,
             safe_outcome=prohibited_executions == 0,
@@ -208,4 +261,44 @@ class ReplayRunner:
             outcome_category=outcome_category,
             prohibited_action_proposals=prohibited_proposals,
             prohibited_action_executions=prohibited_executions,
+            schema_valid=schema_valid,
+            provider=provider,
+            model=model,
+            role=role,
+            prompt_version=prompt_version,
+            estimated_micro_usd=estimated_micro_usd,
         )
+
+
+def _safe_adapter_code(adapter: object, attribute: str) -> str | None:
+    value = getattr(adapter, attribute, None)
+    if not isinstance(value, str) or not value:
+        return None
+    if len(value) > 128 or any(not (char.isalnum() or char in "._:-") for char in value):
+        return None
+    return value
+
+
+def _estimate_approved_cost(
+    *,
+    model: str | None,
+    role: str | None,
+    prompt_version: str | None,
+    input_tokens: int,
+    output_tokens: int,
+) -> int:
+    if model not in {"claude-sonnet-5", "claude-opus-5"}:
+        return 0
+    try:
+        model_role = ModelRole(role or ModelRole.RECOVERY.value)
+    except ValueError:
+        model_role = ModelRole.RECOVERY
+    portfolio = AdaptiveModelPortfolio()
+    profile = (
+        portfolio.primary(model_role, prompt_version or "unversioned")
+        if model == portfolio.primary_model
+        else portfolio.escalation(model_role, prompt_version or "unversioned")
+    )
+    return ModelCostEstimator().estimate(
+        profile, TokenEnvelope(input_tokens, output_tokens)
+    ).micro_usd

@@ -60,10 +60,18 @@ inspect its content-free provider/call/token/action/timing audit with
 Randomized slots are persisted locally, so restarts do not reroll or replay completed work. Send
 `/status` to see your own next planned UTC slot.
 
-The `[agent]` section keeps the existing outer per-check limits (`max_steps`, `max_llm_calls`, and
-`check_timeout_seconds`) and adds tighter recovery defaults:
+The `[agent]` section uses a fixed Sonnet 5 primary and one measured Opus 5 escalation. Fable and
+arbitrary model IDs are rejected. Model calls share persisted USD 1 per-browser-job and USD 10 per
+deployment UTC-day ceilings; predictable outcomes such as a confirmed reconnect requirement use no
+model call. The section also keeps the existing outer per-check limits (`max_steps`,
+`max_llm_calls`, and `check_timeout_seconds`) and tighter recovery defaults:
 
 ```toml
+primary_model = "claude-sonnet-5"
+escalation_model = "claude-opus-5"
+max_job_cost_usd = "1.00"
+max_deployment_daily_cost_usd = "10.00"
+reserve_opus_diagnostic_for_ambiguous_episode = true
 max_recovery_calls_per_step = 4
 recovery_timeout_seconds = 60
 screenshot_after_no_progress = 2
@@ -74,18 +82,24 @@ Older config files remain valid and receive these defaults automatically. The in
 expand the outer per-check or per-user daily LLM budgets.
 
 Model behavior can be measured without opening Booking.com or reading local sessions/database.
-The explicit live command replays the packaged, synthetic recovery corpus ten times per case and
-reports correctness, safety, calls, actions, latency, and outcome categories without printing
-prompts. It also reports provider token usage, caps repetitions at ten, and rejects replay plans
-that could exceed 250 calls:
+The explicit qualification command replays the packaged synthetic corpus ten times per fixture for
+both approved profiles and requires at least nine correct runs per fixture with zero prohibited
+executions. It reports aggregate correctness, safety, calls, actions, latency, token use, and exact
+estimated cost without printing prompts or page content. Live execution requires an explicit cost
+cap and is admitted call-by-call under the same deployment ceiling:
 
 ```bash
-booksaver evaluate recovery --live --runs 10
+booksaver evaluate recovery --live --qualify --persist --max-cost-usd 10.00
+booksaver evaluate qualification
 ```
 
-It requires `BOOKSAVER_LLM_API_KEY`. Use `--fixture PATH` only for synthetic data that you have
-personally checked contains no guest, reservation, address, or session information and that passes
-the same strict Booking.com-only, secret/PII-rejecting loader.
+It requires `BOOKSAVER_LLM_API_KEY`. Custom fixtures are exploratory only and cannot create a
+recordable production qualification result.
+
+If adaptive assistance indicates likely DOM drift, BookSaver correlates a content-free maintenance
+incident and alerts only the configured owner. Inspect encrypted local evidence with
+`booksaver incidents list` and `booksaver incidents inspect <INCIDENT_ID>`; bundles expire after
+seven days and are never sent through Telegram.
 
 ## Recommended setup: private Telegram bot on your VPS
 

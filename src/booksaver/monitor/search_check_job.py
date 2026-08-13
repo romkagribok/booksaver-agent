@@ -5,7 +5,10 @@ import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 
+from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
+from booksaver.application.model_policy import AdaptiveModelStopped
 from booksaver.application.ports import (
     AgentBrain,
     BookingRepository,
@@ -14,8 +17,16 @@ from booksaver.application.ports import (
     InteractiveBrowser,
     LLMClientFactory,
     LLMExtractor,
+    RegisteredPageStateResolver,
 )
 from booksaver.domain.agent import AgentBudget, AgentSettings, BudgetExceeded
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomStepId,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
+    operator_action_for_reason,
+)
 from booksaver.domain.check_result import (
     CheckResult,
     ExtractedBookingFields,
@@ -23,6 +34,7 @@ from booksaver.domain.check_result import (
     FailureCode,
     FailureReason,
     RefundIndicators,
+    failure_code_for_terminal,
 )
 from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.journey import JourneyResult, JourneyStep
@@ -31,6 +43,7 @@ from booksaver.domain.mobile_web import (
     MobileProfileId,
     PriceSourceProvenance,
 )
+from booksaver.domain.model_policy import EscalationTrigger, ModelStopReason, ModelTier
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate, OfferSelection, select_offer
 from booksaver.domain.session import SessionMode
@@ -42,9 +55,56 @@ from booksaver.monitor.search_journey import SearchJourney
 from booksaver.monitor.session_manager import SessionManager
 from booksaver.monitor.trace import SnapshotWriter, TraceRecorder
 
+if TYPE_CHECKING:
+    from booksaver.infrastructure.llm.adaptive_execution import (
+        AdaptiveAnthropicRuntimeFactory,
+    )
+
 logger = logging.getLogger(__name__)
 
+# Production price-evaluation DOM seams owned after search navigation succeeds.
+DOM_STEPS: tuple[DomStepId, ...] = (
+    DomStepId.PRICE_CURRENCY_ALIGN,
+    DomStepId.PRICE_SNAPSHOT,
+    DomStepId.PRICE_OFFER_EXTRACTION,
+)
+
 _GENIUS_EVIDENCE = re.compile(r"\bGenius(?:\s+(?:Level|discount|deal|rate))?\b", re.I)
+
+
+def _model_stop_diagnosis(
+    step_id: DomStepId, reason: ModelStopReason
+) -> TerminalBrowserDiagnosis:
+    terminal = DOM_STEP_REGISTRY.definition(step_id).reason_for_model_stop(reason)
+    provenance = (
+        DiagnosisProvenance.PROVIDER_STOP
+        if terminal
+        in {
+            TerminalBrowserReason.PROVIDER_AUTHENTICATION,
+            TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+            TerminalBrowserReason.PROVIDER_RATE_LIMIT,
+        }
+        else DiagnosisProvenance.BUDGET_STOP
+        if terminal
+        in {
+            TerminalBrowserReason.TIME_LIMIT,
+            TerminalBrowserReason.JOB_COST_LIMIT,
+            TerminalBrowserReason.DAILY_COST_LIMIT,
+            TerminalBrowserReason.MODEL_PRICING_UNAVAILABLE,
+            TerminalBrowserReason.COST_ACCOUNTING_ERROR,
+            TerminalBrowserReason.CLOCK_ROLLBACK,
+        }
+        else DiagnosisProvenance.POLICY_STOP
+    )
+    return TerminalBrowserDiagnosis(
+        reason=terminal,
+        step_id=step_id,
+        provenance=provenance,
+        confidence=1.0,
+        evidence=frozenset(),
+        operator_action=operator_action_for_reason(terminal),
+        model_stop_reason=reason,
+    )
 
 
 class BookingComSearchMonitor:
@@ -63,6 +123,9 @@ class BookingComSearchMonitor:
         llm: LLMExtractor | None = None,
         brain: AgentBrain | None = None,
         llm_factory: LLMClientFactory | None = None,
+        adaptive_runtime_factory: (
+            Callable[[Booking], AdaptiveAnthropicRuntimeFactory | None] | None
+        ) = None,
         agent_settings: AgentSettings | None = None,
         trace_repo: CheckTraceRepository | None = None,
         snapshot_writer: SnapshotWriter | None = None,
@@ -83,11 +146,16 @@ class BookingComSearchMonitor:
         # values used when no factory is supplied (every existing caller/test
         # is unaffected).
         self._llm_factory = llm_factory
+        # The coordinator owns caller/key resolution and constructs one shared
+        # job budget. This lazy seam supplies the already-bound adaptive runtime
+        # only when an ambiguous search actually needs model assistance.
+        self._adaptive_runtime_factory = adaptive_runtime_factory
         self._agent_settings = agent_settings or AgentSettings()
         self._trace_repo = trace_repo
         self._snapshots = snapshot_writer
         self._clock = clock
         self._last_escalator: BrowserAgent | None = None
+        self._page_state_resolver: RegisteredPageStateResolver | None = None
         self._active_budget: AgentBudget | None = None
         self._last_llm_calls_used = 0
         self._llm_enabled = True
@@ -152,7 +220,11 @@ class BookingComSearchMonitor:
                 self._sessions.mark_reauth_required(session)
                 reauth_flagged = True
 
-        if session is not None:
+        if (
+            session is not None
+            and not reauth_flagged
+            and self._browser.is_authenticated()
+        ):
             try:
                 self._sessions.save_refreshed(session, self._browser.get_cookies())
             except Exception as exc:
@@ -188,6 +260,25 @@ class BookingComSearchMonitor:
             self._record(result)
             return result
 
+        verify_account = getattr(self._browser, "verify_authenticated_account", None)
+        if callable(verify_account) and not verify_account():
+            result = CheckResult.failure(
+                booking.booking_id,
+                datetime.now(UTC),
+                FailureReason(
+                    code=FailureCode.AUTH_REQUIRED,
+                    detail=(
+                        "Booking.com did not render a verifiable signed-in account "
+                        "context; send /connect and retry. No public-price fallback "
+                        "was used."
+                    ),
+                ),
+            )
+            recorder = TraceRecorder(booking.booking_id)
+            self._persist_trace(recorder, result, None)
+            self._record(result)
+            return result
+
         result = self.run_check(
             booking,
             session_mode=SessionMode.AUTHENTICATED,
@@ -213,10 +304,24 @@ class BookingComSearchMonitor:
             )
         except Exception as exc:  # belt and braces: the never-raise contract
             logger.exception("Unexpected error checking booking %s", booking.booking_id)
+            diagnosis = TerminalBrowserDiagnosis(
+                reason=TerminalBrowserReason.INFRASTRUCTURE_FAILURE,
+                step_id=DomStepId.PRICE_SNAPSHOT,
+                provenance=DiagnosisProvenance.INFRASTRUCTURE_STOP,
+                confidence=1.0,
+                evidence=frozenset(),
+                operator_action=operator_action_for_reason(
+                    TerminalBrowserReason.INFRASTRUCTURE_FAILURE
+                ),
+            )
             result = CheckResult.failure(
                 booking.booking_id,
                 datetime.now(UTC),
-                FailureReason(code=FailureCode.UNKNOWN, detail=str(exc)),
+                FailureReason(
+                    code=FailureCode.INFRASTRUCTURE_FAILURE,
+                    detail=f"Browser check stopped after {type(exc).__name__}.",
+                ),
+                terminal_diagnosis=diagnosis,
             )
         else:
             escalator = self._last_escalator
@@ -234,8 +339,23 @@ class BookingComSearchMonitor:
     ) -> CheckResult:
         now = datetime.now(UTC)
         self._last_escalator = None
+        self._page_state_resolver = None
 
-        if self._llm_factory is not None and self._llm_enabled:
+        if self._adaptive_runtime_factory is not None and self._llm_enabled:
+            try:
+                runtime = self._adaptive_runtime_factory(booking)
+                self._llm = runtime.extractor() if runtime is not None else None
+                self._brain = runtime.agent_brain() if runtime is not None else None
+                self._page_state_resolver = (
+                    runtime.page_state_resolver() if runtime is not None else None
+                )
+            except UserKeyInvalidError as exc:
+                return CheckResult.failure(
+                    booking.booking_id,
+                    now,
+                    FailureReason(code=FailureCode.USER_KEY_INVALID, detail=str(exc)),
+                )
+        elif self._llm_factory is not None and self._llm_enabled:
             try:
                 self._llm = self._llm_factory.for_booking(booking)
                 self._brain = self._llm_factory.agent_brain_for_booking(booking)
@@ -272,6 +392,7 @@ class BookingComSearchMonitor:
                 budget,
                 recorder,
                 recovery_policy=self._agent_settings.recovery_policy,
+                page_state_resolver=self._page_state_resolver,
             )
             self._last_escalator = escalator
 
@@ -305,33 +426,72 @@ class BookingComSearchMonitor:
 
         try:
             page_text = self._browser.snapshot().text
-        except Exception as exc:
+        except Exception:
+            diagnosis = TerminalBrowserDiagnosis(
+                reason=TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+                step_id=DomStepId.PRICE_SNAPSHOT,
+                provenance=DiagnosisProvenance.INFRASTRUCTURE_STOP,
+                confidence=1.0,
+                evidence=frozenset(),
+                operator_action=operator_action_for_reason(
+                    TerminalBrowserReason.OBSERVATION_UNAVAILABLE
+                ),
+            )
             return CheckResult.failure(
                 booking.booking_id,
                 now,
-                FailureReason(code=FailureCode.NAVIGATION_ERROR, detail=str(exc)),
+                FailureReason(
+                    code=FailureCode.OBSERVATION_UNAVAILABLE,
+                    detail="A fresh property-page observation was unavailable.",
+                ),
+                terminal_diagnosis=diagnosis,
             )
 
         try:
-            candidates, method = self._extract_candidates(page_text, booking, budget)
+            candidates, method, extraction_diagnosis = self._extract_candidates(
+                page_text, booking, budget
+            )
         except BudgetExceeded as exc:
             return CheckResult.failure(
                 booking.booking_id,
                 now,
                 FailureReason(code=FailureCode.BUDGET_EXCEEDED, detail=str(exc)),
             )
+        except Exception as exc:
+            if isinstance(exc, AdaptiveModelStopped):
+                diagnosis = _model_stop_diagnosis(
+                    DomStepId.PRICE_OFFER_EXTRACTION, exc.reason
+                )
+                return CheckResult.failure(
+                    booking.booking_id,
+                    now,
+                    FailureReason(
+                        code=failure_code_for_terminal(diagnosis.reason),
+                        detail=(
+                            "Offer extraction stopped under adaptive model policy: "
+                            f"{diagnosis.reason.value}"
+                        ),
+                    ),
+                    terminal_diagnosis=diagnosis,
+                )
+            raise
 
         if journey.agent_assisted:
             method = ExtractionMethod.AGENT  # US-020: scripted vs agent-assisted marker
 
         if not candidates:
+            diagnosis = self._unresolved_extraction_diagnosis()
             return CheckResult.failure(
                 booking.booking_id,
                 now,
                 FailureReason(
-                    code=FailureCode.EXTRACTION_FAILED,
-                    detail="No offers could be parsed from the room table.",
+                    code=failure_code_for_terminal(diagnosis.reason),
+                    detail=(
+                        "Offer extraction remained ambiguous after every configured "
+                        "DOM/model evidence adapter returned no grounded offers."
+                    ),
                 ),
+                terminal_diagnosis=diagnosis,
             )
 
         selection = select_offer(candidates, booking)
@@ -346,6 +506,10 @@ class BookingComSearchMonitor:
                 now=now,
                 session_mode=session_mode,
                 initial_agent_assisted=journey.agent_assisted,
+                initial_assisted_diagnoses=(
+                    *journey.assisted_diagnoses,
+                    *((extraction_diagnosis,) if extraction_diagnosis is not None else ()),
+                ),
                 session_revision_id=session_revision_id,
             )
         if selection.chosen is None:
@@ -368,6 +532,10 @@ class BookingComSearchMonitor:
             session_mode,
             session_revision_id,
             page_text,
+            (
+                *journey.assisted_diagnoses,
+                *((extraction_diagnosis,) if extraction_diagnosis is not None else ()),
+            ),
         )
 
     def _recover_currency(
@@ -382,6 +550,7 @@ class BookingComSearchMonitor:
         now: datetime,
         session_mode: SessionMode,
         initial_agent_assisted: bool,
+        initial_assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...],
         session_revision_id: str | None,
     ) -> CheckResult:
         desired = booking.baseline_price.currency
@@ -392,6 +561,7 @@ class BookingComSearchMonitor:
 
         recovery_detail: str
         alignment_agent_assisted = False
+        alignment_diagnosis: TerminalBrowserDiagnosis | None = None
         try:
             budget.check_time()
             recovery_detail = search_journey.align_currency(booking)
@@ -430,6 +600,7 @@ class BookingComSearchMonitor:
                 ),
             )
             alignment_agent_assisted = True
+            alignment_diagnosis = escalation.diagnosis if escalation.ok else None
             recovery_detail = escalation.detail
             recorder.currency_alignment(
                 f"method=agent; result={'ok' if escalation.ok else 'failed'}; "
@@ -464,31 +635,70 @@ class BookingComSearchMonitor:
 
         try:
             page_text = self._browser.snapshot().text
-        except Exception as exc:
+        except Exception:
+            diagnosis = TerminalBrowserDiagnosis(
+                reason=TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+                step_id=DomStepId.PRICE_SNAPSHOT,
+                provenance=DiagnosisProvenance.INFRASTRUCTURE_STOP,
+                confidence=1.0,
+                evidence=frozenset(),
+                operator_action=operator_action_for_reason(
+                    TerminalBrowserReason.OBSERVATION_UNAVAILABLE
+                ),
+            )
             return CheckResult.failure(
                 booking.booking_id,
                 now,
-                FailureReason(code=FailureCode.NAVIGATION_ERROR, detail=str(exc)),
+                FailureReason(
+                    code=FailureCode.OBSERVATION_UNAVAILABLE,
+                    detail="A fresh property-page observation was unavailable.",
+                ),
+                terminal_diagnosis=diagnosis,
             )
         try:
-            candidates, method = self._extract_candidates(page_text, booking, budget)
+            candidates, method, extraction_diagnosis = self._extract_candidates(
+                page_text, booking, budget
+            )
         except BudgetExceeded as exc:
             return CheckResult.failure(
                 booking.booking_id,
                 now,
                 FailureReason(code=FailureCode.BUDGET_EXCEEDED, detail=str(exc)),
             )
+        except Exception as exc:
+            if isinstance(exc, AdaptiveModelStopped):
+                diagnosis = _model_stop_diagnosis(
+                    DomStepId.PRICE_OFFER_EXTRACTION, exc.reason
+                )
+                return CheckResult.failure(
+                    booking.booking_id,
+                    now,
+                    FailureReason(
+                        code=failure_code_for_terminal(diagnosis.reason),
+                        detail=(
+                            "Offer extraction stopped under adaptive model policy: "
+                            f"{diagnosis.reason.value}"
+                        ),
+                    ),
+                    terminal_diagnosis=diagnosis,
+                )
+            raise
         if retry_journey.agent_assisted or alignment_agent_assisted or initial_agent_assisted:
             method = ExtractionMethod.AGENT
 
         if not candidates:
+            diagnosis = self._unresolved_extraction_diagnosis()
             return CheckResult.failure(
                 booking.booking_id,
                 now,
                 FailureReason(
-                    code=FailureCode.EXTRACTION_FAILED,
-                    detail="No offers could be parsed after currency alignment.",
+                    code=failure_code_for_terminal(diagnosis.reason),
+                    detail=(
+                        "Offer extraction remained ambiguous after currency alignment; "
+                        "no grounded offers were accepted."
+                    ),
                 ),
+                terminal_diagnosis=diagnosis,
             )
         selection = select_offer(candidates, booking)
         if selection.chosen is not None:
@@ -504,6 +714,12 @@ class BookingComSearchMonitor:
                 session_mode,
                 session_revision_id,
                 page_text,
+                (
+                    *initial_assisted_diagnoses,
+                    *((alignment_diagnosis,) if alignment_diagnosis is not None else ()),
+                    *retry_journey.assisted_diagnoses,
+                    *((extraction_diagnosis,) if extraction_diagnosis is not None else ()),
+                ),
             )
         if selection.currency_mismatches:
             final_observed = self._observed_currencies(selection)
@@ -521,15 +737,73 @@ class BookingComSearchMonitor:
 
     def _extract_candidates(
         self, page_text: str, booking: Booking, budget: AgentBudget
-    ) -> tuple[list[OfferCandidate], ExtractionMethod]:
+    ) -> tuple[
+        list[OfferCandidate],
+        ExtractionMethod,
+        TerminalBrowserDiagnosis | None,
+    ]:
         candidates = room_table.parse_candidates(page_text, booking)
         method = ExtractionMethod.DOM
+        assisted_diagnosis = None
         if not room_table.has_confident_exact_match(candidates, booking):
             llm_candidates = self._try_llm_offers(page_text, booking, budget)
             if llm_candidates is not None:
                 candidates = llm_candidates
                 method = ExtractionMethod.LLM
-        return candidates, method
+                if candidates:
+                    assisted_diagnosis = self._extraction_recovery_diagnosis()
+        return candidates, method, assisted_diagnosis
+
+    def _extraction_recovery_diagnosis(self) -> TerminalBrowserDiagnosis | None:
+        """Receipt a grounded adaptive extraction under its actual model tier."""
+
+        profile = getattr(self._llm, "last_profile", None)
+        tier = getattr(profile, "tier", None)
+        if not isinstance(tier, ModelTier):
+            return None
+        provenance = {
+            ModelTier.SONNET: DiagnosisProvenance.SONNET_RECOVERED,
+            ModelTier.OPUS: DiagnosisProvenance.OPUS_RECOVERED,
+        }[tier]
+        return TerminalBrowserDiagnosis(
+            reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+            step_id=DomStepId.PRICE_OFFER_EXTRACTION,
+            provenance=provenance,
+            confidence=1.0,
+            evidence=frozenset(),
+            operator_action=operator_action_for_reason(
+                TerminalBrowserReason.POSTCONDITION_SATISFIED
+            ),
+        )
+
+    def _unresolved_extraction_diagnosis(self) -> TerminalBrowserDiagnosis:
+        """Type exhausted adaptive extraction without claiming business absence."""
+
+        profile = getattr(self._llm, "last_profile", None)
+        tier = getattr(profile, "tier", None)
+        if isinstance(tier, ModelTier):
+            provenance = {
+                ModelTier.SONNET: DiagnosisProvenance.SONNET_DIAGNOSED,
+                ModelTier.OPUS: DiagnosisProvenance.OPUS_DIAGNOSED,
+            }[tier]
+            model_stop_reason = (
+                ModelStopReason.OPUS_EXHAUSTED if tier is ModelTier.OPUS else None
+            )
+            confidence = 0.0
+        else:
+            provenance = DiagnosisProvenance.POLICY_STOP
+            model_stop_reason = None
+            confidence = 1.0
+        reason = TerminalBrowserReason.UNRESOLVED_AMBIGUITY
+        return TerminalBrowserDiagnosis(
+            reason=reason,
+            step_id=DomStepId.PRICE_OFFER_EXTRACTION,
+            provenance=provenance,
+            confidence=confidence,
+            evidence=frozenset(),
+            operator_action=operator_action_for_reason(reason),
+            model_stop_reason=model_stop_reason,
+        )
 
     @staticmethod
     def _observed_currencies(selection: OfferSelection) -> tuple[str, ...]:
@@ -591,7 +865,15 @@ class BookingComSearchMonitor:
         return CheckResult.failure(
             booking.booking_id,
             now,
-            FailureReason(code=journey.failure_code, detail=detail),
+            FailureReason(
+                code=(
+                    failure_code_for_terminal(journey.terminal_diagnosis.reason)
+                    if journey.terminal_diagnosis is not None
+                    else journey.failure_code
+                ),
+                detail=detail,
+            ),
+            terminal_diagnosis=journey.terminal_diagnosis,
         )
 
     def _persist_trace(
@@ -623,6 +905,7 @@ class BookingComSearchMonitor:
         session_mode: SessionMode = SessionMode.AUTHENTICATED,
         session_revision_id: str | None = None,
         page_text: str = "",
+        assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...] = (),
     ) -> CheckResult:
         """Map the chosen candidate to the downstream CheckResult contract.
 
@@ -668,6 +951,7 @@ class BookingComSearchMonitor:
             ),
             session_mode=session_mode,
             price_source=price_source,
+            assisted_diagnoses=assisted_diagnoses,
         )
 
     def _try_llm_offers(
@@ -678,8 +962,24 @@ class BookingComSearchMonitor:
             return None
         budget.consume_llm_call()  # extraction draws from the same pool (ADR-017)
         try:
-            return self._llm.extract_offers(page_text, booking)
+            offers = self._llm.extract_offers(page_text, booking)
+            if offers:
+                return offers
+            escalate = getattr(self._llm, "extract_offers_with_escalation", None)
+            if callable(escalate):
+                budget.consume_llm_call()
+                return cast(
+                    list[OfferCandidate],
+                    escalate(
+                        page_text,
+                        booking,
+                        EscalationTrigger.UNRESOLVED_LOW_CONFIDENCE,
+                    ),
+                )
+            return offers
         except Exception as exc:
+            if isinstance(exc, AdaptiveModelStopped):
+                raise
             logger.error(
                 "LLM offer extraction failed for booking %s: %s", booking.booking_id, exc
             )

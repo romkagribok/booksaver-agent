@@ -8,6 +8,7 @@ from anthropic.types import ToolUseBlock
 from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
+    AgentDiagnosisReason,
     AgentHistoryEvent,
     AgentHistoryOutcome,
     AgentStopReason,
@@ -19,6 +20,7 @@ from booksaver.domain.agent import (
 from booksaver.infrastructure.llm.anthropic_adapter import (
     AGENT_PROMPT_VERSION,
     AnthropicAgentBrain,
+    LLMFailureKind,
     LLMProviderError,
     action_from_tool_call,
     render_agent_turn_context,
@@ -62,6 +64,32 @@ class TestActionFromToolCall:
     def test_malformed_give_up_becomes_provider_error(self):
         action = action_from_tool_call("give_up", {"reason": "captcha"})
         assert action.type is AgentActionType.GIVE_UP
+        assert action.stop_reason is AgentStopReason.PROVIDER_ERROR
+
+    def test_give_up_can_carry_bounded_terminal_dom_diagnosis(self):
+        action = action_from_tool_call(
+            "give_up",
+            {
+                "reason_code": "no_progress",
+                "explanation": "The known structure no longer verifies.",
+                "diagnosis_code": "code_maintenance_required",
+                "diagnosis_confidence": 0.88,
+            },
+        )
+
+        assert action.diagnosis_reason is AgentDiagnosisReason.CODE_MAINTENANCE_REQUIRED
+        assert action.diagnosis_confidence == 0.88
+
+    def test_diagnosis_requires_bounded_confidence(self):
+        action = action_from_tool_call(
+            "give_up",
+            {
+                "reason_code": "no_progress",
+                "explanation": "The known structure no longer verifies.",
+                "diagnosis_code": "unresolved_ambiguity",
+            },
+        )
+
         assert action.stop_reason is AgentStopReason.PROVIDER_ERROR
 
     def test_model_cannot_claim_controller_owned_provider_error(self):
@@ -156,6 +184,7 @@ def test_provider_exception_becomes_coded_provider_error() -> None:
         brain.decide(_context(screenshot_forced=False))
 
     assert str(raised.value) == "agent provider call failed"
+    assert raised.value.kind is LLMFailureKind.TRANSPORT
     assert "sensitive provider detail" not in str(raised.value)
     assert brain.last_usage is None
 
@@ -183,6 +212,7 @@ def test_malformed_provider_tool_call_becomes_typed_schema_error() -> None:
         brain.decide(_context(screenshot_forced=False))
 
     assert str(raised.value) == "agent provider schema validation failed"
+    assert raised.value.kind is LLMFailureKind.INVALID_RESPONSE
     assert brain.last_usage == LLMUsage(input_tokens=123, output_tokens=17)
 
 

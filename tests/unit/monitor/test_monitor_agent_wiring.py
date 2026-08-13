@@ -100,7 +100,7 @@ class TestAgentAssistedMarker:
         browser.fail_selectors = {"property-card"}
         monitor = _monitor(browser, brain=None)
         result = monitor.run_check(make_booking())
-        assert result.failure_reason.code is FailureCode.NAVIGATION_ERROR
+        assert result.failure_reason.code is FailureCode.DOM_AMBIGUITY
 
 
 class TestTracePersistence:
@@ -146,7 +146,7 @@ class TestTracePersistence:
 class TestFailureSnapshots:
     def test_failed_check_writes_snapshot(self, tmp_path):
         browser = _happy_browser()
-        browser.titles = ["Wrong Hotel"]  # PROPERTY_NOT_FOUND
+        browser.titles = ["Wrong Hotel"]  # ambiguous changed result structure
         writer = SnapshotWriter(tmp_path / "snapshots")
         monitor = _monitor(browser, snapshot_writer=writer)
         result = monitor.run_check(make_booking())

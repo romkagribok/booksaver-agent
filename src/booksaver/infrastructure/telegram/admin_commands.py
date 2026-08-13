@@ -23,6 +23,7 @@ Send = Callable[[int, str, dict[str, Any] | None], None]
 NotifyAccessLoss = Callable[[int, str], None]
 CancelRemoteAuthentication = Callable[[int], bool]
 RevokeUserSession = Callable[[int], bool]
+PurgeIncidentEvidence = Callable[[int], object]
 
 ACCESS_LOSS_MESSAGE = "You no longer have access to this bot."
 
@@ -73,6 +74,7 @@ def register_admin_commands(
     usage_provider: AdminUsageProvider | None = None,
     cancel_remote_authentication: CancelRemoteAuthentication,
     revoke_user_session: RevokeUserSession,
+    purge_incident_evidence: PurgeIncidentEvidence | None = None,
 ) -> None:
     """`/admin ...` (US-028): owner-only. Every branch re-checks
     `access_control.is_owner` (never trusts having reached the handler alone)
@@ -131,6 +133,7 @@ def register_admin_commands(
                 rest,
                 cancel_remote_authentication=cancel_remote_authentication,
                 revoke_user_session=revoke_user_session,
+                purge_incident_evidence=purge_incident_evidence,
             )
         elif sub == "invite":
             _handle_invite(cmd, reply, db_path, send=send)
@@ -305,6 +308,7 @@ def register_admin_commands(
                             [user_token, "confirm"],
                             cancel_remote_authentication=cancel_remote_authentication,
                             revoke_user_session=revoke_user_session,
+                            purge_incident_evidence=purge_incident_evidence,
                         )
                     return
             _edit(callback, "That admin choice has expired.", _menu_markup())
@@ -400,6 +404,7 @@ def _handle_purge(
     *,
     cancel_remote_authentication: CancelRemoteAuthentication,
     revoke_user_session: RevokeUserSession,
+    purge_incident_evidence: PurgeIncidentEvidence | None,
 ) -> None:
     if not rest:
         reply(cmd.chat_id, "Usage: /admin purge <user_id> [confirm]")
@@ -440,6 +445,21 @@ def _handle_purge(
                 f"Could not purge {_user_label(user)} because their encrypted "
                 "Booking.com session could not be removed. No database data was "
                 "deleted; try again.",
+            )
+            return
+        try:
+            if purge_incident_evidence is not None:
+                purge_incident_evidence(user.user_id)
+        except Exception:
+            logger.warning(
+                "Could not remove encrypted DOM diagnostics while purging "
+                "BookSaver user #%s",
+                user.user_id,
+            )
+            reply(
+                cmd.chat_id,
+                f"Could not purge {_user_label(user)} because encrypted diagnostic "
+                "cleanup did not finish. Their database data was retained; try again.",
             )
             return
         try:

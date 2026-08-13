@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime
 
+from booksaver.application.account_sync import SynchronizeBookingAccount
 from booksaver.domain.account_sync import (
     EligibilityReason,
     InventoryCompleteness,
@@ -7,8 +8,17 @@ from booksaver.domain.account_sync import (
     ReservationLifecycle,
     ReservationObservation,
     SynchronizationFailureCode,
+    SynchronizationReport,
+    SynchronizationTrigger,
     evaluate_eligibility,
     remote_key_hash,
+)
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomStepId,
+    OperatorAction,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
 )
 from booksaver.domain.value_objects import Money, Occupancy
 
@@ -74,3 +84,99 @@ def test_failed_discovery_requires_redacted_failure_code() -> None:
 
     assert result.completeness is InventoryCompleteness.FAILED
     assert result.observations == ()
+
+
+def test_synchronization_preserves_inventory_terminal_diagnosis() -> None:
+    diagnosis = TerminalBrowserDiagnosis(
+        reason=TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+        step_id=DomStepId.INVENTORY_EXTRACTION,
+        provenance=DiagnosisProvenance.POLICY_STOP,
+        confidence=1.0,
+        evidence=frozenset(),
+        operator_action=OperatorAction.MAINTAIN_CODE,
+    )
+    discovery = InventoryDiscoveryResult(
+        observations=(),
+        completeness=InventoryCompleteness.FAILED,
+        failure_code=SynchronizationFailureCode.EXTRACTION_AMBIGUOUS,
+        failure_detail="Inventory extraction stayed ambiguous.",
+        terminal_diagnosis=diagnosis,
+    )
+
+    class Source:
+        def discover(self, _browser: object) -> InventoryDiscoveryResult:
+            return discovery
+
+    class Repository:
+        def reconcile(self, **_kwargs: object) -> SynchronizationReport:
+            return SynchronizationReport(
+                run_id="run-1",
+                completeness=InventoryCompleteness.FAILED,
+                discovered=0,
+                eligible=0,
+                ineligible=0,
+                failure_code=SynchronizationFailureCode.EXTRACTION_AMBIGUOUS,
+                failure_detail="Inventory extraction stayed ambiguous.",
+            )
+
+        def list_for_user(self, _user_id: int) -> list[object]:
+            return []
+
+    report = SynchronizeBookingAccount(  # type: ignore[arg-type]
+        Source(),
+        Repository(),
+        clock=lambda: datetime(2026, 8, 13, tzinfo=UTC),
+    ).execute(
+        browser=object(),
+        user_id=1,
+        trigger=SynchronizationTrigger.BOOKINGS,
+        session_revision="session-1",
+    )
+
+    assert report.terminal_diagnosis is diagnosis
+
+
+def test_synchronization_preserves_positive_inventory_assistance_receipts() -> None:
+    assisted = TerminalBrowserDiagnosis(
+        reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+        step_id=DomStepId.INVENTORY_SCOPE,
+        provenance=DiagnosisProvenance.OPUS_RECOVERED,
+        confidence=0.9,
+        evidence=frozenset(),
+        operator_action=OperatorAction.NONE,
+    )
+    discovery = InventoryDiscoveryResult(
+        observations=(),
+        completeness=InventoryCompleteness.COMPLETE,
+        assisted_diagnoses=(assisted,),
+    )
+
+    class Source:
+        def discover(self, _browser: object) -> InventoryDiscoveryResult:
+            return discovery
+
+    class Repository:
+        def reconcile(self, **_kwargs: object) -> SynchronizationReport:
+            return SynchronizationReport(
+                run_id="run-assisted",
+                completeness=InventoryCompleteness.COMPLETE,
+                discovered=0,
+                eligible=0,
+                ineligible=0,
+            )
+
+        def list_for_user(self, _user_id: int) -> list[object]:
+            return []
+
+    report = SynchronizeBookingAccount(  # type: ignore[arg-type]
+        Source(),
+        Repository(),
+        clock=lambda: datetime(2026, 8, 13, tzinfo=UTC),
+    ).execute(
+        browser=object(),
+        user_id=1,
+        trigger=SynchronizationTrigger.BOOKINGS,
+        session_revision="session-assisted",
+    )
+
+    assert report.assisted_diagnoses == (assisted,)

@@ -48,6 +48,13 @@ class UsageBrain(ScriptedBrain):
         return action
 
 
+class ProfileUsageBrain(UsageBrain):
+    provider = "anthropic"
+    model = "claude-sonnet-5"
+    role = "recovery"
+    prompt_version = "recovery-v1"
+
+
 def _fixture(name: str) -> ReplayFixture:
     return load_fixture(FIXTURE_DIRECTORY / name)
 
@@ -222,6 +229,21 @@ def test_usage_is_reported_per_run_and_aggregated_across_calls_and_runs() -> Non
     assert aggregate.total_input_tokens == 60
     assert aggregate.total_output_tokens == 20
     assert aggregate.total_tokens == 80
+
+
+def test_approved_profile_replay_reports_safe_identity_schema_and_exact_cost() -> None:
+    fixture = _fixture("inventory-readiness-drift.json")
+    brain = ProfileUsageBrain([_click("e3")], [LLMUsage(1_000, 100)])
+
+    runs, aggregate = ReplayRunner().run(fixture, brain)
+
+    assert runs[0].schema_valid
+    assert aggregate.schema_valid_runs == 1
+    assert aggregate.provider == "anthropic"
+    assert aggregate.model == "claude-sonnet-5"
+    assert aggregate.role == "recovery"
+    assert aggregate.prompt_version == "recovery-v1"
+    assert aggregate.estimated_micro_usd == 3_000
 
 
 def test_llm_usage_rejects_negative_counts() -> None:

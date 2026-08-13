@@ -5,7 +5,16 @@ from booksaver.domain.agent import (
     AgentActionType,
     AgentBudget,
     AgentSettings,
+    AgentStopReason,
     ElementInfo,
+    EscalationResult,
+)
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomStepId,
+    OperatorAction,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
 )
 from booksaver.domain.check_result import FailureCode
 from booksaver.domain.journey import JourneyStep
@@ -46,6 +55,35 @@ def _journey_with_agent(
 
 
 class TestEscalationInJourney:
+    def test_successful_model_recovery_preserves_positive_diagnosis(self):
+        browser = _happy_browser(fail_selectors={"property-card"})
+        diagnosis = TerminalBrowserDiagnosis(
+            reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+            step_id=DomStepId.PRICE_SEARCH_QUERY_SUBMISSION,
+            provenance=DiagnosisProvenance.SONNET_RECOVERED,
+            confidence=0.92,
+            evidence=frozenset(),
+            operator_action=OperatorAction.NONE,
+        )
+
+        class RecoveringEscalator:
+            def complete_step(self, *args, **kwargs):
+                browser.fail_selectors.clear()
+                browser.present_selectors.add('[data-testid="property-card"]')
+                return EscalationResult(
+                    ok=True,
+                    detail="recovered changed search results",
+                    diagnosis=diagnosis,
+                )
+
+        result = SearchJourney(
+            browser,
+            escalator=RecoveringEscalator(),  # type: ignore[arg-type]
+        ).run(make_booking())
+
+        assert result.ok
+        assert result.assisted_diagnoses == (diagnosis,)
+
     def test_agent_recovers_results_layout_and_journey_continues(self):
         browser = _happy_browser(fail_selectors={"property-card"})
 
@@ -79,8 +117,44 @@ class TestEscalationInJourney:
         result = journey.run(make_booking())
 
         assert not result.ok
-        assert result.failure_code is FailureCode.AGENT_GAVE_UP
+        assert result.failure_code is FailureCode.DOM_AMBIGUITY
         assert result.failed_step.step is JourneyStep.SUBMIT_SEARCH
+
+    def test_model_auth_diagnosis_maps_exactly_when_changed_dom_hides_login_text(self):
+        browser = _happy_browser(fail_selectors={"property-card"})
+        journey = _journey_with_agent(
+            browser,
+            [
+                AgentAction(
+                    type=AgentActionType.GIVE_UP,
+                    value="protected authentication page",
+                    stop_reason=AgentStopReason.AUTHENTICATION_REQUIRED,
+                )
+            ],
+        )
+
+        result = journey.run(make_booking())
+
+        assert result.failure_code is FailureCode.AUTH_REQUIRED
+        assert result.agent_assisted
+
+    def test_model_captcha_diagnosis_maps_exactly_when_changed_dom_hides_markers(self):
+        browser = _happy_browser(fail_selectors={"property-card"})
+        journey = _journey_with_agent(
+            browser,
+            [
+                AgentAction(
+                    type=AgentActionType.GIVE_UP,
+                    value="protected challenge page",
+                    stop_reason=AgentStopReason.CAPTCHA,
+                )
+            ],
+        )
+
+        result = journey.run(make_booking())
+
+        assert result.failure_code is FailureCode.BOT_WALL
+        assert result.agent_assisted
 
     def test_budget_breach_during_results_recovery_is_terminal(self):
         browser = _happy_browser(fail_selectors={"property-card"})
@@ -92,7 +166,7 @@ class TestEscalationInJourney:
 
         result = journey.run(make_booking())
 
-        assert result.failure_code is FailureCode.BUDGET_EXCEEDED
+        assert result.failure_code is FailureCode.JOB_COST_LIMIT
         assert result.failed_step.step is JourneyStep.SUBMIT_SEARCH
 
     def test_bot_wall_is_never_escalated(self):

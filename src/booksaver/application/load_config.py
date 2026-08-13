@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,31 @@ from booksaver.domain.value_objects import (
 )
 
 from .ports import ConfigSource
+
+
+def _approved_model(raw: object, *, field: str, primary: bool) -> str:
+    value = str(raw)
+    approved = "claude-sonnet-5" if primary else "claude-opus-5"
+    legacy = {"claude-sonnet-4-6", "claude-haiku-4-5"} if primary else set()
+    if value == approved or value in legacy:
+        return approved
+    raise ValueError(
+        f"{field} must be {approved}; Fable and arbitrary model profiles are not approved"
+    )
+
+
+def _usd_micro(raw: object, *, field: str, maximum: str) -> int:
+    try:
+        value = Decimal(str(raw))
+        max_value = Decimal(maximum)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field} must be a decimal USD amount") from exc
+    if not value.is_finite() or value <= 0 or value > max_value:
+        raise ValueError(f"{field} must be greater than zero and at most {maximum}")
+    micro = value * Decimal(1_000_000)
+    if micro != micro.to_integral_value():
+        raise ValueError(f"{field} supports at most six decimal places")
+    return int(micro)
 
 
 def load_config(source: ConfigSource) -> Config:
@@ -77,13 +103,37 @@ def load_config(source: ConfigSource) -> Config:
     agent_raw = raw.get("agent", {})
     try:
         defaults = AgentSettings()
+        primary_raw = agent_raw.get(
+            "primary_model", agent_raw.get("model", defaults.primary_model)
+        )
         agent_settings = AgentSettings(
             max_steps=int(agent_raw.get("max_steps", defaults.max_steps)),
             max_llm_calls=int(agent_raw.get("max_llm_calls", defaults.max_llm_calls)),
             check_timeout_seconds=int(
                 agent_raw.get("check_timeout_seconds", defaults.check_timeout_seconds)
             ),
-            model=str(agent_raw.get("model", defaults.model)),
+            model=_approved_model(
+                primary_raw, field="agent.primary_model", primary=True
+            ),
+            escalation_model=_approved_model(
+                agent_raw.get("escalation_model", defaults.escalation_model),
+                field="agent.escalation_model",
+                primary=False,
+            ),
+            max_job_cost_micro_usd=_usd_micro(
+                agent_raw.get("max_job_cost_usd", "1.00"),
+                field="agent.max_job_cost_usd",
+                maximum="1.00",
+            ),
+            max_deployment_daily_cost_micro_usd=_usd_micro(
+                agent_raw.get("max_deployment_daily_cost_usd", "10.00"),
+                field="agent.max_deployment_daily_cost_usd",
+                maximum="10.00",
+            ),
+            reserve_opus_diagnostic_for_ambiguous_episode=agent_raw.get(
+                "reserve_opus_diagnostic_for_ambiguous_episode",
+                defaults.reserve_opus_diagnostic_for_ambiguous_episode,
+            ),
             max_recovery_calls_per_step=int(
                 agent_raw.get(
                     "max_recovery_calls_per_step",
@@ -261,6 +311,15 @@ def load_config(source: ConfigSource) -> Config:
     extraction_settings = {
         str(k): str(v) for k, v in raw.get("extraction", {}).items() if v is not None
     }
+    if "model" in extraction_settings:
+        try:
+            extraction_settings["model"] = _approved_model(
+                extraction_settings["model"], field="extraction.model", primary=True
+            )
+        except ValueError as exc:
+            raise ConfigValidationError([str(exc)]) from exc
+    else:
+        extraction_settings["model"] = agent_settings.primary_model
 
     return Config(
         check_interval=check_interval,

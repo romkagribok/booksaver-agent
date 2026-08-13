@@ -4,16 +4,24 @@ import logging
 import os
 import threading
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from booksaver.application.remote_auth import RemoteAuthenticationManager
 from booksaver.daemon.check_coordinator import CheckCoordinator
 from booksaver.daemon.scheduler import Scheduler
 from booksaver.domain.models import Config
+from booksaver.infrastructure.persistence.dom_incident import (
+    SqliteDomIncidentRepository,
+)
+from booksaver.infrastructure.persistence.encrypted_diagnostics import (
+    EncryptedDiagnosticStore,
+)
 from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
 )
+from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
 
 from .access import AccessControl, AccessRefusalReason, RateLimiter
 from .admin_commands import ACCESS_LOSS_MESSAGE, register_admin_commands
@@ -22,7 +30,7 @@ from .bot_loop import BotLoop
 from .check_now import register_check_now_command
 from .client import TelegramBotClient
 from .command_catalog import api_commands
-from .commands_readonly import register_readonly_commands
+from .commands_readonly import IncidentStatusProjection, register_readonly_commands
 from .connect_command import register_connect_command
 from .key_dialogs import KeyIntakeFlow, handle_deletekey
 from .key_validator import AnthropicKeyValidator
@@ -100,6 +108,13 @@ def build_bot_runner(
     def _reply(chat_id: int, text: str) -> None:
         _send(chat_id, text)
 
+    def _incident_status() -> IncidentStatusProjection:
+        with SqliteStore(db_path) as store:
+            return cast(
+                IncidentStatusProjection,
+                SqliteDomIncidentRepository(store).status_projection(),
+            )
+
     # ── end US-031 rate limiting ────────────────────────────────────────────
 
     register_readonly_commands(
@@ -112,6 +127,7 @@ def build_bot_runner(
         send=_send,
         is_owner=access_control.is_owner,
         check_coordinator=check_coordinator,
+        incident_status_provider=_incident_status,
     )
 
     # ── US-026/US-027/US-028: access modes, personal-key intake, admin ────────
@@ -143,6 +159,13 @@ def build_bot_runner(
 
     user_sessions = EncryptedUserSessionRepository(config.data_directory)
 
+    def _purge_incident_evidence(user_id: int) -> object:
+        with SqliteStore(db_path) as store:
+            return EncryptedDiagnosticStore(store).purge_for_user(
+                user_id,
+                datetime.now(UTC),
+            )
+
     register_admin_commands(
         router=router,
         reply=_reply,
@@ -162,6 +185,7 @@ def build_bot_runner(
             else lambda _telegram_user_id: False
         ),
         revoke_user_session=user_sessions.revoke,
+        purge_incident_evidence=_purge_incident_evidence,
     )
     # ── end US-026/US-027/US-028 wiring ────────────────────────────────────────
 

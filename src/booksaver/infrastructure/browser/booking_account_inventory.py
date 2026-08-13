@@ -11,6 +11,8 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
+from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
+from booksaver.application.model_policy import AdaptiveModelStopped
 from booksaver.application.ports import InventoryInterpreter, PageContent
 from booksaver.domain.account_sync import (
     InventoryCompleteness,
@@ -26,11 +28,38 @@ from booksaver.domain.agent import (
     AgentStopReason,
     BudgetExceeded,
     Observation,
+    blocked_action_reason,
+)
+from booksaver.domain.browser_resilience import (
+    DiagnosisProvenance,
+    DomCapability,
+    DomStepDefinition,
+    DomStepId,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
+    operator_action_for_reason,
+    validate_assisted_diagnoses,
 )
 from booksaver.domain.errors import UserKeyInvalidError
+from booksaver.domain.model_policy import (
+    EscalationTrigger,
+    ModelProfile,
+    ModelStopReason,
+    ModelTier,
+)
 from booksaver.domain.value_objects import Money, Occupancy
 
 logger = logging.getLogger(__name__)
+
+DOM_STEPS: tuple[DomStepId, ...] = (
+    DomStepId.INVENTORY_ENTRY,
+    DomStepId.INVENTORY_READINESS,
+    DomStepId.INVENTORY_SCOPE,
+    DomStepId.INVENTORY_PAGINATION,
+    DomStepId.INVENTORY_DETAIL,
+    DomStepId.INVENTORY_EXTRACTION,
+    DomStepId.INVENTORY_COMPLETENESS,
+)
 
 _INVENTORY_URL = "https://secure.booking.com/myreservations.html"
 _MAX_PAGES = 20
@@ -42,31 +71,25 @@ _CAPTCHA_MARKERS = re.compile(
 )
 _AUTH_MARKERS = re.compile(
     r"(sign in to manage|log in to your account|sign in or register|"
-    r"enter your password|verification code)",
+    r"enter your password)",
     re.I,
 )
-_READ_ONLY_SCOPE_LABEL = re.compile(
-    r"(?:active|upcoming|past|previous|completed|cancelled|canceled)"
-    r"(?: bookings| trips| reservations| stays)?"
-    r"(?:\s*\(\d+\)|\s+\d+)?",
-    re.I,
-)
-_READ_ONLY_PAGINATION_LABEL = re.compile(
-    r"(?:next|previous)(?: page)?|page\s+\d+|"
-    r"(?:show|load) more (?:bookings|reservations|trips|stays)",
+_MFA_MARKERS = re.compile(
+    r"(verification code|two-factor|two factor|security code|approve this login)",
     re.I,
 )
 _READ_ONLY_BUTTON_PAGINATION_LABEL = re.compile(
     r"(?:show|load) more (?:bookings|reservations|trips|stays)",
     re.I,
 )
-_READ_ONLY_DETAIL_LABEL = re.compile(
-    r"(?:view )?(?:booking|reservation|trip)(?: details?)?|details?|confirmed",
+_GENERIC_UNVERIFIED_CONTROL_LABEL = re.compile(
+    r"(?:continue|submit|confirm|save|done|finish|proceed|manage|settings?)",
     re.I,
 )
 
 
 RecoveryFactory = Callable[[Any], Any | None]
+InterpreterFactory = Callable[[], InventoryInterpreter | None]
 
 
 class _InventoryParser(HTMLParser):
@@ -89,9 +112,7 @@ class _InventoryParser(HTMLParser):
         self._control_attrs: dict[str, str] = {}
         self._control_text: list[str] = []
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key: value or "" for key, value in attrs}
         testid = values.get("data-testid", "")
         declared_scopes = {
@@ -99,9 +120,8 @@ class _InventoryParser(HTMLParser):
             for scope in values.get("data-inventory-scopes", "").split(",")
             if scope.strip()
         }
-        if (
-            values.get("data-inventory-complete", "").lower() == "true"
-            or _REQUIRED_SCOPES.issubset(declared_scopes)
+        if values.get("data-inventory-complete", "").lower() == "true" or _REQUIRED_SCOPES.issubset(
+            declared_scopes
         ):
             self.explicit_complete = True
         if testid in {"bookings-list", "reservation-list", "my-bookings-list"}:
@@ -113,8 +133,7 @@ class _InventoryParser(HTMLParser):
             self.recognized_inventory = True
             self.cards.append(values)
         if tag == "a" and (
-            values.get("rel") == "next"
-            or testid in {"pagination-next", "bookings-pagination-next"}
+            values.get("rel") == "next" or testid in {"pagination-next", "bookings-pagination-next"}
         ):
             href = values.get("href")
             if href:
@@ -126,18 +145,13 @@ class _InventoryParser(HTMLParser):
             self._control_attrs = values
             self._control_text = []
         if tag == "a":
-            target = (
-                values.get("href")
-                or values.get("data-href")
-                or values.get("data-url")
-            )
+            target = values.get("href") or values.get("data-href") or values.get("data-url")
             if target:
                 candidate = urljoin(self.source_url, target)
                 lowered = candidate.lower()
                 source_path = urlparse(self.source_url).path.lower()
-                if (
-                    not source_path.startswith("/confirmation")
-                    and ("trip_id=" in lowered or "/confirmation" in lowered)
+                if not source_path.startswith("/confirmation") and (
+                    "trip_id=" in lowered or "/confirmation" in lowered
                 ):
                     self.detail_urls.add(candidate)
                     self.recognized_inventory = True
@@ -191,10 +205,7 @@ class _InventoryParser(HTMLParser):
         ).lower()
         normalized_label = " ".join(evidence.split())
         if not is_scope_control:
-            if (
-                not target
-                and _READ_ONLY_BUTTON_PAGINATION_LABEL.search(normalized_label)
-            ):
+            if not target and _READ_ONLY_BUTTON_PAGINATION_LABEL.search(normalized_label):
                 self.button_pagination = True
                 self.recognized_inventory = True
             return
@@ -226,14 +237,18 @@ class BookingComAccountInventorySource:
         *,
         recovery_factory: RecoveryFactory | None = None,
         interpreter: InventoryInterpreter | None = None,
+        interpreter_factory: InterpreterFactory | None = None,
         consume_interpreter_call: Callable[[], None] | None = None,
         check_time: Callable[[], None] | None = None,
         llm_calls_used: Callable[[], int] | None = None,
         recovery_unavailable_detail: str | None = None,
         action_observer: Callable[[AgentAction], None] | None = None,
     ) -> None:
+        if interpreter is not None and interpreter_factory is not None:
+            raise ValueError("provide interpreter or interpreter_factory, not both")
         self._recovery_factory = recovery_factory
         self._interpreter = interpreter
+        self._interpreter_factory = interpreter_factory
         self._consume_interpreter_call = consume_interpreter_call
         self._check_time = check_time or (lambda: None)
         self._llm_calls_used = llm_calls_used or (lambda: 0)
@@ -243,12 +258,18 @@ class BookingComAccountInventorySource:
         self._recovery_step: str | None = None
         self._recovery_detail: str | None = None
         self._recovery_failure_code: SynchronizationFailureCode | None = None
+        self._terminal_diagnosis: TerminalBrowserDiagnosis | None = None
+        self._assisted_diagnoses: list[TerminalBrowserDiagnosis] = []
+        self._active_step_id = DomStepId.INVENTORY_ENTRY
 
     def discover(self, browser: Any) -> InventoryDiscoveryResult:
         self._recovery_outcome = InventoryRecoveryOutcome.NOT_NEEDED
         self._recovery_step = None
         self._recovery_detail = None
         self._recovery_failure_code = None
+        self._terminal_diagnosis = None
+        self._assisted_diagnoses = []
+        self._active_step_id = DomStepId.INVENTORY_ENTRY
         result = self._discover(browser)
         outcome = self._recovery_outcome
         if (
@@ -262,12 +283,16 @@ class BookingComAccountInventorySource:
             recovery_step=self._recovery_step,
             recovery_detail=self._recovery_detail,
             llm_calls_used=self._llm_calls_used(),
+            terminal_diagnosis=(
+                result.terminal_diagnosis
+                or self._terminal_diagnosis
+                or _diagnosis_for_inventory_result(result, self._active_step_id)
+            ),
+            assisted_diagnoses=tuple(self._assisted_diagnoses),
         )
 
     def _discover(self, browser: Any) -> InventoryDiscoveryResult:
-        pending: list[tuple[str, str, str]] = [
-            ("url", _INVENTORY_URL, "upcoming")
-        ]
+        pending: list[tuple[str, str, str]] = [("url", _INVENTORY_URL, "upcoming")]
         visited: set[tuple[str, str, str]] = set()
         visited_scopes: set[str] = set()
         observations: dict[str, ReservationObservation] = {}
@@ -279,6 +304,7 @@ class BookingComAccountInventorySource:
             while pending and len(visited) < _MAX_PAGES:
                 self._check_time()
                 work_kind, target, scope = pending.pop(0)
+                self._active_step_id = _inventory_navigation_step(work_kind, target)
                 work_key = (work_kind, target, scope)
                 if work_key in visited:
                     continue
@@ -295,16 +321,10 @@ class BookingComAccountInventorySource:
                     if work_kind in {"recover_scope", "recover_pagination"}:
                         page = self._recover_navigation(
                             browser,
-                            work_kind=(
-                                "scope"
-                                if work_kind == "recover_scope"
-                                else "pagination"
-                            ),
+                            work_kind=("scope" if work_kind == "recover_scope" else "pagination"),
                             target=target,
                             scope=scope,
-                            trigger=RuntimeError(
-                                "Booking.com inventory scope controls changed"
-                            ),
+                            trigger=RuntimeError("Booking.com inventory scope controls changed"),
                             before=before_navigation,
                         )
                         if page is None:
@@ -346,18 +366,27 @@ class BookingComAccountInventorySource:
                             self._recovery_detail
                             or "Booking.com reservation inventory could not be read.",
                         )
-                if not browser.is_authenticated():
+                self._active_step_id = DomStepId.INVENTORY_READINESS
+                if _CAPTCHA_MARKERS.search(page.text):
+                    self._set_known_page_failure(TerminalBrowserReason.BOT_WALL)
+                    return InventoryDiscoveryResult.failed(
+                        SynchronizationFailureCode.BOT_WALL,
+                        "Booking.com presented a bot-verification wall; retry later.",
+                    )
+                if _MFA_MARKERS.search(page.text):
+                    self._set_known_page_failure(TerminalBrowserReason.MFA_REQUIRED)
+                    return InventoryDiscoveryResult.failed(
+                        SynchronizationFailureCode.AUTH_REQUIRED,
+                        "Booking.com requires sign-in verification; complete it in /connect.",
+                    )
+                if _AUTH_MARKERS.search(page.text) or not browser.is_authenticated():
+                    self._set_known_page_failure(TerminalBrowserReason.AUTHENTICATION_REQUIRED)
                     return InventoryDiscoveryResult.failed(
                         SynchronizationFailureCode.AUTH_REQUIRED,
                         "Booking.com account authentication is required.",
                     )
                 parser = _InventoryParser(page.url)
                 parser.feed(page.html)
-                if _CAPTCHA_MARKERS.search(page.text):
-                    return InventoryDiscoveryResult.failed(
-                        SynchronizationFailureCode.BOT_WALL,
-                        "Booking.com presented a bot-verification wall; retry later.",
-                    )
                 if _looks_like_empty_scope(page.text, scope):
                     parser.recognized_inventory = True
                     parser.recognized_empty = True
@@ -375,6 +404,7 @@ class BookingComAccountInventorySource:
                     )
                 ]
                 if unidentified_cards and len(page_observations) < len(parser.cards):
+                    self._active_step_id = DomStepId.INVENTORY_EXTRACTION
                     unidentified_inventory_seen = True
                     interpreted = self._interpret_page(page)
                     if interpreted is None:
@@ -404,10 +434,7 @@ class BookingComAccountInventorySource:
                             SynchronizationFailureCode.IDENTITY_AMBIGUOUS,
                             "Booking.com returned conflicting reservation identities.",
                         )
-                    if (
-                        existing is None
-                        or _fact_count(observation) > _fact_count(existing)
-                    ):
+                    if existing is None or _fact_count(observation) > _fact_count(existing):
                         observations[observation.remote_id] = observation
                 if len(observations) > _MAX_RESERVATIONS:
                     return InventoryDiscoveryResult(
@@ -422,14 +449,9 @@ class BookingComAccountInventorySource:
                         parser.scope_controls | visited_scopes
                     )
                 is_navigation_container = bool(
-                    parser.scope_controls
-                    or parser.detail_urls
-                    or visible_unknown_scopes
+                    parser.scope_controls or parser.detail_urls or visible_unknown_scopes
                 )
-                if (
-                    not page_observations
-                    and not parser.recognized_empty
-                ):
+                if not page_observations and not parser.recognized_empty:
                     code = (
                         SynchronizationFailureCode.EXTRACTION_AMBIGUOUS
                         if parser.recognized_inventory
@@ -437,10 +459,7 @@ class BookingComAccountInventorySource:
                     )
                     interpreted = self._interpret_page(page)
                     if interpreted is None:
-                        if (
-                            not is_navigation_container
-                            and self._recovery_factory is None
-                        ):
+                        if not is_navigation_container and self._recovery_factory is None:
                             return InventoryDiscoveryResult.failed(
                                 code,
                                 self._recovery_detail
@@ -528,12 +547,8 @@ class BookingComAccountInventorySource:
                 if parser.next_url is not None:
                     pending.append(("url", parser.next_url, scope))
                 if parser.button_pagination:
-                    pending.append(
-                        ("recover_pagination", f"button-{len(visited)}", scope)
-                    )
-                for candidate_scope, candidate_url in sorted(
-                    parser.scope_urls.items()
-                ):
+                    pending.append(("recover_pagination", f"button-{len(visited)}", scope))
+                for candidate_scope, candidate_url in sorted(parser.scope_urls.items()):
                     pending.append(("url", candidate_url, candidate_scope))
                 interactive_scopes = sorted(
                     parser.scope_controls - parser.scope_urls.keys() - visited_scopes
@@ -543,27 +558,23 @@ class BookingComAccountInventorySource:
                 for candidate_scope in interactive_scopes:
                     pending.append(("scope", candidate_scope, candidate_scope))
                 if self._recovery_factory is not None and not explicit_complete:
-                    recovery_scopes = (
-                        visible_unknown_scopes
-                        | (
-                            _REQUIRED_SCOPES
-                            - visited_scopes
-                            - parser.scope_controls
-                            - parser.scope_urls.keys()
-                        )
+                    recovery_scopes = visible_unknown_scopes | (
+                        _REQUIRED_SCOPES
+                        - visited_scopes
+                        - parser.scope_controls
+                        - parser.scope_urls.keys()
                     )
                     for candidate_scope in sorted(recovery_scopes):
-                        pending.append(
-                            ("recover_scope", candidate_scope, candidate_scope)
-                        )
+                        pending.append(("recover_scope", candidate_scope, candidate_scope))
                 for detail_url in sorted(parser.detail_urls):
                     pending.append(("url", detail_url, scope))
         except UserKeyInvalidError:
             raise
         except BudgetExceeded:
+            self._active_step_id = DomStepId.INVENTORY_COMPLETENESS
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.BUDGET_EXHAUSTED,
-                "inventory_discovery",
+                DomStepId.INVENTORY_COMPLETENESS.value,
                 "Booking.com inventory discovery exceeded its time budget; the last "
                 "safe inventory was preserved.",
             )
@@ -579,6 +590,7 @@ class BookingComAccountInventorySource:
             )
 
         if pending:
+            self._active_step_id = DomStepId.INVENTORY_PAGINATION
             return InventoryDiscoveryResult(
                 tuple(observations.values()),
                 InventoryCompleteness.INCOMPLETE,
@@ -587,6 +599,7 @@ class BookingComAccountInventorySource:
             )
         missing_scopes = _REQUIRED_SCOPES - visited_scopes
         if not explicit_complete and missing_scopes:
+            self._active_step_id = DomStepId.INVENTORY_COMPLETENESS
             return InventoryDiscoveryResult(
                 tuple(observations.values()),
                 InventoryCompleteness.INCOMPLETE,
@@ -594,6 +607,7 @@ class BookingComAccountInventorySource:
                 "Booking.com did not prove complete upcoming, past, and cancelled inventory.",
             )
         if unidentified_inventory_seen:
+            self._active_step_id = DomStepId.INVENTORY_EXTRACTION
             return InventoryDiscoveryResult(
                 tuple(observations.values()),
                 InventoryCompleteness.INCOMPLETE,
@@ -615,7 +629,9 @@ class BookingComAccountInventorySource:
         trigger: Exception,
         before: Observation | None,
     ) -> PageContent | None:
-        preflight_step = f"inventory_{scope}_{work_kind}"
+        step_id = _inventory_navigation_step(work_kind, target)
+        self._active_step_id = step_id
+        preflight_step = step_id.value
         observation = _safe_observe(browser)
         destination_category = (
             "unavailable"
@@ -635,6 +651,11 @@ class BookingComAccountInventorySource:
                 InventoryRecoveryOutcome.UNAVAILABLE,
                 preflight_step,
                 "Booking.com inventory recovery had no safe page evidence.",
+                terminal_diagnosis=_terminal_diagnosis(
+                    TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+                    step_id,
+                    provenance=DiagnosisProvenance.INFRASTRUCTURE_STOP,
+                ),
             )
             return None
         if _CAPTCHA_MARKERS.search(observation.text):
@@ -643,6 +664,12 @@ class BookingComAccountInventorySource:
                 preflight_step,
                 "Booking.com presented a bot-verification wall; retry later.",
                 failure_code=SynchronizationFailureCode.BOT_WALL,
+            )
+            return None
+        if _MFA_MARKERS.search(observation.text):
+            self._set_model_stop(
+                step_id,
+                ModelStopReason.MFA_REQUIRED,
             )
             return None
         if _AUTH_MARKERS.search(observation.text) or not browser.is_authenticated():
@@ -658,6 +685,11 @@ class BookingComAccountInventorySource:
                 InventoryRecoveryOutcome.BLOCKED,
                 preflight_step,
                 "Booking.com inventory recovery left the approved reservation pages.",
+                terminal_diagnosis=_terminal_diagnosis(
+                    TerminalBrowserReason.BLOCKED_DESTINATION,
+                    step_id,
+                    provenance=DiagnosisProvenance.DETERMINISTIC,
+                ),
             )
             return None
         if self._recovery_factory is None:
@@ -673,20 +705,21 @@ class BookingComAccountInventorySource:
             return None
 
         recovery_kind = _navigation_kind(work_kind, target)
-        step = f"inventory_{scope}_{recovery_kind}"
+        step = step_id.value
         verification_baseline = before or observation
         try:
             self._check_time()
             agent = self._recovery_factory(
                 _InventoryGuardedBrowser(
                     browser,
+                    step=DOM_STEP_REGISTRY.definition(step_id),
                     action_observer=self._action_observer,
                 )
             )
             if agent is None:
                 raise RuntimeError("navigation agent is unavailable")
             result = agent.complete_step(
-                step,
+                step_id,
                 goal=(
                     f"Open the read-only {scope} Booking.com reservation inventory and expose "
                     "its reservation list, explicit empty state, or reservation-detail links."
@@ -706,6 +739,9 @@ class BookingComAccountInventorySource:
             raise
         except BudgetExceeded:
             raise
+        except AdaptiveModelStopped as exc:
+            self._set_model_stop(step_id, exc.reason)
+            return None
         except Exception as exc:
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.PROVIDER_ERROR,
@@ -714,11 +750,14 @@ class BookingComAccountInventorySource:
             )
             return None
         if not result.ok:
-            outcome = _outcome_from_escalation(result)
+            diagnosis = _diagnosis_from_escalation(result, step_id)
+            outcome = _recovery_outcome_for_terminal(diagnosis.reason)
             self._set_recovery_failure(
                 outcome,
                 step,
-                _redacted_recovery_failure(outcome),
+                _redacted_terminal_detail(diagnosis.reason),
+                failure_code=_synchronization_code_for_terminal(diagnosis.reason),
+                terminal_diagnosis=diagnosis,
             )
             return None
         recovered = _safe_observe(browser)
@@ -727,26 +766,49 @@ class BookingComAccountInventorySource:
                 InventoryRecoveryOutcome.BLOCKED,
                 step,
                 "Booking.com inventory recovery did not end on an approved reservation page.",
+                terminal_diagnosis=_terminal_diagnosis(
+                    TerminalBrowserReason.BLOCKED_DESTINATION,
+                    step_id,
+                    provenance=DiagnosisProvenance.DETERMINISTIC,
+                ),
             )
             return None
         self._recovery_outcome = InventoryRecoveryOutcome.RECOVERED
         self._recovery_step = step
         self._recovery_failure_code = None
+        assisted_diagnosis = getattr(result, "diagnosis", None)
+        if isinstance(assisted_diagnosis, TerminalBrowserDiagnosis):
+            assisted_receipts = (*self._assisted_diagnoses, assisted_diagnosis)
+            validate_assisted_diagnoses(assisted_receipts)
+            self._assisted_diagnoses.append(assisted_diagnosis)
         self._recovery_detail = (
             "Booking.com inventory navigation was recovered with guarded assistance."
         )
         return _page_from_observation(recovered)
 
-    def _interpret_page(
-        self, page: PageContent
-    ) -> list[ReservationObservation] | None:
-        step = "inventory_interpretation"
-        if _CAPTCHA_MARKERS.search(page.text) or _AUTH_MARKERS.search(page.text):
+    def _interpret_page(self, page: PageContent) -> list[ReservationObservation] | None:
+        step = DomStepId.INVENTORY_EXTRACTION.value
+        self._active_step_id = DomStepId.INVENTORY_EXTRACTION
+        if _CAPTCHA_MARKERS.search(page.text):
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.BLOCKED,
                 step,
-                "Booking.com inventory interpretation was blocked by authentication "
-                "or verification.",
+                "Booking.com presented a bot-verification wall; retry later.",
+                failure_code=SynchronizationFailureCode.BOT_WALL,
+            )
+            return None
+        if _MFA_MARKERS.search(page.text):
+            self._set_model_stop(
+                DomStepId.INVENTORY_EXTRACTION,
+                ModelStopReason.MFA_REQUIRED,
+            )
+            return None
+        if _AUTH_MARKERS.search(page.text):
+            self._set_recovery_failure(
+                InventoryRecoveryOutcome.BLOCKED,
+                step,
+                "Booking.com authentication is required; send /connect and retry.",
+                failure_code=SynchronizationFailureCode.AUTH_REQUIRED,
             )
             return None
         if not _allowlisted(page.url):
@@ -754,9 +816,14 @@ class BookingComAccountInventorySource:
                 InventoryRecoveryOutcome.BLOCKED,
                 step,
                 "Booking.com inventory interpretation refused an unapproved page.",
+                terminal_diagnosis=_terminal_diagnosis(
+                    TerminalBrowserReason.BLOCKED_DESTINATION,
+                    DomStepId.INVENTORY_EXTRACTION,
+                    provenance=DiagnosisProvenance.DETERMINISTIC,
+                ),
             )
             return None
-        if self._interpreter is None or self._consume_interpreter_call is None:
+        if self._interpreter is None and self._interpreter_factory is None:
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.UNAVAILABLE,
                 step,
@@ -769,8 +836,14 @@ class BookingComAccountInventorySource:
             return None
         try:
             self._check_time()
-            self._consume_interpreter_call()
-            candidates = self._interpreter.interpret(page.text, page.url)
+            interpreter = self._interpreter
+            if interpreter is None and self._interpreter_factory is not None:
+                interpreter = self._interpreter_factory()
+            if interpreter is None:
+                raise RuntimeError("inventory interpreter factory is unavailable")
+            if self._consume_interpreter_call is not None:
+                self._consume_interpreter_call()
+            candidates = interpreter.interpret(page.text, page.url)
             self._check_time()
         except BudgetExceeded:
             self._set_recovery_failure(
@@ -778,6 +851,9 @@ class BookingComAccountInventorySource:
                 step,
                 "Inventory recovery budget is exhausted; the last safe inventory was preserved.",
             )
+            return None
+        except AdaptiveModelStopped as exc:
+            self._set_model_stop(DomStepId.INVENTORY_EXTRACTION, exc.reason)
             return None
         except UserKeyInvalidError:
             raise
@@ -788,41 +864,104 @@ class BookingComAccountInventorySource:
                 f"Booking.com inventory interpretation was unavailable ({type(exc).__name__}).",
             )
             return None
-        valid: list[ReservationObservation] = []
-        seen: dict[str, ReservationObservation] = {}
-        for candidate in candidates:
-            validated = _validated_interpreted_observation(
-                candidate, page.url, page.text
+        valid, conflict = _ground_interpreted_candidates(candidates, page)
+        if conflict:
+            self._set_recovery_failure(
+                InventoryRecoveryOutcome.BLOCKED,
+                step,
+                "Booking.com inventory interpretation returned conflicting identities.",
             )
-            if validated is None:
-                continue
-            candidate = validated
-            existing = seen.get(candidate.remote_id)
-            if (
-                existing is not None
-                and existing.lifecycle is not ReservationLifecycle.UNKNOWN
-                and candidate.lifecycle is not ReservationLifecycle.UNKNOWN
-                and existing.lifecycle is not candidate.lifecycle
-            ):
-                self._set_recovery_failure(
-                    InventoryRecoveryOutcome.BLOCKED,
-                    step,
-                    "Booking.com inventory interpretation returned conflicting identities.",
-                )
-                return None
-            if existing is None or _fact_count(candidate) > _fact_count(existing):
-                seen[candidate.remote_id] = candidate
-        valid.extend(seen.values())
+            return None
         if not valid:
+            escalate = getattr(interpreter, "interpret_with_escalation", None)
+            if callable(escalate):
+                try:
+                    self._check_time()
+                    if self._consume_interpreter_call is not None:
+                        self._consume_interpreter_call()
+                    candidates = escalate(
+                        page.text,
+                        page.url,
+                        EscalationTrigger.UNVERIFIED_SONNET_EXHAUSTION,
+                    )
+                    self._check_time()
+                except BudgetExceeded:
+                    self._set_recovery_failure(
+                        InventoryRecoveryOutcome.BUDGET_EXHAUSTED,
+                        step,
+                        "Inventory recovery budget is exhausted; the last safe "
+                        "inventory was preserved.",
+                    )
+                    return None
+                except AdaptiveModelStopped as exc:
+                    self._set_model_stop(DomStepId.INVENTORY_EXTRACTION, exc.reason)
+                    return None
+                except UserKeyInvalidError:
+                    raise
+                except Exception as exc:
+                    self._set_recovery_failure(
+                        InventoryRecoveryOutcome.PROVIDER_ERROR,
+                        step,
+                        "Booking.com inventory interpretation was unavailable "
+                        f"({type(exc).__name__}).",
+                    )
+                    return None
+                valid, conflict = _ground_interpreted_candidates(candidates, page)
+                if conflict:
+                    self._set_recovery_failure(
+                        InventoryRecoveryOutcome.BLOCKED,
+                        step,
+                        "Booking.com inventory interpretation returned conflicting "
+                        "identities.",
+                    )
+                    return None
+        if not valid:
+            profile = getattr(interpreter, "last_profile", None)
+            tier = profile.tier if isinstance(profile, ModelProfile) else None
+            reason = (
+                TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
+                if tier is ModelTier.OPUS
+                else TerminalBrowserReason.UNRESOLVED_AMBIGUITY
+            )
+            provenance = {
+                ModelTier.SONNET: DiagnosisProvenance.SONNET_DIAGNOSED,
+                ModelTier.OPUS: DiagnosisProvenance.OPUS_DIAGNOSED,
+                None: DiagnosisProvenance.POLICY_STOP,
+            }[tier]
             self._set_recovery_failure(
                 InventoryRecoveryOutcome.GAVE_UP,
                 step,
                 "Booking.com inventory interpretation produced no validated reservation evidence.",
+                failure_code=SynchronizationFailureCode.EXTRACTION_AMBIGUOUS,
+                terminal_diagnosis=_terminal_diagnosis(
+                    reason,
+                    DomStepId.INVENTORY_EXTRACTION,
+                    provenance=provenance,
+                ),
             )
             return None
         self._recovery_outcome = InventoryRecoveryOutcome.RECOVERED
         self._recovery_step = step
         self._recovery_failure_code = None
+        profile = getattr(interpreter, "last_profile", None)
+        if isinstance(profile, ModelProfile):
+            provenance = {
+                ModelTier.SONNET: DiagnosisProvenance.SONNET_RECOVERED,
+                ModelTier.OPUS: DiagnosisProvenance.OPUS_RECOVERED,
+            }[profile.tier]
+            assisted_diagnosis = TerminalBrowserDiagnosis(
+                reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+                step_id=DomStepId.INVENTORY_EXTRACTION,
+                provenance=provenance,
+                confidence=1.0,
+                evidence=frozenset(),
+                operator_action=operator_action_for_reason(
+                    TerminalBrowserReason.POSTCONDITION_SATISFIED
+                ),
+            )
+            assisted_receipts = (*self._assisted_diagnoses, assisted_diagnosis)
+            validate_assisted_diagnoses(assisted_receipts)
+            self._assisted_diagnoses.append(assisted_diagnosis)
         self._recovery_detail = (
             "Booking.com reservation details were recovered with guarded assistance."
         )
@@ -835,11 +974,47 @@ class BookingComAccountInventorySource:
         detail: str,
         *,
         failure_code: SynchronizationFailureCode | None = None,
+        terminal_diagnosis: TerminalBrowserDiagnosis | None = None,
     ) -> None:
         self._recovery_outcome = outcome
         self._recovery_step = step
         self._recovery_detail = detail[:500]
         self._recovery_failure_code = failure_code
+        self._terminal_diagnosis = terminal_diagnosis or _diagnosis_for_recovery_failure(
+            outcome,
+            self._active_step_id,
+            failure_code=failure_code,
+        )
+
+    def _set_model_stop(self, step_id: DomStepId, model_stop: Any) -> None:
+        reason = DOM_STEP_REGISTRY.definition(step_id).reason_for_model_stop(model_stop)
+        outcome = _recovery_outcome_for_terminal(reason)
+        failure_code = _synchronization_code_for_terminal(reason)
+        self._set_recovery_failure(
+            outcome,
+            step_id.value,
+            _redacted_terminal_detail(reason),
+            failure_code=failure_code,
+            terminal_diagnosis=_terminal_diagnosis(
+                reason,
+                step_id,
+                provenance=_provenance_for_terminal(reason),
+                model_stop_reason=model_stop,
+            ),
+        )
+
+    def _set_known_page_failure(self, reason: TerminalBrowserReason) -> None:
+        self._set_recovery_failure(
+            _recovery_outcome_for_terminal(reason),
+            self._active_step_id.value,
+            _redacted_terminal_detail(reason),
+            failure_code=_synchronization_code_for_terminal(reason),
+            terminal_diagnosis=_terminal_diagnosis(
+                reason,
+                self._active_step_id,
+                provenance=DiagnosisProvenance.DETERMINISTIC,
+            ),
+        )
 
 
 class _InventoryGuardedBrowser:
@@ -849,9 +1024,11 @@ class _InventoryGuardedBrowser:
         self,
         browser: Any,
         *,
+        step: DomStepDefinition | None = None,
         action_observer: Callable[[AgentAction], None] | None = None,
     ) -> None:
         self._browser = browser
+        self._step = step or DOM_STEP_REGISTRY.definition(DomStepId.INVENTORY_SCOPE)
         self._observation: Observation | None = None
         self._action_observer = action_observer
 
@@ -883,11 +1060,14 @@ class _InventoryGuardedBrowser:
         if action.type in {AgentActionType.FILL, AgentActionType.SELECT}:
             raise RuntimeError("inventory recovery refused an input action")
         if action.type is AgentActionType.CLICK:
+            if blocked_action_reason(action, observation) is not None:
+                raise RuntimeError("inventory recovery refused a non-read-only control")
             if target is None or not _is_read_only_inventory_control(
                 target.role,
                 target.label,
                 target.href,
                 observation.url,
+                step=self._step,
             ):
                 raise RuntimeError("inventory recovery refused a non-read-only control")
         self._browser.act(action)
@@ -905,33 +1085,52 @@ def _is_read_only_inventory_control(
     label: str,
     href: str | None,
     source_url: str,
+    *,
+    step: DomStepDefinition,
 ) -> bool:
     normalized_role = role.casefold()
     normalized_label = " ".join(label.casefold().split())
     if normalized_role not in {"button", "link", "tab"}:
         return False
-    if _READ_ONLY_SCOPE_LABEL.fullmatch(normalized_label):
-        return href is None or _allowlisted(urljoin(source_url, href))
-    if _READ_ONLY_PAGINATION_LABEL.fullmatch(normalized_label):
-        if href is None:
-            return bool(
-                _READ_ONLY_BUTTON_PAGINATION_LABEL.fullmatch(normalized_label)
-            )
-        destination = urlparse(urljoin(source_url, href))
-        return _allowlisted(destination.geturl()) and any(
-            name in parse_qs(destination.query)
-            for name in ("page", "cursor", "offset")
-        )
-    if href is None or not _allowlisted(urljoin(source_url, href)):
+    if not normalized_label or _GENERIC_UNVERIFIED_CONTROL_LABEL.fullmatch(normalized_label):
         return False
+
+    if href is None:
+        if DomCapability.ACTIVATE_READ_ONLY_CONTROL not in step.safe_capabilities:
+            return False
+        if step.step_id is DomStepId.INVENTORY_SCOPE:
+            # A tab is a view switch by accessible role. Its copy may drift;
+            # code still verifies the requested scope after the click.
+            return normalized_role in {"button", "tab"}
+        if step.step_id is DomStepId.INVENTORY_PAGINATION:
+            # Pagination buttons frequently change copy. The step capability,
+            # global mutation guard, current inventory origin, and fresh
+            # postcondition together form the approval boundary.
+            return normalized_role == "button"
+        return False
+
     destination = urlparse(urljoin(source_url, href))
-    is_detail_destination = (
-        destination.path.casefold().startswith("/confirmation")
-        or "trip_id" in parse_qs(destination.query)
-    )
-    return is_detail_destination and bool(
-        _READ_ONLY_DETAIL_LABEL.fullmatch(normalized_label)
-    )
+    if not _allowlisted(destination.geturl()):
+        return False
+    query = parse_qs(destination.query)
+    if step.step_id is DomStepId.INVENTORY_DETAIL:
+        return DomCapability.NAVIGATE_APPROVED_READ_ONLY in step.safe_capabilities and (
+            destination.path.casefold().startswith("/confirmation") or "trip_id" in query
+        )
+    if step.step_id is DomStepId.INVENTORY_PAGINATION:
+        return DomCapability.ACTIVATE_READ_ONLY_CONTROL in step.safe_capabilities and any(
+            name in query for name in ("page", "cursor", "offset")
+        )
+    if step.step_id is DomStepId.INVENTORY_SCOPE:
+        return DomCapability.ACTIVATE_READ_ONLY_CONTROL in step.safe_capabilities and any(
+            name in query for name in ("scope", "status", "tab", "filter")
+        )
+    if step.step_id is DomStepId.INVENTORY_ENTRY:
+        return DomCapability.NAVIGATE_APPROVED_READ_ONLY in step.safe_capabilities and (
+            "myreservations" in destination.path.casefold()
+            or "mytrips" in destination.path.casefold()
+        )
+    return False
 
 
 def _safe_observe(browser: Any) -> Observation | None:
@@ -967,6 +1166,27 @@ def _navigation_kind(work_kind: str, target: str) -> str:
     if any(name in query for name in ("page", "cursor", "offset")):
         return "pagination"
     return "scope"
+
+
+def _inventory_navigation_step(work_kind: str, target: str) -> DomStepId:
+    """Return the stable registered step for an inventory navigation seam.
+
+    Scope names and target URLs are run-specific evidence, not audit identity.
+    Keeping them out of the step label makes incident correlation and terminal
+    reason mapping stable across users and Booking.com variants.
+    """
+    parsed = urlparse(target)
+    if (
+        work_kind == "url"
+        and not parsed.query
+        and parsed.path.casefold().endswith("/myreservations.html")
+    ):
+        return DomStepId.INVENTORY_ENTRY
+    return {
+        "scope": DomStepId.INVENTORY_SCOPE,
+        "pagination": DomStepId.INVENTORY_PAGINATION,
+        "detail": DomStepId.INVENTORY_DETAIL,
+    }[_navigation_kind(work_kind, target)]
 
 
 def _scope_aliases(scope: str) -> tuple[str, ...]:
@@ -1037,7 +1257,11 @@ def _navigation_page_verified(
 ) -> bool:
     if not _allowlisted(page.url):
         return False
-    if _CAPTCHA_MARKERS.search(page.text) or _AUTH_MARKERS.search(page.text):
+    if (
+        _CAPTCHA_MARKERS.search(page.text)
+        or _MFA_MARKERS.search(page.text)
+        or _AUTH_MARKERS.search(page.text)
+    ):
         return False
     if kind == "detail":
         requested = urlparse(target)
@@ -1045,10 +1269,7 @@ def _navigation_page_verified(
         same_detail_family = (
             requested.path.casefold().startswith("/confirmation")
             and actual.path.casefold().startswith("/confirmation")
-        ) or (
-            "trip_id" in parse_qs(requested.query)
-            and "trip_id" in parse_qs(actual.query)
-        )
+        ) or ("trip_id" in parse_qs(requested.query) and "trip_id" in parse_qs(actual.query))
         return same_detail_family and bool(observations)
     if kind == "pagination":
         if target.startswith("button-"):
@@ -1060,15 +1281,11 @@ def _navigation_page_verified(
             for name in ("page", "cursor", "offset")
             if name in requested_query
         )
-        return cursor_matches and bool(
-            observations or parser.recognized_empty or parser.next_url
-        )
+        return cursor_matches and bool(observations or parser.recognized_empty or parser.next_url)
     if any(_lifecycle_matches_scope(item, scope) for item in observations):
         return True
     visible_text = _visible_page_text(page)
-    if _looks_like_empty_scope(visible_text, scope) or _scope_text_evidence(
-        visible_text, scope
-    ):
+    if _looks_like_empty_scope(visible_text, scope) or _scope_text_evidence(visible_text, scope):
         return True
     # The default inventory entry represents upcoming only when it exposes
     # actual reservation/detail content, never from a persistent nav alias.
@@ -1090,7 +1307,11 @@ def _inventory_recovery_verified(
     observation = _safe_observe(browser)
     if observation is None or not _allowlisted(observation.url):
         return False
-    if _CAPTCHA_MARKERS.search(observation.text) or _AUTH_MARKERS.search(observation.text):
+    if (
+        _CAPTCHA_MARKERS.search(observation.text)
+        or _MFA_MARKERS.search(observation.text)
+        or _AUTH_MARKERS.search(observation.text)
+    ):
         return False
     try:
         if not browser.is_authenticated():
@@ -1101,9 +1322,7 @@ def _inventory_recovery_verified(
     if kind == "scope":
         # Interactive controls are intentionally excluded: persistent tab labels
         # cannot prove which scope's content is currently rendered.
-        matches = _scope_text_evidence(
-            " ".join((observation.title, observation.text)), scope
-        )
+        matches = _scope_text_evidence(" ".join((observation.title, observation.text)), scope)
         return matches and (
             _scope_observation_changed(before, observation)
             or _url_explicitly_selects_scope(before.url, scope)
@@ -1125,10 +1344,7 @@ def _inventory_recovery_verified(
             requested_url.path.casefold().startswith("/confirmation")
             and actual_url.path.casefold().startswith("/confirmation")
         )
-        or (
-            "trip_id" in parse_qs(requested_url.query)
-            and "trip_id" in parse_qs(actual_url.query)
-        )
+        or ("trip_id" in parse_qs(requested_url.query) and "trip_id" in parse_qs(actual_url.query))
     )
 
 
@@ -1177,9 +1393,7 @@ def _validated_interpreted_observation(
         return None
     if not candidate.remote_id.strip():
         return None
-    if len(candidate.remote_id.strip()) < 4 or not _literal_visible(
-        candidate.remote_id, page_text
-    ):
+    if len(candidate.remote_id.strip()) < 4 or not _literal_visible(candidate.remote_id, page_text):
         return None
     if candidate.source_url and not _allowlisted(candidate.source_url):
         return None
@@ -1194,20 +1408,17 @@ def _validated_interpreted_observation(
         lifecycle=ReservationLifecycle.UNKNOWN,
         confirmation_id=(
             candidate.confirmation_id
-            if candidate.confirmation_id
-            and _literal_visible(candidate.confirmation_id, page_text)
+            if candidate.confirmation_id and _literal_visible(candidate.confirmation_id, page_text)
             else None
         ),
         property_name=(
             candidate.property_name
-            if candidate.property_name
-            and _literal_visible(candidate.property_name, page_text)
+            if candidate.property_name and _literal_visible(candidate.property_name, page_text)
             else None
         ),
         property_ref=(
             candidate.property_ref
-            if candidate.property_ref
-            and _literal_visible(candidate.property_ref, page_text)
+            if candidate.property_ref and _literal_visible(candidate.property_ref, page_text)
             else None
         ),
         check_in=None,
@@ -1223,15 +1434,46 @@ def _validated_interpreted_observation(
     )
 
 
+def _ground_interpreted_candidates(
+    candidates: tuple[ReservationObservation, ...] | list[ReservationObservation],
+    page: PageContent,
+) -> tuple[list[ReservationObservation], bool]:
+    """Ground positive model facts; never infer absence or completeness."""
+
+    seen: dict[str, ReservationObservation] = {}
+    for candidate in candidates:
+        validated = _validated_interpreted_observation(
+            candidate,
+            page.url,
+            page.text,
+        )
+        if validated is None:
+            continue
+        existing = seen.get(validated.remote_id)
+        if (
+            existing is not None
+            and existing.lifecycle is not ReservationLifecycle.UNKNOWN
+            and validated.lifecycle is not ReservationLifecycle.UNKNOWN
+            and existing.lifecycle is not validated.lifecycle
+        ):
+            return [], True
+        if existing is None or _fact_count(validated) > _fact_count(existing):
+            seen[validated.remote_id] = validated
+    return list(seen.values()), False
+
+
 def _literal_visible(value: str, page_text: str) -> bool:
     normalized_value = " ".join(value.casefold().split())
     normalized_text = " ".join(page_text.casefold().split())
     if not normalized_value:
         return False
-    return re.search(
-        rf"(?<![a-z0-9]){re.escape(normalized_value)}(?![a-z0-9])",
-        normalized_text,
-    ) is not None
+    return (
+        re.search(
+            rf"(?<![a-z0-9]){re.escape(normalized_value)}(?![a-z0-9])",
+            normalized_text,
+        )
+        is not None
+    )
 
 
 def _merge_positive_interpretation(
@@ -1249,32 +1491,252 @@ def _merge_positive_interpretation(
     )
 
 
-def _outcome_from_escalation(result: Any) -> InventoryRecoveryOutcome:
-    if result.stop_reason is AgentStopReason.UNSAFE_ACTION:
+def _diagnosis_from_escalation(
+    result: Any,
+    step_id: DomStepId,
+) -> TerminalBrowserDiagnosis:
+    """Preserve an exact adaptive terminal instead of collapsing to gave-up.
+
+    New adaptive controllers attach the canonical diagnosis directly. Legacy
+    controllers remain supported while composition migrates, but their closed
+    stop reasons are translated at this boundary rather than exposed as a
+    generic navigation failure.
+    """
+    diagnosis = getattr(result, "diagnosis", None)
+    if isinstance(diagnosis, TerminalBrowserDiagnosis):
+        return diagnosis
+
+    model_stop = getattr(result, "model_stop_reason", None)
+    if model_stop is not None:
+        reason = DOM_STEP_REGISTRY.definition(step_id).reason_for_model_stop(model_stop)
+        provenance = _provenance_for_terminal(reason)
+        return _terminal_diagnosis(
+            reason,
+            step_id,
+            provenance=provenance,
+            model_stop_reason=model_stop,
+        )
+
+    reason = {
+        AgentStopReason.AUTHENTICATION_REQUIRED: TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+        AgentStopReason.CAPTCHA: TerminalBrowserReason.BOT_WALL,
+        AgentStopReason.EXPLICIT_UNAVAILABLE: TerminalBrowserReason.EXPLICIT_UNAVAILABLE,
+        AgentStopReason.UNSAFE_ACTION: TerminalBrowserReason.PROHIBITED_ACTION,
+        AgentStopReason.MISSING_BROWSER_CAPABILITY: (TerminalBrowserReason.OBSERVATION_UNAVAILABLE),
+        AgentStopReason.NO_PROGRESS: TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+        AgentStopReason.PROVIDER_ERROR: TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+        AgentStopReason.BUDGET_EXHAUSTED: TerminalBrowserReason.JOB_COST_LIMIT,
+        AgentStopReason.UNKNOWN: TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+        None: TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+    }[getattr(result, "stop_reason", None)]
+    return _terminal_diagnosis(
+        reason,
+        step_id,
+        provenance=_provenance_for_terminal(reason),
+    )
+
+
+def _recovery_outcome_for_terminal(
+    reason: TerminalBrowserReason,
+) -> InventoryRecoveryOutcome:
+    if reason in {
+        TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+        TerminalBrowserReason.MFA_REQUIRED,
+        TerminalBrowserReason.BOT_WALL,
+        TerminalBrowserReason.BLOCKED_DESTINATION,
+        TerminalBrowserReason.PROHIBITED_ACTION,
+        TerminalBrowserReason.POPUP_REFUSED,
+    }:
         return InventoryRecoveryOutcome.BLOCKED
-    if result.stop_reason is AgentStopReason.BUDGET_EXHAUSTED:
-        return InventoryRecoveryOutcome.BUDGET_EXHAUSTED
-    if result.stop_reason is AgentStopReason.PROVIDER_ERROR:
+    if reason in {
+        TerminalBrowserReason.PROVIDER_AUTHENTICATION,
+        TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+        TerminalBrowserReason.PROVIDER_RATE_LIMIT,
+        TerminalBrowserReason.CALLER_REVOKED,
+        TerminalBrowserReason.MODEL_PROFILE_UNQUALIFIED,
+        TerminalBrowserReason.MODEL_NOT_APPROVED,
+        TerminalBrowserReason.INVALID_PROVIDER_RESPONSE,
+    }:
         return InventoryRecoveryOutcome.PROVIDER_ERROR
+    if reason in {
+        TerminalBrowserReason.TIME_LIMIT,
+        TerminalBrowserReason.JOB_COST_LIMIT,
+        TerminalBrowserReason.DAILY_COST_LIMIT,
+        TerminalBrowserReason.MODEL_PRICING_UNAVAILABLE,
+        TerminalBrowserReason.COST_ACCOUNTING_ERROR,
+        TerminalBrowserReason.CLOCK_ROLLBACK,
+    }:
+        return InventoryRecoveryOutcome.BUDGET_EXHAUSTED
+    if reason is TerminalBrowserReason.OBSERVATION_UNAVAILABLE:
+        return InventoryRecoveryOutcome.UNAVAILABLE
     return InventoryRecoveryOutcome.GAVE_UP
 
 
-def _redacted_recovery_failure(outcome: InventoryRecoveryOutcome) -> str:
-    messages = {
-        InventoryRecoveryOutcome.BLOCKED: (
-            "Booking.com inventory recovery stopped at the read-only safety boundary."
+def _synchronization_code_for_terminal(
+    reason: TerminalBrowserReason,
+) -> SynchronizationFailureCode | None:
+    if reason in {
+        TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+        TerminalBrowserReason.MFA_REQUIRED,
+    }:
+        return SynchronizationFailureCode.AUTH_REQUIRED
+    if reason is TerminalBrowserReason.BOT_WALL:
+        return SynchronizationFailureCode.BOT_WALL
+    return None
+
+
+def _redacted_terminal_detail(reason: TerminalBrowserReason) -> str:
+    if reason in {
+        TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+        TerminalBrowserReason.MFA_REQUIRED,
+    }:
+        return "Booking.com authentication is required; send /connect and retry."
+    if reason is TerminalBrowserReason.BOT_WALL:
+        return "Booking.com presented a bot-verification wall; retry later."
+    if reason is TerminalBrowserReason.OBSERVATION_UNAVAILABLE:
+        return "Booking.com inventory recovery had no safe page evidence."
+    if reason in {
+        TerminalBrowserReason.PROVIDER_AUTHENTICATION,
+        TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+        TerminalBrowserReason.PROVIDER_RATE_LIMIT,
+        TerminalBrowserReason.CALLER_REVOKED,
+        TerminalBrowserReason.MODEL_PROFILE_UNQUALIFIED,
+        TerminalBrowserReason.MODEL_NOT_APPROVED,
+        TerminalBrowserReason.INVALID_PROVIDER_RESPONSE,
+    }:
+        return "Booking.com inventory recovery was unavailable from the configured LLM provider."
+    if reason in {
+        TerminalBrowserReason.TIME_LIMIT,
+        TerminalBrowserReason.JOB_COST_LIMIT,
+        TerminalBrowserReason.DAILY_COST_LIMIT,
+        TerminalBrowserReason.MODEL_PRICING_UNAVAILABLE,
+        TerminalBrowserReason.COST_ACCOUNTING_ERROR,
+        TerminalBrowserReason.CLOCK_ROLLBACK,
+    }:
+        return "Booking.com inventory recovery stopped at its configured cost or time limit."
+    if reason in {
+        TerminalBrowserReason.BLOCKED_DESTINATION,
+        TerminalBrowserReason.PROHIBITED_ACTION,
+        TerminalBrowserReason.POPUP_REFUSED,
+    }:
+        return "Booking.com inventory recovery stopped at the read-only safety boundary."
+    return "Booking.com inventory recovery ended with an exact typed diagnosis."
+
+
+def _diagnosis_for_inventory_result(
+    result: InventoryDiscoveryResult,
+    step_id: DomStepId,
+) -> TerminalBrowserDiagnosis | None:
+    """Give every failed/incomplete inventory path a canonical safe terminal."""
+    if result.failure_code is None:
+        return None
+    reason = {
+        SynchronizationFailureCode.AUTH_REQUIRED: (TerminalBrowserReason.AUTHENTICATION_REQUIRED),
+        SynchronizationFailureCode.USER_KEY_INVALID: (
+            TerminalBrowserReason.PROVIDER_AUTHENTICATION
         ),
-        InventoryRecoveryOutcome.BUDGET_EXHAUSTED: (
-            "Booking.com inventory recovery exhausted its bounded LLM allowance."
+        SynchronizationFailureCode.BOT_WALL: TerminalBrowserReason.BOT_WALL,
+        SynchronizationFailureCode.NAVIGATION_FAILED: (
+            TerminalBrowserReason.INFRASTRUCTURE_FAILURE
         ),
-        InventoryRecoveryOutcome.PROVIDER_ERROR: (
-            "Booking.com inventory recovery was unavailable from the configured LLM provider."
+        SynchronizationFailureCode.UNSUPPORTED_LAYOUT: (TerminalBrowserReason.UNRESOLVED_AMBIGUITY),
+        SynchronizationFailureCode.PAGINATION_INCOMPLETE: (
+            TerminalBrowserReason.UNRESOLVED_AMBIGUITY
         ),
-    }
-    return messages.get(
-        outcome,
-        "Booking.com inventory recovery could not verify progress; the last safe "
-        "inventory was preserved.",
+        SynchronizationFailureCode.IDENTITY_AMBIGUOUS: (
+            TerminalBrowserReason.DETERMINISTIC_REJECTION
+        ),
+        SynchronizationFailureCode.EXTRACTION_AMBIGUOUS: (
+            TerminalBrowserReason.UNRESOLVED_AMBIGUITY
+        ),
+        SynchronizationFailureCode.PERSISTENCE_CONFLICT: (
+            TerminalBrowserReason.INFRASTRUCTURE_FAILURE
+        ),
+        SynchronizationFailureCode.UNKNOWN: TerminalBrowserReason.INFRASTRUCTURE_FAILURE,
+    }[result.failure_code]
+    return _terminal_diagnosis(
+        reason,
+        step_id,
+        provenance=_provenance_for_terminal(reason),
+    )
+
+
+def _diagnosis_for_recovery_failure(
+    outcome: InventoryRecoveryOutcome,
+    step_id: DomStepId,
+    *,
+    failure_code: SynchronizationFailureCode | None,
+) -> TerminalBrowserDiagnosis | None:
+    if failure_code is not None:
+        probe = InventoryDiscoveryResult(
+            (),
+            InventoryCompleteness.FAILED,
+            failure_code,
+            "typed inventory failure",
+        )
+        return _diagnosis_for_inventory_result(probe, step_id)
+    reason = {
+        InventoryRecoveryOutcome.UNAVAILABLE: TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+        InventoryRecoveryOutcome.GAVE_UP: TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+        InventoryRecoveryOutcome.BLOCKED: TerminalBrowserReason.PROHIBITED_ACTION,
+        InventoryRecoveryOutcome.PROVIDER_ERROR: TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+        InventoryRecoveryOutcome.BUDGET_EXHAUSTED: TerminalBrowserReason.JOB_COST_LIMIT,
+    }.get(outcome)
+    if reason is None:
+        return None
+    return _terminal_diagnosis(
+        reason,
+        step_id,
+        provenance=_provenance_for_terminal(reason),
+    )
+
+
+def _provenance_for_terminal(reason: TerminalBrowserReason) -> DiagnosisProvenance:
+    if reason in {
+        TerminalBrowserReason.PROVIDER_AUTHENTICATION,
+        TerminalBrowserReason.PROVIDER_UNAVAILABLE,
+        TerminalBrowserReason.PROVIDER_RATE_LIMIT,
+    }:
+        return DiagnosisProvenance.PROVIDER_STOP
+    if reason in {
+        TerminalBrowserReason.TIME_LIMIT,
+        TerminalBrowserReason.JOB_COST_LIMIT,
+        TerminalBrowserReason.DAILY_COST_LIMIT,
+        TerminalBrowserReason.MODEL_PRICING_UNAVAILABLE,
+        TerminalBrowserReason.COST_ACCOUNTING_ERROR,
+        TerminalBrowserReason.CLOCK_ROLLBACK,
+    }:
+        return DiagnosisProvenance.BUDGET_STOP
+    if reason in {
+        TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+        TerminalBrowserReason.MFA_REQUIRED,
+        TerminalBrowserReason.BOT_WALL,
+        TerminalBrowserReason.BLOCKED_DESTINATION,
+        TerminalBrowserReason.PROHIBITED_ACTION,
+        TerminalBrowserReason.EXPLICIT_UNAVAILABLE,
+    }:
+        return DiagnosisProvenance.DETERMINISTIC
+    return DiagnosisProvenance.POLICY_STOP
+
+
+def _terminal_diagnosis(
+    reason: TerminalBrowserReason,
+    step_id: DomStepId,
+    *,
+    provenance: DiagnosisProvenance,
+    model_stop_reason: Any | None = None,
+) -> TerminalBrowserDiagnosis:
+    return TerminalBrowserDiagnosis(
+        reason=reason,
+        step_id=step_id,
+        provenance=provenance,
+        confidence=1.0,
+        evidence=frozenset(),
+        operator_action=operator_action_for_reason(reason),
+        code_maintenance_required=(
+            reason is TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
+        ),
+        model_stop_reason=model_stop_reason,
     )
 
 
@@ -1322,48 +1784,35 @@ def _parse_page(
     if len(page_observations) == 1 and page_observations[0].occupancy is None:
         occupancy = _occupancy_from_text(page_text)
         if occupancy is not None:
-            page_observations[0] = replace(
-                page_observations[0], occupancy=occupancy
-            )
+            page_observations[0] = replace(page_observations[0], occupancy=occupancy)
     return page_observations
 
 
-def _observations_from_apollo_cache(
-    document: Any, source_url: str
-) -> list[ReservationObservation]:
+def _observations_from_apollo_cache(document: Any, source_url: str) -> list[ReservationObservation]:
     if not isinstance(document, dict):
         return []
     entities = [
         value
         for value in document.values()
-        if isinstance(value, dict)
-        and value.get("__typename") == "PostBookingReservation"
+        if isinstance(value, dict) and value.get("__typename") == "PostBookingReservation"
     ]
     observations: list[ReservationObservation] = []
     for entity in entities:
         identity = _resolve_cache_value(document, entity.get("identity"))
         property_data = _resolve_cache_value(document, entity.get("property"))
         price = _resolve_cache_value(document, entity.get("price"))
-        check_in = _resolve_cache_value(
-            document, entity.get("reservationCheckinDate")
-        )
-        check_out = _resolve_cache_value(
-            document, entity.get("reservationCheckoutDate")
-        )
+        check_in = _resolve_cache_value(document, entity.get("reservationCheckinDate"))
+        check_out = _resolve_cache_value(document, entity.get("reservationCheckoutDate"))
         remote_id = _first_string(identity, "reservationId", "reservationNumber")
         if remote_id is None:
             continue
         property_name = _apollo_property_name(property_data)
-        property_ref = _first_string(
-            property_data, "url", "hotelId", "propertyId"
-        )
+        property_ref = _first_string(property_data, "url", "hotelId", "propertyId")
         room_type = _apollo_room_type(document, entity)
         currency = (
             _first_string(price, "currency", "currencyCode")
             or _first_string(property_data, "currencyCode")
-            or _deep_first_string(
-                _resolve_cache_value(document, entity), "selectedCurrency"
-            )
+            or _deep_first_string(_resolve_cache_value(document, entity), "selectedCurrency")
         )
         total_text = _first_string(
             price,
@@ -1394,10 +1843,7 @@ def _observations_from_apollo_cache(
                 room_type=room_type,
                 booked_total=_money(_amount_text(total_text), currency),
                 refundable=refundable,
-                refund_note=_first_string(
-                    entity, "cancellationType", "cancellationPolicy"
-                )
-                or "",
+                refund_note=_first_string(entity, "cancellationType", "cancellationPolicy") or "",
                 occupancy=_occupancy_from_apollo(resolved),
                 observed_at=datetime.now(UTC),
                 source_url=source_url,
@@ -1428,15 +1874,12 @@ def _resolve_cache_value(
                 depth=depth + 1,
             )
         return {
-            key: _resolve_cache_value(
-                cache, nested, visited=visited, depth=depth + 1
-            )
+            key: _resolve_cache_value(cache, nested, visited=visited, depth=depth + 1)
             for key, nested in value.items()
         }
     if isinstance(value, list):
         return [
-            _resolve_cache_value(cache, item, visited=visited, depth=depth + 1)
-            for item in value
+            _resolve_cache_value(cache, item, visited=visited, depth=depth + 1) for item in value
         ]
     return value
 
@@ -1516,9 +1959,7 @@ def _deep_first_int(value: Any, *keys: str) -> int | None:
 
 
 def _occupancy_from_apollo(value: Any) -> Occupancy | None:
-    adults = _deep_first_int(
-        value, "adults", "adultCount", "numberOfAdults", "numberOfAdultGuests"
-    )
+    adults = _deep_first_int(value, "adults", "adultCount", "numberOfAdults", "numberOfAdultGuests")
     if adults is None:
         return None
     try:
@@ -1598,9 +2039,7 @@ def _observation_from_mapping(
     )
     if not remote_id:
         return None
-    total = _money(
-        values.get("data-total-amount"), values.get("data-currency")
-    )
+    total = _money(values.get("data-total-amount"), values.get("data-currency"))
     return ReservationObservation(
         remote_id=remote_id,
         confirmation_id=values.get("data-confirmation-id") or None,
@@ -1663,57 +2102,35 @@ def _observation_from_generic_json(
     )
     if remote_id is None:
         return None
-    property_data = _first_mapping(
-        item, "property", "hotel", "accommodation", "reservationFor"
-    )
+    property_data = _first_mapping(item, "property", "hotel", "accommodation", "reservationFor")
     total_data = _first_mapping(item, "totalPrice", "bookedTotal", "price")
-    total_amount = _first_string(
-        item, "totalAmount", "amount", "bookedAmount", "totalPrice"
-    )
+    total_amount = _first_string(item, "totalAmount", "amount", "bookedAmount", "totalPrice")
     currency = _first_string(item, "currency", "priceCurrency", "currencyCode")
     if total_data is not None:
-        total_amount = total_amount or _first_string(
-            total_data, "amount", "value", "total"
-        )
-        currency = currency or _first_string(
-            total_data, "currency", "currencyCode", "code"
-        )
+        total_amount = total_amount or _first_string(total_data, "amount", "value", "total")
+        currency = currency or _first_string(total_data, "currency", "currencyCode", "code")
     property_name = _first_string(item, "propertyName", "hotelName")
     property_ref = _first_string(item, "propertyUrl", "hotelUrl")
     if property_data is not None:
         property_name = property_name or _first_string(property_data, "name", "title")
-        property_ref = property_ref or _first_string(
-            property_data, "url", "id", "propertyId"
-        )
+        property_ref = property_ref or _first_string(property_data, "url", "id", "propertyId")
     occupancy_data = _first_mapping(item, "occupancy", "guests", "guestCounts")
     return ReservationObservation(
         remote_id=remote_id,
         confirmation_id=_first_string(
             item, "confirmationId", "confirmationNumber", "reservationNumber"
         ),
-        lifecycle=_lifecycle(
-            _first_string(item, "status", "reservationStatus", "bookingStatus")
-        ),
+        lifecycle=_lifecycle(_first_string(item, "status", "reservationStatus", "bookingStatus")),
         property_name=property_name,
         property_ref=property_ref,
-        check_in=_date(
-            _first_string(item, "checkIn", "checkin", "check_in", "checkinTime")
-        ),
-        check_out=_date(
-            _first_string(item, "checkOut", "checkout", "check_out", "checkoutTime")
-        ),
-        room_type=_first_string(
-            item, "roomType", "roomName", "accommodationUnitName"
-        ),
+        check_in=_date(_first_string(item, "checkIn", "checkin", "check_in", "checkinTime")),
+        check_out=_date(_first_string(item, "checkOut", "checkout", "check_out", "checkoutTime")),
+        room_type=_first_string(item, "roomType", "roomName", "accommodationUnitName"),
         booked_total=_money(total_amount, currency),
         refundable=_first_bool(item, "refundable", "isRefundable"),
-        refund_note=_first_string(
-            item, "cancellationPolicy", "refundNote", "cancellationText"
-        )
+        refund_note=_first_string(item, "cancellationPolicy", "refundNote", "cancellationText")
         or "",
-        refund_deadline=_date(
-            _first_string(item, "refundDeadline", "freeCancellationUntil")
-        ),
+        refund_deadline=_date(_first_string(item, "refundDeadline", "freeCancellationUntil")),
         occupancy=_occupancy_from_json(occupancy_data or item),
         observed_at=datetime.now(UTC),
         source_url=source_url,
@@ -1759,10 +2176,7 @@ def _lifecycle(raw: str | None) -> ReservationLifecycle:
         return ReservationLifecycle.COMPLETED
     if "current" in value or "checked_in" in value:
         return ReservationLifecycle.CURRENT
-    if any(
-        token in value
-        for token in ("upcoming", "active", "confirmed", "reservationconfirmed")
-    ):
+    if any(token in value for token in ("upcoming", "active", "confirmed", "reservationconfirmed")):
         return ReservationLifecycle.UPCOMING
     return ReservationLifecycle.UNKNOWN
 

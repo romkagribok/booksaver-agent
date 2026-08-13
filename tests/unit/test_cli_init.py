@@ -18,6 +18,9 @@ def test_init_config_uses_requested_data_directory(tmp_path) -> None:
     assert "# recovery_timeout_seconds = 60" in config_text
     assert "# screenshot_after_no_progress = 2" in config_text
     assert "# max_semantic_action_executions = 2" in config_text
+    assert '# primary_model = "claude-sonnet-5"' in config_text
+    assert '# escalation_model = "claude-opus-5"' in config_text
+    assert '# max_job_cost_usd = "1.00"' in config_text
 
 
 def test_config_commands_show_effective_recovery_defaults(tmp_path, capsys) -> None:

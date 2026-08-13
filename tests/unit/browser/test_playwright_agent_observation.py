@@ -2,19 +2,33 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from booksaver.domain.agent import AgentAction, AgentActionType, blocked_url_reason
+from booksaver.domain.browser_resilience import DomStepId, PopupRefusalReason
 from booksaver.infrastructure.browser.playwright_adapter import (
     PlaywrightInteractiveBrowser,
 )
 
 
 class _Popup:
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, text: str = "Hotel Test") -> None:
         self.url = url
+        self.text = text
         self.closed = False
+        self.default_timeout: int | None = None
 
     def close(self) -> None:
         self.closed = True
+
+    def wait_for_load_state(self, _state: str, timeout: int) -> None:
+        assert timeout > 0
+
+    def set_default_timeout(self, timeout: int) -> None:
+        self.default_timeout = timeout
+
+    def inner_text(self, _selector: str) -> str:
+        return self.text
 
 
 class _Button:
@@ -141,6 +155,122 @@ def test_click_reports_sanitized_popup_without_adopting_it() -> None:
     assert "secret-value" not in after.describe()
     assert browser._page is page
     assert browser.snapshot().url == page.url
+
+
+def test_adopts_exactly_one_new_step_relevant_property_popup() -> None:
+    popup = _Popup(
+        "https://www.booking.com/hotel/test.html?aid=secret-value"
+    )
+    pages: list[_Popup] = []
+    page = _Page(
+        "https://www.booking.com/searchresults.html",
+        on_click=lambda: pages.append(popup),
+    )
+    pages.append(page)
+    browser = _browser(page, _Context(pages))
+
+    browser.observe()
+    browser.act(AgentAction(type=AgentActionType.CLICK, ref="e0"))
+    result = browser.adopt_read_only_popup(DomStepId.PRICE_PROPERTY_OPEN)
+
+    assert result.is_adopted
+    assert result.receipt is not None
+    assert result.receipt.step_id is DomStepId.PRICE_PROPERTY_OPEN
+    assert browser._page is popup
+    assert popup.default_timeout is not None
+    assert page.closed
+
+
+def test_adopts_approved_inventory_detail_popup() -> None:
+    popup = _Popup(
+        "https://secure.booking.com/confirmation/CONF-PRIVATE?trip_id=secret"
+    )
+    pages: list[_Popup] = []
+    page = _Page(
+        "https://secure.booking.com/myreservations.html",
+        on_click=lambda: pages.append(popup),
+    )
+    pages.append(page)
+    browser = _browser(page, _Context(pages))
+
+    browser.observe()
+    browser.act(AgentAction(type=AgentActionType.CLICK, ref="e0"))
+    result = browser.adopt_read_only_popup(DomStepId.INVENTORY_DETAIL)
+
+    assert result.is_adopted
+    assert browser._page is popup
+
+
+@pytest.mark.parametrize(
+    ("popup", "step_id", "reason"),
+    [
+        (
+            _Popup("https://evil.example/phish"),
+            DomStepId.PRICE_PROPERTY_OPEN,
+            PopupRefusalReason.EXTERNAL_ORIGIN,
+        ),
+        (
+            _Popup("https://secure.booking.com/checkout"),
+            DomStepId.PRICE_PROPERTY_OPEN,
+            PopupRefusalReason.MUTATING_DESTINATION,
+        ),
+        (
+            _Popup("https://www.booking.com/searchresults.html"),
+            DomStepId.PRICE_PROPERTY_OPEN,
+            PopupRefusalReason.UNSUPPORTED_ROUTE,
+        ),
+        (
+            _Popup(
+                "https://www.booking.com/hotel/test.html",
+                text="Sign in to manage your booking",
+            ),
+            DomStepId.PRICE_PROPERTY_OPEN,
+            PopupRefusalReason.PROTECTED_DESTINATION,
+        ),
+    ],
+)
+def test_popup_adoption_refuses_unsafe_or_irrelevant_destination(
+    popup: _Popup,
+    step_id: DomStepId,
+    reason: PopupRefusalReason,
+) -> None:
+    pages: list[_Popup] = []
+    page = _Page(
+        "https://www.booking.com/searchresults.html",
+        on_click=lambda: pages.append(popup),
+    )
+    pages.append(page)
+    browser = _browser(page, _Context(pages))
+
+    browser.observe()
+    browser.act(AgentAction(type=AgentActionType.CLICK, ref="e0"))
+    result = browser.adopt_read_only_popup(step_id)
+
+    assert result.refusal_reason is reason
+    assert popup.closed
+    assert browser._page is page
+
+
+def test_popup_adoption_refuses_multiple_new_children() -> None:
+    popups = [
+        _Popup("https://www.booking.com/hotel/one.html"),
+        _Popup("https://www.booking.com/hotel/two.html"),
+    ]
+    pages: list[_Popup] = []
+    page = _Page(
+        "https://www.booking.com/searchresults.html",
+        on_click=lambda: pages.extend(popups),
+    )
+    pages.append(page)
+    browser = _browser(page, _Context(pages))
+
+    browser.observe()
+    browser.act(AgentAction(type=AgentActionType.CLICK, ref="e0"))
+    result = browser.adopt_read_only_popup(DomStepId.PRICE_PROPERTY_OPEN)
+
+    assert result.refusal_reason is PopupRefusalReason.MULTIPLE_OPENED
+    assert all(popup.closed for popup in popups)
+    assert browser._page is page
 
 
 def test_every_popup_destination_remains_inspectable_and_value_free() -> None:

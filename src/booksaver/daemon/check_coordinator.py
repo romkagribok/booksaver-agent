@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import threading
 import time
 import uuid
-from collections.abc import Callable
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
 from booksaver.application.account_sync import SynchronizeBookingAccount
+from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
+from booksaver.application.dom_incident import build_incident_draft, is_dom_incident_eligible
+from booksaver.application.model_policy import BrowserJobCostBudget, SpendLedger
 from booksaver.application.ports import AgentBrain, InventoryInterpreter
 from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
 from booksaver.application.user_sessions import (
@@ -34,12 +38,37 @@ from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
     AgentBudget,
+    AgentHistoryOutcome,
     AgentStopReason,
     AgentTurnContext,
     BudgetExceeded,
+    CheckTrace,
+    TraceKind,
+)
+from booksaver.domain.browser_resilience import (
+    DomJourney,
+    DomStepId,
+    TerminalBrowserDiagnosis,
+    TerminalBrowserReason,
 )
 from booksaver.domain.check_result import CheckResult, FailureCode, FailureReason
+from booksaver.domain.dom_incident import (
+    IncidentBudgetState,
+    IncidentDraft,
+    IncidentProviderState,
+)
 from booksaver.domain.errors import UserKeyInvalidError
+from booksaver.domain.model_policy import (
+    AdmissionDecision,
+    BrowserJobKind,
+    CostReconciliation,
+    ModelAttemptAudit,
+    ModelCostEstimator,
+    ModelStopReason,
+    ReconciliationRequest,
+    ReservationRequest,
+    UsdAmount,
+)
 from booksaver.domain.models import Booking, Config
 from booksaver.domain.schedule import (
     ScheduledAdmission,
@@ -58,6 +87,7 @@ from booksaver.infrastructure.notifications.telegram_notifier import TelegramNot
 from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
 )
+from booksaver.infrastructure.persistence.model_policy import SqliteSpendLedger
 from booksaver.infrastructure.persistence.scheduled_check_slots import (
     SqliteScheduledCheckSlotRepository,
 )
@@ -74,7 +104,7 @@ from booksaver.monitor.browser_agent import BrowserAgent
 from booksaver.monitor.failure_tracker import FailureTracker
 from booksaver.monitor.search_check_job import BookingComSearchMonitor
 from booksaver.monitor.session_manager import SessionManager
-from booksaver.monitor.trace import SnapshotWriter, TraceRecorder
+from booksaver.monitor.trace import TraceRecorder
 from booksaver.monitor.user_limits import (
     DailyCounter,
     build_check_plan,
@@ -91,6 +121,35 @@ AuthRequiredNotifier = Callable[[int], None]
 InventorySynchronizer = Callable[
     [SqliteStore, Any, int, SynchronizationTrigger], SynchronizationReport
 ]
+IncidentRecorderFactory = Callable[[], AbstractContextManager[Any]]
+
+_INCIDENT_STRUCTURAL_ROLE_ALIASES = {"input": "textbox"}
+_INCIDENT_STRUCTURAL_ROLES = frozenset(
+    {
+        "page",
+        "main",
+        "list",
+        "listitem",
+        "button",
+        "link",
+        "dialog",
+        "form",
+        "textbox",
+        "checkbox",
+        "table",
+        "row",
+    }
+)
+_INCIDENT_HISTORY_OUTCOMES = frozenset(outcome.value for outcome in AgentHistoryOutcome)
+_MAX_INCIDENT_EVIDENCE_ITEMS = 128
+
+
+@dataclass(frozen=True, slots=True)
+class _SanitizedIncidentEvidence:
+    """Browser-lifetime evidence safe to carry across the cleanup boundary."""
+
+    structural_roles: tuple[str, ...] = ()
+    action_outcomes: tuple[str, ...] = ()
 
 
 class _InventoryLLMUsage:
@@ -125,12 +184,8 @@ class _InventoryLLMUsage:
         provider_usage = getattr(delegate, "last_usage", None)
         if provider_usage is None:
             return
-        self.input_tokens += _bounded_usage_count(
-            getattr(provider_usage, "input_tokens", 0)
-        )
-        self.output_tokens += _bounded_usage_count(
-            getattr(provider_usage, "output_tokens", 0)
-        )
+        self.input_tokens += _bounded_usage_count(getattr(provider_usage, "input_tokens", 0))
+        self.output_tokens += _bounded_usage_count(getattr(provider_usage, "output_tokens", 0))
 
     def record_action(self, _action: AgentAction) -> None:
         self.action_count += 1
@@ -147,6 +202,7 @@ def _bounded_usage_count(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return 0
     return min(max(0, value), 100_000_000)
+
 
 class _LazyCountedInventoryBrain:
     """Resolve caller capability only after deterministic inventory has failed."""
@@ -184,9 +240,7 @@ class _LazyCountedInventoryBrain:
         try:
             return self._delegate.decide(context)
         finally:
-            self._usage.record_delegate_call(
-                self._delegate, default_role="navigation_agent"
-            )
+            self._usage.record_delegate_call(self._delegate, default_role="navigation_agent")
 
 
 class _LazyCountedInventoryInterpreter:
@@ -205,9 +259,7 @@ class _LazyCountedInventoryInterpreter:
         self._usage = usage
         self._delegate: InventoryInterpreter | None = None
 
-    def interpret(
-        self, page_text: str, source_url: str
-    ) -> tuple[Any, ...]:
+    def interpret(self, page_text: str, source_url: str) -> tuple[Any, ...]:
         if self._delegate is None:
             method = getattr(self._factory, "inventory_interpreter_for_user", None)
             if method is None:
@@ -221,9 +273,7 @@ class _LazyCountedInventoryInterpreter:
         try:
             return self._delegate.interpret(page_text, source_url)
         finally:
-            self._usage.record_delegate_call(
-                self._delegate, default_role="inventory_interpreter"
-            )
+            self._usage.record_delegate_call(self._delegate, default_role="inventory_interpreter")
 
 
 class _UnavailableLegacySessionRepository:
@@ -234,6 +284,79 @@ class _UnavailableLegacySessionRepository:
 
     def save(self, _session: Any) -> None:
         raise RuntimeError("Legacy global session writes are disabled in the daemon")
+
+
+class _DailyCappedSpendLedger:
+    """Retain the legacy per-user call ceiling behind persistent USD admission."""
+
+    def __init__(
+        self,
+        ledger: SpendLedger,
+        counter: DailyCounter,
+        user_id: int,
+        limit: int,
+    ) -> None:
+        self._ledger = ledger
+        self._counter = counter
+        self._user_id = user_id
+        self._limit = limit
+
+    def reserve_call(self, request: ReservationRequest) -> AdmissionDecision:
+        # CheckCoordinator serializes all provider work, so the read followed
+        # by persistent admission and increment cannot race another job.
+        if self._counter.count(self._user_id) >= self._limit:
+            return AdmissionDecision(denied_reason=ModelStopReason.DAILY_COST_LIMIT)
+        decision = self._ledger.reserve_call(request)
+        if decision.reservation is not None and decision.reservation.was_new:
+            self._counter.increment(self._user_id)
+        return decision
+
+    def reconcile_call(self, request: ReconciliationRequest) -> CostReconciliation:
+        return self._ledger.reconcile_call(request)
+
+    def list_attempts(self, job_id: str) -> tuple[ModelAttemptAudit, ...]:
+        return self._ledger.list_attempts(job_id)
+
+
+@dataclass(frozen=True)
+class AdaptiveBrowserJobContext:
+    local_user_id: int
+    runtime: Any
+    budget: BrowserJobCostBudget
+
+    @property
+    def calls_used(self) -> int:
+        return len(self.budget.ordered_attempts())
+
+    def record_usage(self, usage: _InventoryLLMUsage) -> None:
+        attempts = self.budget.ordered_attempts()
+        usage.actual_calls = len(attempts)
+        for attempt in attempts:
+            usage.providers.add(attempt.provider)
+            usage.models.add(attempt.model)
+            usage.roles.add(attempt.role)
+            usage.prompt_versions.add(
+                {
+                    "recovery": "booking-browser-recovery-v2",
+                    "interpretation": "booking-inventory-interpretation-v1",
+                    "extraction": "booking-offer-extraction-v1",
+                    "classification": "booking-page-state-v1",
+                    "diagnostic": "booking-browser-diagnostic-v1",
+                }.get(attempt.role, "adaptive-model-policy-v1")
+            )
+            if attempt.usage is not None:
+                usage.input_tokens += attempt.usage.input_tokens
+                usage.output_tokens += attempt.usage.output_tokens
+
+
+@dataclass(frozen=True)
+class AdaptiveBrowserJobAdmission:
+    context: AdaptiveBrowserJobContext | None = None
+    stop_reason: ModelStopReason | None = None
+
+    def __post_init__(self) -> None:
+        if (self.context is None) == (self.stop_reason is None):
+            raise ValueError("adaptive browser-job admission requires context or stop")
 
 
 class ImmediateAdmission(Enum):
@@ -283,6 +406,7 @@ class CheckCoordinator:
         session_repository: UserSessionRepository | None = None,
         auth_required_notifier: AuthRequiredNotifier | None = None,
         inventory_synchronizer: InventorySynchronizer | None = None,
+        incident_recorder_factory: IncidentRecorderFactory | None = None,
         execution_gate: threading.Lock | None = None,
     ) -> None:
         self._config = config
@@ -297,10 +421,12 @@ class CheckCoordinator:
         )
         self._auth_required_notifier = auth_required_notifier
         self._inventory_synchronizer = inventory_synchronizer
+        self._incident_recorder_factory = incident_recorder_factory
         self._checks_today = checks_today or DailyCounter()
         self._llm_calls_today = llm_calls_today or DailyCounter()
         self._capped_notice_sent_today = capped_notice_sent_today or DailyCounter()
         self._execution_gate = execution_gate or threading.Lock()
+        self._job_local = threading.local()
 
     @property
     def checks_today(self) -> dict[int, int]:
@@ -310,10 +436,367 @@ class CheckCoordinator:
     def llm_calls_today(self) -> dict[int, int]:
         return self._llm_calls_today.snapshot()
 
-    def set_auth_required_notifier(
-        self, notifier: AuthRequiredNotifier | None
-    ) -> None:
+    def set_auth_required_notifier(self, notifier: AuthRequiredNotifier | None) -> None:
         self._auth_required_notifier = notifier
+
+    @contextmanager
+    def _adaptive_job_scope(
+        self,
+        store: SqliteStore,
+        user_id: int,
+        job_kind: BrowserJobKind,
+    ) -> Iterator[None]:
+        previous = getattr(self._job_local, "adaptive", None)
+        self._job_local.adaptive = self._build_adaptive_job_context(
+            store,
+            user_id,
+            job_kind,
+        )
+        try:
+            yield
+        finally:
+            self._job_local.adaptive = previous
+
+    def _build_adaptive_job_context(
+        self,
+        store: SqliteStore,
+        user_id: int,
+        job_kind: BrowserJobKind,
+    ) -> AdaptiveBrowserJobContext | None:
+        daily_limit = self._config.limits_settings.max_llm_calls_per_user_per_day
+        if self._llm_calls_today.count(user_id) >= daily_limit:
+            return None
+        factory = self._llm_factory_builder(self._config, store)
+        key_ref_method = getattr(factory, "caller_key_ref_for_user", None)
+        runtime_method = getattr(factory, "adaptive_runtime_for_user", None)
+        if not callable(key_ref_method) or not callable(runtime_method):
+            return None
+        key_ref = key_ref_method(user_id)
+        if key_ref is None:
+            return None
+        ledger = _DailyCappedSpendLedger(
+            SqliteSpendLedger(store),
+            self._llm_calls_today,
+            user_id,
+            daily_limit,
+        )
+        settings = self._config.agent_settings
+        budget = BrowserJobCostBudget(
+            job_id=f"{job_kind.value}-{uuid.uuid4().hex}",
+            job_kind=job_kind,
+            caller_key_ref=key_ref,
+            ledger=ledger,
+            estimator=ModelCostEstimator(),
+            job_limit=UsdAmount(settings.max_job_cost_micro_usd),
+            day_limit=UsdAmount(settings.max_deployment_daily_cost_micro_usd),
+            preserve_opus_diagnostic=(settings.reserve_opus_diagnostic_for_ambiguous_episode),
+        )
+        runtime = runtime_method(user_id, budget)
+        if runtime is None:
+            return None
+        return AdaptiveBrowserJobContext(
+            local_user_id=user_id,
+            runtime=runtime,
+            budget=budget,
+        )
+
+    def _current_adaptive_job(self) -> AdaptiveBrowserJobContext | None:
+        current = getattr(self._job_local, "adaptive", None)
+        return current if isinstance(current, AdaptiveBrowserJobContext) else None
+
+    @contextmanager
+    def adaptive_runtime_scope_for_telegram_user(
+        self,
+        telegram_user_id: int,
+        job_kind: BrowserJobKind = BrowserJobKind.REMOTE_AUTH,
+    ) -> Iterator[AdaptiveBrowserJobAdmission]:
+        """Expose one store-backed runtime scope for remote-auth composition.
+
+        The runner must keep this context open for the whole admitted attempt;
+        doing so maps Telegram identity to the local caller once and keeps one
+        budget available to every ambiguous classification in that attempt.
+        """
+        with SqliteStore(self._db_path) as store:
+            user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
+            if user is None or not user.is_active:
+                yield AdaptiveBrowserJobAdmission(stop_reason=ModelStopReason.CALLER_REVOKED)
+                return
+            if self._llm_calls_today.count(user.user_id) >= (
+                self._config.limits_settings.max_llm_calls_per_user_per_day
+            ):
+                yield AdaptiveBrowserJobAdmission(stop_reason=ModelStopReason.DAILY_COST_LIMIT)
+                return
+            with self._adaptive_job_scope(store, user.user_id, job_kind):
+                current = self._current_adaptive_job()
+                if current is None:
+                    yield AdaptiveBrowserJobAdmission(
+                        stop_reason=ModelStopReason.PROVIDER_AUTHENTICATION
+                    )
+                else:
+                    yield AdaptiveBrowserJobAdmission(context=current)
+
+    def _record_post_browser_incidents(
+        self,
+        *,
+        user_id: int,
+        adaptive_job: AdaptiveBrowserJobContext | None,
+        inventory_report: SynchronizationReport | None = None,
+        check_result: CheckResult | None = None,
+        evidence: _SanitizedIncidentEvidence | None = None,
+    ) -> None:
+        """Persist only sanitized incident material after browser cleanup."""
+        if self._incident_recorder_factory is None:
+            return
+        try:
+            drafts, resolved_steps = self._incident_handoffs(
+                user_id=user_id,
+                adaptive_job=adaptive_job,
+                inventory_report=inventory_report,
+                check_result=check_result,
+                evidence=evidence,
+            )
+            if not drafts and not resolved_steps:
+                return
+            with self._incident_recorder_factory() as recorder:
+                for journey, step_id, observed_at in resolved_steps:
+                    try:
+                        recorder.resolve_deterministic_success(
+                            journey=journey,
+                            step_id=step_id,
+                            observed_at=observed_at,
+                        )
+                    except Exception:
+                        logger.warning("DOM incident deterministic resolution failed")
+                for draft in drafts:
+                    recorder.record_safely(draft)
+        except Exception:
+            # Incident construction/factory/persistence is operationally
+            # secondary and must never alter the completed caller result.
+            logger.warning("DOM incident post-browser handoff failed")
+
+    @staticmethod
+    def _capture_incident_evidence(
+        *,
+        browser: Any,
+        adaptive_job: AdaptiveBrowserJobContext | None,
+        inventory_report: SynchronizationReport | None = None,
+        check_result: CheckResult | None = None,
+        check_trace: CheckTrace | None = None,
+    ) -> _SanitizedIncidentEvidence:
+        """Capture an allowlisted structural/action projection before close.
+
+        The observation itself, page text, labels, element references, URLs,
+        screenshots, and trace details never cross this boundary.
+        """
+        if adaptive_job is None:
+            return _SanitizedIncidentEvidence()
+        try:
+            attempts = adaptive_job.budget.ordered_attempts()
+        except Exception:
+            logger.warning("DOM incident model-attempt evidence capture failed")
+            return _SanitizedIncidentEvidence()
+        if not attempts:
+            return _SanitizedIncidentEvidence()
+        diagnoses = CheckCoordinator._incident_diagnoses(
+            inventory_report=inventory_report,
+            check_result=check_result,
+        )
+        if not any(is_dom_incident_eligible(diagnosis) for diagnosis in diagnoses):
+            return _SanitizedIncidentEvidence()
+
+        structural_roles: list[str] = []
+        try:
+            observation = browser.observe()
+            for element in getattr(observation, "elements", ()):
+                role = getattr(element, "role", None)
+                if not isinstance(role, str):
+                    continue
+                normalized = role.strip().casefold()
+                normalized = _INCIDENT_STRUCTURAL_ROLE_ALIASES.get(normalized, normalized)
+                if normalized in _INCIDENT_STRUCTURAL_ROLES:
+                    structural_roles.append(normalized)
+                if len(structural_roles) == _MAX_INCIDENT_EVIDENCE_ITEMS:
+                    break
+        except Exception:
+            # Evidence collection is secondary and must not change a completed
+            # browser outcome. An empty structural digest remains a valid signal.
+            logger.warning("DOM incident structural-role capture failed")
+
+        action_outcomes: list[str] = []
+
+        def _append(value: str) -> None:
+            if value not in action_outcomes and len(action_outcomes) < _MAX_INCIDENT_EVIDENCE_ITEMS:
+                action_outcomes.append(value)
+
+        def _consume_event(kind: str, fields: dict[str, Any]) -> None:
+            if kind == TraceKind.AGENT_BLOCKED.value:
+                _append("blocked")
+                return
+            if kind != TraceKind.AGENT_OUTCOME.value:
+                return
+            outcome = fields.get("outcome")
+            if isinstance(outcome, str) and outcome in _INCIDENT_HISTORY_OUTCOMES:
+                _append(outcome)
+            if fields.get("verified") is True:
+                _append("verified")
+            stop_reason = fields.get("stop_reason")
+            if stop_reason == AgentStopReason.NO_PROGRESS.value:
+                _append("no_progress")
+            elif stop_reason == AgentStopReason.UNSAFE_ACTION.value:
+                _append("blocked")
+
+        audit = inventory_report.recovery_audit if inventory_report is not None else None
+        if audit is not None:
+            for inventory_event in audit.trace:
+                event_fields = inventory_event.as_dict()
+                kind = event_fields.pop("kind", "")
+                if isinstance(kind, str):
+                    _consume_event(kind, event_fields)
+            if audit.action_count and not action_outcomes:
+                _append("executed")
+            if audit.outcome is InventoryRecoveryOutcome.BLOCKED:
+                _append("blocked")
+            elif audit.outcome is InventoryRecoveryOutcome.GAVE_UP:
+                _append("no_progress")
+
+        if check_trace is not None:
+            for check_event in check_trace.events:
+                if check_event.kind not in {
+                    TraceKind.AGENT_OUTCOME,
+                    TraceKind.AGENT_BLOCKED,
+                }:
+                    continue
+                try:
+                    parsed = json.loads(check_event.detail)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    parsed = {}
+                fields = parsed if isinstance(parsed, dict) else {}
+                _consume_event(check_event.kind.value, fields)
+
+        for diagnosis in diagnoses:
+            if not is_dom_incident_eligible(diagnosis):
+                continue
+            _append(
+                "verified"
+                if diagnosis.reason is TerminalBrowserReason.POSTCONDITION_SATISFIED
+                else "no_progress"
+            )
+        return _SanitizedIncidentEvidence(
+            structural_roles=tuple(structural_roles),
+            action_outcomes=tuple(action_outcomes),
+        )
+
+    @staticmethod
+    def _load_check_trace_for_evidence(
+        store: SqliteStore,
+        result: CheckResult,
+    ) -> CheckTrace | None:
+        try:
+            return SqliteCheckTraceRepository(store).get(result.check_id)
+        except Exception:
+            logger.warning("DOM incident check-trace evidence capture failed")
+            return None
+
+    @staticmethod
+    def _incident_diagnoses(
+        *,
+        inventory_report: SynchronizationReport | None,
+        check_result: CheckResult | None,
+    ) -> tuple[TerminalBrowserDiagnosis, ...]:
+        if inventory_report is not None:
+            return (
+                *inventory_report.assisted_diagnoses,
+                *(
+                    (inventory_report.terminal_diagnosis,)
+                    if inventory_report.terminal_diagnosis
+                    else ()
+                ),
+            )
+        if check_result is not None:
+            return (
+                *check_result.assisted_diagnoses,
+                *((check_result.terminal_diagnosis,) if check_result.terminal_diagnosis else ()),
+            )
+        return ()
+
+    @staticmethod
+    def _incident_handoffs(
+        *,
+        user_id: int,
+        adaptive_job: AdaptiveBrowserJobContext | None,
+        inventory_report: SynchronizationReport | None,
+        check_result: CheckResult | None,
+        evidence: _SanitizedIncidentEvidence | None = None,
+    ) -> tuple[
+        tuple[IncidentDraft, ...],
+        tuple[tuple[DomJourney, DomStepId, datetime], ...],
+    ]:
+        attempts = adaptive_job.budget.ordered_attempts() if adaptive_job is not None else ()
+        diagnoses = CheckCoordinator._incident_diagnoses(
+            inventory_report=inventory_report,
+            check_result=check_result,
+        )
+        resolved_candidates: tuple[DomStepId, ...] = ()
+        observed_at = datetime.now(UTC)
+        if inventory_report is not None:
+            if inventory_report.succeeded:
+                from booksaver.application.browser_resilience import (
+                    ACCOUNT_INVENTORY_DOM_STEPS,
+                )
+
+                resolved_candidates = ACCOUNT_INVENTORY_DOM_STEPS
+        elif check_result is not None:
+            observed_at = check_result.checked_at.astimezone(UTC)
+            if check_result.failure_reason is None:
+                from booksaver.application.browser_resilience import PRICE_SEARCH_DOM_STEPS
+
+                resolved_candidates = PRICE_SEARCH_DOM_STEPS
+
+        evidence = evidence or _SanitizedIncidentEvidence()
+        assisted_steps = {diagnosis.step_id for diagnosis in diagnoses}
+        drafts: list[IncidentDraft] = []
+        if attempts:
+            provider_state = (
+                IncidentProviderState.FAILED
+                if any(attempt.outcome == "provider_failed" for attempt in attempts)
+                else IncidentProviderState.COMPLETED
+            )
+            for diagnosis in diagnoses:
+                definition = DOM_STEP_REGISTRY.definition(diagnosis.step_id)
+                budget_state = (
+                    IncidentBudgetState.EXHAUSTED
+                    if diagnosis.model_stop_reason
+                    in {
+                        ModelStopReason.JOB_COST_LIMIT,
+                        ModelStopReason.DAILY_COST_LIMIT,
+                    }
+                    else IncidentBudgetState.WITHIN_LIMIT
+                )
+                draft = build_incident_draft(
+                    journey=definition.journey,
+                    diagnosis=diagnosis,
+                    verifier_category=definition.deterministic_postcondition,
+                    structural_roles=evidence.structural_roles,
+                    model_attempts=attempts,
+                    provider_state=provider_state,
+                    budget_state=budget_state,
+                    observed_at=observed_at,
+                    source_user_ids=(user_id,),
+                    action_outcomes=evidence.action_outcomes,
+                )
+                if draft is not None:
+                    drafts.append(draft)
+
+        resolved = tuple(
+            (
+                DOM_STEP_REGISTRY.definition(step_id).journey,
+                step_id,
+                observed_at,
+            )
+            for step_id in resolved_candidates
+            if step_id not in assisted_steps
+        )
+        return tuple(drafts), resolved
 
     def _default_browser_factory(self) -> AbstractContextManager[Any]:
         from booksaver.infrastructure.browser.playwright_adapter import (
@@ -369,15 +852,18 @@ class CheckCoordinator:
                 return ScheduledAdmission.STALE
             try:
                 with SqliteStore(self._db_path) as store:
-                    self._run_scheduled_user_locked(store, identity.user_id)
+                    with self._adaptive_job_scope(
+                        store,
+                        identity.user_id,
+                        BrowserJobKind.SCHEDULED_SLOT,
+                    ):
+                        self._run_scheduled_user_locked(store, identity.user_id)
             finally:
                 # Terminalize through a fresh connection so an unexpected
                 # browser/persistence transaction cannot strand this slot in
                 # RUNNING until the next process restart.
                 with SqliteStore(self._db_path) as store:
-                    SqliteScheduledCheckSlotRepository(store).complete(
-                        identity, datetime.now(UTC)
-                    )
+                    SqliteScheduledCheckSlotRepository(store).complete(identity, datetime.now(UTC))
             return ScheduledAdmission.COMPLETED
         finally:
             self._execution_gate.release()
@@ -447,9 +933,24 @@ class CheckCoordinator:
                 user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
                 if user is None or not user.is_active:
                     return
-                with self._browser_factory() as browser:
-                    report = self._synchronize_user(
-                        store, browser, user.user_id, trigger
+                with self._adaptive_job_scope(
+                    store,
+                    user.user_id,
+                    BrowserJobKind.BOOKINGS_SYNC,
+                ):
+                    adaptive_job = self._current_adaptive_job()
+                    with self._browser_factory() as browser:
+                        report = self._synchronize_user(store, browser, user.user_id, trigger)
+                        evidence = self._capture_incident_evidence(
+                            browser=browser,
+                            adaptive_job=adaptive_job,
+                            inventory_report=report,
+                        )
+                    self._record_post_browser_incidents(
+                        user_id=user.user_id,
+                        adaptive_job=adaptive_job,
+                        inventory_report=report,
+                        evidence=evidence,
                     )
                 reservations = tuple(
                     SqliteAccountReservationRepository(store).list_for_user(user.user_id)
@@ -462,14 +963,10 @@ class CheckCoordinator:
             )
             try:
                 with SqliteStore(self._db_path) as store:
-                    user = SqliteUserRepository(store).get_by_telegram_id(
-                        telegram_user_id
-                    )
+                    user = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
                     if user is not None and user.is_active:
                         reservations = tuple(
-                            SqliteAccountReservationRepository(store).list_for_user(
-                                user.user_id
-                            )
+                            SqliteAccountReservationRepository(store).list_for_user(user.user_id)
                         )
                         completion = InventoryCompletion(
                             SynchronizationReport(
@@ -495,9 +992,7 @@ class CheckCoordinator:
             self._execution_gate.release()
             try:
                 with SqliteStore(self._db_path) as store:
-                    current = SqliteUserRepository(store).get_by_telegram_id(
-                        telegram_user_id
-                    )
+                    current = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
                     may_deliver = current is not None and current.is_active
             except Exception:
                 may_deliver = False
@@ -531,74 +1026,112 @@ class CheckCoordinator:
                 if user is None or not user.is_active:
                     return
                 bookings = SqliteBookingRepository(store)
-                with self._browser_factory() as browser:
+                with self._adaptive_job_scope(
+                    store,
+                    user.user_id,
+                    BrowserJobKind.CHECK_NOW,
+                ):
+                    adaptive_job = self._current_adaptive_job()
+                    report: SynchronizationReport | None = None
+                    result: CheckResult | None = None
+                    inventory_evidence = _SanitizedIncidentEvidence()
+                    check_evidence = _SanitizedIncidentEvidence()
                     try:
-                        report = self._synchronize_user(
-                            store,
-                            browser,
-                            user.user_id,
-                            SynchronizationTrigger.CHECK_NOW,
+                        with self._browser_factory() as browser:
+                            try:
+                                report = self._synchronize_user(
+                                    store,
+                                    browser,
+                                    user.user_id,
+                                    SynchronizationTrigger.CHECK_NOW,
+                                )
+                                inventory_evidence = self._capture_incident_evidence(
+                                    browser=browser,
+                                    adaptive_job=adaptive_job,
+                                    inventory_report=report,
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Immediate inventory synchronization failed for user %s",
+                                    user.user_id,
+                                )
+                                completion = ImmediateCompletion(
+                                    ImmediateCompletionKind.UNAVAILABLE,
+                                    unavailable_detail=(
+                                        "Booking.com reservations could not be refreshed. "
+                                        "Try /bookings again shortly."
+                                    ),
+                                )
+                                return
+                            if report.completeness is not InventoryCompleteness.COMPLETE:
+                                completion = ImmediateCompletion(
+                                    ImmediateCompletionKind.UNAVAILABLE,
+                                    unavailable_detail=(
+                                        report.failure_detail
+                                        or "Booking.com reservation refresh was incomplete."
+                                    ),
+                                )
+                                return
+                            booking = bookings.get_by_id(booking_id)
+                            if (
+                                booking is None
+                                or bookings.get_owner_user_id(booking_id) != user.user_id
+                                or all(
+                                    active.booking_id != booking_id
+                                    for active in bookings.list_active_for_user(user.user_id)
+                                )
+                            ):
+                                return
+                            if not self._checks_today.try_increment(
+                                user.user_id,
+                                self._config.limits_settings.max_checks_per_user_per_day,
+                            ):
+                                result = self._limit_result(booking, "Immediate check skipped")
+                                SqliteCheckHistoryRepository(store).add(result)
+                                self._send_capped_notice(store, user.user_id)
+                            elif self._stop_event.is_set():
+                                return
+                            else:
+                                try:
+                                    result = self._run_booking(
+                                        store, browser, user.user_id, booking
+                                    )
+                                except Exception as exc:
+                                    logger.exception(
+                                        "Immediate browser execution failed for booking %s",
+                                        booking_id,
+                                    )
+                                    result = CheckResult.failure(
+                                        booking.booking_id,
+                                        datetime.now(UTC),
+                                        FailureReason(
+                                            FailureCode.NAVIGATION_ERROR,
+                                            f"Could not start the live browser check: {exc}",
+                                        ),
+                                    )
+                                    SqliteCheckHistoryRepository(store).add(result)
+                                if result is not None:
+                                    check_evidence = self._capture_incident_evidence(
+                                        browser=browser,
+                                        adaptive_job=adaptive_job,
+                                        check_result=result,
+                                        check_trace=self._load_check_trace_for_evidence(
+                                            store, result
+                                        ),
+                                    )
+                    finally:
+                        self._record_post_browser_incidents(
+                            user_id=user.user_id,
+                            adaptive_job=adaptive_job,
+                            inventory_report=report,
+                            evidence=inventory_evidence,
                         )
-                    except Exception:
-                        logger.exception(
-                            "Immediate inventory synchronization failed for user %s",
-                            user.user_id,
+                        self._record_post_browser_incidents(
+                            user_id=user.user_id,
+                            adaptive_job=adaptive_job,
+                            check_result=result,
+                            evidence=check_evidence,
                         )
-                        completion = ImmediateCompletion(
-                            ImmediateCompletionKind.UNAVAILABLE,
-                            unavailable_detail=(
-                                "Booking.com reservations could not be refreshed. "
-                                "Try /bookings again shortly."
-                            ),
-                        )
-                        return
-                    if report.completeness is not InventoryCompleteness.COMPLETE:
-                        completion = ImmediateCompletion(
-                            ImmediateCompletionKind.UNAVAILABLE,
-                            unavailable_detail=(
-                                report.failure_detail
-                                or "Booking.com reservation refresh was incomplete."
-                            ),
-                        )
-                        return
-                    booking = bookings.get_by_id(booking_id)
-                    if (
-                        booking is None
-                        or bookings.get_owner_user_id(booking_id) != user.user_id
-                        or all(
-                            active.booking_id != booking_id
-                            for active in bookings.list_active_for_user(user.user_id)
-                        )
-                    ):
-                        return
-                    if not self._checks_today.try_increment(
-                        user.user_id,
-                        self._config.limits_settings.max_checks_per_user_per_day,
-                    ):
-                        result = self._limit_result(booking, "Immediate check skipped")
-                        SqliteCheckHistoryRepository(store).add(result)
-                        self._send_capped_notice(store, user.user_id)
-                    elif self._stop_event.is_set():
-                        return
-                    else:
-                        try:
-                            result = self._run_booking(
-                                store, browser, user.user_id, booking
-                            )
-                        except Exception as exc:
-                            logger.exception(
-                                "Immediate browser execution failed for booking %s",
-                                booking_id,
-                            )
-                            result = CheckResult.failure(
-                                booking.booking_id,
-                                datetime.now(UTC),
-                                FailureReason(
-                                    FailureCode.NAVIGATION_ERROR,
-                                    f"Could not start the live browser check: {exc}",
-                                ),
-                            )
-                            SqliteCheckHistoryRepository(store).add(result)
 
                 # A check may take minutes. Re-authorize and re-resolve at
                 # completion so revocation/deletion during navigation does
@@ -609,8 +1142,7 @@ class CheckCoordinator:
                     current_user is not None
                     and current_user.is_active
                     and current_booking is not None
-                    and bookings.get_owner_user_id(booking_id)
-                    == current_user.user_id
+                    and bookings.get_owner_user_id(booking_id) == current_user.user_id
                 ):
                     completion = ImmediateCompletion(
                         ImmediateCompletionKind.RESULT,
@@ -642,10 +1174,7 @@ class CheckCoordinator:
                     ).fetchone()
                     is not None
                 )
-                if (
-                    not bookings.list_all_for_user(user.user_id)
-                    and not has_account_inventory
-                ):
+                if not bookings.list_all_for_user(user.user_id) and not has_account_inventory:
                     try:
                         if (
                             self._session_repository.status(user.user_id).health
@@ -667,6 +1196,11 @@ class CheckCoordinator:
                             user.user_id,
                             SynchronizationTrigger.SCHEDULED,
                         )
+                    self._record_post_browser_incidents(
+                        user_id=user.user_id,
+                        adaptive_job=self._current_adaptive_job(),
+                        inventory_report=report,
+                    )
                 except Exception:
                     logger.exception(
                         "Scheduled inventory synchronization failed for user %s",
@@ -674,9 +1208,7 @@ class CheckCoordinator:
                     )
                     continue
                 if report.completeness is InventoryCompleteness.COMPLETE:
-                    bookings_by_user[user.user_id] = bookings.list_active_for_user(
-                        user.user_id
-                    )
+                    bookings_by_user[user.user_id] = bookings.list_active_for_user(user.user_id)
             plan = build_check_plan(
                 users=active_users,
                 bookings_by_user=bookings_by_user,
@@ -715,6 +1247,11 @@ class CheckCoordinator:
                 # Telegram user can never survive into another user's check.
                 with self._browser_factory() as browser:
                     result = self._run_booking(store, browser, user_id, booking)
+                self._record_post_browser_incidents(
+                    user_id=user_id,
+                    adaptive_job=self._current_adaptive_job(),
+                    check_result=result,
+                )
                 if (
                     self._auth_required_notifier is not None
                     and result.failure_reason is not None
@@ -745,10 +1282,7 @@ class CheckCoordinator:
         )
         if not bookings.list_all_for_user(user_id) and not has_account_inventory:
             try:
-                if (
-                    self._session_repository.status(user_id).health
-                    is not UserSessionHealth.READY
-                ):
+                if self._session_repository.status(user_id).health is not UserSessionHealth.READY:
                     return
             except Exception:
                 logger.warning(
@@ -766,6 +1300,17 @@ class CheckCoordinator:
                     user_id,
                     SynchronizationTrigger.SCHEDULED,
                 )
+                inventory_evidence = self._capture_incident_evidence(
+                    browser=browser,
+                    adaptive_job=self._current_adaptive_job(),
+                    inventory_report=report,
+                )
+            self._record_post_browser_incidents(
+                user_id=user_id,
+                adaptive_job=self._current_adaptive_job(),
+                inventory_report=report,
+                evidence=inventory_evidence,
+            )
         except Exception:
             logger.exception(
                 "Scheduled inventory synchronization failed for user %s",
@@ -780,9 +1325,7 @@ class CheckCoordinator:
             users=[user],
             bookings_by_user={user_id: active_bookings},
             checks_today=self._checks_today.snapshot(),
-            max_checks_per_user_per_day=(
-                self._config.limits_settings.max_checks_per_user_per_day
-            ),
+            max_checks_per_user_per_day=(self._config.limits_settings.max_checks_per_user_per_day),
         )
         history = SqliteCheckHistoryRepository(store)
         for skipped_user_id, booking in plan.skipped:
@@ -794,9 +1337,7 @@ class CheckCoordinator:
             self._send_capped_notice(store, capped_user_id, already_marked=True)
 
         for planned_user_id, booking in plan.ordered:
-            if self._stop_event.is_set() or not self._is_active_user(
-                store, planned_user_id
-            ):
+            if self._stop_event.is_set() or not self._is_active_user(store, planned_user_id):
                 break
             if not self._checks_today.try_increment(
                 planned_user_id,
@@ -811,6 +1352,18 @@ class CheckCoordinator:
                     planned_user_id,
                     booking,
                 )
+                check_evidence = self._capture_incident_evidence(
+                    browser=browser,
+                    adaptive_job=self._current_adaptive_job(),
+                    check_result=result,
+                    check_trace=self._load_check_trace_for_evidence(store, result),
+                )
+            self._record_post_browser_incidents(
+                user_id=planned_user_id,
+                adaptive_job=self._current_adaptive_job(),
+                check_result=result,
+                evidence=check_evidence,
+            )
             if (
                 self._auth_required_notifier is not None
                 and result.failure_reason is not None
@@ -862,6 +1415,7 @@ class CheckCoordinator:
         )
         usage = _InventoryLLMUsage()
         budget = AgentBudget(self._config.agent_settings)
+        adaptive_job = self._current_adaptive_job()
         source: BookingComAccountInventorySource
         if remaining_llm == 0:
             source = BookingComAccountInventorySource(
@@ -869,7 +1423,34 @@ class CheckCoordinator:
                 recovery_unavailable_detail=(
                     "Daily LLM allowance is exhausted; the deterministic inventory "
                     "result was preserved."
+                ),
+            )
+        elif adaptive_job is not None:
+            settings = replace(
+                self._config.agent_settings,
+                max_llm_calls=min(
+                    self._config.agent_settings.max_llm_calls,
+                    remaining_llm,
+                ),
+            )
+            budget = AgentBudget(settings)
+
+            def _adaptive_recovery_factory(guarded_browser: Any) -> BrowserAgent:
+                return BrowserAgent(
+                    guarded_browser,
+                    adaptive_job.runtime.agent_brain(),
+                    budget,
+                    trace_recorder,
+                    recovery_policy=settings.recovery_policy,
+                    page_state_resolver=adaptive_job.runtime.page_state_resolver(),
                 )
+
+            source = BookingComAccountInventorySource(
+                recovery_factory=_adaptive_recovery_factory,
+                interpreter_factory=adaptive_job.runtime.inventory_interpreter,
+                check_time=budget.check_time,
+                llm_calls_used=lambda: adaptive_job.calls_used,
+                action_observer=usage.record_action,
             )
         else:
             factory = self._llm_factory_builder(self._config, store)
@@ -948,7 +1529,10 @@ class CheckCoordinator:
                 recovery_step=result.recovery_step,
                 recovery_detail=result.recovery_detail,
                 llm_calls_used=result.llm_calls_used,
+                terminal_diagnosis=result.terminal_diagnosis,
             )
+        if adaptive_job is not None:
+            adaptive_job.record_usage(usage)
         duration_seconds = time.monotonic() - synchronization_started
         if report.recovery_outcome is not InventoryRecoveryOutcome.NOT_NEEDED:
             audit = InventoryRecoveryAudit.from_operational_events(
@@ -1025,9 +1609,7 @@ class CheckCoordinator:
         try:
             self._auth_required_notifier(user_id)
         except Exception:
-            logger.warning(
-                "Could not issue Booking.com reconnect notice for user %s", user_id
-            )
+            logger.warning("Could not issue Booking.com reconnect notice for user %s", user_id)
 
     def _run_booking(
         self, store: SqliteStore, browser: Any, user_id: int, booking: Booking
@@ -1041,9 +1623,7 @@ class CheckCoordinator:
                 users, user_id, booking, resolution.unavailable_reason
             )
             history.add(result)
-            SqliteCheckTraceRepository(store).add(
-                TraceRecorder(booking.booking_id).finish(result)
-            )
+            SqliteCheckTraceRepository(store).add(TraceRecorder(booking.booking_id).finish(result))
             return result
         snapshot = resolution.snapshot
         remaining_llm = max(
@@ -1053,31 +1633,31 @@ class CheckCoordinator:
         )
         settings = self._config.agent_settings
         if remaining_llm:
-            settings = replace(
-                settings, max_llm_calls=min(settings.max_llm_calls, remaining_llm)
-            )
+            settings = replace(settings, max_llm_calls=min(settings.max_llm_calls, remaining_llm))
+        adaptive_job = self._current_adaptive_job()
         monitor = BookingComSearchMonitor(
             browser=browser,
             # Kept only for the legacy run_all_active API; owner-bound daemon
             # execution below never resolves or falls back to this global state.
-            session_manager=SessionManager(
-                _UnavailableLegacySessionRepository()
-            ),
+            session_manager=SessionManager(_UnavailableLegacySessionRepository()),
             check_history=history,
             booking_repo=SqliteBookingRepository(store),
             failure_tracker=FailureTracker(history),
-            llm_factory=self._llm_factory_builder(self._config, store),
+            llm_factory=(
+                None if adaptive_job is not None else self._llm_factory_builder(self._config, store)
+            ),
+            adaptive_runtime_factory=(
+                (lambda _booking: adaptive_job.runtime) if adaptive_job is not None else None
+            ),
             agent_settings=settings,
             trace_repo=SqliteCheckTraceRepository(store),
-            snapshot_writer=SnapshotWriter(
-                self._config.data_directory.path / "snapshots"
-            ),
+            snapshot_writer=None,
             mobile_profile_id=self._config.mobile_web_settings.profile_id,
         )
         monitor.set_llm_enabled(remaining_llm > 0)
         result = monitor.run_authenticated(booking, snapshot)
         used = min(monitor.last_llm_calls_used, remaining_llm)
-        if used:
+        if used and adaptive_job is None:
             self._llm_calls_today.increment(user_id, by=used)
 
         if (
@@ -1174,9 +1754,7 @@ class CheckCoordinator:
         if user is None or not user.is_active:
             return
         if not already_marked:
-            due = users_needing_capped_notice(
-                [user_id], self._capped_notice_sent_today
-            )
+            due = users_needing_capped_notice([user_id], self._capped_notice_sent_today)
             if not due:
                 return
         chat_id = resolve_telegram_chat_id(user, self._config.telegram_bot_settings)

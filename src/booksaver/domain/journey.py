@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from .check_result import FailureCode
+
+if TYPE_CHECKING:
+    from .browser_resilience import TerminalBrowserDiagnosis
 
 
 class JourneyStep(Enum):
@@ -46,6 +50,15 @@ class JourneyResult:
     outcomes: tuple[StepOutcome, ...]
     failure_code: FailureCode | None = None
     agent_assisted: bool = False  # any step needed LLM-agent takeover (bolt 007)
+    terminal_diagnosis: TerminalBrowserDiagnosis | None = None
+    assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...] = ()
+
+    def __post_init__(self) -> None:
+        from .browser_resilience import validate_assisted_diagnoses
+
+        validate_assisted_diagnoses(self.assisted_diagnoses)
+        if self.failure_code is None and self.terminal_diagnosis is not None:
+            raise ValueError("a successful journey cannot carry a terminal diagnosis")
 
     @property
     def ok(self) -> bool:

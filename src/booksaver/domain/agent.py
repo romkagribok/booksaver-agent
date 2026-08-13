@@ -6,9 +6,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit
 
 from .check_result import FailureCode
+
+if TYPE_CHECKING:
+    from .browser_resilience import TerminalBrowserDiagnosis
+    from .model_policy import ModelStopReason
 
 
 class AgentActionType(Enum):
@@ -37,6 +42,14 @@ class AgentStopReason(Enum):
     UNKNOWN = "unknown"
 
 
+class AgentDiagnosisReason(Enum):
+    """Advisory, content-free DOM diagnosis allowed on an actionless stop."""
+
+    UNSUPPORTED_PAGE = "unsupported_page"
+    UNRESOLVED_AMBIGUITY = "unresolved_ambiguity"
+    CODE_MAINTENANCE_REQUIRED = "code_maintenance_required"
+
+
 @dataclass(frozen=True)
 class LLMUsage:
     """Provider-neutral token usage for one completed model call."""
@@ -59,6 +72,19 @@ class AgentAction:
     ref: str | None = None  # element reference from the current observation
     value: str | None = None  # fill/select text, scroll direction, or give-up reason
     stop_reason: AgentStopReason | None = None
+    diagnosis_reason: AgentDiagnosisReason | None = None
+    diagnosis_confidence: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.diagnosis_reason is not None and self.type is not AgentActionType.GIVE_UP:
+            raise ValueError("only an actionless give_up may carry a diagnosis")
+        if self.diagnosis_confidence is not None:
+            if self.diagnosis_reason is None:
+                raise ValueError("diagnosis confidence requires a typed diagnosis")
+            if isinstance(self.diagnosis_confidence, bool) or not (
+                0.0 <= self.diagnosis_confidence <= 1.0
+            ):
+                raise ValueError("diagnosis confidence must be between zero and one")
 
 
 @dataclass(frozen=True)
@@ -164,24 +190,52 @@ class AgentTurnContext:
     screenshot_forced: bool = False
     seconds_remaining: float | None = None
     verification_condition: str | None = None
+    terminal_diagnosis_required: bool = False
 
 
 @dataclass(frozen=True)
 class AgentSettings:
-    """Hard per-check cost caps (ADR-017). Deliberately simple: if these prove too
-    blunt, the named future work is adaptive budgeting (per-day budgets, backoff,
-    model downshift) — see adr-017 and README."""
+    """Browser-agent limits plus the fixed adaptive portfolio (ADR-031).
+
+    ``model`` remains the compatibility name for the primary model.  It is no
+    longer an arbitrary model selector: only Sonnet 5 is valid and Opus 5 is
+    the sole escalation profile.
+    """
 
     max_steps: int = 15
     max_llm_calls: int = 20
     check_timeout_seconds: int = 180
-    model: str = "claude-sonnet-4-6"
+    model: str = "claude-sonnet-5"
+    escalation_model: str = "claude-opus-5"
+    max_job_cost_micro_usd: int = 1_000_000
+    max_deployment_daily_cost_micro_usd: int = 10_000_000
+    reserve_opus_diagnostic_for_ambiguous_episode: bool = True
     max_recovery_calls_per_step: int = 4
     recovery_timeout_seconds: int = 60
     screenshot_after_no_progress: int = 2
     max_semantic_action_executions: int = 2
 
     def __post_init__(self) -> None:
+        if self.model != "claude-sonnet-5":
+            raise ValueError(
+                "agent.primary_model must be claude-sonnet-5; Fable and arbitrary "
+                "model profiles are not approved"
+            )
+        if self.escalation_model != "claude-opus-5":
+            raise ValueError(
+                "agent.escalation_model must be claude-opus-5; Fable and arbitrary "
+                "model profiles are not approved"
+            )
+        if not 1 <= self.max_job_cost_micro_usd <= 1_000_000:
+            raise ValueError("agent.max_job_cost_usd must be between 0.000001 and 1.00")
+        if not 1 <= self.max_deployment_daily_cost_micro_usd <= 10_000_000:
+            raise ValueError(
+                "agent.max_deployment_daily_cost_usd must be between 0.000001 and 10.00"
+            )
+        if isinstance(self.reserve_opus_diagnostic_for_ambiguous_episode, bool) is False:
+            raise ValueError(
+                "agent.reserve_opus_diagnostic_for_ambiguous_episode must be boolean"
+            )
         if self.max_steps < 1:
             raise ValueError(f"agent.max_steps must be >= 1, got {self.max_steps}")
         if self.max_llm_calls < 1:
@@ -208,6 +262,10 @@ class AgentSettings:
             no_progress_before_screenshot=self.screenshot_after_no_progress,
             max_semantic_executions=self.max_semantic_action_executions,
         )
+
+    @property
+    def primary_model(self) -> str:
+        return self.model
 
 
 class BudgetExceeded(Exception):
@@ -309,6 +367,8 @@ class EscalationResult:
     failure_code: FailureCode | None = None
     used_screenshot: bool = False
     stop_reason: AgentStopReason | None = None
+    model_stop_reason: ModelStopReason | None = None
+    diagnosis: TerminalBrowserDiagnosis | None = None
 
 
 class TraceKind(Enum):

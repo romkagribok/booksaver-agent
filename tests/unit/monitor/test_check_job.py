@@ -212,6 +212,8 @@ def test_run_all_active_flags_reauth_on_auth_failure() -> None:
 
     statuses = [s.status for s in session_repo.saved]
     assert SessionStatus.REQUIRES_REAUTH in statuses
+    assert SessionStatus.ACTIVE not in statuses
+    assert all(s.cookies != b'[{"name": "fresh"}]' for s in session_repo.saved)
 
 
 def test_run_all_active_with_no_bookings_is_a_noop() -> None:

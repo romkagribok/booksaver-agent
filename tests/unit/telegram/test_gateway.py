@@ -559,7 +559,7 @@ def test_admin_users_command_works_for_owner(tmp_path: Path) -> None:
 
 
 def test_admin_purge_wiring_cancels_remote_auth_and_deletes_session(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
     owner_chat_id = 555
     target_telegram_user_id = 777
@@ -585,6 +585,11 @@ def test_admin_purge_wiring_cancels_remote_auth_and_deletes_session(
             return True
 
     manager = _RemoteAuthManager()
+    diagnostic_purges: list[int] = []
+    monkeypatch.setattr(
+        "booksaver.infrastructure.telegram.gateway.EncryptedDiagnosticStore.purge_for_user",
+        lambda _store, user_id, _now: diagnostic_purges.append(user_id),
+    )
     sent = _run_single_message(
         tmp_path,
         cfg,
@@ -595,6 +600,7 @@ def test_admin_purge_wiring_cancels_remote_auth_and_deletes_session(
     )
 
     assert manager.cancelled == [target_telegram_user_id]
+    assert diagnostic_purges == [target.user_id]
     assert not session_path.exists()
     assert (
         session_directory / f"user-{target.user_id}-booking-com.revoked"
@@ -602,6 +608,43 @@ def test_admin_purge_wiring_cancels_remote_auth_and_deletes_session(
     with SqliteStore(db_path) as store:
         assert SqliteUserRepository(store).get_by_id(target.user_id) is None
     assert any("all their data were purged" in text for _chat_id, text in sent)
+
+
+def test_owner_status_uses_content_free_incident_projection(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class Status:
+        open_incidents = 2
+        pending_alerts = 1
+        failed_alerts = 3
+        unavailable_evidence = 4
+
+    calls = 0
+
+    def status_projection(_repository):
+        nonlocal calls
+        calls += 1
+        return Status()
+
+    monkeypatch.setattr(
+        "booksaver.infrastructure.telegram.gateway.SqliteDomIncidentRepository.status_projection",
+        status_projection,
+    )
+    cfg = _config(tmp_path, enabled=True, owner_chat_id=555)
+
+    sent = _run_single_message(
+        tmp_path,
+        cfg,
+        chat_id=555,
+        user_id=555,
+        text="/status",
+    )
+
+    text = "\n".join(message for _chat_id, message in sent)
+    assert "DOM maintenance incidents: 2 open" in text
+    assert "DOM maintenance alerts: 1 pending, 3 failed" in text
+    assert "DOM diagnostic evidence unavailable: 4" in text
+    assert calls == 1
 
 
 def test_admin_command_refused_for_non_owner(tmp_path: Path) -> None:
