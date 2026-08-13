@@ -16,6 +16,7 @@ stages_completed:
   - technical-design
   - adr-analysis
   - implement
+  - test
 requires_bolts:
   - 040-agent-assisted-booking-inventory
   - 041-adaptive-model-policy
@@ -24,7 +25,7 @@ enables_bolts:
 requires_units:
   - 001-adaptive-model-policy
   - 002-agent-assisted-booking-inventory
-blocks: true
+blocks: false
 complexity:
   avg_complexity: 3
   avg_uncertainty: 2
@@ -62,7 +63,7 @@ production failure where an LLM authentication conclusion is collapsed into gene
 - [x] **2. Technical Design**: Complete → `ddd-02-technical-design.md`
 - [x] **3. ADR Analysis**: Complete → ADR-032 accepted
 - [x] **4. Implement**: Complete → step registry, protected-first classifier, exact auth mapping
-- [ ] **5. Test**: In progress → `ddd-03-test-report.md`
+- [x] **5. Test**: Complete → `ddd-03-test-report.md`
 
 ## Dependencies
 
@@ -86,13 +87,13 @@ production failure where an LLM authentication conclusion is collapsed into gene
 
 ## Success Criteria
 
-- [ ] Every current DOM-sensitive step declares exact terminal behavior and ambiguity fallback.
-- [ ] Changed login DOM cannot be accepted from weak account-link/Genius markers.
-- [ ] Model `authentication_required` becomes domain auth-required and `/connect` guidance.
-- [ ] An LLM authenticated claim alone cannot save or extend a session.
-- [ ] Protected pages execute zero model browser actions.
-- [ ] Focused and full relevant quality gates pass.
+- [x] Every current DOM-sensitive step declares exact terminal behavior and ambiguity fallback.
+- [x] Changed login DOM cannot be accepted from weak account-link/Genius markers.
+- [x] Model `authentication_required` becomes domain auth-required and `/connect` guidance.
+- [x] An LLM authenticated claim alone cannot save or extend a session.
+- [x] Protected pages execute zero model browser actions.
+- [x] Focused and full relevant quality gates pass.
 
 ## Notes
 
-This bolt is blocked until bolt 041 is complete and reviewed within Construction.
+Bolt 041 completed before this bolt entered implementation; the dependency is satisfied.

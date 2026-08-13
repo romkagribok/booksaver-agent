@@ -2,7 +2,7 @@
 unit: 001-adaptive-model-policy
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T02:25:43Z
-last_updated: 2026-08-13T02:30:30Z
+last_updated: 2026-08-13T12:43:21Z
 ---
 
 # Construction Log: Adaptive Model Policy
@@ -25,7 +25,7 @@ last_updated: 2026-08-13T02:30:30Z
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
-| `041-adaptive-model-policy` | US-130–US-132 | In progress | - |
+| `041-adaptive-model-policy` | US-130–US-132 | Complete | - |
 
 ## Execution History
 
@@ -35,6 +35,7 @@ last_updated: 2026-08-13T02:30:30Z
 | 2026-08-13T02:26:50Z | `041-adaptive-model-policy` | stage-complete | Domain Model → Technical Design |
 | 2026-08-13T02:29:33Z | `041-adaptive-model-policy` | stage-complete | Technical Design → ADR Analysis |
 | 2026-08-13T02:30:30Z | `041-adaptive-model-policy` | stage-complete | ADR Analysis → Implement; ADR-031 accepted |
+| 2026-08-13T03:00:53Z | `041-adaptive-model-policy` | completed | Implementation and verification complete; test report recorded |
 
 ## Execution Summary
 
@@ -42,8 +43,8 @@ last_updated: 2026-08-13T02:30:30Z
 |--------|-------|
 | Original bolts planned | 1 |
 | Current bolt count | 1 |
-| Bolts completed | 0 |
-| Bolts in progress | 1 |
+| Bolts completed | 1 |
+| Bolts in progress | 0 |
 | Bolts remaining | 0 |
 | Replanning events | 0 |
 

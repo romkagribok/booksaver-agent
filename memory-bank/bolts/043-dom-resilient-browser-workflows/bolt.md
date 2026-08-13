@@ -15,13 +15,15 @@ stages_completed:
   - domain-model
   - technical-design
   - adr-analysis
+  - implement
+  - test
 requires_bolts:
   - 042-dom-resilient-browser-workflows
 enables_bolts:
   - 044-dom-drift-incident-operations
 requires_units:
   - 001-adaptive-model-policy
-blocks: true
+blocks: false
 complexity:
   avg_complexity: 3
   avg_uncertainty: 3
@@ -57,8 +59,8 @@ ambiguous work receives an Opus diagnosis rather than a generic browser failure.
 - [x] **1. Domain Model**: Complete → `ddd-01-domain-model.md`
 - [x] **2. Technical Design**: Complete → `ddd-02-technical-design.md`
 - [x] **3. ADR Analysis**: Complete → ADR-033 accepted
-- [ ] **4. Implement**: In progress → browser/inventory/search/extraction/outcome integration
-- [ ] **5. Test**: Pending → `ddd-03-test-report.md`
+- [x] **4. Implement**: Complete → browser/inventory/search/extraction/outcome integration
+- [x] **5. Test**: Complete → `ddd-03-test-report.md`
 
 ## Dependencies
 
@@ -81,13 +83,13 @@ ambiguous work receives an Opus diagnosis rather than a generic browser failure.
 
 ## Success Criteria
 
-- [ ] Changed safe controls and one allowlisted popup recover without new selectors.
-- [ ] Model facts never replace code-owned identity/completeness/equivalence/refundability/currency rules.
-- [ ] Registered DOM paths cannot fall through to generic unknown/navigation/extraction results.
-- [ ] Opus diagnoses eligible ambiguous DOM work without receiving action authority; known failures
+- [x] Changed safe controls and one allowlisted popup recover without new selectors.
+- [x] Model facts never replace code-owned identity/completeness/equivalence/refundability/currency rules.
+- [x] Registered DOM paths cannot fall through to generic unknown/navigation/extraction results.
+- [x] Opus diagnoses eligible ambiguous DOM work without receiving action authority; known failures
   use zero diagnosis calls.
-- [ ] All failure paths preserve state and release browser/coordinator resources.
-- [ ] Focused and full relevant quality gates pass.
+- [x] All failure paths preserve state and release browser/coordinator resources.
+- [x] Focused and full relevant quality gates pass.
 
 ## Notes
 

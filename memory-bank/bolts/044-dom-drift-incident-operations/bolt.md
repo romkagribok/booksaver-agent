@@ -16,12 +16,14 @@ stages_completed:
   - domain-model
   - technical-design
   - adr-analysis
+  - implement
+  - test
 requires_bolts:
   - 043-dom-resilient-browser-workflows
 enables_bolts: []
 requires_units:
   - 002-dom-resilient-browser-workflows
-blocks: true
+blocks: false
 complexity:
   avg_complexity: 3
   avg_uncertainty: 2
@@ -58,8 +60,8 @@ ensuring incident work never disrupts browser cleanup.
 - [x] **1. Domain Model**: Complete → `ddd-01-domain-model.md`
 - [x] **2. Technical Design**: Complete → `ddd-02-technical-design.md`
 - [x] **3. ADR Analysis**: Complete → ADR-034 accepted
-- [ ] **4. Implement**: In progress → persistence, bundle store, Telegram/CLI/status, retry/purge wiring
-- [ ] **5. Test**: Pending → `ddd-03-test-report.md`
+- [x] **4. Implement**: Complete → persistence, bundle store, Telegram/CLI/status, retry/purge wiring
+- [x] **5. Test**: Complete → `ddd-03-test-report.md`
 
 ## Dependencies
 
@@ -82,13 +84,13 @@ ensuring incident work never disrupts browser cleanup.
 
 ## Success Criteria
 
-- [ ] Maintenance diagnosis alerts immediately; repeated assisted drift alerts on occurrence two.
-- [ ] Later deterministic success resolves the incident; assisted success alone does not.
-- [ ] Telegram/logs contain no page, account, user, reservation, model-response, or secret content.
-- [ ] Evidence is encrypted locally and unavailable after seven days or applicable purge.
-- [ ] Evidence/encryption/Telegram failure remains explicit without suppressing the incident.
-- [ ] Incident work never starts browser work or delays cleanup.
-- [ ] Focused and full relevant quality gates pass.
+- [x] Maintenance diagnosis alerts immediately; repeated assisted drift alerts on occurrence two.
+- [x] Later deterministic success resolves the incident; assisted success alone does not.
+- [x] Telegram/logs contain no page, account, user, reservation, model-response, or secret content.
+- [x] Evidence is encrypted locally and unavailable after seven days or applicable purge.
+- [x] Evidence/encryption/Telegram failure remains explicit without suppressing the incident.
+- [x] Incident work never starts browser work or delays cleanup.
+- [x] Focused and full relevant quality gates pass.
 
 ## Notes
 
