@@ -113,7 +113,13 @@ def _classification_evidence() -> PageClassificationEvidence:
         observation_id="page-observation-1",
         title="Booking account",
         visible_text="Manage your stay or sign in to continue",
-        controls=(VisibleControlEvidence(role="button", label="Continue"),),
+        controls=(
+            VisibleControlEvidence(
+                reference="e0",
+                role="button",
+                label="Continue",
+            ),
+        ),
     )
 
 
@@ -387,6 +393,29 @@ def test_ambiguous_state_uses_sonnet_and_model_auth_requires_code_verification()
     assert resolution.verification_receipt is None
     assert budget_factory.calls == 1
     assert len(ledger.requests) == 1
+    assert len(ledger.reconciliations) == 1
+
+
+def test_remote_auth_sonnet_candidate_reaches_the_fixed_code_probe_boundary() -> None:
+    ledger = _Ledger()
+    model = _ModelClassifier(_decision(PageState.AUTHENTICATED_CANDIDATE))
+    budget_factory = _BudgetFactory(ledger)
+
+    resolution = PageStateResolver(model).resolve(
+        step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+        observation=_observation(EvidenceCategory.WEAK_ACCOUNT_CHROME),
+        classification_evidence=_classification_evidence(),
+        budget_factory=budget_factory,
+    )
+
+    assert resolution.classification is not None
+    assert resolution.classification.state is PageState.AUTHENTICATED_CANDIDATE
+    assert resolution.classification.source is PageStateSource.SONNET
+    assert resolution.terminal_reason is TerminalBrowserReason.CODE_VERIFICATION_REQUIRED
+    assert resolution.verification_receipt is None
+    assert [request.profile.model_id for request in ledger.requests] == [
+        "claude-sonnet-5"
+    ]
     assert len(ledger.reconciliations) == 1
 
 

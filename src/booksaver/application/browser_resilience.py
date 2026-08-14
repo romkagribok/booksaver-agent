@@ -50,7 +50,7 @@ from booksaver.domain.model_policy import (
     TokenEnvelope,
 )
 
-PAGE_STATE_PROMPT_VERSION = "booking-page-state-v1"
+PAGE_STATE_PROMPT_VERSION = "booking-page-state-v2"
 DEFAULT_CLASSIFICATION_ENVELOPE = TokenEnvelope(12_000, 512)
 DEFAULT_CLASSIFICATION_CONFIDENCE = 0.80
 
@@ -516,10 +516,13 @@ class DeterministicPageClassifier:
 class VisibleControlEvidence:
     """Ephemeral role and label only; never a selector, href, or typed value."""
 
+    reference: str
     role: str
     label: str
 
     def __post_init__(self) -> None:
+        if not _SAFE_IDENTIFIER.fullmatch(self.reference):
+            raise ValueError("control reference must be a bounded machine identifier")
         if not _CONTROL_ROLE.fullmatch(self.role):
             raise ValueError("control role must be a bounded machine label")
         if not self.label or len(self.label) > _MAX_CONTROL_LABEL_LENGTH:
@@ -553,6 +556,9 @@ class PageClassificationEvidence:
             raise ValueError("classification visible text is too long")
         if len(self.controls) > _MAX_CONTROLS:
             raise ValueError("classification contains too many controls")
+        references = tuple(control.reference for control in self.controls)
+        if len(set(references)) != len(references):
+            raise ValueError("classification control references must be unique")
         if _POSSIBLE_URL.search(self.title) or _POSSIBLE_URL.search(self.visible_text):
             raise ValueError("classification evidence cannot contain URLs or query strings")
         if _SECRET_MATERIAL.search(self.title) or _SECRET_MATERIAL.search(

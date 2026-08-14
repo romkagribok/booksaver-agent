@@ -20,7 +20,8 @@ stages_completed:
   - test
 requires_bolts:
   - 043-dom-resilient-browser-workflows
-enables_bolts: []
+enables_bolts:
+  - 045-dom-resilient-browser-workflows
 requires_units:
   - 002-dom-resilient-browser-workflows
 blocks: false

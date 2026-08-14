@@ -20,13 +20,17 @@ from booksaver.application.dom_incident import build_incident_draft
 from booksaver.application.remote_auth import RemoteBrowserResult, RemoteBrowserWork
 from booksaver.domain.agent import ElementInfo, Observation
 from booksaver.domain.browser_resilience import (
+    CodeVerificationReceipt,
     DiagnosisProvenance,
     DomJourney,
     DomStepId,
     EvidenceCategory,
     PageState,
+    PageStateClassification,
     PageStateResolution,
     PageStateSource,
+    StepVerificationResult,
+    StepVerificationStatus,
     TerminalBrowserDiagnosis,
     TerminalBrowserReason,
     operator_action_for_reason,
@@ -59,7 +63,18 @@ _INVENTORY_PROBE_URL = "https://secure.booking.com/myreservations.html"
 _BOOKING_HOST = "booking.com"
 _MAX_OBSERVATION_TEXT = 30_000
 _MAX_OBSERVATION_CONTROLS = 80
-_INTERACTIVE_SELECTOR = "a, button, input, select, textarea, [role='button']"
+_MAX_TRANSIENT_LOOP_FAILURES = 3
+_OBSERVABLE_SELECTOR = (
+    "a, button, input, select, textarea, h1, h2, h3, "
+    "[role='button'], [role='heading'], [role='tab'], [role='tablist'], "
+    "[role='list'], [role='listitem']"
+)
+_SEMANTIC_PROOF_ROLES = frozenset(
+    {"button", "heading", "link", "list", "listitem", "tab", "tablist"}
+)
+_SEMANTIC_COMPANION_ROLES = frozenset(
+    {"button", "link", "list", "listitem", "tab", "tablist"}
+)
 
 
 @dataclass(frozen=True)
@@ -107,9 +122,63 @@ class _AmbiguousStateDebouncer:
         self.classified_fingerprint = None
 
 
+@dataclass
+class _RemoteAuthCaptureEpisode:
+    debouncer: _AmbiguousStateDebouncer
+    probe_attempted: bool = False
+    consecutive_loop_failures: int = 0
+
+    def note_loop_success(self) -> None:
+        self.consecutive_loop_failures = 0
+
+    def note_loop_failure(
+        self,
+        exc: Exception,
+    ) -> TerminalBrowserReason | None:
+        self.consecutive_loop_failures += 1
+        if self.consecutive_loop_failures < _MAX_TRANSIENT_LOOP_FAILURES:
+            return None
+        return (
+            TerminalBrowserReason.OBSERVATION_UNAVAILABLE
+            if type(exc).__name__ == "TimeoutError"
+            else TerminalBrowserReason.INFRASTRUCTURE_FAILURE
+        )
+
+
+@dataclass(frozen=True)
+class _InventoryProbeOutcome:
+    assessment: PageStateClassification | None = None
+    observation: Observation | None = None
+    terminal_reason: TerminalBrowserReason | None = None
+
+    def __post_init__(self) -> None:
+        if self.terminal_reason is not None and (
+            self.assessment is not None or self.observation is not None
+        ):
+            raise ValueError("a failed probe cannot carry trusted page evidence")
+        if (self.assessment is None) != (self.observation is None):
+            raise ValueError("probe assessment and observation must be paired")
+
+    @property
+    def verified(self) -> bool:
+        return self.assessment is not None and assessment_proves_authenticated(
+            self.assessment
+        )
+
+
 def _is_booking_navigation_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return host == _BOOKING_HOST or host.endswith(f".{_BOOKING_HOST}")
+
+
+def _is_inventory_navigation_url(url: str) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.casefold()
+    return (
+        parsed.scheme.casefold() == "https"
+        and _is_booking_navigation_url(url)
+        and any(marker in path for marker in ("myreservations", "mytrips"))
+    )
 
 
 class SystemRemoteBrowserRunner:
@@ -184,7 +253,7 @@ class SystemRemoteBrowserRunner:
         playwright: Any = None
         browser: Any = None
         context: Any = None
-        debouncer = _AmbiguousStateDebouncer()
+        episode = _RemoteAuthCaptureEpisode(_AmbiguousStateDebouncer())
         try:
             self._require_tools()
             with tempfile.TemporaryDirectory(prefix="booksaver-auth-") as temp_raw:
@@ -281,20 +350,6 @@ class SystemRemoteBrowserRunner:
                         text = page.locator("body").inner_text(timeout=2_000)
                         assessment = assess_page_state(page, text)
                         verified = assessment_proves_authenticated(assessment)
-                        if not verified and (
-                            assessment.state is PageState.AUTHENTICATED_CANDIDATE
-                            or (
-                                assessment.state is PageState.AMBIGUOUS
-                                and EvidenceCategory.WEAK_ACCOUNT_CHROME in assessment.evidence
-                            )
-                        ):
-                            verified = self._probe_authenticated_inventory(page)
-                            if not verified:
-                                # The fixed probe changed page state. Observe it
-                                # afresh on the next tick before classification.
-                                debouncer.reset()
-                                work.cancel_event.wait(1.0)
-                                continue
                         if verified:
                             cookies = json.dumps(context.cookies(), separators=(",", ":"))
                             return _RemoteBrowserExecution(
@@ -308,7 +363,7 @@ class SystemRemoteBrowserRunner:
                             text,
                             assessment.state,
                             capability,
-                            debouncer,
+                            episode.debouncer,
                         )
                         if resolved is not None:
                             resolution, observation = resolved
@@ -317,6 +372,7 @@ class SystemRemoteBrowserRunner:
                                 resolution,
                                 observation,
                                 capability,
+                                episode,
                             )
                             if terminal is not None:
                                 if terminal.result.status is RemoteAuthStatus.SUCCEEDED:
@@ -325,12 +381,32 @@ class SystemRemoteBrowserRunner:
                                         RemoteBrowserResult(
                                             RemoteAuthStatus.SUCCEEDED,
                                             cookies_json=cookies,
-                                        )
+                                        ),
+                                        incident_draft=terminal.incident_draft,
                                     )
                                 return terminal
-                    except Exception:
+                        episode.note_loop_success()
+                    except Exception as exc:
                         # Navigation/login transitions can temporarily detach the body.
-                        pass
+                        # A persistent failure is terminal and typed; it must not idle
+                        # silently until the remote-auth capability expires.
+                        terminal_reason = episode.note_loop_failure(exc)
+                        logger.info(
+                            "Remote authentication browser observation ended after %s",
+                            type(exc).__name__,
+                        )
+                        if terminal_reason is not None:
+                            return self._failed_execution(
+                                self._diagnosis_for_resolution(
+                                    PageStateResolution(
+                                        classification=None,
+                                        terminal_reason=terminal_reason,
+                                    )
+                                ),
+                                Observation(url="", title="", text="", elements=()),
+                                capability,
+                                action_outcome="browser_loop_failed",
+                            )
                     work.cancel_event.wait(1.0)
         except Exception as exc:
             logger.warning("Remote authentication browser ended with %s", type(exc).__name__)
@@ -385,6 +461,10 @@ class SystemRemoteBrowserRunner:
                 classification=None,
                 terminal_reason=TerminalBrowserReason.INFRASTRUCTURE_FAILURE,
             )
+        logger.info(
+            "Remote authentication adaptive resolution ended as %s",
+            resolution.terminal_reason.value,
+        )
         return resolution, observation
 
     def _resolution_execution(
@@ -393,6 +473,7 @@ class SystemRemoteBrowserRunner:
         resolution: PageStateResolution,
         observation: Observation,
         capability: RemoteAuthPageStateCapability,
+        episode: _RemoteAuthCaptureEpisode,
     ) -> _RemoteBrowserExecution | None:
         reason = resolution.terminal_reason
         if reason in {
@@ -405,19 +486,99 @@ class SystemRemoteBrowserRunner:
             TerminalBrowserReason.CODE_VERIFICATION_REQUIRED,
             TerminalBrowserReason.POSTCONDITION_SATISFIED,
         }:
-            if self._probe_authenticated_inventory(page):
-                # The caller captures cookies only after this fresh code-owned
-                # proof; the model merely selected the fixed verification probe.
-                return _RemoteBrowserExecution(
-                    RemoteBrowserResult(
-                        RemoteAuthStatus.SUCCEEDED,
-                        cookies_json="pending-code-owned-capture",
-                    )
+            classification = resolution.classification
+            if (
+                classification is not None
+                and classification.source is PageStateSource.SONNET
+                and not episode.probe_attempted
+            ):
+                episode.probe_attempted = True
+                probe = self._probe_authenticated_inventory(page)
+                logger.info(
+                    "Remote authentication inventory probe ended as %s",
+                    (
+                        probe.terminal_reason.value
+                        if probe.terminal_reason is not None
+                        else "verified" if probe.verified else "ambiguous"
+                    ),
                 )
-            # A candidate remains untrusted. The fixed probe changed the page;
-            # its next fresh deterministic assessment decides whether to keep
-            # waiting, classify a new ambiguity, or capture cookies.
-            return None
+                if probe.terminal_reason is not None:
+                    return self._failed_execution(
+                        self._diagnosis_for_resolution(
+                            PageStateResolution(
+                                classification=None,
+                                terminal_reason=probe.terminal_reason,
+                            )
+                        ),
+                        observation,
+                        capability,
+                        action_outcome="inventory_probe_failed",
+                    )
+                assert probe.assessment is not None
+                assert probe.observation is not None
+                if probe.verified:
+                    return self._assisted_success_execution(
+                        resolution,
+                        probe.observation,
+                        capability,
+                        self._verification_from_probe(probe),
+                    )
+                if self._observation_fingerprint(probe.observation) != (
+                    self._observation_fingerprint(observation)
+                ):
+                    # The probe reached a different fresh page. Discard stale
+                    # model evidence and stabilize it without reopening probe
+                    # admission.
+                    episode.debouncer.reset()
+                    return None
+
+            verification, page_changed = self._semantic_inventory_verification(
+                page,
+                resolution,
+                observation,
+            )
+            if page_changed:
+                episode.debouncer.reset()
+                return None
+            if verification.status is StepVerificationStatus.EXACT_FAILURE:
+                assert verification.exact_reason is not None
+                if verification.exact_reason in {
+                    TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+                    TerminalBrowserReason.MFA_REQUIRED,
+                    TerminalBrowserReason.BOT_WALL,
+                }:
+                    return None
+                return self._failed_execution(
+                    self._diagnosis_for_resolution(
+                        PageStateResolution(
+                            classification=None,
+                            terminal_reason=verification.exact_reason,
+                        )
+                    ),
+                    observation,
+                    capability,
+                    action_outcome="semantic_inventory_exact_stop",
+                )
+            if verification.status is StepVerificationStatus.VERIFIED:
+                logger.info("Remote authentication semantic inventory proof accepted")
+                return self._assisted_success_execution(
+                    resolution,
+                    observation,
+                    capability,
+                    verification,
+                )
+            logger.info("Remote authentication semantic inventory proof rejected")
+            unresolved = PageStateResolution(
+                classification=resolution.classification,
+                terminal_reason=TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
+                model_stop_reason=resolution.model_stop_reason,
+            )
+            return self._failed_execution(
+                self._diagnosis_for_resolution(unresolved),
+                observation,
+                capability,
+                action_outcome="semantic_inventory_unverified",
+            )
 
         diagnosis = self._diagnosis_for_resolution(resolution)
         return self._failed_execution(
@@ -425,6 +586,204 @@ class SystemRemoteBrowserRunner:
             observation,
             capability,
             action_outcome="page_state_diagnosed",
+        )
+
+    @staticmethod
+    def _verification_from_probe(
+        probe: _InventoryProbeOutcome,
+    ) -> StepVerificationResult:
+        assessment = probe.assessment
+        assert assessment is not None
+        assert probe.verified
+        receipt = CodeVerificationReceipt(
+            step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+            verified_state=PageState.INVENTORY,
+            observation_id=assessment.observation_id,
+            verified_at=datetime.now(UTC),
+            verifier="remote_auth_fixed_inventory_probe",
+        )
+        return StepVerificationResult(
+            step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+            observation_id=assessment.observation_id,
+            status=StepVerificationStatus.VERIFIED,
+            evidence=assessment.evidence,
+            receipt=receipt,
+        )
+
+    def _semantic_inventory_verification(
+        self,
+        page: Any,
+        resolution: PageStateResolution,
+        observation: Observation,
+    ) -> tuple[StepVerificationResult, bool]:
+        """Ground model inventory evidence before code authorizes cookie capture."""
+
+        classification = resolution.classification
+        observation_id = (
+            classification.observation_id
+            if classification is not None
+            else "remote-auth-semantic-observation"
+        )
+
+        def ambiguous() -> tuple[StepVerificationResult, bool]:
+            return (
+                StepVerificationResult(
+                    step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+                    observation_id=observation_id,
+                    status=StepVerificationStatus.AMBIGUOUS,
+                    evidence=(
+                        classification.evidence
+                        if classification is not None
+                        else frozenset()
+                    ),
+                ),
+                False,
+            )
+
+        # Opus is diagnosis-only. It can explain why the postcondition remains
+        # unresolved but can never issue a recovery receipt or capture cookies.
+        if classification is None or classification.source is not PageStateSource.SONNET:
+            return ambiguous()
+        if classification.state is not PageState.INVENTORY:
+            return ambiguous()
+        if EvidenceCategory.SUPPORTED_INVENTORY_STRUCTURE not in classification.evidence:
+            return ambiguous()
+
+        grounded_references = {
+            reference.reference
+            for reference in classification.evidence_references
+            if reference.category is EvidenceCategory.SUPPORTED_INVENTORY_STRUCTURE
+        }
+        elements = {element.ref: element for element in observation.elements}
+        if len(grounded_references) < 2 or any(
+            reference not in elements for reference in grounded_references
+        ):
+            return ambiguous()
+        roles = {elements[reference].role for reference in grounded_references}
+        if not roles.issubset(_SEMANTIC_PROOF_ROLES):
+            return ambiguous()
+        if "heading" not in roles or not roles.intersection(_SEMANTIC_COMPANION_ROLES):
+            return ambiguous()
+
+        try:
+            current_text = page.locator("body").inner_text(timeout=2_000)
+            current_observation = self._observe_page(page, current_text)
+            current_assessment = assess_page_state(page, current_text)
+        except Exception:
+            return (
+                StepVerificationResult(
+                    step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+                    observation_id=observation_id,
+                    status=StepVerificationStatus.EXACT_FAILURE,
+                    evidence=frozenset({EvidenceCategory.OBSERVATION_UNAVAILABLE}),
+                    exact_reason=TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+                ),
+                False,
+            )
+        if self._observation_fingerprint(current_observation) != self._observation_fingerprint(
+            observation
+        ):
+            result, _ = ambiguous()
+            return result, True
+        if current_assessment.state.is_protected:
+            return (
+                StepVerificationResult(
+                    step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+                    observation_id=observation_id,
+                    status=StepVerificationStatus.EXACT_FAILURE,
+                    evidence=current_assessment.evidence,
+                    exact_reason=self._reason_for_protected_state(current_assessment.state),
+                ),
+                False,
+            )
+        if not _is_inventory_navigation_url(current_observation.url):
+            return ambiguous()
+        receipt = CodeVerificationReceipt(
+            step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+            verified_state=PageState.INVENTORY,
+            observation_id=observation_id,
+            verified_at=datetime.now(UTC),
+            verifier="remote_auth_semantic_inventory",
+        )
+        return (
+            StepVerificationResult(
+                step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+                observation_id=observation_id,
+                status=StepVerificationStatus.VERIFIED,
+                evidence=classification.evidence,
+                receipt=receipt,
+            ),
+            False,
+        )
+
+    @staticmethod
+    def _reason_for_protected_state(state: PageState) -> TerminalBrowserReason:
+        return {
+            PageState.OBSERVATION_UNAVAILABLE: TerminalBrowserReason.OBSERVATION_UNAVAILABLE,
+            PageState.AUTHENTICATION_REQUIRED: TerminalBrowserReason.AUTHENTICATION_REQUIRED,
+            PageState.MFA_REQUIRED: TerminalBrowserReason.MFA_REQUIRED,
+            PageState.CAPTCHA: TerminalBrowserReason.BOT_WALL,
+            PageState.BOT_WALL: TerminalBrowserReason.BOT_WALL,
+            PageState.EXTERNAL: TerminalBrowserReason.BLOCKED_DESTINATION,
+            PageState.PROHIBITED: TerminalBrowserReason.PROHIBITED_ACTION,
+        }[state]
+
+    @staticmethod
+    def _assisted_success_execution(
+        resolution: PageStateResolution,
+        observation: Observation,
+        capability: RemoteAuthPageStateCapability,
+        verification: StepVerificationResult,
+    ) -> _RemoteBrowserExecution:
+        if (
+            verification.status is not StepVerificationStatus.VERIFIED
+            or verification.receipt is None
+            or verification.receipt.step_id is not DomStepId.REMOTE_AUTH_SESSION_CAPTURE
+        ):
+            raise ValueError("remote-auth success requires a code verification receipt")
+        classification = resolution.classification
+        assert classification is not None
+        if classification.source is not PageStateSource.SONNET:
+            raise ValueError("only Sonnet recovery can produce remote-auth success")
+        provenance = DiagnosisProvenance.SONNET_RECOVERED
+        diagnosis = TerminalBrowserDiagnosis(
+            reason=TerminalBrowserReason.POSTCONDITION_SATISFIED,
+            step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+            provenance=provenance,
+            confidence=classification.confidence,
+            evidence=classification.evidence,
+            operator_action=operator_action_for_reason(
+                TerminalBrowserReason.POSTCONDITION_SATISFIED
+            ),
+            code_maintenance_required=False,
+        )
+        attempts = capability.budget.ordered_attempts() if capability.budget is not None else ()
+        draft = None
+        if attempts:
+            draft = build_incident_draft(
+                journey=DomJourney.REMOTE_AUTH,
+                diagnosis=diagnosis,
+                verifier_category="remote_auth_session_capture",
+                structural_roles=tuple(item.role for item in observation.elements) or ("page",),
+                provider_state=IncidentProviderState.COMPLETED,
+                budget_state=IncidentBudgetState.WITHIN_LIMIT,
+                observed_at=datetime.now(UTC),
+                model_attempts=attempts,
+                source_user_ids=(
+                    (capability.source_user_id,) if capability.source_user_id is not None else ()
+                ),
+                action_outcomes=(
+                    ("semantic_inventory_verified",)
+                    if capability.source_user_id is not None
+                    else ()
+                ),
+            )
+        return _RemoteBrowserExecution(
+            RemoteBrowserResult(
+                RemoteAuthStatus.SUCCEEDED,
+                cookies_json="pending-code-owned-capture",
+            ),
+            incident_draft=draft,
         )
 
     @staticmethod
@@ -518,7 +877,7 @@ class SystemRemoteBrowserRunner:
     @staticmethod
     def _observe_page(page: Any, text: str) -> Observation:
         elements: list[ElementInfo] = []
-        locator = page.locator(_INTERACTIVE_SELECTOR)
+        locator = page.locator(_OBSERVABLE_SELECTOR)
         for index in range(min(locator.count(), _MAX_OBSERVATION_CONTROLS * 3)):
             if len(elements) >= _MAX_OBSERVATION_CONTROLS:
                 break
@@ -527,12 +886,24 @@ class SystemRemoteBrowserRunner:
                 if not handle.is_visible():
                     continue
                 tag = str(handle.evaluate("el => el.tagName.toLowerCase()"))
-                role_attr = handle.get_attribute("role") or ""
+                role_attr = (handle.get_attribute("role") or "").casefold()
                 role = (
-                    "checkbox"
-                    if role_attr == "checkbox"
+                    role_attr
+                    if role_attr
+                    in {
+                        "button",
+                        "checkbox",
+                        "heading",
+                        "list",
+                        "listitem",
+                        "tab",
+                        "tablist",
+                    }
                     else {
                         "a": "link",
+                        "h1": "heading",
+                        "h2": "heading",
+                        "h3": "heading",
                         "input": "input",
                         "select": "select",
                         "textarea": "input",
@@ -570,7 +941,7 @@ class SystemRemoteBrowserRunner:
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _probe_authenticated_inventory(page: Any) -> bool:
+    def _probe_authenticated_inventory(page: Any) -> _InventoryProbeOutcome:
         """Verify a weak signed-in candidate through one fixed read-only page.
 
         This is code-owned navigation to a fixed Booking.com inventory URL. A
@@ -584,9 +955,21 @@ class SystemRemoteBrowserRunner:
                 wait_until="domcontentloaded",
             )
             text = page.locator("body").inner_text(timeout=5_000)
-            return assessment_proves_authenticated(assess_page_state(page, text))
-        except Exception:
-            return False
+            return _InventoryProbeOutcome(
+                assessment=assess_page_state(page, text),
+                observation=SystemRemoteBrowserRunner._observe_page(page, text),
+            )
+        except Exception as exc:
+            reason = (
+                TerminalBrowserReason.OBSERVATION_UNAVAILABLE
+                if type(exc).__name__ == "TimeoutError"
+                else TerminalBrowserReason.INFRASTRUCTURE_FAILURE
+            )
+            logger.info(
+                "Remote authentication inventory probe ended after %s",
+                type(exc).__name__,
+            )
+            return _InventoryProbeOutcome(terminal_reason=reason)
 
     @staticmethod
     def _secure_context(context: Any) -> None:
