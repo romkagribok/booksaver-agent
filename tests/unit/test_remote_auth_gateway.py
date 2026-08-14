@@ -120,7 +120,7 @@ def test_bootstrap_reports_safe_viewer_connection_failures(tmp_path: Path) -> No
     assert "The remote browser connection was lost." in body
     assert "Return to Telegram and try /connect again." in body
     assert "terminalState=terminalStatuses.has(state.status)" in body
-    assert "if(!viewerError||terminalState)setStatus(state.message)" in body
+    assert "if(!viewerError||terminalState||finalizing)setStatus(state.message)" in body
     assert "if(terminalState)return;" in body
     assert "event.detail.reason" not in body
 
@@ -156,6 +156,9 @@ def test_bootstrap_cancels_on_pagehide_but_not_visibility_change(tmp_path: Path)
     assert "keepalive:true" in body
     assert "visibilitychange" not in body
     assert "viewerAuthorized||terminalState||closeRequested" in body
+    assert "state.status==='finalizing'" in body
+    assert "cancelButton.disabled=true" in body
+    assert "typeof tg.close==='function'" in body
 
 
 def test_bootstrap_uses_packaged_novnc_input_modules(tmp_path: Path) -> None:
@@ -211,9 +214,7 @@ def test_viewer_and_cancel_require_cookie_and_never_echo_it(tmp_path: Path) -> N
     assert payload["websocket_token"] == "websocket-secret"
     assert b"viewer-secret" not in response.body
 
-    assert (
-        app.handle("POST", "/api/connect/cancel", headers).status == 401
-    )
+    assert app.handle("POST", "/api/connect/cancel", headers).status == 401
     cancelled = app.handle(
         "POST",
         "/api/connect/cancel",

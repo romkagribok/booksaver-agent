@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import threading
 import uuid
@@ -10,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 
+from booksaver.domain.dom_incident import IncidentDraft
 from booksaver.domain.remote_auth import (
     AttemptLaunch,
     RemoteAuthFailure,
@@ -21,6 +23,9 @@ from booksaver.domain.remote_auth import (
 
 if TYPE_CHECKING:
     from booksaver.domain.browser_resilience import TerminalBrowserDiagnosis
+
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteAuthError(RuntimeError):
@@ -54,6 +59,7 @@ class RemoteBrowserResult:
     cookies_json: str | None = None
     failure: RemoteAuthFailure | None = None
     terminal_diagnosis: TerminalBrowserDiagnosis | None = None
+    incident_draft: IncidentDraft | None = None
 
     def __post_init__(self) -> None:
         if not self.status.is_terminal:
@@ -64,6 +70,11 @@ class RemoteBrowserResult:
             raise ValueError("Only successful remote browser results may contain cookies")
         if self.status is not RemoteAuthStatus.FAILED and self.terminal_diagnosis is not None:
             raise ValueError("Only failed remote browser results may carry a terminal diagnosis")
+        if self.incident_draft is not None and self.status not in {
+            RemoteAuthStatus.SUCCEEDED,
+            RemoteAuthStatus.FAILED,
+        }:
+            raise ValueError("Only successful or failed results may carry an incident draft")
 
 
 class RemoteBrowserRunner(Protocol):
@@ -72,12 +83,14 @@ class RemoteBrowserRunner(Protocol):
         work: RemoteBrowserWork,
         daemon_stop_event: threading.Event,
         on_ready: Callable[[], None],
+        on_finalizing: Callable[[], bool],
     ) -> RemoteBrowserResult: ...
 
 
 CaptureSession = Callable[[int, str], Any]
 NotifyUser = Callable[[int, str], None]
 SuccessfulConnection = Callable[[int], None]
+IncidentSink = Callable[[IncidentDraft], None]
 Clock = Callable[[], datetime]
 
 
@@ -123,6 +136,7 @@ class RemoteAuthenticationManager:
         clock: Clock | None = None,
         browser_gate: threading.Lock | None = None,
         replacement_join_timeout: float = 5.0,
+        incident_sink: IncidentSink | None = None,
     ) -> None:
         self._settings = settings
         self._runner = runner
@@ -133,6 +147,7 @@ class RemoteAuthenticationManager:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._browser_gate = browser_gate or threading.Lock()
         self._replacement_join_timeout = max(0.0, replacement_join_timeout)
+        self._incident_sink = incident_sink
         self._create_lock = threading.Lock()
         self._lock = threading.RLock()
         self._attempts: dict[str, _Attempt] = {}
@@ -158,17 +173,19 @@ class RemoteAuthenticationManager:
         replacement_worker: threading.Thread | None = None
         with self._lock:
             if self._daemon_stop_event.is_set():
-                raise RemoteAuthUnavailable(
-                    "BookSaver is shutting down; try again after restart."
-                )
+                raise RemoteAuthUnavailable("BookSaver is shutting down; try again after restart.")
             now = self._clock()
             self._expire_locked(now)
             if self._active_attempt_id is not None:
                 active = self._attempts[self._active_attempt_id]
                 if active.telegram_user_id != telegram_user_id:
                     raise RemoteAuthBusy(
-                        "Another Booking.com login is currently active. "
-                        "Try again in a few minutes."
+                        "Another Booking.com login is currently active. Try again in a few minutes."
+                    )
+                if active.status is RemoteAuthStatus.FINALIZING:
+                    raise RemoteAuthBusy(
+                        "Your Booking.com login is being saved. Return to the open "
+                        "connection window for the result."
                     )
                 replacement_id = active.attempt_id
                 replacement_worker = active.worker
@@ -200,9 +217,7 @@ class RemoteAuthenticationManager:
             if self._daemon_stop_event.is_set():
                 if gate_reserved:
                     self._browser_gate.release()
-                raise RemoteAuthUnavailable(
-                    "BookSaver is shutting down; try again after restart."
-                )
+                raise RemoteAuthUnavailable("BookSaver is shutting down; try again after restart.")
             return self._start_attempt_locked(
                 telegram_user_id,
                 chat_id,
@@ -298,7 +313,7 @@ class RemoteAuthenticationManager:
         now = self._clock()
         with self._lock:
             attempt = self._attempt_for_viewer_locked(session_token, now)
-            if attempt.status.is_terminal:
+            if attempt.status.is_terminal or attempt.status is RemoteAuthStatus.FINALIZING:
                 return False
             attempt.status = RemoteAuthStatus.CANCELLED
             attempt.cancel_event.set()
@@ -315,10 +330,7 @@ class RemoteAuthenticationManager:
         with self._lock:
             cancelled = False
             for attempt in self._attempts.values():
-                if (
-                    attempt.telegram_user_id == telegram_user_id
-                    and not attempt.status.is_terminal
-                ):
+                if attempt.telegram_user_id == telegram_user_id and not attempt.status.is_terminal:
                     attempt.status = RemoteAuthStatus.CANCELLED
                     attempt.cancel_event.set()
                     cancelled = True
@@ -354,9 +366,36 @@ class RemoteAuthenticationManager:
                 if current is not None and current.status is RemoteAuthStatus.STARTING:
                     current.status = RemoteAuthStatus.READY
 
+        def _finalizing() -> bool:
+            with self._lock:
+                current = self._attempts.get(attempt_id)
+                if current is None or current.status not in {
+                    RemoteAuthStatus.READY,
+                    RemoteAuthStatus.CONNECTED,
+                }:
+                    return False
+                if (
+                    current.cancel_event.is_set()
+                    or self._daemon_stop_event.is_set()
+                    or self._clock() >= current.expires_at
+                ):
+                    return False
+                current.status = RemoteAuthStatus.FINALIZING
+                logger.info("Remote authentication finalization started")
+                return True
+
         try:
-            result = self._runner.run(work, self._daemon_stop_event, _ready)
-        except Exception:
+            result = self._runner.run(
+                work,
+                self._daemon_stop_event,
+                _ready,
+                _finalizing,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Remote authentication runner ended with %s",
+                type(exc).__name__,
+            )
             result = RemoteBrowserResult(
                 RemoteAuthStatus.FAILED,
                 failure=RemoteAuthFailure.BROWSER_FAILED,
@@ -366,20 +405,34 @@ class RemoteAuthenticationManager:
             attempt = self._attempts[attempt_id]
             if not attempt.status.is_terminal:
                 if result.status is RemoteAuthStatus.SUCCEEDED:
-                    assert result.cookies_json is not None
-                    try:
-                        # Persistence and the terminal transition are one critical
-                        # section. A concurrent cancel can therefore either win
-                        # before capture (and prevent it) or observe success after
-                        # capture, but can never produce cancelled-and-persisted.
-                        self._capture_session(
-                            work.telegram_user_id, result.cookies_json
-                        )
-                    except Exception:  # expose only a redacted failure class
+                    cookies_json = result.cookies_json
+                    assert cookies_json is not None
+                    if attempt.status is not RemoteAuthStatus.FINALIZING:
                         result = RemoteBrowserResult(
                             RemoteAuthStatus.FAILED,
-                            failure=RemoteAuthFailure.CAPTURE_REJECTED,
+                            failure=RemoteAuthFailure.BROWSER_FAILED,
                         )
+                    else:
+                        try:
+                            # Persistence and the terminal transition are one critical
+                            # section. A concurrent cancel can therefore either win
+                            # before capture (and prevent it) or observe success after
+                            # capture, but can never produce cancelled-and-persisted.
+                            self._capture_session(work.telegram_user_id, cookies_json)
+                        except Exception as exc:  # redact message and values
+                            logger.warning(
+                                "Remote authentication finalization capture rejected with %s",
+                                type(exc).__name__,
+                            )
+                            result = RemoteBrowserResult(
+                                RemoteAuthStatus.FAILED,
+                                failure=RemoteAuthFailure.CAPTURE_REJECTED,
+                            )
+                        else:
+                            self._safe_record_incident(result.incident_draft)
+                            logger.info("Remote authentication finalization succeeded")
+                elif result.status is RemoteAuthStatus.FAILED:
+                    self._safe_record_incident(result.incident_draft)
                 attempt.status = result.status
                 attempt.failure = result.failure
             self._release_active_locked(attempt)
@@ -400,10 +453,18 @@ class RemoteAuthenticationManager:
                 "Booking.com connection timed out. Send /connect when you're ready to try again.",
             )
         elif status is RemoteAuthStatus.FAILED:
-            self._safe_notify(
-                chat_id,
-                "Booking.com connection failed and no session was saved. Send /connect to retry.",
-            )
+            if attempt.failure is RemoteAuthFailure.CAPTURE_REJECTED:
+                self._safe_notify(
+                    chat_id,
+                    "Booking.com authentication was verified, but BookSaver could not save "
+                    "the session. No session was replaced. Send /connect to retry.",
+                )
+            else:
+                self._safe_notify(
+                    chat_id,
+                    "Booking.com connection failed and no session was saved. "
+                    "Send /connect to retry.",
+                )
         elif (
             status is RemoteAuthStatus.CANCELLED
             and not attempt.suppress_cancel_notification
@@ -472,13 +533,28 @@ class RemoteAuthenticationManager:
                 "and other external providers are disabled. This window closes after "
                 "authentication."
             )
+        if attempt.status is RemoteAuthStatus.FINALIZING:
+            return "Authentication verified; saving the Booking.com session…"
         if attempt.status is RemoteAuthStatus.SUCCEEDED:
             return "Connected. You can return to Telegram."
         if attempt.status is RemoteAuthStatus.EXPIRED:
             return "This connection timed out. Return to Telegram and send /connect again."
         if attempt.status is RemoteAuthStatus.CANCELLED:
             return "This connection was cancelled."
+        if attempt.failure is RemoteAuthFailure.CAPTURE_REJECTED:
+            return (
+                "Authentication was verified, but BookSaver could not save the session. "
+                "Return to Telegram and send /connect to retry."
+            )
         return "Connection failed. No Booking.com session was saved."
+
+    def _safe_record_incident(self, draft: IncidentDraft | None) -> None:
+        if draft is None or self._incident_sink is None:
+            return
+        try:
+            self._incident_sink(draft)
+        except Exception:
+            logger.warning("Remote authentication finalization incident recording failed")
 
     def _safe_notify(self, chat_id: int, message: str) -> None:
         try:

@@ -2,7 +2,7 @@
 unit: 002-dom-resilient-browser-workflows
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T02:39:01Z
-last_updated: 2026-08-14T02:24:00Z
+last_updated: 2026-08-14T03:21:03Z
 ---
 
 # Construction Log: DOM-Resilient Browser Workflows
@@ -19,6 +19,7 @@ last_updated: 2026-08-14T02:24:00Z
 | Date | Action | Change | Reason | Approved |
 |------|--------|--------|--------|----------|
 | 2026-08-14T02:03:30Z | append | Added `045-dom-resilient-browser-workflows` for US-134–136 | Production `/connect` probe loop starved adaptive recovery after Booking.com mobile DOM drift | Yes - owner requested implementation |
+| 2026-08-14T03:08:12Z | append | Added `046-dom-resilient-browser-workflows` for US-140 | Verified recovery could be cancelled by ordinary viewer close before encrypted capture committed | Yes - owner requested AI-DLC implementation to pre-merge review |
 
 ## Current Bolt Structure
 
@@ -27,6 +28,7 @@ last_updated: 2026-08-14T02:24:00Z
 | `042-dom-resilient-browser-workflows` | US-133–US-134 | Complete | - |
 | `043-dom-resilient-browser-workflows` | US-135–US-136 | Complete | - |
 | `045-dom-resilient-browser-workflows` | US-134–US-136 corrective coverage | Complete | Added after production incident |
+| `046-dom-resilient-browser-workflows` | US-140 | Complete | Added after live Telegram acceptance exposed finalization race |
 
 ## Execution History
 
@@ -46,17 +48,22 @@ last_updated: 2026-08-14T02:24:00Z
 | 2026-08-14T02:20:00Z | `045-dom-resilient-browser-workflows` | stage-complete | Implement → test; current mobile shell recognized, probe bounded, classifier refs grounded, Sonnet receipt required, Opus diagnosis-only |
 | 2026-08-14T02:24:00Z | `045-dom-resilient-browser-workflows` | stage-complete | Test complete; final review closed the last silent-loop path, then 167 broader focused tests and the 1539-test repository gate passed |
 | 2026-08-14T02:24:21Z | `045-dom-resilient-browser-workflows` | completed | Corrective remote-auth DOM recovery bolt complete; stories already complete and unit returned to complete |
+| 2026-08-14T03:10:57Z | `046-dom-resilient-browser-workflows` | started | Stage 1: model verified-session finalization, cancellation-source precedence, persistence commit, and incident publication |
+| 2026-08-14T03:11:51Z | `046-dom-resilient-browser-workflows` | stage-complete | Domain model → technical design; ordinary viewer close loses authority only after code verification, while purge/shutdown remain authoritative |
+| 2026-08-14T03:13:01Z | `046-dom-resilient-browser-workflows` | stage-complete | Technical design and ADR analysis → implement; post-capture incident publication applies existing ADR-024/026/032/033/034 without a new decision |
+| 2026-08-14T03:19:00Z | `046-dom-resilient-browser-workflows` | stage-complete | Implement → test; finalizing latch, source-aware cancellation, post-capture incident ordering, and success-only viewer close complete |
+| 2026-08-14T03:21:03Z | `046-dom-resilient-browser-workflows` | completed | Atomic finalization verified by 63 focused tests, 55 purge/deployment regressions, and the 1548-test repository gate |
 
 ## Execution Summary
 
 | Metric | Value |
 |--------|-------|
 | Original bolts planned | 2 |
-| Current bolt count | 3 |
-| Bolts completed | 3 |
+| Current bolt count | 4 |
+| Bolts completed | 4 |
 | Bolts in progress | 0 |
 | Bolts remaining | 0 |
-| Replanning events | 1 |
+| Replanning events | 2 |
 
 ## Notes
 

@@ -4,7 +4,7 @@ intent: 022-adaptive-booking-browser-resilience
 phase: inception
 status: complete
 created: 2026-08-13T01:59:59.000Z
-updated: 2026-08-14T02:03:30.000Z
+updated: 2026-08-14T03:21:03.000Z
 default_bolt_type: ddd-construction-bolt
 ---
 
@@ -44,6 +44,7 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 | FR-2 | Classify the current page safely despite DOM drift | Must |
 | FR-3 | Recover or interpret every safe DOM-dependent step | Must |
 | FR-4 | Explain every terminal browser outcome | Must |
+| FR-11 | Finalize verified remote authentication atomically | Must |
 
 ## Domain Concepts
 
@@ -53,6 +54,8 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 - **ResilienceEpisode**: Deterministic failure, model attempts, guarded outcomes, verification, and stop.
 - **TerminalBrowserDiagnosis**: Exact category, provenance, named step, safe action, and maintenance flag.
 - **AdoptablePopup**: One allowlisted read-only child page validated before control transfer.
+- **RemoteAuthFinalization**: Verified, non-viewer-cancellable session-capture phase whose success is
+  committed only after encrypted persistence; administrative purge and shutdown remain authoritative.
 
 ## Key Operations
 
@@ -63,22 +66,24 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 | Recover step | Propose guarded navigation from current evidence | Definition, policy, model router | Verified success or diagnosis |
 | Interpret facts | Produce positive typed observations | Bounded current evidence, schema | Validated facts or exact rejection |
 | Map outcome | Preserve diagnosis through workflow/coordinator | Resilience result | Domain failure/session/user guidance |
+| Finalize authentication | Commit verified cookies and terminal state | Verification receipt, cookies, cancellation source | Persisted session or typed failure |
 
 ## Story Summary
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 4 |
-| Must Have | 4 |
+| Total Stories | 5 |
+| Must Have | 5 |
 | Should Have | 0 |
 | Could Have | 0 |
 
 | Story ID | Title | Priority | Status |
 |----------|-------|----------|--------|
-| US-133 | Register every DOM-sensitive browser step | Must | Planned |
-| US-134 | Classify the current page with LLM fallback | Must | Planned |
-| US-135 | Recover and interpret safe DOM drift | Must | Planned |
-| US-136 | Explain every terminal browser outcome | Must | Planned |
+| US-133 | Register every DOM-sensitive browser step | Must | Complete |
+| US-134 | Classify the current page with LLM fallback | Must | Complete |
+| US-135 | Recover and interpret safe DOM drift | Must | Complete |
+| US-136 | Explain every terminal browser outcome | Must | Complete |
+| US-140 | Finalize verified remote authentication atomically | Must | Complete |
 
 ## Dependencies
 
@@ -124,6 +129,8 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 - [ ] Changed account/search controls and one safe popup can recover without adding a selector.
 - [ ] Typed model facts can support semantic progress only after deterministic comparison.
 - [ ] Every terminal registered step preserves an exact reason and provenance to Telegram/audit.
+- [ ] A verified remote-auth result survives ordinary viewer closure, persists before success and
+  recovered-incident publication, and closes the Mini App only after commit.
 
 ### Non-Functional
 
@@ -137,3 +144,6 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
   after bolt 041.
 - `043-dom-resilient-browser-workflows`: cross-journey recovery, semantic verification, popup policy,
   and terminal reason propagation (US-135–136) after bolt 042.
+- `045-dom-resilient-browser-workflows`: production correction for changed mobile inventory DOM.
+- `046-dom-resilient-browser-workflows`: atomic verified-session finalization and viewer lifecycle
+  correction (US-140) after bolt 045.
