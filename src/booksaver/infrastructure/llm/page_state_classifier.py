@@ -42,7 +42,7 @@ from .anthropic_adapter import LLMFailureKind, _provider_failure_kind, _response
 
 PAGE_CLASSIFIER_PROVIDER = "anthropic"
 PAGE_CLASSIFIER_ROLE = "page_state_classifier"
-PAGE_CLASSIFIER_PROMPT_VERSION = "booking-page-state-v1"
+PAGE_CLASSIFIER_PROMPT_VERSION = "booking-page-state-v2"
 _CLASSIFIER_TOOL_NAME = "classify_page_state"
 _PROVIDER_TIMEOUT_SECONDS = 20.0
 _MAX_REFERENCES = 32
@@ -106,7 +106,11 @@ _CLASSIFIER_TOOL = {
                             "type": "string",
                             "enum": list(_EVIDENCE_CATEGORIES),
                         },
-                        "reference": {"type": "string", "maxLength": 128},
+                        "reference": {
+                            "type": "string",
+                            "maxLength": 128,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                        },
                     },
                     "required": ["category", "reference"],
                 },
@@ -138,7 +142,11 @@ MFA action, CAPTCHA action, reservation change, checkout, payment, or purchase.
 Weak account chrome never proves authentication. If login, MFA, CAPTCHA, bot
 wall, external, or prohibited evidence is present, report that protected state.
 If a page appears authenticated, return `authenticated_candidate`; code must
-still verify it. Use `ambiguous` when the bounded evidence is insufficient.
+still verify it. Return `inventory` only when visible reservation inventory
+structure supports the registered postcondition; include
+`supported_inventory_structure` and cite the relevant current control
+references. A reference must be copied from `current_page.controls`; never
+invent one. Use `ambiguous` when the bounded evidence is insufficient.
 """
 
 
@@ -208,6 +216,8 @@ class AnthropicPageStateClassifier:
                 schema_valid=False,
                 usage=usage,
             )
+        if not _decision_is_grounded(step, decision, evidence):
+            return ModelClassifierCall(schema_valid=False, usage=usage)
         return ModelClassifierCall(decision=decision, usage=usage)
 
     def _validate_admission(self, attempt: AdmittedModelAttempt) -> None:
@@ -285,8 +295,9 @@ def classification_evidence_from_page(
 
     Possible credential, MFA, CAPTCHA, bot-wall, and unavailable pages suppress
     all text and controls.  For ambiguous non-protected pages, URLs, query
-    fragments, secret headers, selector-like fragments, hrefs, refs, input
-    values, popup destinations, and screenshots are never copied.
+    fragments, secret headers, selector-like fragments, hrefs, input values,
+    popup destinations, and screenshots are never copied. Content-free element
+    references are retained so model evidence can be grounded by code.
     """
 
     if observation.evidence.intersection(_PROTECTED_CONTENT_EVIDENCE):
@@ -303,7 +314,13 @@ def classification_evidence_from_page(
         if not role or not label:
             continue
         try:
-            controls.append(VisibleControlEvidence(role=role, label=label))
+            controls.append(
+                VisibleControlEvidence(
+                    reference=str(getattr(element, "ref", "")),
+                    role=role,
+                    label=label,
+                )
+            )
         except ValueError:
             continue
         if len(controls) >= 80:
@@ -334,7 +351,11 @@ def _render_classifier_request(
             "title": evidence.title,
             "visible_text": evidence.visible_text,
             "controls": [
-                {"role": control.role, "label": control.label}
+                {
+                    "reference": control.reference,
+                    "role": control.role,
+                    "label": control.label,
+                }
                 for control in evidence.controls
             ],
         },
@@ -406,6 +427,52 @@ def _decision_from_response(response: Any) -> ModelPageStateDecision:
         evidence_references=tuple(references),
         operator_action=OperatorAction(_strict_string(raw["operator_action"])),
     )
+
+
+def _decision_is_grounded(
+    step: DomStepDefinition,
+    decision: ModelPageStateDecision,
+    evidence: PageClassificationEvidence,
+) -> bool:
+    """Reject structural claims that do not cite current bounded controls."""
+
+    allowed_references = {control.reference for control in evidence.controls}
+    if any(
+        reference.reference not in allowed_references
+        for reference in decision.evidence_references
+    ):
+        return False
+
+    structural_category = {
+        PageState.INVENTORY: EvidenceCategory.SUPPORTED_INVENTORY_STRUCTURE,
+        PageState.SEARCH_RESULTS: EvidenceCategory.SUPPORTED_SEARCH_RESULTS_STRUCTURE,
+        PageState.PROPERTY: EvidenceCategory.SUPPORTED_PROPERTY_STRUCTURE,
+    }.get(decision.state)
+    if structural_category is None:
+        return True
+    grounded = {
+        reference.reference
+        for reference in decision.evidence_references
+        if reference.category is structural_category
+    }
+    minimum = (
+        2
+        if step.step_id is DomStepId.REMOTE_AUTH_SESSION_CAPTURE
+        and decision.state is PageState.INVENTORY
+        else 1
+    )
+    if structural_category not in decision.evidence or len(grounded) < minimum:
+        return False
+    if (
+        step.step_id is DomStepId.REMOTE_AUTH_SESSION_CAPTURE
+        and decision.state is PageState.INVENTORY
+    ):
+        controls = {control.reference: control for control in evidence.controls}
+        roles = {controls[reference].role for reference in grounded}
+        return "heading" in roles and bool(
+            roles.intersection({"button", "link", "list", "listitem", "tab", "tablist"})
+        )
+    return True
 
 
 def _strict_string(value: object) -> str:

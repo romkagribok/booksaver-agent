@@ -340,7 +340,7 @@ class AdaptiveBrowserJobContext:
                     "recovery": "booking-browser-recovery-v5",
                     "interpretation": "booking-inventory-interpretation-v1",
                     "extraction": "booking-offer-extraction-v1",
-                    "classification": "booking-page-state-v1",
+                    "classification": "booking-page-state-v2",
                     "diagnostic": "booking-browser-diagnostic-v1",
                 }.get(attempt.role, "adaptive-model-policy-v1")
             )

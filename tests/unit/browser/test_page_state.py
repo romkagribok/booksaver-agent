@@ -90,6 +90,31 @@ def test_strong_supported_inventory_is_code_verified() -> None:
     assert assessment_proves_authenticated(assessment)
 
 
+def test_current_mobile_mytrips_shell_is_code_verified_without_legacy_selectors() -> None:
+    assessment = assess_page_state(
+        _Page(
+            url="https://secure.booking.com/mytrips.html",
+        ),
+        "Bookings & Trips\nActive\nPast\nCanceled\nWest Lafayette",
+    )
+
+    assert assessment.state is PageState.INVENTORY
+    assert assessment_proves_authenticated(assessment)
+
+
+def test_mobile_inventory_text_never_outranks_a_visible_password_control() -> None:
+    assessment = assess_page_state(
+        _Page(
+            url="https://secure.booking.com/mytrips.html",
+            selectors={"input[type='password']"},
+        ),
+        "Bookings & Trips\nActive\nPast\nCanceled",
+    )
+
+    assert assessment.state is PageState.AUTHENTICATION_REQUIRED
+    assert not assessment_proves_authenticated(assessment)
+
+
 def test_external_or_mutating_destination_precedes_page_chrome() -> None:
     external = assess_page_state(
         _Page(

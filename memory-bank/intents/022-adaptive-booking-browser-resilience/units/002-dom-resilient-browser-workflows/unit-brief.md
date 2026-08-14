@@ -4,7 +4,7 @@ intent: 022-adaptive-booking-browser-resilience
 phase: inception
 status: complete
 created: 2026-08-13T01:59:59.000Z
-updated: 2026-08-13T01:59:59.000Z
+updated: 2026-08-14T02:03:30.000Z
 default_bolt_type: ddd-construction-bolt
 ---
 

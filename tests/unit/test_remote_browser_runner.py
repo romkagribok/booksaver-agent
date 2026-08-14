@@ -11,11 +11,13 @@ from booksaver.domain.browser_resilience import (
     DiagnosisProvenance,
     DomStepId,
     EvidenceCategory,
+    EvidenceReference,
     OperatorAction,
     PageState,
     PageStateClassification,
     PageStateResolution,
     PageStateSource,
+    StepVerificationStatus,
     TerminalBrowserReason,
 )
 from booksaver.domain.mobile_web import MobileWebSettings
@@ -25,8 +27,34 @@ from booksaver.infrastructure.remote_auth.browser_runner import (
     RemoteAuthPageStateCapability,
     SystemRemoteBrowserRunner,
     _AmbiguousStateDebouncer,
+    _RemoteAuthCaptureEpisode,
     _RemoteBrowserExecution,
 )
+
+
+def _episode() -> _RemoteAuthCaptureEpisode:
+    return _RemoteAuthCaptureEpisode(_AmbiguousStateDebouncer())
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (TimeoutError("body unavailable"), TerminalBrowserReason.OBSERVATION_UNAVAILABLE),
+        (RuntimeError("page detached"), TerminalBrowserReason.INFRASTRUCTURE_FAILURE),
+    ],
+)
+def test_remote_browser_bounds_persistent_loop_failures_with_exact_reason(
+    error: Exception,
+    reason: TerminalBrowserReason,
+) -> None:
+    episode = _episode()
+
+    assert episode.note_loop_failure(error) is None
+    assert episode.note_loop_failure(error) is None
+    assert episode.note_loop_failure(error) is reason
+
+    episode.note_loop_success()
+    assert episode.note_loop_failure(error) is None
 
 
 class FakeFrame:
@@ -247,13 +275,21 @@ def test_remote_browser_probe_requires_strong_inventory_evidence() -> None:
                 return Locator(True, "Genius Level 2 — Upcoming reservations")
             return Locator(self.inventory_visible and selector == '[data-testid="bookings-list"]')
 
+        def title(self) -> str:
+            return "Booking account"
+
     weak_only = Page(inventory_visible=False)
     strong = Page(inventory_visible=True)
 
-    assert not SystemRemoteBrowserRunner._probe_authenticated_inventory(  # noqa: SLF001
+    weak_outcome = SystemRemoteBrowserRunner._probe_authenticated_inventory(  # noqa: SLF001
         weak_only
     )
-    assert SystemRemoteBrowserRunner._probe_authenticated_inventory(strong)  # noqa: SLF001
+    strong_outcome = SystemRemoteBrowserRunner._probe_authenticated_inventory(  # noqa: SLF001
+        strong
+    )
+    assert not weak_outcome.verified
+    assert weak_outcome.terminal_reason is None
+    assert strong_outcome.verified
     assert weak_only.goto_urls == ["https://secure.booking.com/myreservations.html"]
     assert strong.goto_urls == ["https://secure.booking.com/myreservations.html"]
 
@@ -416,6 +452,7 @@ def test_remote_browser_preserves_exact_model_stop_without_claiming_dom_drift(
         ),
         runner._observe_page(_ObservedPage(), "Unknown account page"),  # noqa: SLF001
         RemoteAuthPageStateCapability(),
+        _episode(),
     )
 
     assert execution is not None
@@ -428,13 +465,14 @@ def test_remote_browser_preserves_exact_model_stop_without_claiming_dom_drift(
     assert execution.incident_draft is None
 
 
-def test_remote_browser_model_candidate_only_runs_fixed_inventory_probe() -> None:
+def test_remote_browser_model_candidate_runs_fixed_inventory_probe_only_once() -> None:
     class Page(_ObservedPage):
         def __init__(self) -> None:
             self.goto_urls: list[str] = []
 
         def goto(self, url: str, **_kwargs: object) -> None:
             self.goto_urls.append(url)
+            self.url = url
 
         def locator(self, selector: str) -> object:
             if selector == "body":
@@ -453,15 +491,251 @@ def test_remote_browser_model_candidate_only_runs_fixed_inventory_probe() -> Non
         observation,
     )
 
+    episode = _episode()
+    first = runner._resolution_execution(  # noqa: SLF001
+        page,
+        resolution,
+        observation,
+        RemoteAuthPageStateCapability(),
+        episode,
+    )
+    second = runner._resolution_execution(  # noqa: SLF001
+        page,
+        resolution,
+        observation,
+        RemoteAuthPageStateCapability(),
+        episode,
+    )
+
+    assert first is None
+    assert second is not None
+    assert second.result.status is RemoteAuthStatus.FAILED
+    assert second.result.terminal_diagnosis is not None
+    assert second.result.terminal_diagnosis.reason is TerminalBrowserReason.UNRESOLVED_AMBIGUITY
+    assert page.goto_urls == ["https://secure.booking.com/myreservations.html"]
+
+
+class _SemanticElement:
+    def __init__(self, *, tag: str, role: str, label: str) -> None:
+        self._tag = tag
+        self._role = role
+        self._label = label
+
+    def is_visible(self) -> bool:
+        return True
+
+    def evaluate(self, _script: str) -> str:
+        return self._tag
+
+    def get_attribute(self, name: str) -> str | None:
+        if name == "role":
+            return self._role
+        if name == "aria-label":
+            return self._label
+        return None
+
+    def inner_text(self) -> str:
+        return self._label
+
+
+class _SemanticElements:
+    def __init__(self, elements: tuple[_SemanticElement, ...]) -> None:
+        self._elements = elements
+
+    def count(self) -> int:
+        return len(self._elements)
+
+    def nth(self, index: int) -> _SemanticElement:
+        return self._elements[index]
+
+
+class _SemanticBody:
+    def __init__(self, page: _SemanticPage) -> None:
+        self._page = page
+
+    def inner_text(self, timeout: int | None = None) -> str:
+        assert timeout in {None, 2_000, 5_000}
+        return self._page.text
+
+
+class _SemanticPage:
+    def __init__(self) -> None:
+        self.url = "https://secure.booking.com/mytrips.html"
+        self.text = "Your stays\nCurrent\nPrevious"
+        self.page_title = "Changed trips page"
+        self.goto_urls: list[str] = []
+        self.elements = (
+            _SemanticElement(tag="h1", role="heading", label="Your stays"),
+            _SemanticElement(tag="button", role="tab", label="Current"),
+        )
+
+    def goto(self, url: str, **_kwargs: object) -> None:
+        self.goto_urls.append(url)
+        # Booking.com currently redirects this legacy alias back to /mytrips.
+        self.url = "https://secure.booking.com/mytrips.html"
+
+    def locator(self, selector: str) -> object:
+        if selector == "body":
+            return _SemanticBody(self)
+        if selector.startswith("a, button"):
+            return _SemanticElements(self.elements)
+        return _SemanticElements(())
+
+    def title(self) -> str:
+        return self.page_title
+
+
+def _semantic_resolution(
+    runner: SystemRemoteBrowserRunner,
+    page: _SemanticPage,
+    *,
+    source: PageStateSource = PageStateSource.SONNET,
+    references: tuple[str, ...] = ("e0", "e1"),
+) -> tuple[PageStateResolution, object]:
+    observation = runner._observe_page(page, page.text)  # noqa: SLF001
+    classification = PageStateClassification(
+        state=PageState.INVENTORY,
+        confidence=0.96,
+        evidence=frozenset({EvidenceCategory.SUPPORTED_INVENTORY_STRUCTURE}),
+        evidence_references=tuple(
+            EvidenceReference(
+                category=EvidenceCategory.SUPPORTED_INVENTORY_STRUCTURE,
+                reference=reference,
+            )
+            for reference in references
+        ),
+        operator_action=OperatorAction.NONE,
+        source=source,
+        observation_id="remote-auth-semantic-1",
+    )
+    return (
+        PageStateResolution(
+            classification=classification,
+            terminal_reason=TerminalBrowserReason.CODE_VERIFICATION_REQUIRED,
+        ),
+        observation,
+    )
+
+
+def test_remote_browser_grounded_sonnet_inventory_requires_code_receipt() -> None:
+    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
+    page = _SemanticPage()
+    resolution, observation = _semantic_resolution(runner, page)
+    episode = _episode()
+    episode.probe_attempted = True
+
+    verification, page_changed = runner._semantic_inventory_verification(  # noqa: SLF001
+        page,
+        resolution,
+        observation,
+    )
     execution = runner._resolution_execution(  # noqa: SLF001
         page,
         resolution,
         observation,
         RemoteAuthPageStateCapability(),
+        episode,
     )
 
-    assert execution is None
-    assert page.goto_urls == ["https://secure.booking.com/myreservations.html"]
+    assert not page_changed
+    assert verification.status is StepVerificationStatus.VERIFIED
+    assert verification.receipt is not None
+    assert verification.receipt.verifier == "remote_auth_semantic_inventory"
+    assert execution is not None
+    assert execution.result.status is RemoteAuthStatus.SUCCEEDED
+    assert execution.result.cookies_json == "pending-code-owned-capture"
+
+
+def test_remote_browser_opus_is_diagnosis_only_even_with_grounded_inventory_refs() -> None:
+    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
+    page = _SemanticPage()
+    resolution, observation = _semantic_resolution(
+        runner,
+        page,
+        source=PageStateSource.OPUS,
+    )
+    episode = _episode()
+    episode.probe_attempted = True
+
+    execution = runner._resolution_execution(  # noqa: SLF001
+        page,
+        resolution,
+        observation,
+        RemoteAuthPageStateCapability(),
+        episode,
+    )
+
+    assert execution is not None
+    assert execution.result.status is RemoteAuthStatus.FAILED
+    assert execution.result.cookies_json is None
+    assert execution.result.terminal_diagnosis is not None
+    assert execution.result.terminal_diagnosis.provenance is DiagnosisProvenance.OPUS_DIAGNOSED
+
+
+def test_remote_browser_rejects_hallucinated_or_stale_semantic_refs() -> None:
+    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
+    page = _SemanticPage()
+    resolution, observation = _semantic_resolution(
+        runner,
+        page,
+        references=("e0", "invented"),
+    )
+    episode = _episode()
+    episode.probe_attempted = True
+
+    execution = runner._resolution_execution(  # noqa: SLF001
+        page,
+        resolution,
+        observation,
+        RemoteAuthPageStateCapability(),
+        episode,
+    )
+
+    assert execution is not None
+    assert execution.result.status is RemoteAuthStatus.FAILED
+    assert execution.result.cookies_json is None
+    assert execution.result.terminal_diagnosis is not None
+    assert execution.result.terminal_diagnosis.reason is TerminalBrowserReason.UNRESOLVED_AMBIGUITY
+
+
+def test_remote_browser_discards_semantic_proof_when_page_changes() -> None:
+    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
+    page = _SemanticPage()
+    resolution, observation = _semantic_resolution(runner, page)
+    page.text = "Your stays\nCurrent\nPrevious\nRecently updated"
+
+    verification, page_changed = runner._semantic_inventory_verification(  # noqa: SLF001
+        page,
+        resolution,
+        observation,
+    )
+
+    assert page_changed
+    assert verification.status is StepVerificationStatus.AMBIGUOUS
+    assert verification.receipt is None
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (TimeoutError("probe timed out"), TerminalBrowserReason.OBSERVATION_UNAVAILABLE),
+        (RuntimeError("browser detached"), TerminalBrowserReason.INFRASTRUCTURE_FAILURE),
+    ],
+)
+def test_remote_browser_probe_failures_are_typed(
+    error: Exception,
+    reason: TerminalBrowserReason,
+) -> None:
+    class Page:
+        def goto(self, _url: str, **_kwargs: object) -> None:
+            raise error
+
+    outcome = SystemRemoteBrowserRunner._probe_authenticated_inventory(Page())  # noqa: SLF001
+
+    assert not outcome.verified
+    assert outcome.assessment is None
+    assert outcome.observation is None
+    assert outcome.terminal_reason is reason
 
 
 def test_remote_browser_opus_exhaustion_is_ambiguous_incident_diagnosis() -> None:

@@ -49,7 +49,7 @@ from booksaver.infrastructure.llm.page_state_classifier import (
 def _profile(*, opus: bool = False) -> ModelProfile:
     portfolio = AdaptiveModelPortfolio()
     factory = portfolio.escalation if opus else portfolio.primary
-    return factory(ModelRole.CLASSIFICATION, "booking-page-state-v1")
+    return factory(ModelRole.CLASSIFICATION, "booking-page-state-v2")
 
 
 def _attempt(profile: ModelProfile) -> AdmittedModelAttempt:
@@ -85,8 +85,12 @@ def _evidence() -> PageClassificationEvidence:
         title="Your Booking account",
         visible_text="Manage your trips or sign in to continue",
         controls=(
-            VisibleControlEvidence(role="button", label="Continue"),
-            VisibleControlEvidence(role="link", label="Bookings and trips"),
+            VisibleControlEvidence(reference="e0", role="button", label="Continue"),
+            VisibleControlEvidence(
+                reference="e1",
+                role="link",
+                label="Bookings and trips",
+            ),
         ),
     )
 
@@ -96,9 +100,7 @@ def _tool_input(**overrides: object) -> dict[str, object]:
         "state": "authentication_required",
         "confidence": 0.97,
         "evidence_categories": ["credential_control"],
-        "evidence_references": [
-            {"category": "credential_control", "reference": "sign_in_control"}
-        ],
+        "evidence_references": [{"category": "credential_control", "reference": "e0"}],
         "operator_action": "connect",
     }
     value.update(overrides)
@@ -147,6 +149,39 @@ def _classify(
     )
 
 
+def _remote_inventory_evidence() -> PageClassificationEvidence:
+    return PageClassificationEvidence(
+        observation_id="page-observation-1",
+        title="Changed trips page",
+        visible_text="Reservation inventory is visible",
+        controls=(
+            VisibleControlEvidence(
+                reference="e0",
+                role="heading",
+                label="Your stays",
+            ),
+            VisibleControlEvidence(
+                reference="e1",
+                role="tab",
+                label="Current",
+            ),
+        ),
+    )
+
+
+def _classify_remote_inventory(
+    classifier: AnthropicPageStateClassifier,
+    profile: ModelProfile,
+    evidence: PageClassificationEvidence | None = None,
+) -> ModelClassifierCall:
+    return classifier.classify(
+        step=DOM_STEP_REGISTRY.definition(DomStepId.REMOTE_AUTH_SESSION_CAPTURE),
+        observation=_observation(),
+        evidence=evidence or _remote_inventory_evidence(),
+        attempt=_attempt(profile),
+    )
+
+
 def test_valid_tool_reply_returns_typed_decision_and_usage() -> None:
     profile = _profile()
     classifier, calls = _classifier(profile, _response(_tool_input()))
@@ -165,7 +200,7 @@ def test_valid_tool_reply_returns_typed_decision_and_usage() -> None:
     }
 
 
-def test_request_contains_only_bounded_text_and_role_label_controls() -> None:
+def test_request_contains_only_bounded_text_and_groundable_controls() -> None:
     profile = _profile()
     classifier, calls = _classifier(profile, _response(_tool_input()))
 
@@ -174,6 +209,8 @@ def test_request_contains_only_bounded_text_and_role_label_controls() -> None:
     request = str(calls[0]["messages"])
     assert "Your Booking account" in request
     assert "Bookings and trips" in request
+    assert '"reference":"e0"' in request
+    assert '"reference":"e1"' in request
     assert "selector" not in request.casefold()
     assert "screenshot" not in request.casefold()
     assert "https://" not in request
@@ -207,6 +244,87 @@ def test_authenticated_model_state_is_candidate_not_verified() -> None:
     assert classification.state is PageState.AUTHENTICATED_CANDIDATE
 
 
+def test_remote_inventory_claim_requires_grounded_heading_and_companion_refs() -> None:
+    profile = _profile()
+    classifier, _ = _classifier(
+        profile,
+        _response(
+            _tool_input(
+                state="inventory",
+                evidence_categories=["supported_inventory_structure"],
+                evidence_references=[
+                    {
+                        "category": "supported_inventory_structure",
+                        "reference": "e0",
+                    },
+                    {
+                        "category": "supported_inventory_structure",
+                        "reference": "e1",
+                    },
+                ],
+                operator_action="none",
+            )
+        ),
+    )
+
+    result = _classify_remote_inventory(classifier, profile)
+
+    assert result.schema_valid
+    assert result.decision is not None
+    assert result.decision.state is PageState.INVENTORY
+
+
+@pytest.mark.parametrize(
+    ("references", "controls"),
+    [
+        (
+            [
+                {"category": "supported_inventory_structure", "reference": "invented"},
+                {"category": "supported_inventory_structure", "reference": "e1"},
+            ],
+            _remote_inventory_evidence().controls,
+        ),
+        (
+            [
+                {"category": "supported_inventory_structure", "reference": "e0"},
+                {"category": "supported_inventory_structure", "reference": "e1"},
+            ],
+            (
+                VisibleControlEvidence(reference="e0", role="button", label="Accept"),
+                VisibleControlEvidence(reference="e1", role="link", label="Account"),
+            ),
+        ),
+    ],
+)
+def test_remote_inventory_claim_rejects_invented_or_insufficient_structure(
+    references: list[dict[str, str]],
+    controls: tuple[VisibleControlEvidence, ...],
+) -> None:
+    profile = _profile()
+    classifier, _ = _classifier(
+        profile,
+        _response(
+            _tool_input(
+                state="inventory",
+                evidence_categories=["supported_inventory_structure"],
+                evidence_references=references,
+                operator_action="none",
+            )
+        ),
+    )
+    evidence = PageClassificationEvidence(
+        observation_id="page-observation-1",
+        title="Changed trips page",
+        visible_text="Reservation inventory is visible",
+        controls=controls,
+    )
+
+    result = _classify_remote_inventory(classifier, profile, evidence)
+
+    assert not result.schema_valid
+    assert result.decision is None
+
+
 @pytest.mark.parametrize(
     "response",
     [
@@ -222,9 +340,7 @@ def test_authenticated_model_state_is_candidate_not_verified() -> None:
         _response(
             _tool_input(
                 evidence_categories=[],
-                evidence_references=[
-                    {"category": "credential_control", "reference": "sign_in_control"}
-                ],
+                evidence_references=[{"category": "credential_control", "reference": "e0"}],
             )
         ),
     ],
@@ -291,7 +407,7 @@ def test_classifier_refuses_unadmitted_or_wrong_role_profiles() -> None:
 
     recovery_profile = AdaptiveModelPortfolio().primary(
         ModelRole.RECOVERY,
-        "booking-page-state-v1",
+        "booking-page-state-v2",
     )
     with pytest.raises(ValueError, match="classification profile"):
         AnthropicPageStateClassifier(api_key="sk-test", profile=recovery_profile)
@@ -308,9 +424,7 @@ def test_caller_bound_wrapper_builds_only_the_admitted_fixed_profile() -> None:
         def classify(self, *, step, observation, evidence, attempt):
             calls.append(attempt.plan.profile)
             assert attempt.plan.profile == self.profile
-            return ModelClassifierCall(
-                provider_failure=PageClassifierProviderFailure.RATE_LIMIT
-            )
+            return ModelClassifierCall(provider_failure=PageClassifierProviderFailure.RATE_LIMIT)
 
     class _Factory:
         def page_classifier(self, profile: ModelProfile):
@@ -339,8 +453,7 @@ def test_agent_observation_conversion_drops_browser_authority_and_sensitive_frag
         url="https://secure.booking.com/mytrips?token=private",
         title="Trips https://private.example/path",
         text=(
-            "Unknown changed layout ?token=secret "
-            "cookie: session-secret [data-testid='private']"
+            "Unknown changed layout ?token=secret cookie: session-secret [data-testid='private']"
         ),
         elements=(
             ElementInfo(
@@ -367,10 +480,12 @@ def test_agent_observation_conversion_drops_browser_authority_and_sensitive_frag
     assert "session-secret" not in rendered
     assert "data-testid" not in rendered
     assert "token=secret" not in rendered
-    assert "e7" not in rendered
+    assert "reference='e7'" in rendered
+    assert "reference='e8'" in rendered
     assert "private-pixels" not in rendered
     assert "popup" not in rendered
     assert evidence.controls[-1] == VisibleControlEvidence(
+        reference="e8",
         role="button",
         label="Continue",
     )

@@ -44,6 +44,11 @@ _WEAK_ACCOUNT_TEXT = re.compile(
     r"Manage account|My account)",
     re.I,
 )
+_INVENTORY_TITLE_TEXT = re.compile(r"\bBookings\s*(?:&|and)\s*Trips\b", re.I)
+_INVENTORY_SCOPE_TEXT = tuple(
+    re.compile(pattern, re.I)
+    for pattern in (r"\bActive\b", r"\bPast\b", r"\bCancel(?:l)?ed\b")
+)
 _URL_OR_QUERY_TEXT = re.compile(
     r"(?:https?://\S+|www\.\S+|(?:^|\s)[?&][A-Za-z0-9_.~-]+=[^\s&]+)", re.I
 )
@@ -135,8 +140,9 @@ def assess_page_state(page: Any, text: str | None = None) -> PageStateClassifica
             page, _WEAK_ACCOUNT_SELECTORS
         ):
             evidence.add(EvidenceCategory.WEAK_ACCOUNT_CHROME)
-        if _is_inventory_destination(raw_url) and _has_visible(
-            page, _STRONG_INVENTORY_SELECTORS
+        if _is_inventory_destination(raw_url) and (
+            _has_visible(page, _STRONG_INVENTORY_SELECTORS)
+            or _has_supported_inventory_text(visible_text)
         ):
             evidence.add(EvidenceCategory.SUPPORTED_INVENTORY_STRUCTURE)
             supported_states.add(PageState.INVENTORY)
@@ -227,7 +233,13 @@ def classification_inputs_from_observation(
         role = re.sub(r"[^a-z0-9_]", "_", element.role.casefold())[:64]
         label = _safe_classifier_text(element.label, 256)
         if role and label:
-            controls.append(VisibleControlEvidence(role=role, label=label))
+            controls.append(
+                VisibleControlEvidence(
+                    reference=element.ref,
+                    role=role,
+                    label=label,
+                )
+            )
     ephemeral = PageClassificationEvidence(
         observation_id=observation_id,
         title=_safe_classifier_text(observation.title, _MAX_CLASSIFIER_TITLE),
@@ -269,6 +281,15 @@ def _is_inventory_destination(raw_url: str) -> bool:
     path = parsed.path.casefold()
     return any(
         marker in path for marker in ("myreservations", "mytrips", "/confirmation")
+    )
+
+
+def _has_supported_inventory_text(visible_text: str) -> bool:
+    """Recognize the current mobile inventory shell without one brittle test ID."""
+
+    return (
+        _INVENTORY_TITLE_TEXT.search(visible_text) is not None
+        and all(pattern.search(visible_text) is not None for pattern in _INVENTORY_SCOPE_TEXT)
     )
 
 
