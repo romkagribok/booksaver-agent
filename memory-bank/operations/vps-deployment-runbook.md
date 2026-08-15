@@ -168,6 +168,30 @@ each user completes `/connect` as described in §11.
 
 ## 6. Upgrade procedure
 
+### Pre-merge Bugbot gate
+
+Cursor Bugbot review is asynchronous and may arrive after local checks or after a pull request is
+marked ready. Do not infer a clean review from the absence of comments and do not merge while its
+review of the final proposed commit is missing or stale.
+
+1. Finish the local release gate and push the final candidate commit to the pull request.
+2. Mark the pull request ready and wait for Cursor Bugbot to complete its review.
+3. Inspect thread-aware review state. Fix every valid concern with regression coverage; answer any
+   false positive with concrete evidence; resolve every Cursor-authored thread.
+4. If any code or documentation changes are pushed, wait for Bugbot to review the new head commit.
+5. Run the executable gate from the repository root:
+
+   ```bash
+   python3 scripts/bugbot_merge_gate.py PR_NUMBER
+   ```
+
+   Use `--repo owner/name` outside a checkout, or pass the canonical GitHub pull-request URL. The
+   gate fails closed when `gh` authentication/network access is unavailable, no Bugbot review exists
+   for the current head, or any Cursor thread remains unresolved.
+
+Only present or execute merge approval after this command passes for the final head commit. GitHub
+mergeability, an unprotected `main` branch, and passing local tests do not substitute for this gate.
+
 Schema v11 intentionally removes every legacy manually registered booking and its booking-scoped
 check, trace, savings, and rebook history before repopulating from Booking.com. Make and verify the
 recoverable §7 backup before the first upgrade to this schema.
