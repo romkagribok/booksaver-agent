@@ -22,7 +22,7 @@ content, retention duration, or user-purge authority.
 | `RemoteAuthAttempt` | lifecycle status, ordinary expiry, cancellation authority, worker ownership, optional result | `FINALIZING` has admitted code verification and cannot transition through ordinary expiry |
 | `FinalizationCommit` | verified cookie result, encrypted capture outcome, terminal transition | Capture and terminal success remain one manager-locked critical section |
 | `FailureIncidentCandidate` | sanitized draft, runner outcome, cancellation authority, cleanup-complete fact | May publish only when the runner actually failed and no privacy-erasure authority suppresses publication |
-| `ReleaseCandidate` | final commit, local gates, Bugbot review state, thread dispositions, follow-up review | Merge admission requires a completed review of the final proposed commit and zero unresolved actionable concerns |
+| `ReleaseCandidate` | final commit, local gates, Bugbot review/check state, thread dispositions, follow-up review | Merge admission requires a completed Bugbot result for the final proposed commit and zero unresolved actionable concerns |
 
 ## Value Objects
 
@@ -48,7 +48,7 @@ content, retention duration, or user-purge authority.
 | `OrdinaryExpiryIgnoredDuringFinalization` | Viewer/poll observes elapsed ordinary expiry after admission | Lifecycle outcome code only |
 | `FailureIncidentPublishedAfterTerminalRace` | Failed runner result returns after viewer cancel, replacement, or expiry | Existing sanitized incident draft only |
 | `FailureIncidentSuppressedForPrivacyErasure` | Purge/revocation won before failed runner result returned | Closed suppression reason only |
-| `BugbotMergeGatePassed` | Final reviewed commit has no unresolved actionable review threads | PR and reviewed commit identifiers |
+| `BugbotMergeGatePassed` | Final reviewed commit has a current successful review/check and no unresolved actionable review threads | PR and reviewed commit identifiers |
 
 ## Domain Services
 
@@ -74,7 +74,7 @@ runbook rule, not a runtime database feature.
 | Terminal race | A cancellation or expiry transition that wins before the browser worker returns its already-sanitized result |
 | Privacy erasure | Administrative user purge or revocation that forbids recreating encrypted source evidence after deletion |
 | Thread disposition | A fix or evidence-backed rejection attached to an unresolved review concern |
-| Clean follow-up pass | Bugbot review of the final proposed commit with zero unresolved actionable concerns |
+| Clean follow-up pass | Bugbot review or successful check for the final proposed commit with zero unresolved actionable concerns |
 
 ## Invariants
 

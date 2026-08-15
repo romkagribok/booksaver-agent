@@ -31,6 +31,22 @@ def _thread(*, resolved: bool, author: str = "cursor") -> dict[str, Any]:
     }
 
 
+def _check(
+    *,
+    oid: str = _HEAD,
+    status: str = "COMPLETED",
+    conclusion: str = "SUCCESS",
+) -> dict[str, Any]:
+    return {
+        "__typename": "CheckRun",
+        "headOid": oid,
+        "name": "Cursor Bugbot",
+        "status": status,
+        "conclusion": conclusion,
+        "checkSuite": {"app": {"slug": "cursor"}},
+    }
+
+
 def test_gate_accepts_current_review_with_all_cursor_threads_resolved() -> None:
     result = evaluate_gate(
         GateData(
@@ -43,7 +59,28 @@ def test_gate_accepts_current_review_with_all_cursor_threads_resolved() -> None:
 
     assert result.head_oid == _HEAD
     assert result.bugbot_reviews_for_head == 1
+    assert result.bugbot_checks_for_head == 0
     assert result.cursor_threads == 1
+
+
+def test_gate_accepts_successful_current_head_check_when_clean_run_has_no_review() -> None:
+    result = evaluate_gate(
+        GateData(
+            state="OPEN",
+            head_oid=_HEAD,
+            reviews=(_review(_OLD_HEAD),),
+            threads=(_thread(resolved=True),),
+            checks=(_check(),),
+        )
+    )
+
+    assert result.bugbot_reviews_for_head == 0
+    assert result.bugbot_checks_for_head == 1
+
+
+def test_gate_rejects_incomplete_current_head_check() -> None:
+    with pytest.raises(GateRejected, match="has not completed successfully"):
+        evaluate_gate(GateData("OPEN", _HEAD, (), (), (_check(status="IN_PROGRESS"),)))
 
 
 def test_gate_rejects_missing_bugbot_review() -> None:
@@ -107,7 +144,7 @@ def test_fetch_gate_data_paginates_reviews_and_threads(
                 "headRefOid": _HEAD,
                 "reviews": {"nodes": nodes, "pageInfo": page_info},
             }
-        else:
+        elif "reviewThreads(first" in query:
             nodes = [_thread(resolved=True)]
             page_info = (
                 {"hasNextPage": True, "endCursor": "thread-page-2"}
@@ -117,6 +154,27 @@ def test_fetch_gate_data_paginates_reviews_and_threads(
             pull_request = {
                 "reviewThreads": {"nodes": nodes, "pageInfo": page_info},
             }
+        else:
+            nodes = [_check()]
+            page_info = (
+                {"hasNextPage": True, "endCursor": "check-page-2"}
+                if cursor is None
+                else {"hasNextPage": False, "endCursor": None}
+            )
+            pull_request = {
+                "commits": {
+                    "nodes": [
+                        {
+                            "commit": {
+                                "oid": _HEAD,
+                                "statusCheckRollup": {
+                                    "contexts": {"nodes": nodes, "pageInfo": page_info}
+                                },
+                            }
+                        }
+                    ]
+                }
+            }
         return {"data": {"repository": {"pullRequest": pull_request}}}
 
     monkeypatch.setattr("scripts.bugbot_merge_gate._graphql", _graphql)
@@ -125,4 +183,5 @@ def test_fetch_gate_data_paginates_reviews_and_threads(
 
     assert len(data.reviews) == 2
     assert len(data.threads) == 2
+    assert len(data.checks) == 2
     assert evaluate_gate(data).head_oid == _HEAD

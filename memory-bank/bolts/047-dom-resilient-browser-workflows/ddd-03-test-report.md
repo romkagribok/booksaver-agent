@@ -10,11 +10,11 @@ updated: 2026-08-15T16:06:12Z
 
 ## Summary
 
-- **Focused tests**: 39 passed across remote-auth lifecycle races, HTTP cookie behavior, and the
+- **Focused tests**: 41 passed across remote-auth lifecycle races, HTTP cookie behavior, and the
   executable Bugbot gate.
-- **Full repository tests**: 1,561 passed with 55 known configuration-deprecation warnings.
+- **Full repository tests**: 1,563 passed with 55 known configuration-deprecation warnings.
 - **Lint**: Ruff clean across `src`, `tests`, and `scripts`.
-- **Formatting**: All five changed Python files are Ruff-formatted. The optional repository-wide
+- **Formatting**: All changed Python files are Ruff-formatted. The optional repository-wide
   format check remains a pre-existing non-gate baseline affecting 122 untouched files; none were
   mechanically rewritten.
 - **Types**: Strict mypy clean across 117 source files.
@@ -38,7 +38,8 @@ updated: 2026-08-15T16:06:12Z
 - ✅ **US-140 / privacy erasure**: Administrative cancellation permanently suppresses a late failure
   occurrence so purge cannot be followed by recreated encrypted evidence.
 - ✅ **US-140 / shutdown**: Daemon teardown suppresses best-effort late incident writes.
-- ✅ **Merge gate / current head**: A current-head Bugbot review with resolved Cursor threads passes.
+- ✅ **Merge gate / current head**: A current-head Bugbot review or successful Cursor-app check with
+  resolved Cursor threads passes, including clean runs that create no review object.
 - ✅ **Merge gate / fail closed**: Missing review, stale reviewed head, unresolved Cursor thread, closed
   PR, invalid target, and unavailable GitHub state all block admission.
 - ✅ **Merge gate / pagination**: Multiple review and thread pages are aggregated before evaluation.

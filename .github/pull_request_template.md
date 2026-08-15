@@ -10,7 +10,7 @@
 
 ## Review and merge gate
 
-- [ ] Cursor Bugbot reviewed the final proposed head commit
+- [ ] Cursor Bugbot reviewed the final proposed head commit (review object or successful check)
 - [ ] Every Cursor review thread has a tested fix or evidence-backed disposition and is resolved
 - [ ] `python3 scripts/bugbot_merge_gate.py PR_NUMBER` passes for the final head
 

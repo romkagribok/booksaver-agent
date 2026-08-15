@@ -53,6 +53,36 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
 }
 """
 
+_CHECKS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      commits(last: 1) {
+        nodes {
+          commit {
+            oid
+            statusCheckRollup {
+              contexts(first: 100, after: $cursor) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  __typename
+                  ... on CheckRun {
+                    name
+                    status
+                    conclusion
+                    checkSuite { app { slug } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 JsonObject = dict[str, Any]
 
 
@@ -70,12 +100,14 @@ class GateData:
     head_oid: str
     reviews: tuple[JsonObject, ...]
     threads: tuple[JsonObject, ...]
+    checks: tuple[JsonObject, ...] = ()
 
 
 @dataclass(frozen=True)
 class GateSummary:
     head_oid: str
     bugbot_reviews_for_head: int
+    bugbot_checks_for_head: int
     cursor_threads: int
 
 
@@ -122,7 +154,29 @@ def evaluate_gate(data: GateData) -> GateSummary:
             bugbot_reviews.append(oid)
 
     current_reviews = [oid for oid in bugbot_reviews if oid == data.head_oid]
-    if not current_reviews:
+    current_checks = []
+    for check in data.checks:
+        suite = check.get("checkSuite")
+        app = suite.get("app") if isinstance(suite, dict) else None
+        if (
+            check.get("headOid") == data.head_oid
+            and check.get("__typename") == "CheckRun"
+            and check.get("name") == "Cursor Bugbot"
+            and check.get("status") == "COMPLETED"
+            and check.get("conclusion") == "SUCCESS"
+            and isinstance(app, dict)
+            and app.get("slug") == "cursor"
+        ):
+            current_checks.append(check)
+
+    if not current_reviews and not current_checks:
+        current_bugbot_checks = [
+            check
+            for check in data.checks
+            if check.get("headOid") == data.head_oid and check.get("name") == "Cursor Bugbot"
+        ]
+        if current_bugbot_checks:
+            raise GateRejected("Bugbot check has not completed successfully for the current head")
         if bugbot_reviews:
             raise GateRejected("Bugbot review is stale for the current pull-request head")
         raise GateRejected("Bugbot has not completed a review for the pull request")
@@ -139,6 +193,7 @@ def evaluate_gate(data: GateData) -> GateSummary:
     return GateSummary(
         head_oid=data.head_oid,
         bugbot_reviews_for_head=len(current_reviews),
+        bugbot_checks_for_head=len(current_checks),
         cursor_threads=len(cursor_threads),
     )
 
@@ -242,9 +297,40 @@ def fetch_gate_data(owner: str, repo: str, number: int) -> GateData:
         if not isinstance(thread_cursor, str) or not thread_cursor:
             raise GitHubAccessError("pull request thread pagination is malformed")
 
+    checks: list[JsonObject] = []
+    check_cursor: str | None = None
+    while True:
+        pull_request = _pull_request(_graphql(_CHECKS_QUERY, owner, repo, number, check_cursor))
+        commits = pull_request.get("commits")
+        commit_nodes = commits.get("nodes") if isinstance(commits, dict) else None
+        if not isinstance(commit_nodes, list) or len(commit_nodes) != 1:
+            raise GitHubAccessError("pull request head checks are unavailable")
+        commit = commit_nodes[0].get("commit") if isinstance(commit_nodes[0], dict) else None
+        commit_oid = commit.get("oid") if isinstance(commit, dict) else None
+        if not isinstance(commit_oid, str) or commit_oid != head_oid:
+            raise GitHubAccessError("pull request head checks do not match the current head")
+        rollup = commit.get("statusCheckRollup") if isinstance(commit, dict) else None
+        if rollup is None:
+            break
+        connection = rollup.get("contexts") if isinstance(rollup, dict) else None
+        if not isinstance(connection, dict):
+            raise GitHubAccessError("pull request head checks are malformed")
+        nodes = connection.get("nodes")
+        if not isinstance(nodes, list):
+            raise GitHubAccessError("pull request head check contexts are malformed")
+        for node in nodes:
+            if isinstance(node, dict):
+                checks.append({**node, "headOid": commit_oid})
+        page_info = connection.get("pageInfo")
+        if not isinstance(page_info, dict) or page_info.get("hasNextPage") is not True:
+            break
+        check_cursor = page_info.get("endCursor")
+        if not isinstance(check_cursor, str) or not check_cursor:
+            raise GitHubAccessError("pull request head check pagination is malformed")
+
     assert state is not None
     assert head_oid is not None
-    return GateData(state, head_oid, tuple(reviews), tuple(threads))
+    return GateData(state, head_oid, tuple(reviews), tuple(threads), tuple(checks))
 
 
 def _current_repository() -> str:
@@ -300,6 +386,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "Bugbot merge gate passed: "
         f"PR #{number}, head {summary.head_oid[:12]}, "
         f"current reviews {summary.bugbot_reviews_for_head}, "
+        f"successful checks {summary.bugbot_checks_for_head}, "
         f"resolved Cursor threads {summary.cursor_threads}."
     )
     return 0

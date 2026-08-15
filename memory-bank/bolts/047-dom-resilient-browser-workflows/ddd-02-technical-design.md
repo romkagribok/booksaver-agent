@@ -17,8 +17,8 @@ moving incident persistence outside the manager lock or teaching the incident re
 remote-auth cancellation.
 
 Add an executable repository-operations gate for Cursor Bugbot. It queries GitHub's thread-aware
-GraphQL state through the authenticated `gh` CLI, compares the latest Bugbot-reviewed commit with
-the PR's current head, and refuses merge admission while any Cursor review thread is unresolved.
+GraphQL state through the authenticated `gh` CLI, compares Bugbot review/check state with the PR's
+current head, and refuses merge admission while any Cursor review thread is unresolved.
 
 No database migration, runtime dependency, model prompt, browser authority, endpoint, or external
 service is introduced.
@@ -58,13 +58,14 @@ service is introduced.
 
 - Add `scripts/bugbot_merge_gate.py`, a stdlib-only wrapper around `gh api graphql`.
 - Required input: PR number or URL; optional repository override for deterministic tests/automation.
-- Query: PR state, head commit, reviews with author/body/commit, and paginated review threads with
-  resolution state and authors.
+- Query: PR state, head commit, reviews with author/body/commit, current-head check rollup, and
+  paginated review threads with resolution state and authors.
 - Admission requirements:
-  1. At least one completed Cursor Bugbot review exists for the current head commit.
-  2. The review body carries Bugbot's stable review marker.
-  3. Every Cursor-authored review thread is resolved.
-  4. The PR is open and mergeable state is not used as a substitute for review completion.
+  1. A Cursor Bugbot review carrying its stable marker exists for the current head, or the
+     current-head `Cursor Bugbot` check from the Cursor GitHub App completed successfully. Clean
+     Bugbot runs may produce only the check and no review object.
+  2. Every Cursor-authored review thread is resolved.
+  3. The PR is open and mergeable state is not used as a substitute for review completion.
 - Output only PR number, reviewed head, and aggregate counts. Never print comment bodies, URLs with
   capabilities, tokens, or repository secrets.
 - Nonzero exit codes distinguish missing/stale review, unresolved threads, invalid input, and GitHub
@@ -110,7 +111,7 @@ does not change user notification or session-capture outcomes.
 
 ```text
 current PR head SHA
-  -> completed Bugbot review exists for exact SHA?
+  -> completed Bugbot review or successful Cursor-app check exists for exact SHA?
   -> all Cursor review threads resolved?
   -> yes: exit 0
   -> no: exit nonzero with aggregate reason
@@ -157,9 +158,9 @@ Any pushed fix changes the PR head and invalidates the prior pass until Bugbot r
 
 ### Merge Gate
 
-1. Final-head Bugbot review plus zero unresolved Cursor threads exits zero.
-2. No Bugbot review fails closed.
-3. Bugbot review of an older head fails closed after a push.
+1. Final-head Bugbot review or successful Cursor-app check plus zero unresolved threads exits zero.
+2. No current Bugbot review/check fails closed.
+3. Bugbot review/check of an older head fails closed after a push.
 4. Any unresolved Cursor thread fails closed, including informational-looking comments until a human
    records a disposition and resolves the thread.
 5. Resolved threads, non-Cursor discussions, pagination, invalid input, GraphQL errors, and missing
