@@ -67,12 +67,8 @@ _MAX_CONTROL_LABEL_LENGTH = 256
 _MAX_CONTROLS = 80
 
 
-REMOTE_AUTH_DOM_STEPS = (
-    DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
-)
-SESSION_VALIDATION_DOM_STEPS = (
-    DomStepId.SESSION_VALIDATION,
-)
+REMOTE_AUTH_DOM_STEPS: tuple[DomStepId, ...] = ()
+SESSION_VALIDATION_DOM_STEPS = (DomStepId.SESSION_VALIDATION,)
 ACCOUNT_INVENTORY_DOM_STEPS = (
     DomStepId.INVENTORY_ENTRY,
     DomStepId.INVENTORY_READINESS,
@@ -159,13 +155,10 @@ def _state_mappings(
 
 def _model_stop_mappings() -> tuple[ModelStopTerminalMapping, ...]:
     if set(_MODEL_STOP_REASONS) != set(ModelStopReason):
-        missing = sorted(
-            reason.value for reason in set(ModelStopReason) - set(_MODEL_STOP_REASONS)
-        )
+        missing = sorted(reason.value for reason in set(ModelStopReason) - set(_MODEL_STOP_REASONS))
         raise RuntimeError(f"model-stop mapping is incomplete: {missing}")
     return tuple(
-        ModelStopTerminalMapping(stop, _MODEL_STOP_REASONS[stop])
-        for stop in ModelStopReason
+        ModelStopTerminalMapping(stop, _MODEL_STOP_REASONS[stop]) for stop in ModelStopReason
     )
 
 
@@ -415,16 +408,17 @@ def validate_declared_dom_step_coverage(
     owners: dict[DomStepId, list[str]] = {}
     repeated_within: dict[str, list[str]] = {}
     for workflow, declared in declared_by_workflow.items():
-        duplicates = sorted(
-            {step.value for step in declared if declared.count(step) > 1}
-        )
+        duplicates = sorted({step.value for step in declared if declared.count(step) > 1})
         if duplicates:
             repeated_within[workflow] = duplicates
         for step in set(declared):
             owners.setdefault(step, []).append(workflow)
 
     declared_steps = set(owners)
-    expected_steps = set(registry.step_ids)
+    expected_steps = set(PRODUCTION_DOM_STEPS)
+    if not expected_steps.issubset(registry.step_ids):
+        undefined = sorted(step.value for step in expected_steps - registry.step_ids)
+        raise ValueError(f"DOM workflow registry definitions missing: {undefined}")
     missing = sorted(step.value for step in expected_steps - declared_steps)
     extra = sorted(step.value for step in declared_steps - expected_steps)
     cross_workflow_duplicates = {
@@ -561,9 +555,7 @@ class PageClassificationEvidence:
             raise ValueError("classification control references must be unique")
         if _POSSIBLE_URL.search(self.title) or _POSSIBLE_URL.search(self.visible_text):
             raise ValueError("classification evidence cannot contain URLs or query strings")
-        if _SECRET_MATERIAL.search(self.title) or _SECRET_MATERIAL.search(
-            self.visible_text
-        ):
+        if _SECRET_MATERIAL.search(self.title) or _SECRET_MATERIAL.search(self.visible_text):
             raise ValueError("classification evidence cannot contain secrets")
         if self.screenshot_allowed:
             raise ValueError("page-state classification never accepts screenshots")
@@ -636,8 +628,7 @@ class ModelClassifierCall:
         if self.latency_ms < 0:
             raise ValueError("classification latency cannot be negative")
         terminal_values = sum(
-            item is not None
-            for item in (self.decision, self.stop_reason, self.provider_failure)
+            item is not None for item in (self.decision, self.stop_reason, self.provider_failure)
         )
         if terminal_values > 1:
             raise ValueError("model call must contain at most one result or failure")
@@ -653,9 +644,7 @@ class ModelClassifierCall:
         if self.provider_failure is None:
             return None
         return {
-            PageClassifierProviderFailure.AUTHENTICATION: (
-                ModelStopReason.PROVIDER_AUTHENTICATION
-            ),
+            PageClassifierProviderFailure.AUTHENTICATION: (ModelStopReason.PROVIDER_AUTHENTICATION),
             PageClassifierProviderFailure.RATE_LIMIT: ModelStopReason.PROVIDER_RATE_LIMIT,
             PageClassifierProviderFailure.UNAVAILABLE: ModelStopReason.PROVIDER_UNAVAILABLE,
             PageClassifierProviderFailure.TRANSPORT: ModelStopReason.PROVIDER_UNAVAILABLE,
@@ -752,9 +741,7 @@ class PageStateResolver:
             if primary_retry.stop_reason is not None:
                 return PageStateResolution(
                     classification=deterministic,
-                    terminal_reason=step.reason_for_model_stop(
-                        primary_retry.stop_reason
-                    ),
+                    terminal_reason=step.reason_for_model_stop(primary_retry.stop_reason),
                     model_stop_reason=primary_retry.stop_reason,
                 )
             assert primary_retry.attempt is not None

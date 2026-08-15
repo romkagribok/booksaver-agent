@@ -2,7 +2,7 @@
 unit: 002-dom-resilient-browser-workflows
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T02:39:01Z
-last_updated: 2026-08-15T16:06:42Z
+last_updated: 2026-08-15T23:16:21Z
 ---
 
 # Construction Log: DOM-Resilient Browser Workflows
@@ -21,6 +21,7 @@ last_updated: 2026-08-15T16:06:42Z
 | 2026-08-14T02:03:30Z | append | Added `045-dom-resilient-browser-workflows` for US-134–136 | Production `/connect` probe loop starved adaptive recovery after Booking.com mobile DOM drift | Yes - owner requested implementation |
 | 2026-08-14T03:08:12Z | append | Added `046-dom-resilient-browser-workflows` for US-140 | Verified recovery could be cancelled by ordinary viewer close before encrypted capture committed | Yes - owner requested AI-DLC implementation to pre-merge review |
 | 2026-08-15T15:55:59Z | append | Added `047-dom-resilient-browser-workflows` for US-140 corrective coverage | Delayed Bugbot review found ordinary expiry and terminal-race evidence gaps after PR #23 merged | Yes - owner requested all Bugbot concerns and a durable merge gate |
+| 2026-08-15T22:33:19.000Z | append | Added `048-dom-resilient-browser-workflows` for US-141 | Live `/connect` still coupled authentication success to reservation DOM; owner approved server-backed proof and removal of DOM/model authority | Yes - owner requested AI-DLC implementation through final pre-merge review |
 
 ## Current Bolt Structure
 
@@ -31,6 +32,7 @@ last_updated: 2026-08-15T16:06:42Z
 | `045-dom-resilient-browser-workflows` | US-134–US-136 corrective coverage | Complete | Added after production incident |
 | `046-dom-resilient-browser-workflows` | US-140 | Complete | Added after live Telegram acceptance exposed finalization race |
 | `047-dom-resilient-browser-workflows` | US-140 corrective coverage | Complete | Added after delayed post-merge Bugbot review |
+| `048-dom-resilient-browser-workflows` | US-141 | Complete | Server-backed, exact-snapshot `/connect` proof; zero DOM/model authority |
 
 ## Execution History
 
@@ -61,17 +63,21 @@ last_updated: 2026-08-15T16:06:42Z
 | 2026-08-15T16:04:46Z | `047-dom-resilient-browser-workflows` | stage-complete | Implement → test; finalizing ignores ordinary TTL, failure incidents honor cancellation authority, and the executable final-head Bugbot gate is documented |
 | 2026-08-15T16:06:12Z | `047-dom-resilient-browser-workflows` | stage-complete | Test complete; 31 focused and 1561 full tests passed with Ruff, mypy, CLI, AI-DLC, and diff gates clean |
 | 2026-08-15T16:06:42Z | `047-dom-resilient-browser-workflows` | completed | Finalizing-expiry and failure-incident races closed; executable final-head Bugbot merge gate complete |
+| 2026-08-15T22:33:19.000Z | `048-dom-resilient-browser-workflows` | started | Stage 1: model negative baseline, immutable candidate snapshots, isolated server probes, bound receipt, and exact finalization handoff |
+| 2026-08-15T22:56:03Z | `048-dom-resilient-browser-workflows` | stage-complete | Domain model → technical design → ADR analysis; ADR-035 accepted for server-backed `/connect` authority |
+| 2026-08-15T23:15:14Z | `048-dom-resilient-browser-workflows` | stage-complete | Implement → test; DOM/model success authority removed, isolated server verifier and exact-snapshot receipt wired |
+| 2026-08-15T23:16:21Z | `048-dom-resilient-browser-workflows` | completed | 129 focused and 1561 full tests passed; live negative and authenticated server-contract controls matched v1 |
 
 ## Execution Summary
 
 | Metric | Value |
 |--------|-------|
 | Original bolts planned | 2 |
-| Current bolt count | 5 |
-| Bolts completed | 5 |
+| Current bolt count | 6 |
+| Bolts completed | 6 |
 | Bolts in progress | 0 |
 | Bolts remaining | 0 |
-| Replanning events | 3 |
+| Replanning events | 4 |
 
 ## Notes
 

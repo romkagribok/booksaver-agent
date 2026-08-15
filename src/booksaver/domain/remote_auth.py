@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+import hmac
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
@@ -32,6 +33,114 @@ class RemoteAuthFailure(Enum):
     BROWSER_FAILED = "browser_failed"
     CAPTURE_REJECTED = "capture_rejected"
     ACCESS_REVOKED = "access_revoked"
+    VERIFICATION_CONTRACT_CHANGED = "verification_contract_changed"
+    VERIFICATION_UNAVAILABLE = "verification_unavailable"
+    VERIFICATION_BLOCKED = "verification_blocked"
+    VERIFICATION_RECEIPT_REJECTED = "verification_receipt_rejected"
+
+
+class ServerSessionProbeOutcome(Enum):
+    SIGNED_OUT = "signed_out"
+    AUTHENTICATED = "authenticated"
+    CONTRACT_CHANGED = "contract_changed"
+    BLOCKED_REDIRECT = "blocked_redirect"
+    CHALLENGE = "challenge"
+    UNAVAILABLE = "unavailable"
+
+
+class ServerStatusClass(Enum):
+    SUCCESS = "success"
+    REDIRECTION = "redirection"
+    CLIENT_ERROR = "client_error"
+    SERVER_ERROR = "server_error"
+    UNAVAILABLE = "unavailable"
+
+
+class ServerMediaClass(Enum):
+    HTML = "html"
+    OTHER = "other"
+    MISSING = "missing"
+
+
+class ServerRedirectClass(Enum):
+    NONE = "none"
+    BOOKING_OAUTH = "booking_oauth"
+    OTHER_BOOKING = "other_booking"
+    EXTERNAL = "external"
+    INVALID = "invalid"
+
+
+class ServerSizeClass(Enum):
+    EMPTY = "empty"
+    BOUNDED = "bounded"
+    OVERSIZED = "oversized"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class SafeServerEvidence:
+    """Content-free server response classification safe for diagnostics."""
+
+    contract_version: str
+    status: ServerStatusClass
+    media: ServerMediaClass
+    redirect: ServerRedirectClass
+    size: ServerSizeClass
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "booking-account-session-v1":
+            raise ValueError("unsupported remote-auth server contract version")
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteAuthServerReceipt:
+    """Short-lived authority for one exact cookie snapshot.
+
+    Secret-derived fields are deliberately excluded from repr and diagnostics.
+    One-use state is owned by the attempt-local verifier that issued the receipt.
+    """
+
+    attempt_id: str
+    telegram_user_id: int
+    contract_version: str
+    verified_at: datetime
+    expires_at: datetime
+    verifier: str
+    _snapshot_hmac: bytes = field(repr=False)
+    _nonce: bytes = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.attempt_id or self.telegram_user_id < 1:
+            raise ValueError("remote-auth receipt requires an attempt and caller")
+        if self.contract_version != "booking-account-session-v1":
+            raise ValueError("unsupported remote-auth receipt contract")
+        for label, value in (
+            ("verified_at", self.verified_at),
+            ("expires_at", self.expires_at),
+        ):
+            if value.tzinfo is None or value.utcoffset() != UTC.utcoffset(value):
+                raise ValueError(f"{label} must be a timezone-aware UTC datetime")
+        if self.expires_at <= self.verified_at:
+            raise ValueError("remote-auth receipt expiry must follow verification")
+        if self.verifier != "booking_server_session_v1":
+            raise ValueError("unsupported remote-auth receipt verifier")
+        if len(self._snapshot_hmac) != 32 or len(self._nonce) != 32:
+            raise ValueError("remote-auth receipt secret bindings are malformed")
+
+    def matches_snapshot_hmac(self, value: bytes) -> bool:
+        return hmac.compare_digest(self._snapshot_hmac, value)
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteAuthServerVerification:
+    outcome: ServerSessionProbeOutcome
+    evidence: SafeServerEvidence
+    receipt: RemoteAuthServerReceipt | None = None
+
+    def __post_init__(self) -> None:
+        authenticated = self.outcome is ServerSessionProbeOutcome.AUTHENTICATED
+        if authenticated != (self.receipt is not None):
+            raise ValueError("only authenticated server evidence may carry a receipt")
 
 
 @dataclass(frozen=True)

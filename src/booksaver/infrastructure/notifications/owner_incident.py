@@ -1,4 +1,4 @@
-"""Dedicated owner-only Telegram delivery for content-free DOM incidents."""
+"""Dedicated owner-only Telegram delivery for content-free browser incidents."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def render_owner_incident_notice(notice: OwnerIncidentNotice) -> str:
     roles = ", ".join(role.value for role in notice.model_roles) or "none"
     return "\n".join(
         (
-            "BookSaver DOM maintenance required",
+            "BookSaver browser maintenance required",
             f"Incident: {notice.incident_id}",
             f"Journey: {notice.journey.value}",
             f"Step: {notice.step_id.value}",
@@ -67,7 +67,7 @@ class OwnerIncidentTelegramNotifier:
             # Never log Telegram response bodies, transport exception text, or
             # the rendered payload. Retry state uses only this stable incident ID.
             logger.warning(
-                "Owner DOM-incident Telegram delivery failed for incident %s",
+                "Owner browser-incident Telegram delivery failed for incident %s",
                 notice.incident_id,
             )
             raise

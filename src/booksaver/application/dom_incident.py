@@ -99,9 +99,7 @@ class DomIncidentRepository(Protocol):
 
     def recover_stale_claims(self, claimed_before: datetime) -> int: ...
 
-    def set_evidence_state(
-        self, incident_id: UUID, evidence_state: EvidenceState
-    ) -> bool: ...
+    def set_evidence_state(self, incident_id: UUID, evidence_state: EvidenceState) -> bool: ...
 
     def get_incident(self, incident_id: UUID) -> DomDriftIncident | None: ...
 
@@ -151,8 +149,10 @@ class OwnerIncidentDeliveryError(RuntimeError):
 def _safe_code(value: str, field: str) -> str:
     # Domain constructors perform the final check.  This local guard keeps
     # hashing functions from accepting arbitrary strings before construction.
-    if not value or len(value) > 128 or any(
-        character not in "abcdefghijklmnopqrstuvwxyz0123456789._:-" for character in value
+    if (
+        not value
+        or len(value) > 128
+        or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789._:-" for character in value)
     ):
         raise ValueError(f"{field} must be a bounded machine code")
     if not value[0].isalnum() or value[0].isupper():
@@ -183,8 +183,8 @@ def dom_drift_fingerprint(
 
     verifier = _safe_code(verifier_category, "verifier_category")
     roles = tuple(model_roles)
-    if not roles or any(not isinstance(role, ModelRole) for role in roles):
-        raise ValueError("fingerprint requires ordered model roles")
+    if any(not isinstance(role, ModelRole) for role in roles):
+        raise ValueError("fingerprint model roles must use the closed vocabulary")
     if len(set(roles)) != len(roles):
         raise ValueError("fingerprint model roles must be unique")
     canonical = json.dumps(
@@ -238,11 +238,7 @@ def diagnostic_attempts_from_audit(
             provider = ModelProvider(attempt.provider)
             role = ModelRole(attempt.role)
             trigger = EscalationTrigger(attempt.trigger)
-            outcome = (
-                ModelAttemptOutcome(attempt.outcome)
-                if attempt.outcome is not None
-                else None
-            )
+            outcome = ModelAttemptOutcome(attempt.outcome) if attempt.outcome is not None else None
         except ValueError as exc:
             raise ValueError(
                 "model attempt metadata must use the closed diagnostic vocabulary"
@@ -262,9 +258,7 @@ def diagnostic_attempts_from_audit(
                 latency_ms=attempt.latency_ms,
                 reserved_micro_usd=attempt.reserved_cost.micro_usd,
                 charged_micro_usd=(
-                    attempt.charged_cost.micro_usd
-                    if attempt.charged_cost is not None
-                    else None
+                    attempt.charged_cost.micro_usd if attempt.charged_cost is not None else None
                 ),
             )
         )
@@ -286,6 +280,11 @@ def incident_provenance(
             return IncidentSourceProvenance.SONNET_ASSISTED
         if diagnosis.provenance is DiagnosisProvenance.OPUS_RECOVERED:
             return IncidentSourceProvenance.OPUS_ASSISTED
+    if (
+        diagnosis.reason is TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
+        and diagnosis.provenance is DiagnosisProvenance.CODE_VERIFIER_DIAGNOSED
+    ):
+        return IncidentSourceProvenance.CODE_MAINTENANCE_REQUIRED
     if (
         diagnosis.reason in _ELIGIBLE_DIAGNOSED_REASONS
         and diagnosis.provenance in _MODEL_DIAGNOSIS_PROVENANCE
@@ -322,15 +321,19 @@ def build_incident_draft(
         return None
     if model_attempts and model_roles:
         raise ValueError("provide ordered model attempts or model roles, not both")
-    diagnostic_attempts = (
-        diagnostic_attempts_from_audit(model_attempts) if model_attempts else ()
-    )
+    diagnostic_attempts = diagnostic_attempts_from_audit(model_attempts) if model_attempts else ()
     roles = (
         tuple(dict.fromkeys(attempt.role for attempt in diagnostic_attempts))
         if diagnostic_attempts
         else tuple(model_roles)
     )
-    if not roles:
+    model_free_maintenance = (
+        provenance is IncidentSourceProvenance.CODE_MAINTENANCE_REQUIRED
+        and diagnosis.provenance is DiagnosisProvenance.CODE_VERIFIER_DIAGNOSED
+        and provider_state is IncidentProviderState.NOT_ATTEMPTED
+        and budget_state is IncidentBudgetState.NOT_APPLICABLE
+    )
+    if not roles and not model_free_maintenance:
         raise ValueError("incident evidence requires at least one model role")
     structures = tuple(structural_roles)
     digest = structural_digest(structures)
@@ -414,9 +417,7 @@ class DomIncidentRecorder:
         evidence_state = incident.evidence_state
         if draft.diagnostic_bundle is None:
             if evidence_state is EvidenceState.PENDING:
-                self._incidents.set_evidence_state(
-                    incident.incident_id, EvidenceState.UNAVAILABLE
-                )
+                self._incidents.set_evidence_state(incident.incident_id, EvidenceState.UNAVAILABLE)
                 evidence_state = EvidenceState.UNAVAILABLE
         elif evidence_state is EvidenceState.PENDING:
             bundle = replace(draft.diagnostic_bundle, incident_id=incident.incident_id)
@@ -425,9 +426,7 @@ class DomIncidentRecorder:
             except Exception:
                 # Diagnostics are best-effort and must never change a completed
                 # caller result.  Do not include exception text in the log.
-                self._incidents.set_evidence_state(
-                    incident.incident_id, EvidenceState.UNAVAILABLE
-                )
+                self._incidents.set_evidence_state(incident.incident_id, EvidenceState.UNAVAILABLE)
                 evidence_state = EvidenceState.UNAVAILABLE
                 logger.warning(
                     "DOM incident diagnostic persistence failed for incident %s",
@@ -449,9 +448,7 @@ class DomIncidentRecorder:
     def resolve_deterministic_success(
         self, *, journey: DomJourney, step_id: DomStepId, observed_at: datetime
     ) -> int:
-        return self._incidents.resolve_deterministic_success(
-            journey, step_id, observed_at
-        )
+        return self._incidents.resolve_deterministic_success(journey, step_id, observed_at)
 
 
 class DomIncidentLifecycleWorker:
@@ -498,9 +495,7 @@ class DomIncidentLifecycleWorker:
         with self._incident_repository_factory() as incidents:
             stale = 0
             if not self._started:
-                stale = incidents.recover_stale_claims(
-                    instant - self._stale_claim_after
-                )
+                stale = incidents.recover_stale_claims(instant - self._stale_claim_after)
                 self._started = True
 
             delivered = rescheduled = failed = 0
@@ -533,9 +528,7 @@ class DomIncidentLifecycleWorker:
                     if next_attempt is not None
                     else DeliveryFailureCode.RETRIES_EXHAUSTED
                 )
-                incidents.mark_alert_failed(
-                    alert.alert_id, terminal_code, next_attempt
-                )
+                incidents.mark_alert_failed(alert.alert_id, terminal_code, next_attempt)
                 if next_attempt is None:
                     failed += 1
                 else:

@@ -427,7 +427,6 @@ def cmd_run(args: argparse.Namespace) -> int:
             telegram_client,
             browser_gate,
             on_connected=_synchronize_after_connect,
-            adaptive_runtime_scope=(coordinator.adaptive_runtime_scope_for_telegram_user),
         )
         coordinator.set_auth_required_notifier(remote_auth_runtime.reconnect_notifier.notify)
 

@@ -2,7 +2,7 @@
 intent: 022-adaptive-booking-browser-resilience
 phase: inception
 status: stories-defined
-updated: 2026-08-14T03:21:03Z
+updated: 2026-08-15T22:33:19.000Z
 ---
 
 # Adaptive Booking Browser Resilience - Unit Decomposition
@@ -20,6 +20,7 @@ updated: 2026-08-14T03:21:03Z
 - **FR-9**: Notify the owner with actionable, content-free evidence → `003-dom-drift-incident-operations`
 - **FR-10**: Retain encrypted diagnostics for seven days → `003-dom-drift-incident-operations`
 - **FR-11**: Finalize verified remote authentication atomically → `002-dom-resilient-browser-workflows`
+- **FR-12**: Verify remote authentication from Booking.com server evidence → `002-dom-resilient-browser-workflows`
 
 Every functional requirement is assigned exactly once.
 

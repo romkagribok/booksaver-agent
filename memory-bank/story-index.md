@@ -446,7 +446,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Unit | Stories | Status |
 |------|---------|--------|
 | `001-adaptive-model-policy` | 3 stories | Complete (bolt 041) |
-| `002-dom-resilient-browser-workflows` | 5 stories | Complete (bolts 042, 043, 045, 046) |
+| `002-dom-resilient-browser-workflows` | 6 stories | Complete (bolts 042, 043, 045–048) |
 | `003-dom-drift-incident-operations` | 3 stories | Complete (bolt 044) |
 
 ### 001-adaptive-model-policy: Adaptive Model Policy
@@ -466,6 +466,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-135` | Recover and interpret safe DOM drift | Adaptive Resilience | Complete | `002-dom-resilient-browser-workflows/stories/003-recover-and-interpret-safe-dom-drift.md` |
 | `US-136` | Explain every terminal browser outcome | Adaptive Resilience | Complete | `002-dom-resilient-browser-workflows/stories/004-explain-every-terminal-browser-outcome.md` |
 | `US-140` | Finalize verified remote authentication atomically | Adaptive Resilience | Complete | `002-dom-resilient-browser-workflows/stories/005-finalize-verified-remote-authentication-atomically.md` |
+| `US-141` | Verify remote authentication from server evidence | Adaptive Resilience | Complete | `002-dom-resilient-browser-workflows/stories/006-verify-remote-authentication-from-server-evidence.md` |
 
 ### 003-dom-drift-incident-operations: DOM-Drift Incident Operations
 
@@ -500,7 +501,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `019-booking-account-synchronization` | 2 | 7 | Complete (bolts 034–036; 959 tests) |
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
-| `022-adaptive-booking-browser-resilience` | 3 | 11 | Complete (bolts 041–046; 1548 tests) |
+| `022-adaptive-booking-browser-resilience` | 3 | 12 | Complete (bolts 041–048; 1561 tests) |
 
-All 140 stories (138 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
+All 141 stories (139 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
 exactly once.

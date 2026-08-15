@@ -159,15 +159,15 @@ def _decision(
 def test_registry_covers_exact_production_contract_without_legacy_home_form() -> None:
     declared_by_workflow = _production_dom_steps()
     declared = tuple(
-        step
-        for workflow_steps in declared_by_workflow.values()
-        for step in workflow_steps
+        step for workflow_steps in declared_by_workflow.values() for step in workflow_steps
     )
 
     validate_declared_dom_step_coverage(declared_by_workflow)
     assert len(declared) == len(set(declared))
-    assert set(declared) == set(DomStepId)
-    assert DOM_STEP_REGISTRY.step_ids == frozenset(declared)
+    assert set(declared) == set(DomStepId) - {DomStepId.REMOTE_AUTH_SESSION_CAPTURE}
+    assert declared_by_workflow["remote_auth.browser_runner"] == ()
+    assert DOM_STEP_REGISTRY.step_ids == frozenset(DomStepId)
+    assert DomStepId.REMOTE_AUTH_SESSION_CAPTURE not in declared
     assert all("open_home" not in step.value for step in declared)
     assert all("fill_search" not in step.value for step in declared)
 
@@ -222,9 +222,7 @@ def test_structural_coverage_failure_names_duplicate_workflows() -> None:
 def test_every_definition_has_total_mappings_and_diagnosis_has_no_capability() -> None:
     for definition in DOM_STEP_REGISTRY.definitions:
         assert {item.state for item in definition.state_mappings} == set(PageState)
-        assert {item.stop for item in definition.model_stop_mappings} == set(
-            ModelStopReason
-        )
+        assert {item.stop for item in definition.model_stop_mappings} == set(ModelStopReason)
         if definition.recovery_policy is not AdaptiveRecoveryPolicy.GUARDED_READ_ONLY:
             assert not definition.safe_capabilities
 
@@ -413,9 +411,7 @@ def test_remote_auth_sonnet_candidate_reaches_the_fixed_code_probe_boundary() ->
     assert resolution.classification.source is PageStateSource.SONNET
     assert resolution.terminal_reason is TerminalBrowserReason.CODE_VERIFICATION_REQUIRED
     assert resolution.verification_receipt is None
-    assert [request.profile.model_id for request in ledger.requests] == [
-        "claude-sonnet-5"
-    ]
+    assert [request.profile.model_id for request in ledger.requests] == ["claude-sonnet-5"]
     assert len(ledger.reconciliations) == 1
 
 
@@ -526,9 +522,7 @@ def test_low_confidence_sonnet_escalates_directly_without_schema_retry() -> None
 
 def test_provider_stop_is_exact_and_does_not_trigger_explanation_call() -> None:
     ledger = _Ledger()
-    model = _ModelClassifier(
-        ModelClassifierCall(stop_reason=ModelStopReason.PROVIDER_RATE_LIMIT)
-    )
+    model = _ModelClassifier(ModelClassifierCall(stop_reason=ModelStopReason.PROVIDER_RATE_LIMIT))
     budget_factory = _BudgetFactory(ledger)
     resolution = PageStateResolver(model).resolve(
         step_id=DomStepId.SESSION_VALIDATION,

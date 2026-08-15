@@ -1,15 +1,15 @@
 ---
 intent: 022-adaptive-booking-browser-resilience
-phase: inception
-status: context-defined
-updated: 2026-08-13T01:59:59Z
+phase: construction
+status: complete
+updated: 2026-08-15T23:16:21Z
 ---
 
 # Adaptive Booking Browser Resilience - System Context
 
 ## System Overview
 
-BookSaver runs deterministic, caller-scoped Booking.com account synchronization and customer-search
+BookSaver runs deterministic, caller-scoped Booking.com remote authentication, account synchronization, and customer-search
 price checks through one serialized browser coordinator. This intent adds an exhaustive DOM-step
 registry, adaptive Sonnet-to-Opus recovery, typed page interpretation, reasoned terminal outcomes,
 deployment-wide dollar admission, and owner-only DOM-drift incidents.
@@ -19,6 +19,8 @@ ambiguous. Predictable failures terminate immediately under their exact code wit
 When invoked, the model may act only through the existing guarded read-only action vocabulary on
 approved destinations. Protected authentication and transaction states are observation-only.
 Code-owned verifiers and domain policies remain the sole authority for success and state mutation.
+For `/connect`, authentication is verified independently from rendered pages through a versioned,
+read-only Booking server contract. DOM and models have no login-success authority.
 
 ## Actors
 
@@ -30,7 +32,7 @@ Code-owned verifiers and domain policies remain the sole authority for success a
   correct local user.
 - **CheckCoordinator** (System): Owns browser admission, caller authorization, session/key resolution,
   job budgets, cleanup, and use of the shared resilience boundary.
-- **Deterministic verifiers** (System): Decide page postconditions, authentication state changes,
+- **Deterministic verifiers** (System): Decide page postconditions, server-backed authentication receipts,
   inventory completeness, identity, offer equivalence, and accepted price evidence.
 - **Sonnet 5** (External model): Default bounded page classifier, recovery agent, typed interpreter,
   and first-line diagnostic.
@@ -64,6 +66,8 @@ Code-owned verifiers and domain policies remain the sole authority for success a
 - Sonnet/Opus typed classifications, guarded action proposals, typed positive observations, and
   usage metadata; all are untrusted until validated.
 - Telegram delivery success/failure and local clock values for budget, deduplication, and retention.
+- Attempt-local immutable Booking cookie snapshots and closed server response classes for `/connect`;
+  cookie values and response content never cross the verification boundary.
 
 ### Outbound
 
@@ -83,7 +87,11 @@ flowchart LR
     Owner["Self-hosted owner/admin"] --> Telegram
     Scheduler["Randomized scheduler"] --> Coordinator["CheckCoordinator"]
     Telegram --> Coordinator
-    Coordinator --> Session["Caller-scoped session and key"]
+    Coordinator --> Login["Transient remote login browser"]
+    Login --> ServerVerify["Isolated server-session verifier"]
+    ServerVerify --> Session["Encrypted caller-scoped session"]
+    Login --> Booking
+    ServerVerify --> Booking
     Coordinator --> Registry["DOM-step registry and resilience controller"]
     Registry --> Browser["Guarded Playwright browser"]
     Browser --> Booking["Booking.com"]
@@ -109,6 +117,8 @@ flowchart LR
   permissions, budgets, or domain authority.
 - Authentication/MFA/captcha/bot-wall pages may be observed and classified but never operated by a
   model. Credentials and session secrets never enter prompts or diagnostic bundles.
+- `/connect` success requires a code-owned server receipt bound to the exact cookie snapshot. DOM,
+  visible URL, cookie names/presence, and models cannot create or override that receipt.
 - ActionGuard and Booking.com allowlists validate every proposed action after model output and every
   resulting top-level page before progress is accepted.
 - Deterministic verifiers alone establish authenticated state, inventory completeness, reservation

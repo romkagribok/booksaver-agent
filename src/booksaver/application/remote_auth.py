@@ -492,6 +492,25 @@ class RemoteAuthenticationManager:
                     "Booking.com authentication was verified, but BookSaver could not save "
                     "the session. No session was replaced. Send /connect to retry.",
                 )
+            elif attempt.failure is RemoteAuthFailure.VERIFICATION_CONTRACT_CHANGED:
+                self._safe_notify(
+                    chat_id,
+                    "Booking.com changed the server response BookSaver uses to verify login. "
+                    "No session was replaced; the owner has been notified that code "
+                    "maintenance is required.",
+                )
+            elif attempt.failure is RemoteAuthFailure.VERIFICATION_UNAVAILABLE:
+                self._safe_notify(
+                    chat_id,
+                    "Booking.com login verification is temporarily unavailable. No session "
+                    "was replaced. Send /connect to retry shortly.",
+                )
+            elif attempt.failure is RemoteAuthFailure.VERIFICATION_BLOCKED:
+                self._safe_notify(
+                    chat_id,
+                    "Booking.com login verification reached an unapproved destination. "
+                    "No session was saved; contact the BookSaver owner.",
+                )
             else:
                 self._safe_notify(
                     chat_id,
@@ -583,6 +602,18 @@ class RemoteAuthenticationManager:
                 "Authentication was verified, but BookSaver could not save the session. "
                 "Return to Telegram and send /connect to retry."
             )
+        if attempt.failure is RemoteAuthFailure.VERIFICATION_CONTRACT_CHANGED:
+            return (
+                "Booking.com changed the server response used to verify login. No session was "
+                "saved; return to Telegram."
+            )
+        if attempt.failure is RemoteAuthFailure.VERIFICATION_UNAVAILABLE:
+            return (
+                "Booking.com login verification is temporarily unavailable. No session was "
+                "saved; return to Telegram and retry shortly."
+            )
+        if attempt.failure is RemoteAuthFailure.VERIFICATION_BLOCKED:
+            return "Login verification reached an unapproved destination. No session was saved."
         return "Connection failed. No Booking.com session was saved."
 
     def _safe_record_incident(self, draft: IncidentDraft | None) -> None:
