@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 
@@ -13,6 +14,7 @@ from booksaver.application.remote_auth import (
     RemoteBrowserResult,
     RemoteBrowserWork,
 )
+from booksaver.domain.dom_incident import IncidentDraft
 from booksaver.domain.remote_auth import RemoteAuthSettings, RemoteAuthStatus
 
 
@@ -27,12 +29,17 @@ class ControlledRunner:
         work: RemoteBrowserWork,
         daemon_stop_event: threading.Event,
         on_ready: object,
+        on_finalizing: object,
     ) -> RemoteBrowserResult:
         self.started.set()
         assert callable(on_ready)
         on_ready()
         while not self.release.wait(0.01):
             if work.cancel_event.is_set() or daemon_stop_event.is_set():
+                return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
+        if self.result.status is RemoteAuthStatus.SUCCEEDED:
+            assert callable(on_finalizing)
+            if not on_finalizing():
                 return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
         return self.result
 
@@ -54,6 +61,7 @@ class SequentialRunner:
         work: RemoteBrowserWork,
         daemon_stop_event: threading.Event,
         on_ready: object,
+        on_finalizing: object,
     ) -> RemoteBrowserResult:
         call = RunnerCall(work)
         with self._condition:
@@ -65,10 +73,7 @@ class SequentialRunner:
         while not call.release.wait(0.005):
             if daemon_stop_event.is_set():
                 return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
-            if (
-                work.cancel_event.is_set()
-                and call_index not in self.ignore_cancel_calls
-            ):
+            if work.cancel_event.is_set() and call_index not in self.ignore_cancel_calls:
                 return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
         if work.cancel_event.is_set():
             return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
@@ -78,6 +83,31 @@ class SequentialRunner:
         with self._condition:
             assert self._condition.wait_for(lambda: len(self.calls) > index, timeout=1)
             return self.calls[index]
+
+
+class FinalizingRunner:
+    def __init__(self, result: RemoteBrowserResult) -> None:
+        self.result = result
+        self.finalizing = threading.Event()
+        self.release = threading.Event()
+
+    def run(
+        self,
+        work: RemoteBrowserWork,
+        daemon_stop_event: threading.Event,
+        on_ready: object,
+        on_finalizing: object,
+    ) -> RemoteBrowserResult:
+        assert callable(on_ready)
+        assert callable(on_finalizing)
+        on_ready()
+        if not on_finalizing():
+            return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
+        self.finalizing.set()
+        assert self.release.wait(1)
+        if work.cancel_event.is_set() or daemon_stop_event.is_set():
+            return RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
+        return self.result
 
 
 def _settings(**overrides: object) -> RemoteAuthSettings:
@@ -102,9 +132,7 @@ def test_remote_auth_settings_require_safe_https_origin() -> None:
 
 
 def test_manager_binds_single_use_launch_to_user_and_captures_once() -> None:
-    runner = ControlledRunner(
-        RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
-    )
+    runner = ControlledRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
     captured: list[tuple[int, str]] = []
     messages: list[tuple[int, str]] = []
     gate = threading.Lock()
@@ -155,6 +183,150 @@ def test_manager_binds_single_use_launch_to_user_and_captures_once() -> None:
     assert not gate.locked()
 
 
+def test_verified_attempt_is_finalizing_and_refuses_viewer_cancel() -> None:
+    draft = cast(IncidentDraft, object())
+    runner = FinalizingRunner(
+        RemoteBrowserResult(
+            RemoteAuthStatus.SUCCEEDED,
+            cookies_json="[]",
+            incident_draft=draft,
+        )
+    )
+    sequence: list[str] = []
+    messages: list[str] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: sequence.append("capture"),
+        lambda _chat_id, text: messages.append(text),
+        incident_sink=lambda value: sequence.append(
+            "incident" if value is draft else "wrong-incident"
+        ),
+    )
+
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    assert runner.finalizing.wait(1)
+
+    state = manager.viewer_state(grant.session_token)
+    assert state.status is RemoteAuthStatus.FINALIZING
+    assert state.websocket_path is None
+    assert state.websocket_token is None
+    assert "verified; saving" in (state.message or "")
+    assert not manager.cancel(grant.session_token)
+    with pytest.raises(RemoteAuthBusy, match="being saved"):
+        manager.create(123, 123)
+
+    runner.release.set()
+    for _ in range(100):
+        if messages:
+            break
+        threading.Event().wait(0.01)
+
+    assert sequence == ["capture", "incident"]
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.SUCCEEDED
+    assert messages == [
+        "Booking.com connected successfully. Future checks will use your "
+        "authenticated mobile-web prices."
+    ]
+
+
+def test_administrative_cancel_still_wins_during_finalizing() -> None:
+    runner = FinalizingRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
+    captured: list[str] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, raw: captured.append(raw),
+        lambda _chat_id, _text: None,
+    )
+
+    manager.create(123, 123)
+    assert runner.finalizing.wait(1)
+    assert manager.cancel_for_telegram_user(123)
+    runner.release.set()
+    manager.stop_all()
+
+    assert captured == []
+
+
+def test_incident_failure_does_not_undo_committed_session(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    draft = cast(IncidentDraft, object())
+    runner = ControlledRunner(
+        RemoteBrowserResult(
+            RemoteAuthStatus.SUCCEEDED,
+            cookies_json="[]",
+            incident_draft=draft,
+        )
+    )
+    captured: list[str] = []
+    messages: list[str] = []
+
+    def _reject_incident(_draft: IncidentDraft) -> None:
+        raise RuntimeError("sensitive incident detail")
+
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, raw: captured.append(raw),
+        lambda _chat_id, text: messages.append(text),
+        incident_sink=_reject_incident,
+    )
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    runner.release.set()
+    for _ in range(100):
+        if messages:
+            break
+        threading.Event().wait(0.01)
+
+    assert captured == ["[]"]
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.SUCCEEDED
+    assert len(messages) == 1
+    assert "incident recording failed" in caplog.text
+    assert "sensitive incident detail" not in caplog.text
+
+
+def test_success_without_finalization_latch_is_rejected() -> None:
+    class InvalidRunner:
+        def run(
+            self,
+            work: RemoteBrowserWork,
+            daemon_stop_event: threading.Event,
+            on_ready: object,
+            on_finalizing: object,
+        ) -> RemoteBrowserResult:
+            del work, daemon_stop_event, on_finalizing
+            assert callable(on_ready)
+            on_ready()
+            return RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
+
+    captured: list[str] = []
+    messages: list[str] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        InvalidRunner(),
+        threading.Event(),
+        lambda _user_id, raw: captured.append(raw),
+        lambda _chat_id, text: messages.append(text),
+    )
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    for _ in range(100):
+        if messages:
+            break
+        threading.Event().wait(0.01)
+
+    assert captured == []
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.FAILED
+    assert len(messages) == 1
+
+
 def test_manager_preserves_expired_state_until_worker_teardown() -> None:
     now = datetime(2026, 7, 20, tzinfo=UTC)
     current = [now]
@@ -185,9 +357,7 @@ def test_manager_preserves_expired_state_until_worker_teardown() -> None:
 
 
 def test_manager_cancellation_is_idempotent_and_never_captures() -> None:
-    runner = ControlledRunner(
-        RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
-    )
+    runner = ControlledRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
     captured: list[str] = []
     manager = RemoteAuthenticationManager(
         _settings(),
@@ -233,8 +403,7 @@ def test_same_user_connect_immediately_replaces_active_attempt() -> None:
         123,
     )
     assert (
-        manager.viewer_state(replacement_grant.session_token).status
-        is RemoteAuthStatus.CONNECTED
+        manager.viewer_state(replacement_grant.session_token).status is RemoteAuthStatus.CONNECTED
     )
     assert messages == []
     assert gate.locked()
@@ -258,9 +427,7 @@ def test_same_user_replacement_reserves_gate_during_worker_teardown() -> None:
     first_call = runner.wait_for_call(0)
     replacements: list[str] = []
 
-    thread = threading.Thread(
-        target=lambda: replacements.append(manager.create(123, 123).url)
-    )
+    thread = threading.Thread(target=lambda: replacements.append(manager.create(123, 123).url))
     thread.start()
     assert first_call.work.cancel_event.wait(1)
 
@@ -290,9 +457,7 @@ def test_same_user_connect_replaces_pagehide_cancelled_worker() -> None:
     grant = manager.exchange(first.url.rsplit("/", 1)[-1], 123)
     assert manager.cancel(grant.session_token)
     replacements: list[str] = []
-    thread = threading.Thread(
-        target=lambda: replacements.append(manager.create(123, 123).url)
-    )
+    thread = threading.Thread(target=lambda: replacements.append(manager.create(123, 123).url))
     thread.start()
     first_call.release.set()
     thread.join(timeout=1)
@@ -392,9 +557,7 @@ def test_two_racing_same_user_connects_leave_one_browser_active() -> None:
 
 
 def test_manager_target_cancellation_is_scoped_and_prevents_capture() -> None:
-    runner = ControlledRunner(
-        RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
-    )
+    runner = ControlledRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
     captured: list[tuple[int, str]] = []
     manager = RemoteAuthenticationManager(
         _settings(),
@@ -417,9 +580,7 @@ def test_manager_target_cancellation_is_scoped_and_prevents_capture() -> None:
 
 
 def test_manager_target_cancellation_waits_for_completed_capture() -> None:
-    runner = ControlledRunner(
-        RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
-    )
+    runner = ControlledRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
     capture_started = threading.Event()
     release_capture = threading.Event()
     captured: list[tuple[int, str]] = []
@@ -458,11 +619,19 @@ def test_manager_target_cancellation_waits_for_completed_capture() -> None:
     assert captured == [(123, "[]")]
 
 
-def test_manager_redacts_capture_failure_and_releases_browser_gate() -> None:
+def test_manager_redacts_capture_failure_and_drops_recovered_incident(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    draft = cast(IncidentDraft, object())
     runner = ControlledRunner(
-        RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
+        RemoteBrowserResult(
+            RemoteAuthStatus.SUCCEEDED,
+            cookies_json="[]",
+            incident_draft=draft,
+        )
     )
     messages: list[str] = []
+    incidents: list[IncidentDraft] = []
     gate = threading.Lock()
 
     def _reject(_user_id: int, _raw: str) -> None:
@@ -475,6 +644,7 @@ def test_manager_redacts_capture_failure_and_releases_browser_gate() -> None:
         _reject,
         lambda _chat_id, text: messages.append(text),
         browser_gate=gate,
+        incident_sink=incidents.append,
     )
     launch = manager.create(123, 123)
     grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
@@ -485,18 +655,22 @@ def test_manager_redacts_capture_failure_and_releases_browser_gate() -> None:
         threading.Event().wait(0.01)
 
     assert messages == [
-        "Booking.com connection failed and no session was saved. Send /connect to retry."
+        "Booking.com authentication was verified, but BookSaver could not save the "
+        "session. No session was replaced. Send /connect to retry."
     ]
-    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.FAILED
+    state = manager.viewer_state(grant.session_token)
+    assert state.status is RemoteAuthStatus.FAILED
+    assert "could not save the session" in (state.message or "")
+    assert incidents == []
+    assert "ValueError" in caplog.text
+    assert "sensitive parser detail" not in caplog.text
     assert not gate.locked()
 
 
 def test_terminal_viewer_capability_is_pruned_at_attempt_expiry() -> None:
     now = datetime(2026, 7, 20, tzinfo=UTC)
     current = [now]
-    runner = ControlledRunner(
-        RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]")
-    )
+    runner = ControlledRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
     messages: list[str] = []
     manager = RemoteAuthenticationManager(
         _settings(session_timeout_seconds=120),

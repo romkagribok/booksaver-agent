@@ -11,6 +11,7 @@ class RemoteAuthStatus(Enum):
     STARTING = "starting"
     READY = "ready"
     CONNECTED = "connected"
+    FINALIZING = "finalizing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     EXPIRED = "expired"
@@ -74,13 +75,9 @@ class RemoteAuthSettings:
         if self.listen_port == self.websocket_port:
             raise ValueError("remote_auth listen and websocket ports must differ")
         if not 120 <= self.session_timeout_seconds <= 1800:
-            raise ValueError(
-                "remote_auth.session_timeout_seconds must be between 120 and 1800"
-            )
+            raise ValueError("remote_auth.session_timeout_seconds must be between 120 and 1800")
         if not 60 <= self.telegram_init_max_age_seconds <= 900:
-            raise ValueError(
-                "remote_auth.telegram_init_max_age_seconds must be between 60 and 900"
-            )
+            raise ValueError("remote_auth.telegram_init_max_age_seconds must be between 60 and 900")
         if not self.display.startswith(":") or not self.display[1:].isdigit():
             raise ValueError("remote_auth.display must look like ':99'")
 

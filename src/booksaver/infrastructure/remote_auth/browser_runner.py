@@ -10,7 +10,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -72,9 +72,7 @@ _OBSERVABLE_SELECTOR = (
 _SEMANTIC_PROOF_ROLES = frozenset(
     {"button", "heading", "link", "list", "listitem", "tab", "tablist"}
 )
-_SEMANTIC_COMPANION_ROLES = frozenset(
-    {"button", "link", "list", "listitem", "tab", "tablist"}
-)
+_SEMANTIC_COMPANION_ROLES = frozenset({"button", "link", "list", "listitem", "tab", "tablist"})
 
 
 @dataclass(frozen=True)
@@ -89,7 +87,6 @@ class RemoteAuthPageStateCapability:
 PageStateCapabilityFactory = Callable[
     [RemoteBrowserWork], AbstractContextManager[RemoteAuthPageStateCapability]
 ]
-IncidentSink = Callable[[IncidentDraft], None]
 
 
 @dataclass(frozen=True)
@@ -161,9 +158,7 @@ class _InventoryProbeOutcome:
 
     @property
     def verified(self) -> bool:
-        return self.assessment is not None and assessment_proves_authenticated(
-            self.assessment
-        )
+        return self.assessment is not None and assessment_proves_authenticated(self.assessment)
 
 
 def _is_booking_navigation_url(url: str) -> bool:
@@ -194,18 +189,17 @@ class SystemRemoteBrowserRunner:
         mobile_settings: MobileWebSettings,
         *,
         page_state_capability_factory: PageStateCapabilityFactory | None = None,
-        incident_sink: IncidentSink | None = None,
     ) -> None:
         self._settings = settings
         self._mobile_settings = mobile_settings
         self._page_state_capability_factory = page_state_capability_factory
-        self._incident_sink = incident_sink
 
     def run(
         self,
         work: RemoteBrowserWork,
         daemon_stop_event: Any,
         on_ready: Callable[[], None],
+        on_finalizing: Callable[[], bool],
     ) -> RemoteBrowserResult:
         capability_context = (
             self._page_state_capability_factory(work)
@@ -218,6 +212,7 @@ class SystemRemoteBrowserRunner:
                     work,
                     daemon_stop_event,
                     on_ready,
+                    on_finalizing,
                     capability,
                 )
         except Exception as exc:
@@ -233,20 +228,18 @@ class SystemRemoteBrowserRunner:
             )
 
         # _run_browser closes Playwright and every display process before it
-        # returns. Incident persistence therefore cannot overlap the browser
-        # or retain live page authority.
-        if execution.incident_draft is not None and self._incident_sink is not None:
-            try:
-                self._incident_sink(execution.incident_draft)
-            except Exception:
-                logger.warning("Remote authentication incident recording failed")
-        return execution.result
+        # returns. The application layer persists this sanitized draft only
+        # after encrypted session capture commits.
+        if execution.incident_draft is None:
+            return execution.result
+        return replace(execution.result, incident_draft=execution.incident_draft)
 
     def _run_browser(
         self,
         work: RemoteBrowserWork,
         daemon_stop_event: Any,
         on_ready: Callable[[], None],
+        on_finalizing: Callable[[], bool],
         capability: RemoteAuthPageStateCapability,
     ) -> _RemoteBrowserExecution:
         processes: list[subprocess.Popen[bytes]] = []
@@ -352,11 +345,9 @@ class SystemRemoteBrowserRunner:
                         verified = assessment_proves_authenticated(assessment)
                         if verified:
                             cookies = json.dumps(context.cookies(), separators=(",", ":"))
-                            return _RemoteBrowserExecution(
-                                RemoteBrowserResult(
-                                    RemoteAuthStatus.SUCCEEDED,
-                                    cookies_json=cookies,
-                                )
+                            return self._finalized_success_execution(
+                                cookies,
+                                on_finalizing,
                             )
                         resolved = self._resolve_ambiguous_state(
                             page,
@@ -377,11 +368,9 @@ class SystemRemoteBrowserRunner:
                             if terminal is not None:
                                 if terminal.result.status is RemoteAuthStatus.SUCCEEDED:
                                     cookies = json.dumps(context.cookies(), separators=(",", ":"))
-                                    return _RemoteBrowserExecution(
-                                        RemoteBrowserResult(
-                                            RemoteAuthStatus.SUCCEEDED,
-                                            cookies_json=cookies,
-                                        ),
+                                    return self._finalized_success_execution(
+                                        cookies,
+                                        on_finalizing,
                                         incident_draft=terminal.incident_draft,
                                     )
                                 return terminal
@@ -429,6 +418,37 @@ class SystemRemoteBrowserRunner:
                 except Exception:
                     pass
             self._terminate(processes)
+
+    @staticmethod
+    def _finalized_success_execution(
+        cookies_json: str,
+        on_finalizing: Callable[[], bool],
+        *,
+        incident_draft: IncidentDraft | None = None,
+    ) -> _RemoteBrowserExecution:
+        try:
+            admitted = on_finalizing()
+        except Exception as exc:
+            logger.warning(
+                "Remote authentication finalization admission ended with %s",
+                type(exc).__name__,
+            )
+            return _RemoteBrowserExecution(
+                RemoteBrowserResult(
+                    RemoteAuthStatus.FAILED,
+                    failure=RemoteAuthFailure.BROWSER_FAILED,
+                )
+            )
+        if not admitted:
+            logger.info("Remote authentication finalization cancelled before commit")
+            return _RemoteBrowserExecution(RemoteBrowserResult(RemoteAuthStatus.CANCELLED))
+        return _RemoteBrowserExecution(
+            RemoteBrowserResult(
+                RemoteAuthStatus.SUCCEEDED,
+                cookies_json=cookies_json,
+            ),
+            incident_draft=incident_draft,
+        )
 
     def _resolve_ambiguous_state(
         self,
@@ -499,7 +519,9 @@ class SystemRemoteBrowserRunner:
                     (
                         probe.terminal_reason.value
                         if probe.terminal_reason is not None
-                        else "verified" if probe.verified else "ambiguous"
+                        else "verified"
+                        if probe.verified
+                        else "ambiguous"
                     ),
                 )
                 if probe.terminal_reason is not None:
@@ -632,9 +654,7 @@ class SystemRemoteBrowserRunner:
                     observation_id=observation_id,
                     status=StepVerificationStatus.AMBIGUOUS,
                     evidence=(
-                        classification.evidence
-                        if classification is not None
-                        else frozenset()
+                        classification.evidence if classification is not None else frozenset()
                     ),
                 ),
                 False,

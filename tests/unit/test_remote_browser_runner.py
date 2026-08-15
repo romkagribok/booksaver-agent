@@ -22,7 +22,11 @@ from booksaver.domain.browser_resilience import (
 )
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.model_policy import ModelStopReason
-from booksaver.domain.remote_auth import RemoteAuthSettings, RemoteAuthStatus
+from booksaver.domain.remote_auth import (
+    RemoteAuthFailure,
+    RemoteAuthSettings,
+    RemoteAuthStatus,
+)
 from booksaver.infrastructure.remote_auth.browser_runner import (
     RemoteAuthPageStateCapability,
     SystemRemoteBrowserRunner,
@@ -796,9 +800,8 @@ def test_remote_browser_unexpected_resolver_error_is_typed_infrastructure_stop()
     assert resolved[0].model_stop_reason is None
 
 
-def test_remote_browser_records_incident_only_after_browser_execution_cleanup() -> None:
+def test_remote_browser_returns_pending_incident_only_after_execution_cleanup() -> None:
     browser_active = True
-    recorded: list[object] = []
     draft = object()
 
     class Runner(SystemRemoteBrowserRunner):
@@ -806,19 +809,11 @@ def test_remote_browser_records_incident_only_after_browser_execution_cleanup() 
             nonlocal browser_active
             browser_active = False
             return _RemoteBrowserExecution(
-                RemoteBrowserResult(RemoteAuthStatus.CANCELLED),
+                RemoteBrowserResult(RemoteAuthStatus.FAILED),
                 incident_draft=draft,  # type: ignore[arg-type]
             )
 
-    def _sink(value: object) -> None:
-        assert not browser_active
-        recorded.append(value)
-
-    runner = Runner(
-        RemoteAuthSettings(),
-        MobileWebSettings(),
-        incident_sink=_sink,  # type: ignore[arg-type]
-    )
+    runner = Runner(RemoteAuthSettings(), MobileWebSettings())
     work = RemoteBrowserWork(
         attempt_id="attempt-1",
         telegram_user_id=1,
@@ -827,7 +822,59 @@ def test_remote_browser_records_incident_only_after_browser_execution_cleanup() 
         cancel_event=threading.Event(),
     )
 
-    result = runner.run(work, threading.Event(), lambda: None)
+    result = runner.run(work, threading.Event(), lambda: None, lambda: True)
 
-    assert result.status is RemoteAuthStatus.CANCELLED
-    assert recorded == [draft]
+    assert not browser_active
+    assert result.status is RemoteAuthStatus.FAILED
+    assert result.incident_draft is draft
+
+
+def test_remote_browser_finalization_admission_is_required_for_success() -> None:
+    admitted_calls = 0
+    draft = object()
+
+    def _admit() -> bool:
+        nonlocal admitted_calls
+        admitted_calls += 1
+        return True
+
+    execution = SystemRemoteBrowserRunner._finalized_success_execution(  # noqa: SLF001
+        "[]",
+        _admit,
+        incident_draft=draft,  # type: ignore[arg-type]
+    )
+
+    assert admitted_calls == 1
+    assert execution.result.status is RemoteAuthStatus.SUCCEEDED
+    assert execution.result.cookies_json == "[]"
+    assert execution.incident_draft is draft
+
+
+def test_remote_browser_rejected_finalization_discards_cookies_and_incident() -> None:
+    execution = SystemRemoteBrowserRunner._finalized_success_execution(  # noqa: SLF001
+        "sensitive-cookie-json",
+        lambda: False,
+        incident_draft=object(),  # type: ignore[arg-type]
+    )
+
+    assert execution.result.status is RemoteAuthStatus.CANCELLED
+    assert execution.result.cookies_json is None
+    assert execution.incident_draft is None
+
+
+def test_remote_browser_finalization_callback_failure_is_typed_and_redacted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def _reject() -> bool:
+        raise ValueError("sensitive callback detail")
+
+    execution = SystemRemoteBrowserRunner._finalized_success_execution(  # noqa: SLF001
+        "sensitive-cookie-json",
+        _reject,
+    )
+
+    assert execution.result.status is RemoteAuthStatus.FAILED
+    assert execution.result.failure is RemoteAuthFailure.BROWSER_FAILED
+    assert execution.result.cookies_json is None
+    assert "ValueError" in caplog.text
+    assert "sensitive callback detail" not in caplog.text

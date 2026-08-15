@@ -24,6 +24,7 @@ export default class RFB extends EventTarget {
   }
   sendKey(...args) { this.keys.push(args); }
   disconnect() {
+    this.disconnected = true;
     this.dispatchEvent(new CustomEvent('disconnect', {detail: {clean: true}}));
   }
   forceDirtyDisconnect() {
@@ -342,11 +343,53 @@ def test_terminal_viewer_disables_input_and_does_not_cancel_on_close(
     server, url = viewer_server
     server.session_status = "succeeded"
     browser_page.goto(url)
-    browser_page.wait_for_function(
-        "document.querySelector('#status').textContent === 'Done'"
-    )
+    browser_page.wait_for_function("document.querySelector('#status').textContent === 'Done'")
 
     assert browser_page.locator("#keyboard").is_disabled()
+    browser_page.evaluate(
+        "window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: false}))"
+    )
+    browser_page.wait_for_timeout(50)
+    assert server.cancellations == 0
+    assert browser_page.evaluate("window.__telegramClosed") is True
+
+
+def test_finalizing_disables_viewer_and_suppresses_pagehide_until_success(
+    viewer_server: tuple[_ViewerServer, str],
+    browser_page: Page,
+) -> None:
+    server, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+
+    server.session_status = "finalizing"
+    browser_page.wait_for_function(
+        "document.querySelector('#cancel').disabled && document.querySelector('#keyboard').disabled"
+    )
+    assert browser_page.evaluate("window.__rfbInstances[0].disconnected") is True
+
+    browser_page.evaluate(
+        "window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: false}))"
+    )
+    browser_page.wait_for_timeout(50)
+    assert server.cancellations == 0
+
+    server.session_status = "succeeded"
+    browser_page.wait_for_function("window.__telegramClosed === true")
+    assert server.cancellations == 0
+
+
+def test_failed_viewer_remains_visible_and_does_not_close_telegram(
+    viewer_server: tuple[_ViewerServer, str],
+    browser_page: Page,
+) -> None:
+    server, url = viewer_server
+    server.session_status = "failed"
+    browser_page.goto(url)
+    browser_page.wait_for_function("document.querySelector('#status').textContent === 'Done'")
+
+    assert browser_page.evaluate("Boolean(window.__telegramClosed)") is False
+    assert browser_page.locator("#cancel").is_disabled()
     browser_page.evaluate(
         "window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: false}))"
     )

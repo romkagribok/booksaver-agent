@@ -3,7 +3,7 @@ intent: 022-adaptive-booking-browser-resilience
 phase: inception
 status: complete
 created: 2026-08-13T01:51:45.000Z
-updated: 2026-08-13T02:25:17.000Z
+updated: 2026-08-14T03:21:03.000Z
 ---
 
 # Requirements: Adaptive Booking Browser Resilience
@@ -284,6 +284,27 @@ booking, cancellation, modification, checkout, purchase, and payment boundary.
   - Encryption/storage failure does not suppress the content-free incident or owner notification.
 - **Priority**: Must
 - **Related Stories**: US-139
+
+### FR-11: Finalize verified remote authentication atomically
+
+- **Description**: Once the remote browser has code-verified an authenticated Booking.com
+  inventory page, BookSaver must finish session capture exactly once without an ordinary viewer
+  close racing the verified result into cancellation.
+- **Acceptance Criteria**:
+  - Before code verification, explicit viewer cancellation, viewer abandonment, daemon shutdown,
+    and administrative user purge retain their existing cancellation authority.
+  - After code verification begins finalization, an ordinary viewer close cannot discard the
+    verified result; administrative purge/revocation and daemon shutdown remain fail-closed.
+  - The encrypted session is persisted successfully before the attempt becomes `succeeded`, the
+    viewer closes, Telegram reports connection, or a recovered DOM incident is recorded.
+  - A rejected session capture produces a typed safe failure, no false recovered incident, no
+    success notification, and no stale `connected` viewer state.
+  - The Telegram Mini App closes itself only after polling a committed `succeeded` state. A failed
+    finalization remains visible with safe retry guidance.
+  - Logs record only allowlisted finalization stages, outcomes, and exception classes; cookies,
+    capabilities, user identity, page content, and reservation data remain absent.
+- **Priority**: Must
+- **Related Stories**: US-140
 
 ## Non-Functional Requirements
 

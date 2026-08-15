@@ -157,13 +157,13 @@ def build_remote_auth_runtime(
             settings,
             config.mobile_web_settings,
             page_state_capability_factory=_page_state_capability,
-            incident_sink=_record_incident,
         ),
         daemon_stop_event=stop_event,
         capture_session=_capture,
         notify_user=_notify,
         on_success=_connected,
         browser_gate=browser_gate,
+        incident_sink=_record_incident,
     )
     verifier = TelegramInitDataVerifier(
         bot_token,

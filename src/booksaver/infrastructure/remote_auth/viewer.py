@@ -56,6 +56,7 @@ const keyboardButton=document.getElementById('keyboard');
 const nextButton=document.getElementById('next');
 const enterButton=document.getElementById('enter');
 const helpButton=document.getElementById('help-button');
+const cancelButton=document.getElementById('cancel');
 const tg=window.Telegram&&window.Telegram.WebApp;
 const platform=(tg&&tg.platform)||'unknown';
 const touchFirst=['android','android_x','ios'].includes(platform)||
@@ -242,16 +243,28 @@ async function poll(){
  try{
   const state=await jsonRequest('/api/connect/session');
   terminalState=terminalStatuses.has(state.status);
-  if(!viewerError||terminalState)setStatus(state.message);
+  const finalizing=state.status==='finalizing';
+  if(!viewerError||terminalState||finalizing)setStatus(state.message);
+  if(finalizing){
+   closeRequested=true;
+   teardownInput();
+   cancelButton.disabled=true;
+   if(rfb){const current=rfb;rfb=null;current.disconnect();}
+   schedulePoll(250);
+   return;
+  }
   if((state.status==='ready'||state.status==='connected')&&!rfb&&!reconnectExhausted){
    await connectViewer(state);
   }
   if(terminalState){
    closeRequested=true;
    teardownInput();
+   cancelButton.disabled=true;
    if(rfb){const current=rfb;rfb=null;current.disconnect();}
+   if(state.status==='succeeded'&&tg&&typeof tg.close==='function')tg.close();
    return;
   }
+  cancelButton.disabled=false;
   schedulePoll();
  }catch(error){
   teardownInput();
@@ -286,7 +299,7 @@ helpButton.addEventListener('click',()=>{
  helpNode.hidden=!hidden;
  helpButton.setAttribute('aria-expanded',String(hidden));
 });
-document.getElementById('cancel').addEventListener('click',async()=>{
+cancelButton.addEventListener('click',async()=>{
  closeRequested=true;
  teardownInput();
  try{await jsonRequest('/api/connect/cancel',{method:'POST'});}catch(_){}

@@ -2,7 +2,7 @@
 intent: 022-adaptive-booking-browser-resilience
 phase: inception
 status: stories-defined
-updated: 2026-08-13T01:59:59Z
+updated: 2026-08-14T03:21:03Z
 ---
 
 # Adaptive Booking Browser Resilience - Unit Decomposition
@@ -19,6 +19,7 @@ updated: 2026-08-13T01:59:59Z
 - **FR-8**: Detect and correlate likely DOM-drift incidents → `003-dom-drift-incident-operations`
 - **FR-9**: Notify the owner with actionable, content-free evidence → `003-dom-drift-incident-operations`
 - **FR-10**: Retain encrypted diagnostics for seven days → `003-dom-drift-incident-operations`
+- **FR-11**: Finalize verified remote authentication atomically → `002-dom-resilient-browser-workflows`
 
 Every functional requirement is assigned exactly once.
 
@@ -52,6 +53,7 @@ remains across authentication capture, inventory synchronization, and customer-s
 - `002-classify-current-page-with-llm-fallback`
 - `003-recover-and-interpret-safe-dom-drift`
 - `004-explain-every-terminal-browser-outcome`
+- `005-finalize-verified-remote-authentication-atomically`
 
 **Dependencies**: Unit 1, completed intent 021 recovery controller, Playwright adapter, account
 synchronization, remote authentication capture, customer-search journey, offer extraction,
