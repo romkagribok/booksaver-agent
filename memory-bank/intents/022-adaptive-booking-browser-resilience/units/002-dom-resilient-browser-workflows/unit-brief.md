@@ -1,10 +1,10 @@
 ---
 unit: 002-dom-resilient-browser-workflows
 intent: 022-adaptive-booking-browser-resilience
-phase: inception
+phase: construction
 status: complete
 created: 2026-08-13T01:59:59.000Z
-updated: 2026-08-15T15:55:59.000Z
+updated: 2026-08-15T23:16:21Z
 default_bolt_type: ddd-construction-bolt
 ---
 
@@ -27,6 +27,7 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 - Sonnet/Opus recovery and typed interpretation for safe navigation and positive visible facts.
 - Controlled adoption of one allowlisted read-only popup.
 - DOM-independent semantic verifier evidence guarded by trusted domain comparison.
+- DOM-independent `/connect` verification from a versioned read-only Booking server contract.
 - Specific terminal taxonomy, reauth propagation, caller guidance, and redacted audit.
 
 ### Out of Scope
@@ -45,6 +46,7 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 | FR-3 | Recover or interpret every safe DOM-dependent step | Must |
 | FR-4 | Explain every terminal browser outcome | Must |
 | FR-11 | Finalize verified remote authentication atomically | Must |
+| FR-12 | Verify remote authentication from Booking.com server evidence | Must |
 
 ## Domain Concepts
 
@@ -56,6 +58,10 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 - **AdoptablePopup**: One allowlisted read-only child page validated before control transfer.
 - **RemoteAuthFinalization**: Verified, non-viewer-cancellable session-capture phase whose success is
   committed only after encrypted persistence; administrative purge and shutdown remain authoritative.
+- **RemoteAuthSessionContract**: Versioned signed-out/signed-in response distinction for one literal
+  read-only Booking account endpoint, proven in fresh isolated contexts.
+- **RemoteAuthServerReceipt**: Fresh, single-use code authority bound to caller, attempt, contract,
+  expiry, and the exact verified cookie-snapshot digest.
 
 ## Key Operations
 
@@ -67,13 +73,14 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 | Interpret facts | Produce positive typed observations | Bounded current evidence, schema | Validated facts or exact rejection |
 | Map outcome | Preserve diagnosis through workflow/coordinator | Resilience result | Domain failure/session/user guidance |
 | Finalize authentication | Commit verified cookies and terminal state | Verification receipt, cookies, cancellation source | Persisted session or typed failure |
+| Verify remote authentication | Establish negative baseline and verify immutable candidate twice | Fixed server contract, isolated contexts, candidate snapshot | Bound receipt or typed exact failure |
 
 ## Story Summary
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 5 |
-| Must Have | 5 |
+| Total Stories | 6 |
+| Must Have | 6 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -84,6 +91,7 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 | US-135 | Recover and interpret safe DOM drift | Must | Complete |
 | US-136 | Explain every terminal browser outcome | Must | Complete |
 | US-140 | Finalize verified remote authentication atomically | Must | Complete |
+| US-141 | Verify remote authentication from server evidence | Must | Complete |
 
 ## Dependencies
 
@@ -108,6 +116,8 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 - Replace boolean authentication inference with protected-state-first typed classification.
 - Make model interpretation an alternate evidence adapter, never a verifier replacement.
 - Normalize stop reasons at the shared resilience boundary before inventory/search-specific mapping.
+- Separate authentication proof from inventory discovery: `/connect` uses only a code-owned server
+  contract; account inventory remains a later DOM-resilient workflow.
 - Extend popup handling narrowly; never accept arbitrary or mutating destinations.
 - Keep all live browser admission in `CheckCoordinator` and reuse the current context/page.
 
@@ -117,26 +127,30 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 - Protected pages are classification-only and cannot enter the action loop.
 - Fresh current evidence is mandatory; stale pre-navigation observations cannot classify destination.
 - Incomplete evidence preserves prior reservations/opportunities and cannot prove absence.
+- URL, cookie, DOM, and model evidence cannot issue a `/connect` server receipt; the exact verified
+  cookie snapshot must be the snapshot handed to atomic finalization.
 
 ## Success Criteria
 
 ### Functional
 
-- [ ] A coverage test proves every current DOM-sensitive step has exact terminal mapping and, when
+- [x] A coverage test proves every current DOM-sensitive step has exact terminal mapping and, when
   ambiguity can remain, an LLM fallback.
-- [ ] Changed login DOM with weak signed-in markers becomes `auth_required`, marks reauth, and guides
+- [x] Changed login DOM with weak signed-in markers becomes `auth_required`, marks reauth, and guides
   `/connect` without a model action.
-- [ ] Changed account/search controls and one safe popup can recover without adding a selector.
-- [ ] Typed model facts can support semantic progress only after deterministic comparison.
-- [ ] Every terminal registered step preserves an exact reason and provenance to Telegram/audit.
-- [ ] A verified remote-auth result survives ordinary viewer closure, persists before success and
+- [x] Changed account/search controls and one safe popup can recover without adding a selector.
+- [x] Typed model facts can support semantic progress only after deterministic comparison.
+- [x] Every terminal registered step preserves an exact reason and provenance to Telegram/audit.
+- [x] A verified remote-auth result survives ordinary viewer closure, persists before success and
   recovered-incident publication, and closes the Mini App only after commit.
+- [x] `/connect` verifies authentication from an isolated Booking server contract with zero DOM or
+  model authority, while inventory discovery begins only after the session is committed.
 
 ### Non-Functional
 
-- [ ] Zero prohibited actions and zero false authenticated/complete/equivalent states.
-- [ ] Healthy deterministic workflows add zero LLM calls.
-- [ ] All failure, cleanup, and trigger paths are deterministic under fake browser/model tests.
+- [x] Zero prohibited actions and zero false authenticated/complete/equivalent states.
+- [x] Healthy deterministic workflows add zero LLM calls.
+- [x] All failure, cleanup, and trigger paths are deterministic under fake browser/model tests.
 
 ## Bolt Suggestions
 
@@ -149,3 +163,5 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
   correction (US-140) after bolt 045.
 - `047-dom-resilient-browser-workflows`: finalizing-expiry, failure-incident race, and delayed
   Bugbot merge-gate correction (US-140) after bolt 046.
+- `048-dom-resilient-browser-workflows`: server-backed, DOM-independent remote-auth verification
+  (US-141) after bolt 047.

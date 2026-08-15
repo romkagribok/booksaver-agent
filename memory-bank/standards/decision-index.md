@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-13T03:12:00Z
-total_decisions: 34
+last_updated: 2026-08-15T22:56:03Z
+total_decisions: 35
 ---
 
 # Decision Index
@@ -17,6 +17,17 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-035: Server-backed remote authentication verification
+- **Status**: accepted
+- **Date**: 2026-08-15
+- **Bolt**: 048-dom-resilient-browser-workflows (dom-resilient-browser-workflows)
+- **Path**: `bolts/048-dom-resilient-browser-workflows/adr-035-server-backed-remote-authentication-verification.md`
+- **Summary**: Reservation DOM, visible URLs, cookie heuristics, and model output cannot prove a
+  `/connect` login. Require a fresh signed-out baseline plus two isolated signed-in server-contract
+  probes, then bind one-use finalization to the exact verified cookie snapshot.
+- **Read when**: Changing `/connect` success detection, remote browser cookies, server-session
+  verification, authentication receipts, protected Booking endpoints, or login finalization.
 
 ### ADR-034: Owner-only encrypted DOM incident operations
 - **Status**: accepted

@@ -170,6 +170,7 @@ class StepVerificationStatus(Enum):
 
 class DiagnosisProvenance(Enum):
     DETERMINISTIC = "deterministic"
+    CODE_VERIFIER_DIAGNOSED = "code_verifier_diagnosed"
     SONNET_RECOVERED = "sonnet_recovered"
     OPUS_RECOVERED = "opus_recovered"
     SONNET_DIAGNOSED = "sonnet_diagnosed"
@@ -304,9 +305,7 @@ class PageStateClassification:
             raise ValueError("a model cannot verify authentication")
         expected_action = operator_action_for(self.state)
         if self.operator_action is not expected_action:
-            raise ValueError(
-                f"{self.state.value} requires operator action {expected_action.value}"
-            )
+            raise ValueError(f"{self.state.value} requires operator action {expected_action.value}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -502,26 +501,36 @@ class TerminalBrowserDiagnosis:
             raise ValueError("diagnosis model stop must use the closed vocabulary")
         if isinstance(self.confidence, bool) or not 0.0 <= self.confidence <= 1.0:
             raise ValueError("diagnosis confidence must be between zero and one")
-        if self.provenance in {
-            DiagnosisProvenance.DETERMINISTIC,
-            DiagnosisProvenance.POLICY_STOP,
-            DiagnosisProvenance.PROVIDER_STOP,
-            DiagnosisProvenance.BUDGET_STOP,
-            DiagnosisProvenance.INFRASTRUCTURE_STOP,
-        } and self.confidence != 1.0:
+        if (
+            self.provenance
+            in {
+                DiagnosisProvenance.DETERMINISTIC,
+                DiagnosisProvenance.CODE_VERIFIER_DIAGNOSED,
+                DiagnosisProvenance.POLICY_STOP,
+                DiagnosisProvenance.PROVIDER_STOP,
+                DiagnosisProvenance.BUDGET_STOP,
+                DiagnosisProvenance.INFRASTRUCTURE_STOP,
+            }
+            and self.confidence != 1.0
+        ):
             raise ValueError("non-model terminal provenance must be conclusive")
         maintenance = self.reason is TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
         if self.code_maintenance_required is not maintenance:
             raise ValueError("maintenance flag must match the terminal reason")
         if maintenance and self.provenance not in {
+            DiagnosisProvenance.CODE_VERIFIER_DIAGNOSED,
             DiagnosisProvenance.SONNET_DIAGNOSED,
             DiagnosisProvenance.OPUS_DIAGNOSED,
         }:
-            raise ValueError("only a model diagnosis may request code maintenance")
-        if self.provenance in {
-            DiagnosisProvenance.SONNET_RECOVERED,
-            DiagnosisProvenance.OPUS_RECOVERED,
-        } and self.reason is not TerminalBrowserReason.POSTCONDITION_SATISFIED:
+            raise ValueError("only a model diagnosis or code verifier may request code maintenance")
+        if (
+            self.provenance
+            in {
+                DiagnosisProvenance.SONNET_RECOVERED,
+                DiagnosisProvenance.OPUS_RECOVERED,
+            }
+            and self.reason is not TerminalBrowserReason.POSTCONDITION_SATISFIED
+        ):
             raise ValueError("recovery provenance requires a satisfied postcondition")
         if self.reason is TerminalBrowserReason.POSTCONDITION_SATISFIED and (
             self.provenance

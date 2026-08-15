@@ -133,8 +133,16 @@ class DomDriftOccurrence:
     def __post_init__(self) -> None:
         _require_safe_code(self.verifier_category, "verifier_category")
         _require_utc(self.observed_at, "observed_at")
-        if not self.model_roles:
-            raise ValueError("an incident occurrence requires at least one model role")
+        model_free_maintenance = (
+            self.provenance is IncidentSourceProvenance.CODE_MAINTENANCE_REQUIRED
+            and self.provider_state is IncidentProviderState.NOT_ATTEMPTED
+            and self.budget_state is IncidentBudgetState.NOT_APPLICABLE
+            and self.terminal_reason is TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED
+        )
+        if not self.model_roles and not model_free_maintenance:
+            raise ValueError(
+                "an incident occurrence requires a model role unless code maintenance is model-free"
+            )
         if len(set(self.model_roles)) != len(self.model_roles):
             raise ValueError("model roles must be ordered and unique")
 
@@ -258,9 +266,7 @@ class DiagnosticModelAttempt:
             raise ValueError("diagnostic attempt role must use the closed vocabulary")
         if not isinstance(self.trigger, EscalationTrigger):
             raise ValueError("diagnostic attempt trigger must use the closed vocabulary")
-        if self.outcome is not None and not isinstance(
-            self.outcome, ModelAttemptOutcome
-        ):
+        if self.outcome is not None and not isinstance(self.outcome, ModelAttemptOutcome):
             raise ValueError("diagnostic attempt outcome must use the closed vocabulary")
         if not isinstance(self.status, ReservationStatus):
             raise ValueError("diagnostic attempt status must use the closed vocabulary")
@@ -309,16 +315,10 @@ class DiagnosticBundle:
         if self.model_attempts:
             ordinals = tuple(attempt.ordinal for attempt in self.model_attempts)
             if ordinals != tuple(sorted(set(ordinals))):
-                raise ValueError(
-                    "diagnostic model attempts must be strictly ordered and unique"
-                )
-            attempt_roles = tuple(
-                dict.fromkeys(attempt.role for attempt in self.model_attempts)
-            )
+                raise ValueError("diagnostic model attempts must be strictly ordered and unique")
+            attempt_roles = tuple(dict.fromkeys(attempt.role for attempt in self.model_attempts))
             if attempt_roles != self.model_roles:
-                raise ValueError(
-                    "diagnostic model roles must match the ordered attempt projection"
-                )
+                raise ValueError("diagnostic model roles must match the ordered attempt projection")
         if self.structural_image is not None and (
             len(self.structural_image) == 0
             or len(self.structural_image) > MAX_DIAGNOSTIC_IMAGE_BYTES
@@ -334,10 +334,7 @@ class IncidentDraft:
     diagnostic_bundle: DiagnosticBundle | None = None
 
     def __post_init__(self) -> None:
-        if (
-            self.diagnostic_bundle is not None
-            and self.diagnostic_bundle.incident_id.int != 0
-        ):
+        if self.diagnostic_bundle is not None and self.diagnostic_bundle.incident_id.int != 0:
             raise ValueError(
                 "an incident draft bundle must use the zero UUID until correlation assigns an ID"
             )

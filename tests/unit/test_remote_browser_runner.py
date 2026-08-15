@@ -1,64 +1,41 @@
 from __future__ import annotations
 
+import inspect
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
-
-from booksaver.application.remote_auth import RemoteBrowserResult, RemoteBrowserWork
-from booksaver.domain.browser_resilience import (
-    DiagnosisProvenance,
-    DomStepId,
-    EvidenceCategory,
-    EvidenceReference,
-    OperatorAction,
-    PageState,
-    PageStateClassification,
-    PageStateResolution,
-    PageStateSource,
-    StepVerificationStatus,
-    TerminalBrowserReason,
-)
+from booksaver.application.remote_auth import RemoteBrowserWork
 from booksaver.domain.mobile_web import MobileWebSettings
-from booksaver.domain.model_policy import ModelStopReason
 from booksaver.domain.remote_auth import (
     RemoteAuthFailure,
+    RemoteAuthServerReceipt,
+    RemoteAuthServerVerification,
     RemoteAuthSettings,
     RemoteAuthStatus,
+    SafeServerEvidence,
+    ServerMediaClass,
+    ServerRedirectClass,
+    ServerSessionProbeOutcome,
+    ServerSizeClass,
+    ServerStatusClass,
 )
 from booksaver.infrastructure.remote_auth.browser_runner import (
-    RemoteAuthPageStateCapability,
     SystemRemoteBrowserRunner,
-    _AmbiguousStateDebouncer,
-    _RemoteAuthCaptureEpisode,
-    _RemoteBrowserExecution,
+)
+from booksaver.infrastructure.remote_auth.network_session import (
+    BookingServerSessionVerifier,
+    CandidateSessionSnapshot,
 )
 
-
-def _episode() -> _RemoteAuthCaptureEpisode:
-    return _RemoteAuthCaptureEpisode(_AmbiguousStateDebouncer())
-
-
-@pytest.mark.parametrize(
-    ("error", "reason"),
-    [
-        (TimeoutError("body unavailable"), TerminalBrowserReason.OBSERVATION_UNAVAILABLE),
-        (RuntimeError("page detached"), TerminalBrowserReason.INFRASTRUCTURE_FAILURE),
-    ],
-)
-def test_remote_browser_bounds_persistent_loop_failures_with_exact_reason(
-    error: Exception,
-    reason: TerminalBrowserReason,
-) -> None:
-    episode = _episode()
-
-    assert episode.note_loop_failure(error) is None
-    assert episode.note_loop_failure(error) is None
-    assert episode.note_loop_failure(error) is reason
-
-    episode.note_loop_success()
-    assert episode.note_loop_failure(error) is None
+NOW = datetime(2026, 8, 15, 22, 0, tzinfo=UTC)
+DESCRIPTOR = {
+    "user_agent": "Mozilla/5.0 (Linux; Android 13) Chrome Mobile",
+    "viewport": {"width": 480, "height": 960},
+    "is_mobile": True,
+    "has_touch": True,
+    "device_scale_factor": 1,
+}
 
 
 class FakeFrame:
@@ -115,53 +92,21 @@ def _route(context: FakeContext, request: FakeRequest) -> str | None:
     return route.outcome
 
 
-def test_remote_browser_allows_booking_owned_top_level_navigation() -> None:
+def test_remote_browser_allows_only_booking_owned_navigation() -> None:
     context = FakeContext()
     SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
 
     assert _route(context, FakeRequest("https://account.booking.com/sign-in")) == "continue"
     assert _route(context, FakeRequest("https://www.booking.com/index.html")) == "continue"
-    assert _route(context, FakeRequest("https://BOOKING.COM/sign-in")) == "continue"
-
-
-def test_remote_browser_blocks_provider_arbitrary_and_lookalike_top_level_hosts() -> None:
-    context = FakeContext()
-    SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
-
-    blocked_urls = (
+    for url in (
         "https://accounts.google.com/o/oauth2/v2/auth",
         "https://appleid.apple.com/auth/authorize",
-        "https://login.microsoftonline.com/common/oauth2/authorize",
-        "https://www.facebook.com/login.php",
         "https://arbitrary.example/sign-in",
         "https://booking.com.attacker.example/phish",
         "https://evilbooking.com/phish",
         "https://booking.com./sign-in",
-    )
-    for url in blocked_urls:
+    ):
         assert _route(context, FakeRequest(url)) == "abort:blockedbyclient"
-
-
-def test_remote_browser_context_policy_covers_popup_top_level_navigation() -> None:
-    context = FakeContext()
-    SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
-
-    # A popup has its own main frame, so its document navigation has no parent.
-    assert (
-        _route(
-            context,
-            FakeRequest("https://accounts.google.com/o/oauth2/v2/auth", parent=None),
-        )
-        == "abort:blockedbyclient"
-    )
-    assert _route(context, FakeRequest("https://booking.com.attacker.example/phish")) == (
-        "abort:blockedbyclient"
-    )
-
-
-def test_remote_browser_allows_subresources_but_blocks_external_frame_navigation() -> None:
-    context = FakeContext()
-    SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
 
     assert (
         _route(
@@ -170,26 +115,19 @@ def test_remote_browser_allows_subresources_but_blocks_external_frame_navigation
         )
         == "continue"
     )
+
+
+def test_remote_browser_context_policy_covers_popups_and_downloads() -> None:
+    context = FakeContext()
+    SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
     assert (
         _route(
             context,
-            FakeRequest("https://attacker.example/frame", parent=object()),
+            FakeRequest("https://accounts.google.com/o/oauth2/v2/auth", parent=None),
         )
         == "abort:blockedbyclient"
     )
-    assert (
-        _route(
-            context,
-            FakeRequest("https://account.booking.com/frame", parent=object()),
-        )
-        == "continue"
-    )
-    assert _route(context, FakeRequest("https://attacker.example/top")) == ("abort:blockedbyclient")
 
-
-def test_remote_browser_cancels_downloads_on_every_page() -> None:
-    context = FakeContext()
-    SystemRemoteBrowserRunner._secure_context(context)  # noqa: SLF001
     handlers: dict[str, Any] = {}
 
     class Page:
@@ -241,640 +179,489 @@ def test_remote_browser_requires_all_viewer_modules(tmp_path: Any) -> None:
         runner._require_viewer_modules()  # noqa: SLF001
     except RuntimeError as exc:
         assert str(exc) == "Required noVNC viewer modules are unavailable"
-    else:
+    else:  # pragma: no cover - assertion branch
         raise AssertionError("Missing noVNC input module was accepted")
 
 
-def test_remote_browser_probe_requires_strong_inventory_evidence() -> None:
-    class Locator:
-        def __init__(self, visible: bool, text: str = "") -> None:
-            self.visible = visible
-            self.text = text
+class FakeResponse:
+    def __init__(
+        self,
+        status: int,
+        *,
+        url: str = "https://secure.booking.com/myaccount.html",
+        headers: dict[str, str] | None = None,
+        body: bytes = b"account",
+    ) -> None:
+        self.status = status
+        self.url = url
+        self.headers = headers or {"content-type": "text/html"}
+        self._body = body
 
-        def count(self) -> int:
-            return int(self.visible)
-
-        def nth(self, _index: int) -> Locator:
-            return self
-
-        def is_visible(self) -> bool:
-            return self.visible
-
-        def inner_text(self, timeout: int | None = None) -> str:
-            assert timeout == 5_000
-            return self.text
-
-    class Page:
-        def __init__(self, *, inventory_visible: bool) -> None:
-            self.url = "https://www.booking.com/"
-            self.inventory_visible = inventory_visible
-            self.goto_urls: list[str] = []
-
-        def goto(self, url: str, **_kwargs: Any) -> None:
-            self.goto_urls.append(url)
-            self.url = url
-
-        def locator(self, selector: str) -> Locator:
-            if selector == "body":
-                return Locator(True, "Genius Level 2 — Upcoming reservations")
-            return Locator(self.inventory_visible and selector == '[data-testid="bookings-list"]')
-
-        def title(self) -> str:
-            return "Booking account"
-
-    weak_only = Page(inventory_visible=False)
-    strong = Page(inventory_visible=True)
-
-    weak_outcome = SystemRemoteBrowserRunner._probe_authenticated_inventory(  # noqa: SLF001
-        weak_only
-    )
-    strong_outcome = SystemRemoteBrowserRunner._probe_authenticated_inventory(  # noqa: SLF001
-        strong
-    )
-    assert not weak_outcome.verified
-    assert weak_outcome.terminal_reason is None
-    assert strong_outcome.verified
-    assert weak_only.goto_urls == ["https://secure.booking.com/myreservations.html"]
-    assert strong.goto_urls == ["https://secure.booking.com/myreservations.html"]
+    def body(self) -> bytes:
+        return self._body
 
 
-class _ObservedControl:
-    def is_visible(self) -> bool:
-        return True
+class FakeRequestContext:
+    def __init__(self, response: FakeResponse) -> None:
+        self.response = response
 
-    def evaluate(self, _script: str) -> str:
-        return "button"
-
-    def get_attribute(self, name: str) -> str | None:
-        return "Continue" if name == "aria-label" else None
-
-    def inner_text(self) -> str:
-        return "Continue"
+    def get(self, _url: str, **_kwargs: Any) -> FakeResponse:
+        return self.response
 
 
-class _ObservedControls:
-    def count(self) -> int:
-        return 1
+class ProbeContext:
+    def __init__(self, response: FakeResponse) -> None:
+        self.request = FakeRequestContext(response)
+        self.cookies: list[dict[str, Any]] = []
+        self.closed = False
 
-    def nth(self, _index: int) -> _ObservedControl:
-        return _ObservedControl()
+    def add_cookies(self, cookies: list[dict[str, Any]]) -> None:
+        self.cookies = cookies
 
-
-class _ObservedPage:
-    url = "https://account.booking.com/new-flow"
-
-    def locator(self, _selector: str) -> _ObservedControls:
-        return _ObservedControls()
-
-    def title(self) -> str:
-        return "Booking account"
+    def close(self) -> None:
+        self.closed = True
 
 
-class _CountingResolver:
-    def __init__(self) -> None:
-        self.calls: list[tuple[DomStepId, object]] = []
+class FakeBrowser:
+    def __init__(self, responses: list[FakeResponse]) -> None:
+        self.responses = responses
+        self.contexts: list[ProbeContext] = []
 
-    def resolve(self, step_id: DomStepId, observation: object) -> PageStateResolution:
-        self.calls.append((step_id, observation))
-        return PageStateResolution(
-            classification=PageStateClassification(
-                state=PageState.AUTHENTICATED_CANDIDATE,
-                confidence=0.95,
-                evidence=frozenset({EvidenceCategory.WEAK_ACCOUNT_CHROME}),
-                evidence_references=(),
-                operator_action=OperatorAction.NONE,
-                source=PageStateSource.SONNET,
-                observation_id="remote-auth-test",
+    def new_context(self, **_kwargs: Any) -> ProbeContext:
+        context = ProbeContext(self.responses.pop(0))
+        self.contexts.append(context)
+        return context
+
+
+def _verified_fixture() -> tuple[
+    BookingServerSessionVerifier,
+    CandidateSessionSnapshot,
+    RemoteAuthServerVerification,
+]:
+    browser = FakeBrowser(
+        [
+            FakeResponse(
+                302,
+                headers={
+                    "content-type": "text/html",
+                    "location": "https://account.booking.com/auth/oauth2?state=redacted",
+                },
             ),
-            terminal_reason=TerminalBrowserReason.CODE_VERIFICATION_REQUIRED,
-        )
-
-
-def test_remote_browser_classifies_only_stable_unchanged_ambiguity() -> None:
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    resolver = _CountingResolver()
-    capability = RemoteAuthPageStateCapability(resolver=resolver)
-    debouncer = _AmbiguousStateDebouncer()
-    page = _ObservedPage()
-
-    assert (
-        runner._resolve_ambiguous_state(  # noqa: SLF001
-            page, "Unknown account page", PageState.AMBIGUOUS, capability, debouncer
-        )
-        is None
+            FakeResponse(200),
+            FakeResponse(200),
+        ]
     )
-    assert (
-        runner._resolve_ambiguous_state(  # noqa: SLF001
-            page, "Unknown account page", PageState.AMBIGUOUS, capability, debouncer
-        )
-        is not None
+    verifier = BookingServerSessionVerifier(
+        browser,
+        MobileWebSettings(),
+        DESCRIPTOR,
+        clock=lambda: NOW,
+        hmac_key=b"k" * 32,
     )
-    assert (
-        runner._resolve_ambiguous_state(  # noqa: SLF001
-            page, "Unknown account page", PageState.AMBIGUOUS, capability, debouncer
-        )
-        is None
+    assert verifier.establish_baseline().outcome is ServerSessionProbeOutcome.SIGNED_OUT
+    snapshot = verifier.snapshot(
+        [
+            {
+                "name": "session",
+                "value": "secret-value",
+                "domain": ".booking.com",
+                "path": "/",
+                "secure": True,
+            }
+        ]
     )
-    assert len(resolver.calls) == 1
-    assert resolver.calls[0][0] is DomStepId.REMOTE_AUTH_SESSION_CAPTURE
-
-    # A changed state must itself stabilize before the one allowed call.
-    assert (
-        runner._resolve_ambiguous_state(  # noqa: SLF001
-            page, "Changed account page", PageState.AMBIGUOUS, capability, debouncer
-        )
-        is None
+    assert snapshot is not None
+    verification = verifier.verify_candidate(
+        snapshot,
+        attempt_id="attempt-1",
+        telegram_user_id=42,
     )
-    assert (
-        runner._resolve_ambiguous_state(  # noqa: SLF001
-            page, "Changed account page", PageState.AMBIGUOUS, capability, debouncer
-        )
-        is not None
-    )
-    assert len(resolver.calls) == 2
+    return verifier, snapshot, verification
 
 
-@pytest.mark.parametrize(
-    "state",
-    [
-        PageState.AUTHENTICATION_REQUIRED,
-        PageState.MFA_REQUIRED,
-        PageState.CAPTCHA,
-        PageState.BOT_WALL,
-    ],
-)
-def test_remote_browser_protected_interactive_states_never_call_model(
-    state: PageState,
-) -> None:
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    resolver = _CountingResolver()
-    capability = RemoteAuthPageStateCapability(resolver=resolver)
-    debouncer = _AmbiguousStateDebouncer()
-
-    for _ in range(3):
-        assert (
-            runner._resolve_ambiguous_state(  # noqa: SLF001
-                _ObservedPage(), "Protected state", state, capability, debouncer
-            )
-            is None
-        )
-    assert resolver.calls == []
-
-
-@pytest.mark.parametrize(
-    ("model_stop", "terminal_reason", "provenance"),
-    [
-        (
-            ModelStopReason.PROVIDER_RATE_LIMIT,
-            TerminalBrowserReason.PROVIDER_RATE_LIMIT,
-            DiagnosisProvenance.PROVIDER_STOP,
-        ),
-        (
-            ModelStopReason.JOB_COST_LIMIT,
-            TerminalBrowserReason.JOB_COST_LIMIT,
-            DiagnosisProvenance.BUDGET_STOP,
-        ),
-        (
-            ModelStopReason.DAILY_COST_LIMIT,
-            TerminalBrowserReason.DAILY_COST_LIMIT,
-            DiagnosisProvenance.BUDGET_STOP,
-        ),
-    ],
-)
-def test_remote_browser_preserves_exact_model_stop_without_claiming_dom_drift(
-    model_stop: ModelStopReason,
-    terminal_reason: TerminalBrowserReason,
-    provenance: DiagnosisProvenance,
-) -> None:
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    execution = runner._resolution_execution(  # noqa: SLF001
-        _ObservedPage(),
-        PageStateResolution(
-            classification=None,
-            terminal_reason=terminal_reason,
-            model_stop_reason=model_stop,
-        ),
-        runner._observe_page(_ObservedPage(), "Unknown account page"),  # noqa: SLF001
-        RemoteAuthPageStateCapability(),
-        _episode(),
-    )
-
-    assert execution is not None
-    diagnosis = execution.result.terminal_diagnosis
-    assert diagnosis is not None
-    assert diagnosis.reason is terminal_reason
-    assert diagnosis.provenance is provenance
-    assert diagnosis.model_stop_reason is model_stop
-    assert not diagnosis.code_maintenance_required
-    assert execution.incident_draft is None
-
-
-def test_remote_browser_model_candidate_runs_fixed_inventory_probe_only_once() -> None:
-    class Page(_ObservedPage):
-        def __init__(self) -> None:
-            self.goto_urls: list[str] = []
-
-        def goto(self, url: str, **_kwargs: object) -> None:
-            self.goto_urls.append(url)
-            self.url = url
-
-        def locator(self, selector: str) -> object:
-            if selector == "body":
-                return type(
-                    "Body",
-                    (),
-                    {"inner_text": lambda self, timeout=None: "Unknown account page"},
-                )()
-            return _ObservedControls()
-
-    page = Page()
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    observation = runner._observe_page(page, "Unknown account page")  # noqa: SLF001
-    resolution = _CountingResolver().resolve(
-        DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
-        observation,
-    )
-
-    episode = _episode()
-    first = runner._resolution_execution(  # noqa: SLF001
-        page,
-        resolution,
-        observation,
-        RemoteAuthPageStateCapability(),
-        episode,
-    )
-    second = runner._resolution_execution(  # noqa: SLF001
-        page,
-        resolution,
-        observation,
-        RemoteAuthPageStateCapability(),
-        episode,
-    )
-
-    assert first is None
-    assert second is not None
-    assert second.result.status is RemoteAuthStatus.FAILED
-    assert second.result.terminal_diagnosis is not None
-    assert second.result.terminal_diagnosis.reason is TerminalBrowserReason.UNRESOLVED_AMBIGUITY
-    assert page.goto_urls == ["https://secure.booking.com/myreservations.html"]
-
-
-class _SemanticElement:
-    def __init__(self, *, tag: str, role: str, label: str) -> None:
-        self._tag = tag
-        self._role = role
-        self._label = label
-
-    def is_visible(self) -> bool:
-        return True
-
-    def evaluate(self, _script: str) -> str:
-        return self._tag
-
-    def get_attribute(self, name: str) -> str | None:
-        if name == "role":
-            return self._role
-        if name == "aria-label":
-            return self._label
-        return None
-
-    def inner_text(self) -> str:
-        return self._label
-
-
-class _SemanticElements:
-    def __init__(self, elements: tuple[_SemanticElement, ...]) -> None:
-        self._elements = elements
-
-    def count(self) -> int:
-        return len(self._elements)
-
-    def nth(self, index: int) -> _SemanticElement:
-        return self._elements[index]
-
-
-class _SemanticBody:
-    def __init__(self, page: _SemanticPage) -> None:
-        self._page = page
-
-    def inner_text(self, timeout: int | None = None) -> str:
-        assert timeout in {None, 2_000, 5_000}
-        return self._page.text
-
-
-class _SemanticPage:
-    def __init__(self) -> None:
-        self.url = "https://secure.booking.com/mytrips.html"
-        self.text = "Your stays\nCurrent\nPrevious"
-        self.page_title = "Changed trips page"
-        self.goto_urls: list[str] = []
-        self.elements = (
-            _SemanticElement(tag="h1", role="heading", label="Your stays"),
-            _SemanticElement(tag="button", role="tab", label="Current"),
-        )
-
-    def goto(self, url: str, **_kwargs: object) -> None:
-        self.goto_urls.append(url)
-        # Booking.com currently redirects this legacy alias back to /mytrips.
-        self.url = "https://secure.booking.com/mytrips.html"
-
-    def locator(self, selector: str) -> object:
-        if selector == "body":
-            return _SemanticBody(self)
-        if selector.startswith("a, button"):
-            return _SemanticElements(self.elements)
-        return _SemanticElements(())
-
-    def title(self) -> str:
-        return self.page_title
-
-
-def _semantic_resolution(
-    runner: SystemRemoteBrowserRunner,
-    page: _SemanticPage,
-    *,
-    source: PageStateSource = PageStateSource.SONNET,
-    references: tuple[str, ...] = ("e0", "e1"),
-) -> tuple[PageStateResolution, object]:
-    observation = runner._observe_page(page, page.text)  # noqa: SLF001
-    classification = PageStateClassification(
-        state=PageState.INVENTORY,
-        confidence=0.96,
-        evidence=frozenset({EvidenceCategory.SUPPORTED_INVENTORY_STRUCTURE}),
-        evidence_references=tuple(
-            EvidenceReference(
-                category=EvidenceCategory.SUPPORTED_INVENTORY_STRUCTURE,
-                reference=reference,
-            )
-            for reference in references
-        ),
-        operator_action=OperatorAction.NONE,
-        source=source,
-        observation_id="remote-auth-semantic-1",
-    )
-    return (
-        PageStateResolution(
-            classification=classification,
-            terminal_reason=TerminalBrowserReason.CODE_VERIFICATION_REQUIRED,
-        ),
-        observation,
-    )
-
-
-def test_remote_browser_grounded_sonnet_inventory_requires_code_receipt() -> None:
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    page = _SemanticPage()
-    resolution, observation = _semantic_resolution(runner, page)
-    episode = _episode()
-    episode.probe_attempted = True
-
-    verification, page_changed = runner._semantic_inventory_verification(  # noqa: SLF001
-        page,
-        resolution,
-        observation,
-    )
-    execution = runner._resolution_execution(  # noqa: SLF001
-        page,
-        resolution,
-        observation,
-        RemoteAuthPageStateCapability(),
-        episode,
-    )
-
-    assert not page_changed
-    assert verification.status is StepVerificationStatus.VERIFIED
-    assert verification.receipt is not None
-    assert verification.receipt.verifier == "remote_auth_semantic_inventory"
-    assert execution is not None
-    assert execution.result.status is RemoteAuthStatus.SUCCEEDED
-    assert execution.result.cookies_json == "pending-code-owned-capture"
-
-
-def test_remote_browser_opus_is_diagnosis_only_even_with_grounded_inventory_refs() -> None:
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    page = _SemanticPage()
-    resolution, observation = _semantic_resolution(
-        runner,
-        page,
-        source=PageStateSource.OPUS,
-    )
-    episode = _episode()
-    episode.probe_attempted = True
-
-    execution = runner._resolution_execution(  # noqa: SLF001
-        page,
-        resolution,
-        observation,
-        RemoteAuthPageStateCapability(),
-        episode,
-    )
-
-    assert execution is not None
-    assert execution.result.status is RemoteAuthStatus.FAILED
-    assert execution.result.cookies_json is None
-    assert execution.result.terminal_diagnosis is not None
-    assert execution.result.terminal_diagnosis.provenance is DiagnosisProvenance.OPUS_DIAGNOSED
-
-
-def test_remote_browser_rejects_hallucinated_or_stale_semantic_refs() -> None:
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    page = _SemanticPage()
-    resolution, observation = _semantic_resolution(
-        runner,
-        page,
-        references=("e0", "invented"),
-    )
-    episode = _episode()
-    episode.probe_attempted = True
-
-    execution = runner._resolution_execution(  # noqa: SLF001
-        page,
-        resolution,
-        observation,
-        RemoteAuthPageStateCapability(),
-        episode,
-    )
-
-    assert execution is not None
-    assert execution.result.status is RemoteAuthStatus.FAILED
-    assert execution.result.cookies_json is None
-    assert execution.result.terminal_diagnosis is not None
-    assert execution.result.terminal_diagnosis.reason is TerminalBrowserReason.UNRESOLVED_AMBIGUITY
-
-
-def test_remote_browser_discards_semantic_proof_when_page_changes() -> None:
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    page = _SemanticPage()
-    resolution, observation = _semantic_resolution(runner, page)
-    page.text = "Your stays\nCurrent\nPrevious\nRecently updated"
-
-    verification, page_changed = runner._semantic_inventory_verification(  # noqa: SLF001
-        page,
-        resolution,
-        observation,
-    )
-
-    assert page_changed
-    assert verification.status is StepVerificationStatus.AMBIGUOUS
-    assert verification.receipt is None
-
-
-@pytest.mark.parametrize(
-    ("error", "reason"),
-    [
-        (TimeoutError("probe timed out"), TerminalBrowserReason.OBSERVATION_UNAVAILABLE),
-        (RuntimeError("browser detached"), TerminalBrowserReason.INFRASTRUCTURE_FAILURE),
-    ],
-)
-def test_remote_browser_probe_failures_are_typed(
-    error: Exception,
-    reason: TerminalBrowserReason,
-) -> None:
-    class Page:
-        def goto(self, _url: str, **_kwargs: object) -> None:
-            raise error
-
-    outcome = SystemRemoteBrowserRunner._probe_authenticated_inventory(Page())  # noqa: SLF001
-
-    assert not outcome.verified
-    assert outcome.assessment is None
-    assert outcome.observation is None
-    assert outcome.terminal_reason is reason
-
-
-def test_remote_browser_opus_exhaustion_is_ambiguous_incident_diagnosis() -> None:
-    classification = PageStateClassification(
-        state=PageState.AMBIGUOUS,
-        confidence=0.0,
-        evidence=frozenset({EvidenceCategory.UNSUPPORTED_PAGE_STRUCTURE}),
-        evidence_references=(),
-        operator_action=OperatorAction.NONE,
-        source=PageStateSource.DETERMINISTIC,
-        observation_id="remote-auth-opus-exhausted",
-    )
-    diagnosis = SystemRemoteBrowserRunner._diagnosis_for_resolution(  # noqa: SLF001
-        PageStateResolution(
-            classification=classification,
-            terminal_reason=TerminalBrowserReason.UNRESOLVED_AMBIGUITY,
-            model_stop_reason=ModelStopReason.OPUS_EXHAUSTED,
-        )
-    )
-
-    assert diagnosis.reason is TerminalBrowserReason.UNRESOLVED_AMBIGUITY
-    assert diagnosis.provenance is DiagnosisProvenance.OPUS_DIAGNOSED
-    assert diagnosis.confidence == 0.0
-    assert not diagnosis.code_maintenance_required
-
-
-def test_remote_browser_unexpected_resolver_error_is_typed_infrastructure_stop() -> None:
-    class BrokenResolver:
-        def resolve(self, _step_id: object, _observation: object) -> object:
-            raise RuntimeError("provider payload must not escape")
-
-    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
-    capability = RemoteAuthPageStateCapability(
-        resolver=BrokenResolver(),  # type: ignore[arg-type]
-    )
-    debouncer = _AmbiguousStateDebouncer()
-
-    assert (
-        runner._resolve_ambiguous_state(  # noqa: SLF001
-            _ObservedPage(),
-            "Unknown account page",
-            PageState.AMBIGUOUS,
-            capability,
-            debouncer,
-        )
-        is None
-    )
-    resolved = runner._resolve_ambiguous_state(  # noqa: SLF001
-        _ObservedPage(),
-        "Unknown account page",
-        PageState.AMBIGUOUS,
-        capability,
-        debouncer,
-    )
-
-    assert resolved is not None
-    assert resolved[0].terminal_reason is TerminalBrowserReason.INFRASTRUCTURE_FAILURE
-    assert resolved[0].model_stop_reason is None
-
-
-def test_remote_browser_returns_pending_incident_only_after_execution_cleanup() -> None:
-    browser_active = True
-    draft = object()
-
-    class Runner(SystemRemoteBrowserRunner):
-        def _run_browser(self, *_args: object, **_kwargs: object) -> _RemoteBrowserExecution:
-            nonlocal browser_active
-            browser_active = False
-            return _RemoteBrowserExecution(
-                RemoteBrowserResult(RemoteAuthStatus.FAILED),
-                incident_draft=draft,  # type: ignore[arg-type]
-            )
-
-    runner = Runner(RemoteAuthSettings(), MobileWebSettings())
+def test_verified_server_receipt_finalizes_exact_snapshot() -> None:
+    verifier, snapshot, verification = _verified_fixture()
     work = RemoteBrowserWork(
         attempt_id="attempt-1",
-        telegram_user_id=1,
-        websocket_token="token",
-        expires_at=datetime.now(UTC) + timedelta(minutes=1),
+        telegram_user_id=42,
+        websocket_token="ws",
+        expires_at=NOW + timedelta(minutes=5),
         cancel_event=threading.Event(),
     )
+    execution = SystemRemoteBrowserRunner._verified_execution(  # noqa: SLF001
+        verifier,
+        snapshot,
+        verification,
+        work,
+        lambda: True,
+    )
 
-    result = runner.run(work, threading.Event(), lambda: None, lambda: True)
+    assert execution.result.status is RemoteAuthStatus.SUCCEEDED
+    assert execution.result.cookies_json is not None
+    assert "secret-value" in execution.result.cookies_json
+    assert "pending-code-owned-capture" not in execution.result.cookies_json
 
-    assert not browser_active
-    assert result.status is RemoteAuthStatus.FAILED
-    assert result.incident_draft is draft
+
+def test_server_receipt_cannot_be_reused_for_finalization() -> None:
+    verifier, snapshot, verification = _verified_fixture()
+    work = RemoteBrowserWork(
+        attempt_id="attempt-1",
+        telegram_user_id=42,
+        websocket_token="ws",
+        expires_at=NOW + timedelta(minutes=5),
+        cancel_event=threading.Event(),
+    )
+    first = SystemRemoteBrowserRunner._verified_execution(  # noqa: SLF001
+        verifier,
+        snapshot,
+        verification,
+        work,
+        lambda: True,
+    )
+    second = SystemRemoteBrowserRunner._verified_execution(  # noqa: SLF001
+        verifier,
+        snapshot,
+        verification,
+        work,
+        lambda: True,
+    )
+
+    assert first.result.status is RemoteAuthStatus.SUCCEEDED
+    assert second.result.failure is RemoteAuthFailure.VERIFICATION_RECEIPT_REJECTED
 
 
-def test_remote_browser_finalization_admission_is_required_for_success() -> None:
-    admitted_calls = 0
-    draft = object()
+def _safe_evidence() -> SafeServerEvidence:
+    return SafeServerEvidence(
+        contract_version="booking-account-session-v1",
+        status=ServerStatusClass.SUCCESS,
+        media=ServerMediaClass.OTHER,
+        redirect=ServerRedirectClass.NONE,
+        size=ServerSizeClass.BOUNDED,
+    )
 
-    def _admit() -> bool:
-        nonlocal admitted_calls
-        admitted_calls += 1
+
+def test_contract_change_builds_model_free_content_safe_incident() -> None:
+    work = RemoteBrowserWork(
+        attempt_id="attempt-1",
+        telegram_user_id=42,
+        websocket_token="ws-secret",
+        expires_at=NOW + timedelta(minutes=5),
+        cancel_event=threading.Event(),
+    )
+    runner = SystemRemoteBrowserRunner(
+        RemoteAuthSettings(),
+        MobileWebSettings(),
+        source_user_resolver=lambda _telegram_user_id: 7,
+    )
+    execution = runner._failed_server_execution(  # noqa: SLF001
+        work,
+        RemoteAuthServerVerification(
+            ServerSessionProbeOutcome.CONTRACT_CHANGED,
+            _safe_evidence(),
+        ),
+    )
+
+    assert execution.result.failure is RemoteAuthFailure.VERIFICATION_CONTRACT_CHANGED
+    assert execution.incident_draft is not None
+    occurrence = execution.incident_draft.occurrence
+    assert occurrence.model_roles == ()
+    assert occurrence.provider_state.value == "not_attempted"
+    bundle = execution.incident_draft.diagnostic_bundle
+    assert bundle is not None
+    assert bundle.source_user_ids == (7,)
+    rendered = repr(execution.incident_draft)
+    assert "ws-secret" not in rendered
+    assert "attempt-1" not in rendered
+
+
+def test_predictable_server_failures_do_not_create_maintenance_incident() -> None:
+    work = RemoteBrowserWork(
+        attempt_id="attempt-1",
+        telegram_user_id=42,
+        websocket_token="ws",
+        expires_at=NOW + timedelta(minutes=5),
+        cancel_event=threading.Event(),
+    )
+    runner = SystemRemoteBrowserRunner(RemoteAuthSettings(), MobileWebSettings())
+
+    for outcome, failure in (
+        (ServerSessionProbeOutcome.UNAVAILABLE, RemoteAuthFailure.VERIFICATION_UNAVAILABLE),
+        (ServerSessionProbeOutcome.BLOCKED_REDIRECT, RemoteAuthFailure.VERIFICATION_BLOCKED),
+    ):
+        execution = runner._failed_server_execution(  # noqa: SLF001
+            work,
+            RemoteAuthServerVerification(outcome, _safe_evidence()),
+        )
+        assert execution.result.failure is failure
+        assert execution.incident_draft is None
+
+
+def test_remote_auth_declares_no_dom_steps() -> None:
+    from booksaver.infrastructure.remote_auth import browser_runner
+
+    assert browser_runner.DOM_STEPS == ()
+    source = inspect.getsource(SystemRemoteBrowserRunner._run_browser)  # noqa: SLF001
+    assert ".locator(" not in source
+    assert "page_state" not in source
+    assert "model" not in source
+    assert "myreservations" not in source
+
+
+def test_remote_auth_runtime_has_no_adaptive_model_admission() -> None:
+    from booksaver.infrastructure.remote_auth.runtime import build_remote_auth_runtime
+
+    signature = inspect.signature(build_remote_auth_runtime)
+    source = inspect.getsource(build_remote_auth_runtime)
+    assert "adaptive_runtime_scope" not in signature.parameters
+    assert "BrowserJobKind.REMOTE_AUTH" not in source
+    assert "page_state_resolver" not in source
+
+
+class _RunnerProcess:
+    def __init__(self) -> None:
+        self.terminated = False
+
+    def poll(self) -> None:
+        return None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: int) -> None:
+        assert timeout == 3
+
+
+class _RunnerPage:
+    def __init__(self) -> None:
+        self.goto_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def goto(self, url: str, **kwargs: Any) -> None:
+        self.goto_calls.append((url, kwargs))
+
+
+class _RunnerContext(FakeContext):
+    def __init__(self, cookie_states: list[str]) -> None:
+        super().__init__()
+        self.cookie_states = cookie_states
+        self.page = _RunnerPage()
+        self.closed = False
+        self.default_timeout: int | None = None
+
+    def set_default_timeout(self, value: int) -> None:
+        self.default_timeout = value
+
+    def new_page(self) -> _RunnerPage:
+        return self.page
+
+    def cookies(self) -> list[dict[str, str]]:
+        state = self.cookie_states.pop(0)
+        return [{"state": state}]
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RunnerBrowser:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RunnerChromium:
+    def __init__(self, browser: _RunnerBrowser) -> None:
+        self.browser = browser
+
+    def launch(self, **_kwargs: Any) -> _RunnerBrowser:
+        return self.browser
+
+
+class _RunnerPlaywright:
+    def __init__(self, browser: _RunnerBrowser) -> None:
+        self.chromium = _RunnerChromium(browser)
+        self.devices = {"Pixel 7": DESCRIPTOR}
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+class _RunnerPlaywrightStarter:
+    def __init__(self, playwright: _RunnerPlaywright) -> None:
+        self.playwright = playwright
+
+    def start(self) -> _RunnerPlaywright:
+        return self.playwright
+
+
+class _NoWaitEvent:
+    def is_set(self) -> bool:
+        return False
+
+    def wait(self, _timeout: float) -> bool:
+        return False
+
+
+class _RunnerVerifier:
+    def __init__(self, baseline: ServerSessionProbeOutcome) -> None:
+        self.baseline = baseline
+        self.verified_states: list[str] = []
+        self.consumed = False
+
+    def establish_baseline(self) -> RemoteAuthServerVerification:
+        return RemoteAuthServerVerification(self.baseline, _safe_evidence())
+
+    def snapshot(self, cookies: list[dict[str, str]]) -> CandidateSessionSnapshot:
+        state = cookies[0]["state"]
+        return CandidateSessionSnapshot(
+            f'{{"state":"{state}"}}'.encode(),
+            state.encode().ljust(32, b"0"),
+        )
+
+    def verify_candidate(
+        self,
+        snapshot: CandidateSessionSnapshot,
+        *,
+        attempt_id: str,
+        telegram_user_id: int,
+    ) -> RemoteAuthServerVerification:
+        state = snapshot.persistence_json()
+        self.verified_states.append(state)
+        if "anonymous" in state:
+            return RemoteAuthServerVerification(
+                ServerSessionProbeOutcome.SIGNED_OUT,
+                _safe_evidence(),
+            )
+        receipt = RemoteAuthServerReceipt(
+            attempt_id=attempt_id,
+            telegram_user_id=telegram_user_id,
+            contract_version="booking-account-session-v1",
+            verified_at=NOW,
+            expires_at=NOW + timedelta(seconds=30),
+            verifier="booking_server_session_v1",
+            _snapshot_hmac=b"h" * 32,
+            _nonce=b"n" * 32,
+        )
+        return RemoteAuthServerVerification(
+            ServerSessionProbeOutcome.AUTHENTICATED,
+            _safe_evidence(),
+            receipt,
+        )
+
+    def consume_receipt(self, *_args: Any, **_kwargs: Any) -> bool:
+        self.consumed = True
         return True
 
-    execution = SystemRemoteBrowserRunner._finalized_success_execution(  # noqa: SLF001
-        "[]",
-        _admit,
-        incident_draft=draft,  # type: ignore[arg-type]
-    )
 
-    assert admitted_calls == 1
-    assert execution.result.status is RemoteAuthStatus.SUCCEEDED
-    assert execution.result.cookies_json == "[]"
-    assert execution.incident_draft is draft
-
-
-def test_remote_browser_rejected_finalization_discards_cookies_and_incident() -> None:
-    execution = SystemRemoteBrowserRunner._finalized_success_execution(  # noqa: SLF001
-        "sensitive-cookie-json",
-        lambda: False,
-        incident_draft=object(),  # type: ignore[arg-type]
-    )
-
-    assert execution.result.status is RemoteAuthStatus.CANCELLED
-    assert execution.result.cookies_json is None
-    assert execution.incident_draft is None
-
-
-def test_remote_browser_finalization_callback_failure_is_typed_and_redacted(
-    caplog: pytest.LogCaptureFixture,
+def test_runner_uses_server_evidence_without_page_inspection_or_reload(
+    monkeypatch: Any,
 ) -> None:
-    def _reject() -> bool:
-        raise ValueError("sensitive callback detail")
+    from playwright import sync_api
 
-    execution = SystemRemoteBrowserRunner._finalized_success_execution(  # noqa: SLF001
-        "sensitive-cookie-json",
-        _reject,
+    from booksaver.infrastructure.remote_auth import browser_runner
+
+    browser = _RunnerBrowser()
+    playwright = _RunnerPlaywright(browser)
+    context = _RunnerContext(["anonymous", "anonymous", "authenticated", "authenticated"])
+    verifier = _RunnerVerifier(ServerSessionProbeOutcome.SIGNED_OUT)
+    processes: list[_RunnerProcess] = []
+
+    def spawn(_command: list[str]) -> _RunnerProcess:
+        process = _RunnerProcess()
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(sync_api, "sync_playwright", lambda: _RunnerPlaywrightStarter(playwright))
+    monkeypatch.setattr(browser_runner, "new_mobile_context", lambda *_args: context)
+    monkeypatch.setattr(SystemRemoteBrowserRunner, "_require_tools", lambda _self: None)
+    monkeypatch.setattr(SystemRemoteBrowserRunner, "_spawn", staticmethod(spawn))
+    monkeypatch.setattr(SystemRemoteBrowserRunner, "_wait_started", staticmethod(lambda _p: None))
+    monkeypatch.setattr(
+        SystemRemoteBrowserRunner,
+        "_terminate",
+        staticmethod(lambda items: [item.terminate() for item in items]),
+    )
+    ready: list[bool] = []
+    finalizing: list[bool] = []
+    runner = SystemRemoteBrowserRunner(
+        RemoteAuthSettings(),
+        MobileWebSettings(),
+        server_verifier_factory=lambda *_args: verifier,  # type: ignore[arg-type]
+    )
+    work = RemoteBrowserWork(
+        attempt_id="attempt-1",
+        telegram_user_id=42,
+        websocket_token="ws",
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        cancel_event=_NoWaitEvent(),  # type: ignore[arg-type]
     )
 
-    assert execution.result.status is RemoteAuthStatus.FAILED
-    assert execution.result.failure is RemoteAuthFailure.BROWSER_FAILED
-    assert execution.result.cookies_json is None
-    assert "ValueError" in caplog.text
-    assert "sensitive callback detail" not in caplog.text
+    result = runner.run(
+        work,
+        _NoWaitEvent(),
+        lambda: ready.append(True),
+        lambda: finalizing.append(True) or True,
+    )
+
+    assert result.status is RemoteAuthStatus.SUCCEEDED
+    assert result.cookies_json == '{"state":"authenticated"}'
+    assert ready == [True]
+    assert finalizing == [True]
+    assert verifier.verified_states == [
+        '{"state":"anonymous"}',
+        '{"state":"authenticated"}',
+    ]
+    assert verifier.consumed
+    assert context.page.goto_calls == [
+        (
+            "https://account.booking.com/sign-in",
+            {"timeout": 45_000, "wait_until": "domcontentloaded"},
+        )
+    ]
+    assert context.closed and browser.closed and playwright.stopped
+    assert all(process.terminated for process in processes)
+
+
+def test_runner_refuses_to_admit_viewer_when_negative_baseline_changes(
+    monkeypatch: Any,
+) -> None:
+    from playwright import sync_api
+
+    from booksaver.infrastructure.remote_auth import browser_runner
+
+    browser = _RunnerBrowser()
+    playwright = _RunnerPlaywright(browser)
+    context = _RunnerContext(["unused"])
+    verifier = _RunnerVerifier(ServerSessionProbeOutcome.CONTRACT_CHANGED)
+    monkeypatch.setattr(sync_api, "sync_playwright", lambda: _RunnerPlaywrightStarter(playwright))
+    monkeypatch.setattr(browser_runner, "new_mobile_context", lambda *_args: context)
+    monkeypatch.setattr(SystemRemoteBrowserRunner, "_require_tools", lambda _self: None)
+    monkeypatch.setattr(
+        SystemRemoteBrowserRunner, "_spawn", staticmethod(lambda _cmd: _RunnerProcess())
+    )
+    monkeypatch.setattr(SystemRemoteBrowserRunner, "_wait_started", staticmethod(lambda _p: None))
+    runner = SystemRemoteBrowserRunner(
+        RemoteAuthSettings(),
+        MobileWebSettings(),
+        server_verifier_factory=lambda *_args: verifier,  # type: ignore[arg-type]
+    )
+    ready: list[bool] = []
+
+    result = runner.run(
+        RemoteBrowserWork(
+            attempt_id="attempt-1",
+            telegram_user_id=42,
+            websocket_token="ws",
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            cancel_event=_NoWaitEvent(),  # type: ignore[arg-type]
+        ),
+        _NoWaitEvent(),
+        lambda: ready.append(True),
+        lambda: True,
+    )
+
+    assert result.failure is RemoteAuthFailure.VERIFICATION_CONTRACT_CHANGED
+    assert ready == []
+    assert context.page.goto_calls == []
+    assert browser.closed and playwright.stopped

@@ -2,7 +2,7 @@
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T01:51:45Z
 completed: 2026-08-13T02:25:17Z
-updated: 2026-08-14T03:21:03Z
+updated: 2026-08-15T22:56:03Z
 status: complete
 ---
 
@@ -22,25 +22,25 @@ owner when code maintenance is required.
 | Requirements | Approved | `requirements.md` |
 | System Context | Generated | `system-context.md` |
 | Units | Generated | `units.md` and three unit briefs |
-| Stories | Generated | `units/*/stories/*.md` (11 stories) |
-| Bolt Plan | Generated | `memory-bank/bolts/041-*` through `046-*` |
+| Stories | Generated | `units/*/stories/*.md` (12 stories) |
+| Bolt Plan | Generated | `memory-bank/bolts/041-*` through `048-*` |
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
-| Functional Requirements | 11 |
+| Functional Requirements | 12 |
 | Non-Functional Requirements | 16 |
 | Units | 3 |
-| Stories | 11 |
-| Bolts Planned | 6 |
+| Stories | 12 |
+| Bolts Planned | 8 |
 
 ## Units Breakdown
 
 | Unit | Stories | Bolts | Priority |
 |------|---------|-------|----------|
 | `001-adaptive-model-policy` | 3 | 1 (`041`) | Must |
-| `002-dom-resilient-browser-workflows` | 5 | 4 (`042`, `043`, `045`, `046`) | Must |
+| `002-dom-resilient-browser-workflows` | 6 | 6 (`042`, `043`, `045`, `046`, `047`, `048`) | Must |
 | `003-dom-drift-incident-operations` | 3 | 1 (`044`) | Must |
 
 ## Decision Log
@@ -55,6 +55,7 @@ owner when code maintenance is required.
 | 2026-08-13 | Require a reasoned terminal outcome for every DOM-sensitive failure | A browser job may not repeat the current generic failure with no LLM diagnosis or exact system reason | Yes |
 | 2026-08-13 | Use LLM explanation only for ambiguous failures | Predictable outcomes such as confirmed `/connect` required already have an exact code and action; spending a model call would add cost without information | Yes |
 | 2026-08-14 | Commit verified remote auth before viewer close or recovery publication | Production proved that DOM recovery can succeed while pagehide cancellation still discards session capture | Yes |
+| 2026-08-15 | Verify `/connect` from an isolated server contract, never reservation DOM or models | Repeated production attempts proved that logged-in server sessions can expose unfamiliar reservation structure; authentication is a server authorization fact | Yes |
 
 ## Scope Changes
 
@@ -63,6 +64,8 @@ owner when code maintenance is required.
 | 2026-08-13 | Add model escalation and owner drift incidents | Production recovery reached an approved URL but misclassified re-authentication and could not recover | New resilience, model-routing, and operations units expected |
 | 2026-08-14 | Add Bolt 045 for mobile inventory DOM recovery | The fixed legacy probe loop starved classification on `/mytrips` | One corrective DDD bolt completed and deployed |
 | 2026-08-14 | Add US-140 and Bolt 046 for atomic finalization | Verified recovery was published before cookie persistence, while pagehide could still cancel | One corrective story and DDD bolt; no authority expansion |
+| 2026-08-15 | Add Bolt 047 for finalization race and Bugbot merge-gate closure | Review and lifecycle races needed executable fail-closed controls | One corrective DDD bolt completed |
+| 2026-08-15 | Add US-141 and Bolt 048 for server-backed authentication proof | Reservation DOM and LLM classification remained brittle login-success authorities | One corrective story and ADR-035; no model or transaction authority |
 
 ## Ready for Construction
 
@@ -79,7 +82,8 @@ owner when code maintenance is required.
 1. Begin Construction with `041-adaptive-model-policy`.
 2. Continue through bolts 042–044 after their required validation stages.
 3. Stop at the final pre-merge review gate for owner verification.
-4. Present completed corrective Bolt 046 to the owner at the pre-merge review gate.
+4. Require the executable Bugbot gate on the final PR head before merge.
+5. Present completed corrective Bolt 048 to the owner at the pre-merge review gate.
 
 ## Dependencies
 

@@ -80,6 +80,30 @@ def test_maintenance_diagnosis_opens_immediately_and_deduplicates_alert(tmp_path
         assert store.conn.execute("SELECT COUNT(*) FROM dom_drift_alerts").fetchone()[0] == 1
 
 
+def test_model_free_server_contract_maintenance_opens_immediately(tmp_path: Path) -> None:
+    occurrence = DomDriftOccurrence(
+        fingerprint=DomDriftFingerprint("3" * 64),
+        journey=DomJourney.REMOTE_AUTH,
+        step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
+        terminal_reason=TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED,
+        verifier_category="remote_auth_server_contract_v1",
+        structural_digest=StructuralDigest("4" * 64),
+        model_roles=(),
+        provenance=IncidentSourceProvenance.CODE_MAINTENANCE_REQUIRED,
+        provider_state=IncidentProviderState.NOT_ATTEMPTED,
+        budget_state=IncidentBudgetState.NOT_APPLICABLE,
+        recovered=False,
+        observed_at=NOW,
+    )
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        result = SqliteDomIncidentRepository(store).correlate(occurrence)
+
+    assert result.incident.state is IncidentState.OPEN
+    assert result.incident.model_roles == ()
+    assert result.alert is not None
+
+
 def test_assisted_drift_opens_on_second_identical_occurrence_within_six_hours(
     tmp_path: Path,
 ) -> None:

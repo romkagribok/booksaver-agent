@@ -1,9 +1,9 @@
 ---
 intent: 022-adaptive-booking-browser-resilience
-phase: inception
+phase: construction
 status: complete
 created: 2026-08-13T01:51:45.000Z
-updated: 2026-08-15T15:55:59.000Z
+updated: 2026-08-15T23:16:21Z
 ---
 
 # Requirements: Adaptive Booking Browser Resilience
@@ -287,9 +287,9 @@ booking, cancellation, modification, checkout, purchase, and payment boundary.
 
 ### FR-11: Finalize verified remote authentication atomically
 
-- **Description**: Once the remote browser has code-verified an authenticated Booking.com
-  inventory page, BookSaver must finish session capture exactly once without an ordinary viewer
-  close racing the verified result into cancellation.
+- **Description**: Once the remote browser has received a fresh code-owned server-authentication
+  receipt for an immutable cookie snapshot, BookSaver must finish session capture exactly once
+  without an ordinary viewer close racing the verified result into cancellation.
 - **Acceptance Criteria**:
   - Before code verification, explicit viewer cancellation, viewer abandonment, daemon shutdown,
     and administrative user purge retain their existing cancellation authority.
@@ -304,7 +304,33 @@ booking, cancellation, modification, checkout, purchase, and payment boundary.
   - Logs record only allowlisted finalization stages, outcomes, and exception classes; cookies,
     capabilities, user identity, page content, and reservation data remain absent.
 - **Priority**: Must
-- **Related Stories**: US-140
+- **Related Stories**: US-140, US-141
+
+### FR-12: Verify remote authentication from Booking.com server evidence
+
+- **Description**: `/connect` must prove that one immutable candidate cookie snapshot is
+  authenticated through a versioned, isolated, read-only Booking.com server contract. Reservation
+  DOM, URL appearance, cookie changes, and model output are not authentication authority.
+- **Acceptance Criteria**:
+  - A fresh cookie-free isolated context must first match the exact signed-out contract for the
+    fixed Booking account endpoint; an unexpected baseline fails closed.
+  - Stable candidate Booking cookies are copied into fresh service-worker-free isolated contexts;
+    the fixed endpoint is called with redirects disabled and no credentials or reservation request.
+  - Two independent probes of the same immutable snapshot must match the exact signed-in response
+    contract before code issues a short-lived, single-use receipt bound to attempt, caller, contract
+    version, and keyed snapshot digest.
+  - URL, status, cookies, login response, page title/text/DOM, screenshots, and model classifications
+    cannot individually or collectively authorize capture outside the complete server contract.
+  - Explicit signed-out responses keep the viewer available with zero LLM calls; contract drift,
+    unsafe redirects, challenges, or infrastructure failures retain exact typed outcomes and save
+    nothing.
+  - Finalization persists exactly the verified snapshot and preserves all US-140 persistence,
+    cancellation, purge/revocation, notification, and viewer-close ordering.
+  - Only closed status/media/redirect/size/contract outcome codes may reach logs or incidents.
+    Response bodies, headers, queries, cookie material, principals, and reservation data remain
+    absent from diagnostics and model prompts.
+- **Priority**: Must
+- **Related Stories**: US-141
 
 ## Non-Functional Requirements
 
