@@ -71,5 +71,10 @@ checkpoints and keep `memory-bank/story-index.md` consistent with story changes.
   repository's configured worker model; the main agent owns integration and verification.
 - Run targeted checks while editing and the full relevant quality gate before handoff.
 - After starting or deploying a service, verify process state, logs, health, ports, and dependencies.
+- Before merging a pull request, wait for Cursor Bugbot to review the final head commit. A clean
+  run may be represented only by the successful current-head `Cursor Bugbot` check. Run
+  `python3 scripts/bugbot_merge_gate.py PR_NUMBER`; address every unresolved Cursor thread with a
+  tested fix or evidence-backed disposition, resolve it, and wait for a clean review of any pushed
+  follow-up commit. A missing, stale, or unsuccessful Bugbot result is blocked, not a clean pass.
 - Do not commit, push, merge, deploy, or change external state without the user's explicit approval.
 - Use Conventional Commits with a concise single-line subject when approval is given.

@@ -4,7 +4,7 @@ intent: 022-adaptive-booking-browser-resilience
 phase: inception
 status: complete
 created: 2026-08-13T01:59:59.000Z
-updated: 2026-08-14T03:21:03.000Z
+updated: 2026-08-15T15:55:59.000Z
 default_bolt_type: ddd-construction-bolt
 ---
 
@@ -147,3 +147,5 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 - `045-dom-resilient-browser-workflows`: production correction for changed mobile inventory DOM.
 - `046-dom-resilient-browser-workflows`: atomic verified-session finalization and viewer lifecycle
   correction (US-140) after bolt 045.
+- `047-dom-resilient-browser-workflows`: finalizing-expiry, failure-incident race, and delayed
+  Bugbot merge-gate correction (US-140) after bolt 046.

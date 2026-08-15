@@ -5,7 +5,6 @@ import mimetypes
 import secrets
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -112,11 +111,7 @@ class RemoteAuthHttpApp:
             RemoteAuthDenied,
         ):
             return self._denied()
-        max_age = max(0, int((grant.expires_at - datetime.now(UTC)).total_seconds()))
-        cookie = (
-            f"{_COOKIE_NAME}={grant.session_token}; Path=/; Max-Age={max_age}; "
-            "Secure; HttpOnly; SameSite=Strict"
-        )
+        cookie = f"{_COOKIE_NAME}={grant.session_token}; Path=/; Secure; HttpOnly; SameSite=Strict"
         return self._json(
             HTTPStatus.OK,
             {"status": "authorized"},

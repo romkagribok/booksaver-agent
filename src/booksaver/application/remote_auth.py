@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 from booksaver.domain.dom_incident import IncidentDraft
@@ -92,6 +93,13 @@ NotifyUser = Callable[[int, str], None]
 SuccessfulConnection = Callable[[int], None]
 IncidentSink = Callable[[IncidentDraft], None]
 Clock = Callable[[], datetime]
+_FINALIZATION_RESULT_RETENTION = timedelta(seconds=30)
+
+
+class _FailureIncidentPolicy(Enum):
+    PUBLISH = "publish"
+    SUPPRESS_PRIVACY_ERASURE = "suppress_privacy_erasure"
+    SUPPRESS_SHUTDOWN = "suppress_shutdown"
 
 
 @dataclass
@@ -109,6 +117,7 @@ class _Attempt:
     cancel_event: threading.Event = field(default_factory=threading.Event)
     worker: threading.Thread | None = None
     suppress_cancel_notification: bool = False
+    failure_incident_policy: _FailureIncidentPolicy = _FailureIncidentPolicy.PUBLISH
 
 
 def _digest(token: str) -> bytes:
@@ -331,6 +340,9 @@ class RemoteAuthenticationManager:
             cancelled = False
             for attempt in self._attempts.values():
                 if attempt.telegram_user_id == telegram_user_id and not attempt.status.is_terminal:
+                    attempt.failure_incident_policy = (
+                        _FailureIncidentPolicy.SUPPRESS_PRIVACY_ERASURE
+                    )
                     attempt.status = RemoteAuthStatus.CANCELLED
                     attempt.cancel_event.set()
                     cancelled = True
@@ -342,6 +354,10 @@ class RemoteAuthenticationManager:
                 workers = []
                 for attempt in self._attempts.values():
                     if not attempt.status.is_terminal:
+                        if attempt.failure_incident_policy is _FailureIncidentPolicy.PUBLISH:
+                            attempt.failure_incident_policy = (
+                                _FailureIncidentPolicy.SUPPRESS_SHUTDOWN
+                            )
                         attempt.status = RemoteAuthStatus.CANCELLED
                         attempt.cancel_event.set()
                     if attempt.worker is not None and attempt.worker.is_alive():
@@ -403,6 +419,11 @@ class RemoteAuthenticationManager:
 
         with self._lock:
             attempt = self._attempts[attempt_id]
+            if (
+                self._daemon_stop_event.is_set()
+                and attempt.failure_incident_policy is _FailureIncidentPolicy.PUBLISH
+            ):
+                attempt.failure_incident_policy = _FailureIncidentPolicy.SUPPRESS_SHUTDOWN
             if not attempt.status.is_terminal:
                 if result.status is RemoteAuthStatus.SUCCEEDED:
                     cookies_json = result.cookies_json
@@ -431,10 +452,22 @@ class RemoteAuthenticationManager:
                         else:
                             self._safe_record_incident(result.incident_draft)
                             logger.info("Remote authentication finalization succeeded")
-                elif result.status is RemoteAuthStatus.FAILED:
-                    self._safe_record_incident(result.incident_draft)
+                if result.status.is_terminal:
+                    attempt.expires_at = max(
+                        attempt.expires_at,
+                        self._clock() + _FINALIZATION_RESULT_RETENTION,
+                    )
                 attempt.status = result.status
                 attempt.failure = result.failure
+            # A failure draft was prepared while the browser page still existed. Preserve it
+            # after ordinary viewer/expiry races, but never recreate evidence after privacy
+            # erasure or during daemon shutdown. This remains under the lifecycle lock so purge
+            # either suppresses publication first or deletes an occurrence published first.
+            if (
+                result.status is RemoteAuthStatus.FAILED
+                and attempt.failure_incident_policy is _FailureIncidentPolicy.PUBLISH
+            ):
+                self._safe_record_incident(result.incident_draft)
             self._release_active_locked(attempt)
             telegram_user_id = attempt.telegram_user_id
             chat_id = attempt.chat_id
@@ -497,7 +530,11 @@ class RemoteAuthenticationManager:
     def _expire_locked(self, now: datetime) -> None:
         stale: list[str] = []
         for attempt_id, attempt in self._attempts.items():
-            if not attempt.status.is_terminal and now >= attempt.expires_at:
+            if (
+                not attempt.status.is_terminal
+                and attempt.status is not RemoteAuthStatus.FINALIZING
+                and now >= attempt.expires_at
+            ):
                 attempt.status = RemoteAuthStatus.EXPIRED
                 attempt.cancel_event.set()
                 continue

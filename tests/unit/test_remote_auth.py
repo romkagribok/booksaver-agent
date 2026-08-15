@@ -110,6 +110,32 @@ class FinalizingRunner:
         return self.result
 
 
+class DelayedFailureRunner:
+    """Return a prepared failure even when lifecycle cancellation already won."""
+
+    def __init__(self, draft: IncidentDraft) -> None:
+        self.result = RemoteBrowserResult(
+            RemoteAuthStatus.FAILED,
+            incident_draft=draft,
+        )
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def run(
+        self,
+        work: RemoteBrowserWork,
+        daemon_stop_event: threading.Event,
+        on_ready: object,
+        on_finalizing: object,
+    ) -> RemoteBrowserResult:
+        del work, daemon_stop_event, on_finalizing
+        assert callable(on_ready)
+        on_ready()
+        self.started.set()
+        assert self.release.wait(1)
+        return self.result
+
+
 def _settings(**overrides: object) -> RemoteAuthSettings:
     values: dict[str, object] = {
         "enabled": True,
@@ -232,6 +258,56 @@ def test_verified_attempt_is_finalizing_and_refuses_viewer_cancel() -> None:
     ]
 
 
+def test_finalizing_survives_ordinary_expiry_until_capture_commits() -> None:
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    current = [now]
+    draft = cast(IncidentDraft, object())
+    runner = FinalizingRunner(
+        RemoteBrowserResult(
+            RemoteAuthStatus.SUCCEEDED,
+            cookies_json="[]",
+            incident_draft=draft,
+        )
+    )
+    sequence: list[str] = []
+    messages: list[str] = []
+    manager = RemoteAuthenticationManager(
+        _settings(session_timeout_seconds=120),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: sequence.append("capture"),
+        lambda _chat_id, text: messages.append(text),
+        clock=lambda: current[0],
+        incident_sink=lambda value: sequence.append(
+            "incident" if value is draft else "wrong-incident"
+        ),
+    )
+
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    assert runner.finalizing.wait(1)
+
+    current[0] = now + timedelta(seconds=121)
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.FINALIZING
+
+    runner.release.set()
+    for _ in range(100):
+        if messages:
+            break
+        threading.Event().wait(0.01)
+
+    assert sequence == ["capture", "incident"]
+    assert messages == [
+        "Booking.com connected successfully. Future checks will use your "
+        "authenticated mobile-web prices."
+    ]
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.SUCCEEDED
+
+    current[0] = now + timedelta(seconds=152)
+    with pytest.raises(RemoteAuthDenied):
+        manager.viewer_state(grant.session_token)
+
+
 def test_administrative_cancel_still_wins_during_finalizing() -> None:
     runner = FinalizingRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
     captured: list[str] = []
@@ -250,6 +326,109 @@ def test_administrative_cancel_still_wins_during_finalizing() -> None:
     manager.stop_all()
 
     assert captured == []
+
+
+def test_failure_incident_records_when_viewer_cancel_wins_before_worker_return() -> None:
+    draft = cast(IncidentDraft, object())
+    runner = DelayedFailureRunner(draft)
+    incidents: list[IncidentDraft] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+        incident_sink=incidents.append,
+    )
+
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    assert runner.started.wait(1)
+    assert manager.cancel(grant.session_token)
+    runner.release.set()
+    for _ in range(100):
+        if incidents:
+            break
+        threading.Event().wait(0.01)
+
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.CANCELLED
+    assert incidents == [draft]
+    manager.stop_all()
+
+
+def test_failure_incident_records_when_expiry_wins_before_worker_return() -> None:
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    current = [now]
+    draft = cast(IncidentDraft, object())
+    runner = DelayedFailureRunner(draft)
+    incidents: list[IncidentDraft] = []
+    manager = RemoteAuthenticationManager(
+        _settings(session_timeout_seconds=120),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+        clock=lambda: current[0],
+        incident_sink=incidents.append,
+    )
+
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    assert runner.started.wait(1)
+    current[0] = now + timedelta(seconds=121)
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.EXPIRED
+    runner.release.set()
+    for _ in range(100):
+        if incidents:
+            break
+        threading.Event().wait(0.01)
+
+    assert incidents == [draft]
+    manager.stop_all()
+
+
+def test_privacy_erasure_suppresses_late_failure_incident() -> None:
+    draft = cast(IncidentDraft, object())
+    runner = DelayedFailureRunner(draft)
+    incidents: list[IncidentDraft] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+        incident_sink=incidents.append,
+    )
+
+    manager.create(123, 123)
+    assert runner.started.wait(1)
+    assert manager.cancel_for_telegram_user(123)
+    runner.release.set()
+    manager.stop_all()
+
+    assert incidents == []
+
+
+def test_shutdown_suppresses_late_failure_incident() -> None:
+    draft = cast(IncidentDraft, object())
+    runner = DelayedFailureRunner(draft)
+    incidents: list[IncidentDraft] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+        incident_sink=incidents.append,
+    )
+
+    manager.create(123, 123)
+    assert runner.started.wait(1)
+    manager.stop_all(join_timeout=0)
+    runner.release.set()
+    manager.stop_all()
+
+    assert incidents == []
 
 
 def test_incident_failure_does_not_undo_committed_session(
