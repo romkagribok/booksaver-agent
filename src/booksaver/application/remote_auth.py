@@ -431,10 +431,12 @@ class RemoteAuthenticationManager:
                         else:
                             self._safe_record_incident(result.incident_draft)
                             logger.info("Remote authentication finalization succeeded")
-                elif result.status is RemoteAuthStatus.FAILED:
-                    self._safe_record_incident(result.incident_draft)
                 attempt.status = result.status
                 attempt.failure = result.failure
+            # Failure drafts are operational DOM-drift evidence prepared while the page
+            # existed. Record them after cleanup even when cancel/expiry already won.
+            if result.status is RemoteAuthStatus.FAILED:
+                self._safe_record_incident(result.incident_draft)
             self._release_active_locked(attempt)
             telegram_user_id = attempt.telegram_user_id
             chat_id = attempt.chat_id
@@ -497,7 +499,13 @@ class RemoteAuthenticationManager:
     def _expire_locked(self, now: datetime) -> None:
         stale: list[str] = []
         for attempt_id, attempt in self._attempts.items():
-            if not attempt.status.is_terminal and now >= attempt.expires_at:
+            # FINALIZING has already admitted code verification; domain transitions leave
+            # it only via success, typed failure, or administrative/shutdown cancel.
+            if (
+                not attempt.status.is_terminal
+                and attempt.status is not RemoteAuthStatus.FINALIZING
+                and now >= attempt.expires_at
+            ):
                 attempt.status = RemoteAuthStatus.EXPIRED
                 attempt.cancel_event.set()
                 continue

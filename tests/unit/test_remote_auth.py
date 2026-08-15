@@ -232,6 +232,55 @@ def test_verified_attempt_is_finalizing_and_refuses_viewer_cancel() -> None:
     ]
 
 
+def test_finalizing_survives_expiry_until_capture_commits() -> None:
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    current = [now]
+    draft = cast(IncidentDraft, object())
+    runner = FinalizingRunner(
+        RemoteBrowserResult(
+            RemoteAuthStatus.SUCCEEDED,
+            cookies_json="[]",
+            incident_draft=draft,
+        )
+    )
+    sequence: list[str] = []
+    messages: list[str] = []
+    manager = RemoteAuthenticationManager(
+        _settings(session_timeout_seconds=120),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: sequence.append("capture"),
+        lambda _chat_id, text: messages.append(text),
+        clock=lambda: current[0],
+        incident_sink=lambda value: sequence.append(
+            "incident" if value is draft else "wrong-incident"
+        ),
+    )
+
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    assert runner.finalizing.wait(1)
+
+    current[0] = now + timedelta(seconds=121)
+    state = manager.viewer_state(grant.session_token)
+    assert state.status is RemoteAuthStatus.FINALIZING
+
+    runner.release.set()
+    for _ in range(100):
+        if messages:
+            break
+        threading.Event().wait(0.01)
+
+    assert sequence == ["capture", "incident"]
+    assert messages == [
+        "Booking.com connected successfully. Future checks will use your "
+        "authenticated mobile-web prices."
+    ]
+    # Past expires_at, a terminal attempt may already be purged from the viewer index.
+    with pytest.raises(RemoteAuthDenied):
+        manager.viewer_state(grant.session_token)
+
+
 def test_administrative_cancel_still_wins_during_finalizing() -> None:
     runner = FinalizingRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
     captured: list[str] = []
@@ -354,6 +403,49 @@ def test_manager_preserves_expired_state_until_worker_teardown() -> None:
     assert messages == [
         "Booking.com connection timed out. Send /connect when you're ready to try again."
     ]
+
+
+def test_failure_incident_records_when_cancel_wins_before_worker_return() -> None:
+    draft = cast(IncidentDraft, object())
+
+    class FailureAfterCancelRunner:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def run(
+            self,
+            work: RemoteBrowserWork,
+            daemon_stop_event: threading.Event,
+            on_ready: object,
+            on_finalizing: object,
+        ) -> RemoteBrowserResult:
+            del work, daemon_stop_event, on_finalizing
+            self.started.set()
+            assert callable(on_ready)
+            on_ready()
+            assert self.release.wait(1)
+            return RemoteBrowserResult(RemoteAuthStatus.FAILED, incident_draft=draft)
+
+    runner = FailureAfterCancelRunner()
+    incidents: list[IncidentDraft] = []
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, _text: None,
+        incident_sink=incidents.append,
+    )
+    launch = manager.create(123, 123)
+    assert runner.started.wait(1)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    assert manager.cancel(grant.session_token)
+    runner.release.set()
+    manager.stop_all()
+
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.CANCELLED
+    assert incidents == [draft]
 
 
 def test_manager_cancellation_is_idempotent_and_never_captures() -> None:
