@@ -93,6 +93,7 @@ NotifyUser = Callable[[int, str], None]
 SuccessfulConnection = Callable[[int], None]
 IncidentSink = Callable[[IncidentDraft], None]
 Clock = Callable[[], datetime]
+_FINALIZATION_RESULT_RETENTION = timedelta(seconds=30)
 
 
 class _FailureIncidentPolicy(Enum):
@@ -451,6 +452,11 @@ class RemoteAuthenticationManager:
                         else:
                             self._safe_record_incident(result.incident_draft)
                             logger.info("Remote authentication finalization succeeded")
+                if result.status.is_terminal:
+                    attempt.expires_at = max(
+                        attempt.expires_at,
+                        self._clock() + _FINALIZATION_RESULT_RETENTION,
+                    )
                 attempt.status = result.status
                 attempt.failure = result.failure
             # A failure draft was prepared while the browser page still existed. Preserve it

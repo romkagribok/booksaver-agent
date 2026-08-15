@@ -10,7 +10,8 @@ updated: 2026-08-15T16:06:12Z
 
 ## Summary
 
-- **Focused tests**: 31 passed across remote-auth lifecycle races and the executable Bugbot gate.
+- **Focused tests**: 39 passed across remote-auth lifecycle races, HTTP cookie behavior, and the
+  executable Bugbot gate.
 - **Full repository tests**: 1,561 passed with 55 known configuration-deprecation warnings.
 - **Lint**: Ruff clean across `src`, `tests`, and `scripts`.
 - **Formatting**: All five changed Python files are Ruff-formatted. The optional repository-wide
@@ -27,6 +28,9 @@ updated: 2026-08-15T16:06:12Z
 - ✅ **US-140 / finalizing expiry**: A controllable verified runner crosses ordinary `expires_at`;
   viewer state remains `FINALIZING`, then encrypted capture, recovered incident, and success complete
   in order.
+- ✅ **US-140 / viewer lifetime**: The hardened viewer capability is session-scoped in the browser,
+  while the server keeps ordinary expiry authority and exposes a bounded terminal result after late
+  finalization.
 - ✅ **US-140 / higher authority**: Administrative purge/revocation and daemon shutdown still cancel
   in-flight work and prevent session capture.
 - ✅ **US-140 / ordinary terminal races**: Viewer cancellation and ordinary expiry may retain their
@@ -49,6 +53,8 @@ updated: 2026-08-15T16:06:12Z
    Bugbot's unconditional publication suggestion was narrowed because it would recreate evidence
    after administrative purge. The implementation records under the manager lock when publication
    remains eligible and permanently suppresses purge/shutdown cases.
+3. **Viewer cookie expires during finalization**: Confirmed and fixed by removing the client-side
+   `Max-Age` while retaining server-side expiry, plus a bounded post-finalization result window.
 
 ## Issues Found
 

@@ -28,6 +28,10 @@ service is introduced.
 ### Domain and Application
 
 - Preserve `RemoteAuthStatus.FINALIZING` as non-terminal but exclude it from ordinary TTL expiry.
+- Issue the viewer capability as a hardened session cookie. Server-side attempt expiry remains the
+  authority for ordinary work, while a still-open viewer does not discard its capability during a
+  verified finalization. When finalization completes after the ordinary deadline, retain the typed
+  terminal result for a bounded 30-second observation window.
 - Add a private closed `FailureIncidentPolicy` value to each in-memory attempt. Default is
   `PUBLISH`; administrative purge/revocation changes it permanently to `SUPPRESS_PRIVACY_ERASURE`;
   daemon shutdown changes it to `SUPPRESS_SHUTDOWN`.
@@ -83,6 +87,11 @@ if (
 
 `FINALIZING` remains observable after ordinary expiry until the worker commits success, returns a
 typed capture failure, or higher-authority purge/shutdown cancellation wins.
+
+The viewer cookie has no client-side `Max-Age`; it is removed with the embedded browser session.
+The in-memory capability remains server-authoritative and expires on the original deadline unless
+the attempt is finalizing. A terminal result completed after that deadline extends only the
+in-memory observation deadline by 30 seconds.
 
 ### Failure Incident Policy
 

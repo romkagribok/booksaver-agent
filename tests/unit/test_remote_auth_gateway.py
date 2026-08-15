@@ -200,6 +200,7 @@ def test_exchange_requires_exact_origin_and_sets_hardened_cookie(tmp_path: Path)
     assert "Secure" in cookie
     assert "HttpOnly" in cookie
     assert "SameSite=Strict" in cookie
+    assert "Max-Age" not in cookie
 
 
 def test_viewer_and_cancel_require_cookie_and_never_echo_it(tmp_path: Path) -> None:

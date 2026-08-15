@@ -301,6 +301,11 @@ def test_finalizing_survives_ordinary_expiry_until_capture_commits() -> None:
         "Booking.com connected successfully. Future checks will use your "
         "authenticated mobile-web prices."
     ]
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.SUCCEEDED
+
+    current[0] = now + timedelta(seconds=152)
+    with pytest.raises(RemoteAuthDenied):
+        manager.viewer_state(grant.session_token)
 
 
 def test_administrative_cancel_still_wins_during_finalizing() -> None:
