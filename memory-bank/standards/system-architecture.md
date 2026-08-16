@@ -50,9 +50,12 @@ flowchart TB
   visible reservation and derive monitorable booking projections only for reason-coded eligible rows.
 - The opt-in `/connect` adapter is the narrow exception to outbound-only operation (ADR-026). A
   signed Telegram Mini App reaches a stdlib HTTP gateway behind Caddy TLS, drives one transient
-  headed mobile browser through token-gated noVNC/websockify, captures cookies only after positive
-  account evidence, and tears down. It shares the same global browser lease as checks. No endpoint
-  accepts credentials, cookie JSON, arbitrary URLs, uploads, or free-form browser actions.
+  headed mobile browser through token-gated noVNC/websockify, and treats that page only as a cookie
+  producer. A versioned isolated Booking server contract accepts exact negative controls—including
+  the cookie-free edge-pending tuple—without closing the viewer, and captures cookies only after two
+  exact positive probes issue a receipt bound to the immutable snapshot (ADR-035). It then tears
+  down. The flow shares the same global browser lease as checks. No endpoint accepts credentials,
+  cookie JSON, arbitrary URLs, uploads, or free-form browser actions.
 - The remote login browser runs on the trusted self-hosted VPS. HTTPS and encryption do not protect
   keystrokes against compromised VPS root; stronger disposable/device-local isolation is future
   hardening, not a security property of the current design.

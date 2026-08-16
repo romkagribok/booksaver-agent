@@ -4,7 +4,7 @@ intent: 022-adaptive-booking-browser-resilience
 phase: construction
 status: complete
 created: 2026-08-13T01:59:59.000Z
-updated: 2026-08-15T23:16:21Z
+updated: 2026-08-16T16:35:00.000Z
 default_bolt_type: ddd-construction-bolt
 ---
 
@@ -60,6 +60,8 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
   committed only after encrypted persistence; administrative purge and shutdown remain authoritative.
 - **RemoteAuthSessionContract**: Versioned signed-out/signed-in response distinction for one literal
   read-only Booking account endpoint, proven in fresh isolated contexts.
+- **EdgePendingNegativeControl**: Exact cookie-free `202 text/html`, empty-body, no-redirect response
+  admitted only as signed-out/pending evidence and never as authenticated evidence.
 - **RemoteAuthServerReceipt**: Fresh, single-use code authority bound to caller, attempt, contract,
   expiry, and the exact verified cookie-snapshot digest.
 
@@ -79,8 +81,8 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 6 |
-| Must Have | 6 |
+| Total Stories | 7 |
+| Must Have | 7 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -92,6 +94,7 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
 | US-136 | Explain every terminal browser outcome | Must | Complete |
 | US-140 | Finalize verified remote authentication atomically | Must | Complete |
 | US-141 | Verify remote authentication from server evidence | Must | Complete |
+| US-142 | Admit the observed edge-pending negative control safely | Must | Complete |
 
 ## Dependencies
 
@@ -165,3 +168,5 @@ resolve genuine ambiguity. The final actionable reason and provenance survive al
   Bugbot merge-gate correction (US-140) after bolt 046.
 - `048-dom-resilient-browser-workflows`: server-backed, DOM-independent remote-auth verification
   (US-141) after bolt 047.
+- `049-dom-resilient-browser-workflows`: exact `202` edge-pending negative-control correction
+  (US-142) after bolt 048.

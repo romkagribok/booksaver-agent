@@ -3,7 +3,7 @@ intent: 022-adaptive-booking-browser-resilience
 phase: construction
 status: complete
 created: 2026-08-13T01:51:45.000Z
-updated: 2026-08-15T23:16:21Z
+updated: 2026-08-16T16:35:00.000Z
 ---
 
 # Requirements: Adaptive Booking Browser Resilience
@@ -312,8 +312,10 @@ booking, cancellation, modification, checkout, purchase, and payment boundary.
   authenticated through a versioned, isolated, read-only Booking.com server contract. Reservation
   DOM, URL appearance, cookie changes, and model output are not authentication authority.
 - **Acceptance Criteria**:
-  - A fresh cookie-free isolated context must first match the exact signed-out contract for the
-    fixed Booking account endpoint; an unexpected baseline fails closed.
+  - A fresh cookie-free isolated context must first match one exact code-owned negative response
+    in the versioned signed-out contract for the fixed Booking account endpoint. Contract v2 admits
+    either the Booking OAuth redirect or the observed empty `202 text/html` edge-pending response;
+    every other baseline fails closed.
   - Stable candidate Booking cookies are copied into fresh service-worker-free isolated contexts;
     the fixed endpoint is called with redirects disabled and no credentials or reservation request.
   - Two independent probes of the same immutable snapshot must match the exact signed-in response
@@ -321,7 +323,8 @@ booking, cancellation, modification, checkout, purchase, and payment boundary.
     version, and keyed snapshot digest.
   - URL, status, cookies, login response, page title/text/DOM, screenshots, and model classifications
     cannot individually or collectively authorize capture outside the complete server contract.
-  - Explicit signed-out responses keep the viewer available with zero LLM calls; contract drift,
+  - Explicit signed-out responses, including the exact empty `202` edge-pending response, keep the
+    viewer available with zero LLM calls and can never issue a receipt. Contract drift,
     unsafe redirects, challenges, or infrastructure failures retain exact typed outcomes and save
     nothing.
   - Finalization persists exactly the verified snapshot and preserves all US-140 persistence,
@@ -330,7 +333,7 @@ booking, cancellation, modification, checkout, purchase, and payment boundary.
     Response bodies, headers, queries, cookie material, principals, and reservation data remain
     absent from diagnostics and model prompts.
 - **Priority**: Must
-- **Related Stories**: US-141
+- **Related Stories**: US-141, US-142
 
 ## Non-Functional Requirements
 

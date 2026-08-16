@@ -1,5 +1,5 @@
 ---
-last_updated: 2026-08-15T22:56:03Z
+last_updated: 2026-08-16T16:29:00Z
 total_decisions: 35
 ---
 
@@ -24,8 +24,9 @@ Use this to find relevant prior decisions when working on related features.
 - **Bolt**: 048-dom-resilient-browser-workflows (dom-resilient-browser-workflows)
 - **Path**: `bolts/048-dom-resilient-browser-workflows/adr-035-server-backed-remote-authentication-verification.md`
 - **Summary**: Reservation DOM, visible URLs, cookie heuristics, and model output cannot prove a
-  `/connect` login. Require a fresh signed-out baseline plus two isolated signed-in server-contract
-  probes, then bind one-use finalization to the exact verified cookie snapshot.
+  `/connect` login. Contract v2 accepts only the OAuth redirect or the exact empty `202` edge tuple
+  as negative evidence, still requires two isolated exact signed-in probes, and binds one-use
+  finalization to the exact verified cookie snapshot.
 - **Read when**: Changing `/connect` success detection, remote browser cookies, server-session
   verification, authentication receipts, protected Booking endpoints, or login finalization.
 
