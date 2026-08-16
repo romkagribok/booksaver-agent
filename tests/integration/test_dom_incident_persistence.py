@@ -86,7 +86,7 @@ def test_model_free_server_contract_maintenance_opens_immediately(tmp_path: Path
         journey=DomJourney.REMOTE_AUTH,
         step_id=DomStepId.REMOTE_AUTH_SESSION_CAPTURE,
         terminal_reason=TerminalBrowserReason.CODE_MAINTENANCE_REQUIRED,
-        verifier_category="remote_auth_server_contract_v1",
+        verifier_category="remote_auth_server_contract_v2",
         structural_digest=StructuralDigest("4" * 64),
         model_roles=(),
         provenance=IncidentSourceProvenance.CODE_MAINTENANCE_REQUIRED,

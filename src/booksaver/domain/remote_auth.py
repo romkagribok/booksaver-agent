@@ -7,6 +7,9 @@ from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
 
+REMOTE_AUTH_SERVER_CONTRACT_VERSION = "booking-account-session-v2"
+REMOTE_AUTH_SERVER_VERIFIER = "booking_server_session_v2"
+
 
 class RemoteAuthStatus(Enum):
     STARTING = "starting"
@@ -88,7 +91,7 @@ class SafeServerEvidence:
     size: ServerSizeClass
 
     def __post_init__(self) -> None:
-        if self.contract_version != "booking-account-session-v1":
+        if self.contract_version != REMOTE_AUTH_SERVER_CONTRACT_VERSION:
             raise ValueError("unsupported remote-auth server contract version")
 
 
@@ -112,7 +115,7 @@ class RemoteAuthServerReceipt:
     def __post_init__(self) -> None:
         if not self.attempt_id or self.telegram_user_id < 1:
             raise ValueError("remote-auth receipt requires an attempt and caller")
-        if self.contract_version != "booking-account-session-v1":
+        if self.contract_version != REMOTE_AUTH_SERVER_CONTRACT_VERSION:
             raise ValueError("unsupported remote-auth receipt contract")
         for label, value in (
             ("verified_at", self.verified_at),
@@ -122,7 +125,7 @@ class RemoteAuthServerReceipt:
                 raise ValueError(f"{label} must be a timezone-aware UTC datetime")
         if self.expires_at <= self.verified_at:
             raise ValueError("remote-auth receipt expiry must follow verification")
-        if self.verifier != "booking_server_session_v1":
+        if self.verifier != REMOTE_AUTH_SERVER_VERIFIER:
             raise ValueError("unsupported remote-auth receipt verifier")
         if len(self._snapshot_hmac) != 32 or len(self._nonce) != 32:
             raise ValueError("remote-auth receipt secret bindings are malformed")

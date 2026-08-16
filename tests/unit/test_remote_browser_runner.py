@@ -332,7 +332,7 @@ def test_server_receipt_cannot_be_reused_for_finalization() -> None:
 
 def _safe_evidence() -> SafeServerEvidence:
     return SafeServerEvidence(
-        contract_version="booking-account-session-v1",
+        contract_version="booking-account-session-v2",
         status=ServerStatusClass.SUCCESS,
         media=ServerMediaClass.OTHER,
         redirect=ServerRedirectClass.NONE,
@@ -536,10 +536,10 @@ class _RunnerVerifier:
         receipt = RemoteAuthServerReceipt(
             attempt_id=attempt_id,
             telegram_user_id=telegram_user_id,
-            contract_version="booking-account-session-v1",
+            contract_version="booking-account-session-v2",
             verified_at=NOW,
             expires_at=NOW + timedelta(seconds=30),
-            verifier="booking_server_session_v1",
+            verifier="booking_server_session_v2",
             _snapshot_hmac=b"h" * 32,
             _nonce=b"n" * 32,
         )

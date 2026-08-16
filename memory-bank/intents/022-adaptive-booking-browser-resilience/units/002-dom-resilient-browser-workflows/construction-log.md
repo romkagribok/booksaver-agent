@@ -2,7 +2,7 @@
 unit: 002-dom-resilient-browser-workflows
 intent: 022-adaptive-booking-browser-resilience
 created: 2026-08-13T02:39:01Z
-last_updated: 2026-08-15T23:16:21Z
+last_updated: 2026-08-16T16:35:00Z
 ---
 
 # Construction Log: DOM-Resilient Browser Workflows
@@ -22,6 +22,7 @@ last_updated: 2026-08-15T23:16:21Z
 | 2026-08-14T03:08:12Z | append | Added `046-dom-resilient-browser-workflows` for US-140 | Verified recovery could be cancelled by ordinary viewer close before encrypted capture committed | Yes - owner requested AI-DLC implementation to pre-merge review |
 | 2026-08-15T15:55:59Z | append | Added `047-dom-resilient-browser-workflows` for US-140 corrective coverage | Delayed Bugbot review found ordinary expiry and terminal-race evidence gaps after PR #23 merged | Yes - owner requested all Bugbot concerns and a durable merge gate |
 | 2026-08-15T22:33:19.000Z | append | Added `048-dom-resilient-browser-workflows` for US-141 | Live `/connect` still coupled authentication success to reservation DOM; owner approved server-backed proof and removal of DOM/model authority | Yes - owner requested AI-DLC implementation through final pre-merge review |
+| 2026-08-16T16:23:56Z | append | Added `049-dom-resilient-browser-workflows` for US-142 | Live contract v1 rejected Booking's exact empty `202` cookie-free edge response before viewer admission | Yes - owner approved the narrow negative-only v2 amendment through Bugbot review |
 
 ## Current Bolt Structure
 
@@ -33,6 +34,7 @@ last_updated: 2026-08-15T23:16:21Z
 | `046-dom-resilient-browser-workflows` | US-140 | Complete | Added after live Telegram acceptance exposed finalization race |
 | `047-dom-resilient-browser-workflows` | US-140 corrective coverage | Complete | Added after delayed post-merge Bugbot review |
 | `048-dom-resilient-browser-workflows` | US-141 | Complete | Server-backed, exact-snapshot `/connect` proof; zero DOM/model authority |
+| `049-dom-resilient-browser-workflows` | US-142 | Complete | Exact empty `202` admitted as negative/pending only; positive proof unchanged |
 
 ## Execution History
 
@@ -67,17 +69,24 @@ last_updated: 2026-08-15T23:16:21Z
 | 2026-08-15T22:56:03Z | `048-dom-resilient-browser-workflows` | stage-complete | Domain model → technical design → ADR analysis; ADR-035 accepted for server-backed `/connect` authority |
 | 2026-08-15T23:15:14Z | `048-dom-resilient-browser-workflows` | stage-complete | Implement → test; DOM/model success authority removed, isolated server verifier and exact-snapshot receipt wired |
 | 2026-08-15T23:16:21Z | `048-dom-resilient-browser-workflows` | completed | 129 focused and 1561 full tests passed; live negative and authenticated server-contract controls matched v1 |
+| 2026-08-16T16:23:56Z | `049-dom-resilient-browser-workflows` | started | Stage 1: model the exact empty `202` edge response as negative/pending only under contract v2 |
+| 2026-08-16T16:23:56Z | `049-dom-resilient-browser-workflows` | stage-complete | Domain model → technical design; receipt authority remains two exact bounded `200` responses for one immutable snapshot |
+| 2026-08-16T16:27:00Z | `049-dom-resilient-browser-workflows` | stage-complete | Technical design → ADR analysis; contract v2 adds one exact negative tuple with no new success authority |
+| 2026-08-16T16:29:00Z | `049-dom-resilient-browser-workflows` | stage-complete | ADR analysis → implement; ADR-035 amended, positive proof and atomic finalization authority unchanged |
+| 2026-08-16T16:33:00Z | `049-dom-resilient-browser-workflows` | stage-complete | Implement → test; contract-v2 domain identifiers and exact edge-pending negative predicate wired with no positive-authority change |
+| 2026-08-16T16:34:00Z | `049-dom-resilient-browser-workflows` | stage-complete | Test complete; 92 focused and 1574 full tests passed with Ruff, mypy, CLI, AI-DLC, and diff gates clean |
+| 2026-08-16T16:35:00Z | `049-dom-resilient-browser-workflows` | completed | Contract-v2 edge-pending correction complete; final PR head requires the executable Bugbot gate before merge |
 
 ## Execution Summary
 
 | Metric | Value |
 |--------|-------|
 | Original bolts planned | 2 |
-| Current bolt count | 6 |
-| Bolts completed | 6 |
+| Current bolt count | 7 |
+| Bolts completed | 7 |
 | Bolts in progress | 0 |
 | Bolts remaining | 0 |
-| Replanning events | 4 |
+| Replanning events | 5 |
 
 ## Notes
 

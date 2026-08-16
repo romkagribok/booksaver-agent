@@ -352,9 +352,12 @@ MFA code, or Booking.com session is sent in Telegram messages.
    **Enter** to submit/advance, and **Hide keyboard** to restore the full canvas. Sign in using your
    direct Booking.com email and password. Google, Apple, and other external identity-provider
    document navigation is blocked; complete Booking-owned MFA/passkey prompts if requested.
-4. Wait for **Connected** and return to Telegram. BookSaver saves only normalized Booking.com
-   cookies after positive rendered account evidence, encrypts them with `BOOKSAVER_SECRET_KEY`, and
-   destroys the temporary Chromium/Xvfb/VNC processes and all viewer capabilities.
+4. Wait for **Connected** and return to Telegram. The rendered page is only a cookie producer.
+   BookSaver tests one immutable Booking.com cookie snapshot twice against its fixed, isolated,
+   read-only server contract; only the resulting short-lived bound receipt permits encryption with
+   `BOOKSAVER_SECRET_KEY`. Known negative responses keep the viewer open, while DOM, visible URLs,
+   cookie presence, and model output cannot authorize capture. BookSaver then destroys the temporary
+   Chromium/Xvfb/VNC processes and all viewer capabilities.
 5. Send `/status`, then `/checknow` for one booking. Confirm the result reports authenticated mobile
    web. `Genius evidence visible` means the page rendered Genius state; absence of a Genius line does
    not mean authentication failed because not every stay/offer has a Genius discount.

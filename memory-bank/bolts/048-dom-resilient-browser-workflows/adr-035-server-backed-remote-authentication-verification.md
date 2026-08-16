@@ -2,6 +2,8 @@
 bolt: 048-dom-resilient-browser-workflows
 created: 2026-08-15T22:56:03Z
 status: accepted
+amended: 2026-08-16T16:29:00Z
+amended_by: 049-dom-resilient-browser-workflows
 amends: ADR-026
 supersedes: ADR-032 decision 3 for /connect success only
 ---
@@ -21,18 +23,25 @@ Chromium exposes no trusted `isLoggedIn()` primitive. Cookie presence, cookie na
 and a 2xx response on an unprotected page are also insufficient because anonymous Booking sessions
 receive cookies and some account-looking pages render the same URL/status when signed out.
 
-Content-free live discovery established a usable current server distinction: a cookie-free request
-to the fixed protected account endpoint redirects to Booking OAuth, while the same request with an
-authenticated session returns the protected resource directly.
+Content-free live discovery originally established a usable server distinction: a cookie-free
+request to the fixed protected account endpoint redirected to Booking OAuth, while the same request
+with an authenticated session returned the protected resource directly. Production then showed a
+second stable cookie-free edge response from the same VPS: exact `202 text/html`, empty body, no
+redirect, and unchanged protected URL. Contract v1 rejected that negative response before viewer
+admission. Repeated curl and Playwright probes reproduced the tuple without cookies or account data.
 
 ## Decision
 
 1. Make a versioned, code-owned, read-only Booking server contract the sole `/connect` authentication
-   authority. Contract v1 is `GET https://secure.booking.com/myaccount.html` with redirects disabled.
-2. Require a fresh cookie-free isolated context to match the exact signed-out Booking OAuth redirect
-   before accepting any candidate in an attempt.
-3. Treat a stable immutable Booking cookie snapshot as a trigger only. Require two independent clean
-   contexts holding exactly that snapshot to match the direct bounded signed-in response.
+   authority. Contract v2 is `GET https://secure.booking.com/myaccount.html` with redirects disabled.
+2. Require a fresh cookie-free isolated context to match one exact code-owned negative response
+   before accepting any candidate in an attempt. Contract v2 admits either the signed-out Booking
+   OAuth redirect or the exact `202 text/html`, empty-body, no-redirect, unchanged-protected-URL
+   edge-pending tuple. Both are negative only and can never issue a receipt.
+3. Treat a stable immutable Booking cookie snapshot as a trigger only. A candidate receiving either
+   negative tuple remains unverified and may be rechecked after the bounded quiet interval. Require
+   two independent clean contexts holding exactly that snapshot to match the direct bounded signed-in
+   response.
 4. Issue a short-lived, single-use receipt bound to attempt, Telegram caller, contract version, and a
    keyed HMAC of the exact cookie bytes. Existing finalization may persist only those bytes after the
    receipt is validated and consumed.
@@ -53,6 +62,9 @@ Authentication is a server authorization fact, not a UI-layout fact. A negative 
 endpoint that has become public or contaminated from proving every session. Independent positive
 probes remove page JavaScript, service workers, cache, and transient browser state from the decision.
 Binding the receipt to exact bytes closes the gap between what was verified and what is encrypted.
+
+The edge-pending tuple does not explain why Booking returned it. Admitting it is safe because it
+only keeps the interactive attempt available; the positive contract remains distinct and unchanged.
 
 The chosen endpoint is not a public stable Booking API, so it remains versioned and fail-closed. That
 maintenance burden is materially narrower than tracking arbitrary reservation DOM and cannot be
@@ -96,6 +108,10 @@ silently weakened to URL, cookie, or model heuristics.
 
 - **Protected endpoint starts returning 200 to signed-out users**: mandatory fresh negative baseline
   fails closed before the viewer can succeed.
+- **Edge response is also returned to a candidate**: it remains `SIGNED_OUT`, issues no receipt, and
+  enters only the existing bounded recheck path.
+- **A different `202` response appears**: exact status/media/redirect/body/URL conjunction rejects
+  the variant; arbitrary successful statuses or empty bodies are never generalized.
 - **A 200 challenge/error shell resembles success**: bounded media/size and known shell rejection plus
   two clean probes; unknown responses are maintenance-required, never success.
 - **Snapshot substitution between proof and persistence**: HMAC-bound one-use receipt and exact
@@ -107,5 +123,7 @@ silently weakened to URL, cookie, or model heuristics.
 
 ## Related
 
-- **Stories**: US-141
+- **Stories**: US-141, US-142
+- **Amendment**: Bolt 049 advances the response contract and receipt verifier to v2 while leaving
+  the positive authentication predicate and finalization authority unchanged.
 - **ADRs**: ADR-024, ADR-025, ADR-026, ADR-031, ADR-032, ADR-033, ADR-034

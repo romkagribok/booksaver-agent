@@ -8,8 +8,15 @@ import pytest
 
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.remote_auth import (
+    REMOTE_AUTH_SERVER_CONTRACT_VERSION,
+    REMOTE_AUTH_SERVER_VERIFIER,
+    RemoteAuthServerReceipt,
+    SafeServerEvidence,
+    ServerMediaClass,
     ServerRedirectClass,
     ServerSessionProbeOutcome,
+    ServerSizeClass,
+    ServerStatusClass,
 )
 from booksaver.infrastructure.remote_auth.network_session import (
     ACCOUNT_PROBE_URL,
@@ -98,6 +105,14 @@ def authenticated() -> Response:
     return Response(200)
 
 
+def edge_pending() -> Response:
+    return Response(
+        202,
+        headers={"content-type": "text/html; charset=UTF-8"},
+        body=b"",
+    )
+
+
 def verifier(
     responses: list[Response | Exception],
     *,
@@ -184,6 +199,120 @@ def test_anonymous_candidate_is_predictable_and_has_no_receipt() -> None:
     )
 
     assert result.outcome is ServerSessionProbeOutcome.SIGNED_OUT
+    assert result.receipt is None
+
+
+def test_exact_edge_pending_response_is_negative_for_baseline_and_candidate() -> None:
+    value, _browser = verifier([edge_pending(), edge_pending()])
+
+    baseline = value.establish_baseline()
+    result = value.verify_candidate(
+        snapshot(value),
+        attempt_id="attempt-1",
+        telegram_user_id=42,
+    )
+
+    assert baseline.outcome is ServerSessionProbeOutcome.SIGNED_OUT
+    assert result.outcome is ServerSessionProbeOutcome.SIGNED_OUT
+    assert result.receipt is None
+    assert baseline.evidence.status.value == "success"
+    assert baseline.evidence.media.value == "html"
+    assert baseline.evidence.redirect.value == "none"
+    assert baseline.evidence.size.value == "empty"
+
+
+def test_edge_pending_baseline_still_requires_two_exact_positive_probes() -> None:
+    value, _browser = verifier([edge_pending(), authenticated(), authenticated()])
+    value.establish_baseline()
+
+    result = value.verify_candidate(
+        snapshot(value),
+        attempt_id="attempt-1",
+        telegram_user_id=42,
+    )
+
+    assert result.outcome is ServerSessionProbeOutcome.AUTHENTICATED
+    assert result.receipt is not None
+    assert result.receipt.contract_version == REMOTE_AUTH_SERVER_CONTRACT_VERSION
+    assert result.receipt.verifier == REMOTE_AUTH_SERVER_VERIFIER
+
+
+def test_previous_server_contract_cannot_cross_the_v2_boundary() -> None:
+    with pytest.raises(ValueError, match="unsupported remote-auth server contract version"):
+        SafeServerEvidence(
+            contract_version="booking-account-session-v1",
+            status=ServerStatusClass.SUCCESS,
+            media=ServerMediaClass.HTML,
+            redirect=ServerRedirectClass.NONE,
+            size=ServerSizeClass.EMPTY,
+        )
+
+    with pytest.raises(ValueError, match="unsupported remote-auth receipt contract"):
+        RemoteAuthServerReceipt(
+            attempt_id="attempt-1",
+            telegram_user_id=42,
+            contract_version="booking-account-session-v1",
+            verified_at=NOW,
+            expires_at=NOW + timedelta(seconds=30),
+            verifier="booking_server_session_v1",
+            _snapshot_hmac=b"x" * 32,
+            _nonce=b"y" * 32,
+        )
+
+
+def test_edge_pending_second_probe_prevents_receipt() -> None:
+    value, _browser = verifier([signed_out(), authenticated(), edge_pending()])
+    value.establish_baseline()
+
+    result = value.verify_candidate(
+        snapshot(value),
+        attempt_id="attempt-1",
+        telegram_user_id=42,
+    )
+
+    assert result.outcome is ServerSessionProbeOutcome.SIGNED_OUT
+    assert result.receipt is None
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        Response(202, body=b"not empty"),
+        Response(202, headers={"content-type": "application/json"}, body=b""),
+        Response(202, url=f"{ACCOUNT_PROBE_URL}?variant=1", body=b""),
+        Response(202, url=f"{ACCOUNT_PROBE_URL}#fragment", body=b""),
+        Response(202, url="https://secure.booking.com/other", body=b""),
+        Response(
+            202,
+            headers={
+                "content-type": "text/html",
+                "content-length": "2000001",
+            },
+            body=b"",
+        ),
+        Response(202, body=b"x" * 2_000_001),
+        Response(
+            202,
+            headers={
+                "content-type": "text/html",
+                "location": "https://secure.booking.com/other",
+            },
+            body=b"",
+        ),
+        Response(202, body=b"verify you are human"),
+    ],
+)
+def test_malformed_edge_pending_variants_never_authenticate(response: Response) -> None:
+    value, _browser = verifier([signed_out(), response])
+    value.establish_baseline()
+
+    result = value.verify_candidate(
+        snapshot(value),
+        attempt_id="attempt-1",
+        telegram_user_id=42,
+    )
+
+    assert result.outcome is not ServerSessionProbeOutcome.AUTHENTICATED
     assert result.receipt is None
 
 

@@ -434,7 +434,7 @@ class SystemRemoteBrowserRunner:
         return build_incident_draft(
             journey=DomJourney.REMOTE_AUTH,
             diagnosis=diagnosis,
-            verifier_category="remote_auth_server_contract_v1",
+            verifier_category="remote_auth_server_contract_v2",
             structural_roles=(
                 f"server_status.{evidence.status.value}",
                 f"server_media.{evidence.media.value}",

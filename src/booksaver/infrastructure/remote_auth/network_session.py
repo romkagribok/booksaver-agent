@@ -20,6 +20,8 @@ from urllib.parse import urljoin, urlsplit
 
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.remote_auth import (
+    REMOTE_AUTH_SERVER_CONTRACT_VERSION,
+    REMOTE_AUTH_SERVER_VERIFIER,
     RemoteAuthServerReceipt,
     RemoteAuthServerVerification,
     SafeServerEvidence,
@@ -30,7 +32,7 @@ from booksaver.domain.remote_auth import (
     ServerStatusClass,
 )
 
-SERVER_CONTRACT_VERSION = "booking-account-session-v1"
+SERVER_CONTRACT_VERSION = REMOTE_AUTH_SERVER_CONTRACT_VERSION
 ACCOUNT_PROBE_URL = "https://secure.booking.com/myaccount.html"
 _PROBE_HOST = "secure.booking.com"
 _PROBE_PATH = "/myaccount.html"
@@ -265,7 +267,7 @@ class BookingServerSessionVerifier:
             contract_version=SERVER_CONTRACT_VERSION,
             verified_at=verified_at,
             expires_at=verified_at + _RECEIPT_TTL,
-            verifier="booking_server_session_v1",
+            verifier=REMOTE_AUTH_SERVER_VERIFIER,
             _snapshot_hmac=digest,
             _nonce=secrets.token_bytes(32),
         )
@@ -418,16 +420,27 @@ class BookingServerSessionVerifier:
         if self._has_challenge_marker(body):
             return _ProbeResult(ServerSessionProbeOutcome.CHALLENGE, evidence)
         parsed_response = urlsplit(response_url)
+        exact_probe_url = (
+            parsed_response.scheme == "https"
+            and parsed_response.hostname == _PROBE_HOST
+            and parsed_response.path == _PROBE_PATH
+            and not parsed_response.query
+            and not parsed_response.fragment
+        )
+        if (
+            status == 202
+            and media is ServerMediaClass.HTML
+            and redirect is ServerRedirectClass.NONE
+            and size is ServerSizeClass.EMPTY
+            and exact_probe_url
+        ):
+            return _ProbeResult(ServerSessionProbeOutcome.SIGNED_OUT, evidence)
         if (
             status == 200
             and media is ServerMediaClass.HTML
             and redirect is ServerRedirectClass.NONE
             and size is ServerSizeClass.BOUNDED
-            and parsed_response.scheme == "https"
-            and parsed_response.hostname == _PROBE_HOST
-            and parsed_response.path == _PROBE_PATH
-            and not parsed_response.query
-            and not parsed_response.fragment
+            and exact_probe_url
         ):
             return _ProbeResult(ServerSessionProbeOutcome.AUTHENTICATED, evidence)
         return _ProbeResult(ServerSessionProbeOutcome.CONTRACT_CHANGED, evidence)
