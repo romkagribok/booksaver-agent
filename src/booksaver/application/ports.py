@@ -6,6 +6,11 @@ from typing import Any, Protocol, runtime_checkable
 
 from booksaver.domain.account_sync import ReservationObservation
 from booksaver.domain.agent import AgentAction, AgentTurnContext, CheckTrace, Observation
+from booksaver.domain.browser_executor import (
+    PriceExecutionRequest,
+    PriceExecutionResult,
+    SessionLeaseReference,
+)
 from booksaver.domain.browser_resilience import (
     DomStepId,
     PageStateResolution,
@@ -153,6 +158,44 @@ class InteractiveBrowser(Protocol):
     def restore_cookies(self, data: bytes) -> None: ...
     def verify_authenticated_account(self) -> bool: ...
     def is_authenticated(self) -> bool: ...
+
+
+@runtime_checkable
+class SessionRestoreTarget(Protocol):
+    """Code-owned local browser bootstrap that can receive opaque session bytes."""
+
+    def restore_session(self, data: bytes) -> None: ...
+
+
+@runtime_checkable
+class VerifiedSessionRefreshSource(Protocol):
+    """Local browser capability used only after code-owned authentication verification."""
+
+    def verify_authenticated_account(self) -> bool: ...
+    def capture_session(self) -> bytes: ...
+
+
+@runtime_checkable
+class SessionLeaseBroker(Protocol):
+    """Keeps session material outside executor requests and provider-facing objects."""
+
+    def restore_into(
+        self, reference: SessionLeaseReference, target: SessionRestoreTarget
+    ) -> None: ...
+    def capture_verified_refresh(
+        self,
+        reference: SessionLeaseReference,
+        source: VerifiedSessionRefreshSource,
+    ) -> bool: ...
+    def take_verified_refresh(self, reference: SessionLeaseReference) -> bytes | None: ...
+    def close(self, reference: SessionLeaseReference) -> None: ...
+
+
+@runtime_checkable
+class PriceBrowserExecutor(Protocol):
+    """Replaceable, untrusted perception/navigation executor (ADR-036)."""
+
+    def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult: ...
 
 
 @runtime_checkable

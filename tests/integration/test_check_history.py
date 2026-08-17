@@ -354,7 +354,7 @@ class TestSchemaMigration:
 
         assert expected_columns <= columns
         assert legacy_rows == []
-        assert version == SCHEMA_VERSION == 15
+        assert version == SCHEMA_VERSION == 16
 
 
 class TestLocalSessionRepository:

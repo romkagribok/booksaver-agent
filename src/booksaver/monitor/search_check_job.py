@@ -7,6 +7,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from booksaver.application.browser_executor import (
+    OwnerBoundAgenticPriceCheck,
+    PriceExecutionOutcome,
+)
 from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
 from booksaver.application.model_policy import AdaptiveModelStopped
 from booksaver.application.ports import (
@@ -20,6 +24,11 @@ from booksaver.application.ports import (
     RegisteredPageStateResolver,
 )
 from booksaver.domain.agent import AgentBudget, AgentSettings, BudgetExceeded
+from booksaver.domain.browser_executor import (
+    PriceExecutionStatus,
+    RoutingDecision,
+    ValidationRejection,
+)
 from booksaver.domain.browser_resilience import (
     DiagnosisProvenance,
     DomStepId,
@@ -72,9 +81,7 @@ DOM_STEPS: tuple[DomStepId, ...] = (
 _GENIUS_EVIDENCE = re.compile(r"\bGenius(?:\s+(?:Level|discount|deal|rate))?\b", re.I)
 
 
-def _model_stop_diagnosis(
-    step_id: DomStepId, reason: ModelStopReason
-) -> TerminalBrowserDiagnosis:
+def _model_stop_diagnosis(step_id: DomStepId, reason: ModelStopReason) -> TerminalBrowserDiagnosis:
     terminal = DOM_STEP_REGISTRY.definition(step_id).reason_for_model_stop(reason)
     provenance = (
         DiagnosisProvenance.PROVIDER_STOP
@@ -131,6 +138,10 @@ class BookingComSearchMonitor:
         snapshot_writer: SnapshotWriter | None = None,
         clock: Callable[[], float] = time.monotonic,
         mobile_profile_id: MobileProfileId = MobileProfileId.ANDROID_CHROMIUM,
+        agentic_price_check: OwnerBoundAgenticPriceCheck | None = None,
+        agentic_owner_user_id: int | None = None,
+        agentic_route: RoutingDecision | None = None,
+        room_equivalence_policy: (Callable[[str, Booking], tuple[bool, float]] | None) = None,
     ) -> None:
         self._browser = browser
         self._sessions = session_manager
@@ -160,11 +171,21 @@ class BookingComSearchMonitor:
         self._last_llm_calls_used = 0
         self._llm_enabled = True
         self._mobile_profile_id = mobile_profile_id
+        self._agentic_price_check = agentic_price_check
+        self._agentic_owner_user_id = agentic_owner_user_id
+        self._agentic_route = agentic_route
+        self._room_equivalence_policy = room_equivalence_policy or self._exact_room_equivalence
+        self._last_agentic_outcome: PriceExecutionOutcome | None = None
 
     @property
     def last_llm_calls_used(self) -> int:
         """Actual LLM calls consumed by the most recent ``run_check``."""
         return self._last_llm_calls_used
+
+    @property
+    def last_agentic_outcome(self) -> PriceExecutionOutcome | None:
+        """Ephemeral outcome for the coordinator's content-free canary projection."""
+        return self._last_agentic_outcome
 
     def set_llm_enabled(self, enabled: bool) -> None:
         """Disable both extractor and agent resolution for a DOM-only check."""
@@ -193,8 +214,7 @@ class BookingComSearchMonitor:
             # real public bookable totals.
             mode = SessionMode.LOGGED_OUT
             logger.info(
-                "No active Booking.com session — running %d booking(s) logged out "
-                "(public prices).",
+                "No active Booking.com session — running %d booking(s) logged out (public prices).",
                 len(bookings),
             )
         else:
@@ -220,11 +240,7 @@ class BookingComSearchMonitor:
                 self._sessions.mark_reauth_required(session)
                 reauth_flagged = True
 
-        if (
-            session is not None
-            and not reauth_flagged
-            and self._browser.is_authenticated()
-        ):
+        if session is not None and not reauth_flagged and self._browser.is_authenticated():
             try:
                 self._sessions.save_refreshed(session, self._browser.get_cookies())
             except Exception as exc:
@@ -232,10 +248,12 @@ class BookingComSearchMonitor:
 
         return results
 
-    def run_authenticated(
-        self, booking: Booking, snapshot: UserSessionSnapshot
-    ) -> CheckResult:
+    def run_authenticated(self, booking: Booking, snapshot: UserSessionSnapshot) -> CheckResult:
         """Run one fail-closed owner-bound check and persist its result."""
+        if self._agentic_route is not None and self._agentic_route.use_agentic:
+            result = self._run_agentic_authenticated(booking, snapshot)
+            self._record(result)
+            return result
         try:
             self._browser.restore_cookies(snapshot.cookies)
         except Exception:
@@ -287,6 +305,166 @@ class BookingComSearchMonitor:
         self._record(result)
         return result
 
+    def _run_agentic_authenticated(
+        self,
+        booking: Booking,
+        snapshot: UserSessionSnapshot,
+    ) -> CheckResult:
+        recorder = TraceRecorder(booking.booking_id)
+        self._last_llm_calls_used = 0
+        self._last_agentic_outcome = None
+        if self._agentic_price_check is None or self._agentic_owner_user_id is None:
+            result = CheckResult.failure(
+                booking.booking_id,
+                datetime.now(UTC),
+                FailureReason(
+                    FailureCode.PROVIDER_AUTHENTICATION,
+                    "Agentic routing is selected but its local Anthropic executor is unavailable.",
+                ),
+            )
+            self._persist_trace(recorder, result, None)
+            return result
+        try:
+            outcome = self._agentic_price_check.execute(
+                owner_user_id=self._agentic_owner_user_id,
+                booking=booking,
+                session_material=snapshot.cookies,
+            )
+            self._last_agentic_outcome = outcome
+            self._last_llm_calls_used = outcome.result.usage.model_calls
+            result = self._agentic_check_result(
+                booking,
+                outcome,
+                snapshot.metadata.revision_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "Unexpected agentic execution error for booking %s failure_type=%s",
+                booking.booking_id,
+                type(exc).__name__,
+            )
+            result = CheckResult.failure(
+                booking.booking_id,
+                datetime.now(UTC),
+                FailureReason(
+                    FailureCode.INFRASTRUCTURE_FAILURE,
+                    f"Agentic browser check stopped after {type(exc).__name__}.",
+                ),
+            )
+        self._persist_trace(recorder, result, None)
+        return result
+
+    def _agentic_check_result(
+        self,
+        booking: Booking,
+        outcome: PriceExecutionOutcome,
+        session_revision_id: str,
+    ) -> CheckResult:
+        now = datetime.now(UTC)
+        if not outcome.validation.accepted:
+            code = self._agentic_failure_code(
+                outcome.result.status,
+                outcome.validation.rejection,
+            )
+            rejection = (
+                outcome.validation.rejection.value
+                if outcome.validation.rejection is not None
+                else outcome.result.status.value
+            )
+            return CheckResult.failure(
+                booking.booking_id,
+                now,
+                FailureReason(
+                    code,
+                    f"Agentic price observation rejected by BookSaver ({rejection}).",
+                ),
+            )
+
+        candidates: list[OfferCandidate] = []
+        for offer in outcome.validation.accepted_offers:
+            matches, confidence = self._room_equivalence_policy(
+                offer.room_label,
+                booking,
+            )
+            candidates.append(
+                OfferCandidate(
+                    room_label=offer.room_label,
+                    total=offer.total,
+                    is_refundable=True,
+                    cancellation_text=offer.cancellation_text,
+                    matches_room=matches,
+                    match_confidence=confidence,
+                )
+            )
+        selection = select_offer(candidates, booking)
+        if selection.chosen is None:
+            return CheckResult.failure(
+                booking.booking_id,
+                now,
+                FailureReason(
+                    FailureCode.NO_EQUIVALENT_OFFER,
+                    "No BookSaver-qualified equivalent refundable offer was observed.",
+                ),
+            )
+        facts = outcome.result.query_facts
+        genius = (
+            GeniusEvidence.APPLIED_OR_PRESENT
+            if facts is not None and facts.genius is True
+            else GeniusEvidence.NOT_OBSERVED
+        )
+        return self._to_success(
+            booking,
+            selection.chosen,
+            (ExtractionMethod.AGENT if outcome.result.fallback_used else ExtractionMethod.LLM),
+            now,
+            session_mode=SessionMode.AUTHENTICATED,
+            session_revision_id=session_revision_id,
+            genius_evidence=genius,
+        )
+
+    @staticmethod
+    def _exact_room_equivalence(
+        observed_room_label: str,
+        booking: Booking,
+    ) -> tuple[bool, float]:
+        exact = " ".join(observed_room_label.casefold().split()) == " ".join(
+            booking.room_type.label.casefold().split()
+        )
+        return exact, 1.0 if exact else 0.0
+
+    @staticmethod
+    def _agentic_failure_code(
+        status: PriceExecutionStatus,
+        rejection: ValidationRejection | None,
+    ) -> FailureCode:
+        rejection_codes = {
+            ValidationRejection.PROPERTY_MISMATCH: FailureCode.PROPERTY_NOT_FOUND,
+            ValidationRejection.DATE_MISMATCH: FailureCode.STEP_FAILED,
+            ValidationRejection.OCCUPANCY_MISMATCH: FailureCode.OCCUPANCY_MISSING,
+            ValidationRejection.AUTHENTICATION_REQUIRED: FailureCode.AUTH_REQUIRED,
+            ValidationRejection.CURRENCY_MISMATCH: FailureCode.CURRENCY_MISMATCH,
+            ValidationRejection.NO_COMPLETE_REFUNDABLE_ALL_IN_OFFER: (
+                FailureCode.NO_EQUIVALENT_OFFER
+            ),
+            ValidationRejection.EXECUTION_LIMIT_BREACH: FailureCode.BUDGET_EXCEEDED,
+            ValidationRejection.QUERY_EVIDENCE_INCOMPLETE: FailureCode.EXTRACTION_FAILED,
+        }
+        if rejection in rejection_codes:
+            return rejection_codes[rejection]
+        return {
+            PriceExecutionStatus.SESSION_UNAVAILABLE: FailureCode.AUTH_REQUIRED,
+            PriceExecutionStatus.SIGNED_OUT: FailureCode.AUTH_REQUIRED,
+            PriceExecutionStatus.MFA_REQUIRED: FailureCode.AUTH_REQUIRED,
+            PriceExecutionStatus.CAPTCHA: FailureCode.BOT_WALL,
+            PriceExecutionStatus.BOT_WALL: FailureCode.BOT_WALL,
+            PriceExecutionStatus.UNAVAILABLE: FailureCode.NO_EQUIVALENT_OFFER,
+            PriceExecutionStatus.UNSAFE_ACTION: FailureCode.BLOCKED_ACTION,
+            PriceExecutionStatus.PROVIDER_FAILURE: FailureCode.PROVIDER_UNAVAILABLE,
+            PriceExecutionStatus.BUDGET_EXHAUSTED: FailureCode.BUDGET_EXCEEDED,
+            PriceExecutionStatus.TIMEOUT: FailureCode.TIMEOUT,
+            PriceExecutionStatus.NO_VALID_OBSERVATION: FailureCode.EXTRACTION_FAILED,
+        }.get(status, FailureCode.EXTRACTION_FAILED)
+
     def run_check(
         self,
         booking: Booking,
@@ -299,9 +477,7 @@ class BookingComSearchMonitor:
         self._active_budget = None
         self._last_llm_calls_used = 0
         try:
-            result = self._run_check_inner(
-                booking, recorder, session_mode, session_revision_id
-            )
+            result = self._run_check_inner(booking, recorder, session_mode, session_revision_id)
         except Exception as exc:  # belt and braces: the never-raise contract
             logger.exception("Unexpected error checking booking %s", booking.booking_id)
             diagnosis = TerminalBrowserDiagnosis(
@@ -405,10 +581,7 @@ class BookingComSearchMonitor:
         )
         journey = search_journey.run(booking)
 
-        if (
-            session_revision_id is not None
-            and not self._browser.is_authenticated()
-        ):
+        if session_revision_id is not None and not self._browser.is_authenticated():
             return CheckResult.failure(
                 booking.booking_id,
                 now,
@@ -459,9 +632,7 @@ class BookingComSearchMonitor:
             )
         except Exception as exc:
             if isinstance(exc, AdaptiveModelStopped):
-                diagnosis = _model_stop_diagnosis(
-                    DomStepId.PRICE_OFFER_EXTRACTION, exc.reason
-                )
+                diagnosis = _model_stop_diagnosis(DomStepId.PRICE_OFFER_EXTRACTION, exc.reason)
                 return CheckResult.failure(
                     booking.booking_id,
                     now,
@@ -575,9 +746,7 @@ class BookingComSearchMonitor:
             )
         except Exception as exc:
             scripted_detail = str(exc)
-            recorder.currency_alignment(
-                f"method=scripted; unavailable: {scripted_detail}"
-            )
+            recorder.currency_alignment(f"method=scripted; unavailable: {scripted_detail}")
             if escalator is None:
                 return self._currency_failure(
                     booking,
@@ -667,9 +836,7 @@ class BookingComSearchMonitor:
             )
         except Exception as exc:
             if isinstance(exc, AdaptiveModelStopped):
-                diagnosis = _model_stop_diagnosis(
-                    DomStepId.PRICE_OFFER_EXTRACTION, exc.reason
-                )
+                diagnosis = _model_stop_diagnosis(DomStepId.PRICE_OFFER_EXTRACTION, exc.reason)
                 return CheckResult.failure(
                     booking.booking_id,
                     now,
@@ -724,8 +891,7 @@ class BookingComSearchMonitor:
         if selection.currency_mismatches:
             final_observed = self._observed_currencies(selection)
             recorder.currency_alignment(
-                f"verification=failed; requested={desired}; "
-                f"observed={','.join(final_observed)}"
+                f"verification=failed; requested={desired}; observed={','.join(final_observed)}"
             )
             return self._currency_failure(
                 booking,
@@ -786,9 +952,7 @@ class BookingComSearchMonitor:
                 ModelTier.SONNET: DiagnosisProvenance.SONNET_DIAGNOSED,
                 ModelTier.OPUS: DiagnosisProvenance.OPUS_DIAGNOSED,
             }[tier]
-            model_stop_reason = (
-                ModelStopReason.OPUS_EXHAUSTED if tier is ModelTier.OPUS else None
-            )
+            model_stop_reason = ModelStopReason.OPUS_EXHAUSTED if tier is ModelTier.OPUS else None
             confidence = 0.0
         else:
             provenance = DiagnosisProvenance.POLICY_STOP
@@ -850,9 +1014,7 @@ class BookingComSearchMonitor:
         )
 
     @staticmethod
-    def _journey_failure(
-        booking: Booking, journey: JourneyResult, now: datetime
-    ) -> CheckResult:
+    def _journey_failure(booking: Booking, journey: JourneyResult, now: datetime) -> CheckResult:
         failed = journey.failed_step
         assert failed is not None and journey.failure_code is not None
         detail = f"step={failed.step.value}: {failed.detail}"
@@ -906,6 +1068,7 @@ class BookingComSearchMonitor:
         session_revision_id: str | None = None,
         page_text: str = "",
         assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...] = (),
+        genius_evidence: GeniusEvidence | None = None,
     ) -> CheckResult:
         """Map the chosen candidate to the downstream CheckResult contract.
 
@@ -923,7 +1086,7 @@ class BookingComSearchMonitor:
             )
         price_source = None
         if session_revision_id is not None:
-            genius = (
+            genius = genius_evidence or (
                 GeniusEvidence.APPLIED_OR_PRESENT
                 if _GENIUS_EVIDENCE.search(page_text)
                 else GeniusEvidence.NOT_OBSERVED
@@ -980,13 +1143,9 @@ class BookingComSearchMonitor:
         except Exception as exc:
             if isinstance(exc, AdaptiveModelStopped):
                 raise
-            logger.error(
-                "LLM offer extraction failed for booking %s: %s", booking.booking_id, exc
-            )
+            logger.error("LLM offer extraction failed for booking %s: %s", booking.booking_id, exc)
             return None
 
     def _record(self, result: CheckResult) -> None:
         self._history.add(result)
-        self._failures.after_check(
-            result.booking_id, succeeded=result.outcome.value == "success"
-        )
+        self._failures.after_check(result.booking_id, succeeded=result.outcome.value == "success")

@@ -327,6 +327,42 @@ CREATE TABLE IF NOT EXISTS dom_drift_diagnostics (
 CREATE INDEX IF NOT EXISTS idx_dom_drift_diagnostics_expiry
     ON dom_drift_diagnostics(expires_at);
 
+-- v16: redacted agentic-browser qualification, promotion, and disclosure consent.
+-- No screenshot, page text/tree, prompt, cookie, action selector, or model reasoning is stored.
+CREATE TABLE IF NOT EXISTS agentic_canary_checks (
+    check_id TEXT PRIMARY KEY,
+    owner_user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    observed_at TEXT NOT NULL,
+    eligible_unblocked INTEGER NOT NULL CHECK(eligible_unblocked IN (0, 1)),
+    valid_observation INTEGER NOT NULL CHECK(valid_observation IN (0, 1)),
+    manual_price_correct INTEGER CHECK(manual_price_correct IN (0, 1)),
+    model_cost_micro_usd INTEGER NOT NULL CHECK(model_cost_micro_usd >= 0),
+    duration_ms INTEGER NOT NULL CHECK(duration_ms >= 0),
+    fallback_used INTEGER NOT NULL CHECK(fallback_used IN (0, 1)),
+    violations_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agentic_canary_owner_observed
+    ON agentic_canary_checks(owner_user_id, observed_at);
+
+CREATE TABLE IF NOT EXISTS agentic_promotion_state (
+    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+    status TEXT NOT NULL CHECK(status IN ('unqualified', 'qualified', 'regressed')),
+    policy_version TEXT NOT NULL,
+    qualified_at TEXT,
+    approved_by_owner_user_id INTEGER REFERENCES users(user_id),
+    owner_approved_at TEXT,
+    rollback_until TEXT,
+    regression_code TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agentic_disclosure_consents (
+    user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    disclosure_version TEXT NOT NULL,
+    acknowledged_at TEXT NOT NULL
+);
+
 -- v2: finalised by Unit 2 (booking-com-price-monitor)
 -- v5: extraction_method also allows 'agent' (bolt 007 agent-assisted checks)
 CREATE TABLE IF NOT EXISTS check_history (

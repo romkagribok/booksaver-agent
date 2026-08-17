@@ -15,10 +15,15 @@ from enum import Enum
 from typing import Any
 
 from booksaver.application.account_sync import SynchronizeBookingAccount
+from booksaver.application.browser_executor import (
+    AgenticPriceExecutionService,
+    InMemorySessionLeaseBroker,
+    OwnerBoundAgenticPriceCheck,
+)
 from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
 from booksaver.application.dom_incident import build_incident_draft, is_dom_incident_eligible
 from booksaver.application.model_policy import BrowserJobCostBudget, SpendLedger
-from booksaver.application.ports import AgentBrain, InventoryInterpreter
+from booksaver.application.ports import AgentBrain, InventoryInterpreter, PriceBrowserExecutor
 from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
 from booksaver.application.user_sessions import (
     AuthenticatedSessionProvider,
@@ -45,6 +50,17 @@ from booksaver.domain.agent import (
     CheckTrace,
     TraceKind,
 )
+from booksaver.domain.agentic_qualification import (
+    AgenticCanaryCheck,
+    CriticalAgenticViolation,
+)
+from booksaver.domain.browser_executor import (
+    MAX_JOB_COST_MICRO_USD,
+    ExecutorSafetyViolation,
+    PriceExecutionStatus,
+    RoutingContext,
+    resolve_execution_route,
+)
 from booksaver.domain.browser_resilience import (
     DomJourney,
     DomStepId,
@@ -61,6 +77,7 @@ from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.model_policy import (
     AdmissionDecision,
     BrowserJobKind,
+    CallerKeyRef,
     CostReconciliation,
     ModelAttemptAudit,
     ModelCostEstimator,
@@ -93,6 +110,8 @@ from booksaver.infrastructure.persistence.scheduled_check_slots import (
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteAccountReservationRepository,
+    SqliteAgenticDisclosureConsentRepository,
+    SqliteAgenticQualificationRepository,
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteCheckTraceRepository,
@@ -122,6 +141,9 @@ InventorySynchronizer = Callable[
     [SqliteStore, Any, int, SynchronizationTrigger], SynchronizationReport
 ]
 IncidentRecorderFactory = Callable[[], AbstractContextManager[Any]]
+AgenticExecutorFactory = Callable[
+    [BrowserJobCostBudget, InMemorySessionLeaseBroker], PriceBrowserExecutor
+]
 
 _INCIDENT_STRUCTURAL_ROLE_ALIASES = {"input": "textbox"}
 _INCIDENT_STRUCTURAL_ROLES = frozenset(
@@ -408,6 +430,7 @@ class CheckCoordinator:
         inventory_synchronizer: InventorySynchronizer | None = None,
         incident_recorder_factory: IncidentRecorderFactory | None = None,
         execution_gate: threading.Lock | None = None,
+        agentic_executor_factory: AgenticExecutorFactory | None = None,
     ) -> None:
         self._config = config
         self._db_path = config.data_directory.path / "booksaver.db"
@@ -426,6 +449,7 @@ class CheckCoordinator:
         self._llm_calls_today = llm_calls_today or DailyCounter()
         self._capped_notice_sent_today = capped_notice_sent_today or DailyCounter()
         self._execution_gate = execution_gate or threading.Lock()
+        self._agentic_executor_factory = agentic_executor_factory
         self._job_local = threading.local()
 
     @property
@@ -503,6 +527,44 @@ class CheckCoordinator:
     def _current_adaptive_job(self) -> AdaptiveBrowserJobContext | None:
         current = getattr(self._job_local, "adaptive", None)
         return current if isinstance(current, AdaptiveBrowserJobContext) else None
+
+    def _build_agentic_cost_budget(
+        self,
+        store: SqliteStore,
+        user_id: int,
+        job_kind: BrowserJobKind,
+        *,
+        shared_job_id: str | None = None,
+        initial_attempt_ordinal: int = 1,
+    ) -> BrowserJobCostBudget:
+        """Bill agentic execution only to the deployment owner's environment key.
+
+        The caller id remains the invited/owner user whose check consumed the allowance, but the
+        funding provenance can never silently switch to that user's separately stored API key.
+        """
+        daily_limit = self._config.limits_settings.max_llm_calls_per_user_per_day
+        ledger = _DailyCappedSpendLedger(
+            SqliteSpendLedger(store),
+            self._llm_calls_today,
+            user_id,
+            daily_limit,
+        )
+        settings = self._config.agent_settings
+        return BrowserJobCostBudget(
+            job_id=shared_job_id or f"agentic-{job_kind.value}-{uuid.uuid4().hex}",
+            job_kind=job_kind,
+            caller_key_ref=CallerKeyRef(
+                caller_user_id=user_id,
+                funding_mode="shared",
+                provenance="owner_env",
+            ),
+            ledger=ledger,
+            estimator=ModelCostEstimator(),
+            job_limit=UsdAmount(settings.max_job_cost_micro_usd),
+            day_limit=UsdAmount(settings.max_deployment_daily_cost_micro_usd),
+            preserve_opus_diagnostic=False,
+            initial_attempt_ordinal=initial_attempt_ordinal,
+        )
 
     @contextmanager
     def adaptive_runtime_scope_for_telegram_user(
@@ -1626,6 +1688,32 @@ class CheckCoordinator:
             SqliteCheckTraceRepository(store).add(TraceRecorder(booking.booking_id).finish(result))
             return result
         snapshot = resolution.snapshot
+        user = users.get_by_id(user_id)
+        if user is None or not user.is_active:
+            result = CheckResult.failure(
+                booking.booking_id,
+                datetime.now(UTC),
+                FailureReason(
+                    FailureCode.CALLER_REVOKED,
+                    "The booking owner is no longer authorized for browser execution.",
+                ),
+            )
+            history.add(result)
+            return result
+        agentic_settings = self._config.agentic_browser_settings
+        qualification = SqliteAgenticQualificationRepository(store).qualification_state()
+        consent = SqliteAgenticDisclosureConsentRepository(store).get(user_id)
+        route = resolve_execution_route(
+            agentic_settings.routing,
+            RoutingContext(
+                is_owner=user.is_owner,
+                qualification=qualification,
+                disclosure_version=agentic_settings.disclosure_version,
+                acknowledged_disclosure_version=(
+                    consent.disclosure_version if consent is not None else None
+                ),
+            ),
+        )
         remaining_llm = max(
             0,
             self._config.limits_settings.max_llm_calls_per_user_per_day
@@ -1635,6 +1723,32 @@ class CheckCoordinator:
         if remaining_llm:
             settings = replace(settings, max_llm_calls=min(settings.max_llm_calls, remaining_llm))
         adaptive_job = self._current_adaptive_job()
+        agentic_price_check: OwnerBoundAgenticPriceCheck | None = None
+        if route.use_agentic and self._agentic_executor_factory is not None:
+            lease_broker = InMemorySessionLeaseBroker()
+            agentic_budget = self._build_agentic_cost_budget(
+                store,
+                user_id,
+                (
+                    adaptive_job.budget.job_kind
+                    if adaptive_job is not None
+                    else BrowserJobKind.CHECK_NOW
+                ),
+                shared_job_id=(adaptive_job.budget.job_id if adaptive_job is not None else None),
+                initial_attempt_ordinal=(
+                    len(adaptive_job.budget.ordered_attempts()) + 1
+                    if adaptive_job is not None
+                    else 1
+                ),
+            )
+            executor = self._agentic_executor_factory(
+                agentic_budget,
+                lease_broker,
+            )
+            agentic_price_check = OwnerBoundAgenticPriceCheck(
+                AgenticPriceExecutionService(executor, lease_broker),
+                lease_broker,
+            )
         monitor = BookingComSearchMonitor(
             browser=browser,
             # Kept only for the legacy run_all_active API; owner-bound daemon
@@ -1653,12 +1767,59 @@ class CheckCoordinator:
             trace_repo=SqliteCheckTraceRepository(store),
             snapshot_writer=None,
             mobile_profile_id=self._config.mobile_web_settings.profile_id,
+            agentic_price_check=agentic_price_check,
+            agentic_owner_user_id=user_id,
+            agentic_route=route,
         )
         monitor.set_llm_enabled(remaining_llm > 0)
         result = monitor.run_authenticated(booking, snapshot)
         used = min(monitor.last_llm_calls_used, remaining_llm)
-        if used and adaptive_job is None:
+        if used and adaptive_job is None and not route.use_agentic:
             self._llm_calls_today.increment(user_id, by=used)
+        if user.is_owner and route.use_agentic and monitor.last_agentic_outcome is not None:
+            agentic_outcome = monitor.last_agentic_outcome
+            blocked_statuses = {
+                PriceExecutionStatus.SESSION_UNAVAILABLE,
+                PriceExecutionStatus.SIGNED_OUT,
+                PriceExecutionStatus.MFA_REQUIRED,
+                PriceExecutionStatus.CAPTCHA,
+                PriceExecutionStatus.BOT_WALL,
+                PriceExecutionStatus.UNAVAILABLE,
+            }
+            violations: set[CriticalAgenticViolation] = set()
+            if (
+                ExecutorSafetyViolation.PROHIBITED_ACTION_EXECUTED
+                in agentic_outcome.result.safety_violations
+            ):
+                violations.add(CriticalAgenticViolation.PROHIBITED_ACTION_EXECUTED)
+            if (
+                ExecutorSafetyViolation.NON_ALLOWLISTED_DESTINATION
+                in agentic_outcome.result.safety_violations
+            ):
+                violations.add(CriticalAgenticViolation.NON_ALLOWLISTED_DESTINATION)
+            if agentic_outcome.result.usage.cost.micro_usd > MAX_JOB_COST_MICRO_USD:
+                violations.add(CriticalAgenticViolation.JOB_COST_CAP_BREACH)
+            try:
+                SqliteAgenticQualificationRepository(store).record_check(
+                    AgenticCanaryCheck(
+                        check_id=result.check_id,
+                        owner_user_id=user_id,
+                        observed_at=result.checked_at,
+                        eligible_unblocked=(agentic_outcome.result.status not in blocked_statuses),
+                        valid_observation=agentic_outcome.validation.accepted,
+                        manual_price_correct=None,
+                        model_cost=agentic_outcome.result.usage.cost,
+                        duration_ms=agentic_outcome.result.latency_ms,
+                        fallback_used=agentic_outcome.result.fallback_used,
+                        violations=frozenset(violations),
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Could not record redacted owner canary metrics for check %s",
+                    result.check_id,
+                    exc_info=True,
+                )
 
         if (
             result.failure_reason is not None
@@ -1667,7 +1828,20 @@ class CheckCoordinator:
             provider.mark_reauth_required(user_id, snapshot.metadata.revision_id)
         else:
             try:
-                if browser.is_authenticated():
+                if route.use_agentic:
+                    refreshed = (
+                        monitor.last_agentic_outcome.refreshed_session
+                        if monitor.last_agentic_outcome is not None
+                        else None
+                    )
+                    if refreshed is not None:
+                        provider.refresh(
+                            user_id,
+                            snapshot.metadata.revision_id,
+                            refreshed,
+                            datetime.now(UTC),
+                        )
+                elif browser.is_authenticated():
                     provider.refresh(
                         user_id,
                         snapshot.metadata.revision_id,

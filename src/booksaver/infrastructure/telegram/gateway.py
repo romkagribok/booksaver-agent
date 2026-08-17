@@ -21,7 +21,11 @@ from booksaver.infrastructure.persistence.encrypted_diagnostics import (
 from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
 )
-from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
+from booksaver.infrastructure.persistence.sqlite_store import (
+    SqliteAgenticDisclosureConsentRepository,
+    SqliteStore,
+    SqliteUserRepository,
+)
 
 from .access import AccessControl, AccessRefusalReason, RateLimiter
 from .admin_commands import ACCESS_LOSS_MESSAGE, register_admin_commands
@@ -95,9 +99,7 @@ def build_bot_runner(
         max_events=config.limits_settings.messages_per_minute_per_chat, window_seconds=60.0
     )
 
-    def _send(
-        chat_id: int, text: str, reply_markup: dict[str, Any] | None = None
-    ) -> None:
+    def _send(chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
         if not message_limiter.allow(chat_id):
             logger.warning(
                 "Per-chat message rate limit exceeded for chat %s; dropping reply", chat_id
@@ -199,6 +201,37 @@ def build_bot_runner(
         coordinator=check_coordinator,
     )
 
+    def _invitee_agentic_disclosure(telegram_user_id: int) -> str | None:
+        with SqliteStore(db_path) as disclosure_store:
+            user = SqliteUserRepository(disclosure_store).get_by_telegram_id(telegram_user_id)
+            consent = (
+                SqliteAgenticDisclosureConsentRepository(disclosure_store).get(user.user_id)
+                if user is not None
+                else None
+            )
+        if user is None or user.is_owner:
+            return None
+        version = config.agentic_browser_settings.disclosure_version
+        if consent is not None and consent.disclosure_version == version:
+            return None
+        return (
+            f"Privacy disclosure ({version}): if agentic checks are enabled for you, "
+            "the deployment owner's configured Anthropic account may process visible "
+            "Booking.com page content and escalation screenshots. Cookies and passwords "
+            "remain local, and BookSaver keeps execution read-only."
+        )
+
+    def _acknowledge_agentic_disclosure(telegram_user_id: int) -> None:
+        with SqliteStore(db_path) as disclosure_store:
+            user = SqliteUserRepository(disclosure_store).get_by_telegram_id(telegram_user_id)
+            if user is None or user.is_owner or not user.is_active:
+                raise PermissionError("only an active invited user can acknowledge disclosure")
+            SqliteAgenticDisclosureConsentRepository(disclosure_store).acknowledge(
+                user_id=user.user_id,
+                disclosure_version=config.agentic_browser_settings.disclosure_version,
+                acknowledged_at=datetime.now(UTC),
+            )
+
     register_connect_command(
         router=router,
         callback_router=callback_router,
@@ -206,6 +239,8 @@ def build_bot_runner(
         send=_send,
         client=client,
         manager=remote_auth_manager,
+        invitee_disclosure=_invitee_agentic_disclosure,
+        acknowledge_disclosure=_acknowledge_agentic_disclosure,
     )
 
     def _cancelflow(cmd: IncomingCommand) -> None:
@@ -241,8 +276,7 @@ def build_bot_runner(
                 return
             message = (
                 ACCESS_LOSS_MESSAGE
-                if access_control.refusal_reason(cmd.user_id)
-                is AccessRefusalReason.REVOKED
+                if access_control.refusal_reason(cmd.user_id) is AccessRefusalReason.REVOKED
                 else "This bot is private and only available to invited users."
             )
             _reply(cmd.chat_id, message)
@@ -271,9 +305,7 @@ def build_bot_runner(
                     is AccessRefusalReason.REVOKED
                     else "This action is not available."
                 )
-                client.answer_callback_query(
-                    callback.callback_query_id, text=refusal
-                )
+                client.answer_callback_query(callback.callback_query_id, text=refusal)
             except Exception:
                 logger.warning("Could not answer refused Telegram callback")
             return
@@ -330,9 +362,7 @@ def build_bot_runner(
             try:
                 client.set_my_commands(commands, scope)
             except Exception:
-                logger.warning(
-                    "Could not publish Telegram %s command menu; continuing", label
-                )
+                logger.warning("Could not publish Telegram %s command menu; continuing", label)
 
     def _run(stop_event: threading.Event) -> None:
         _sync_commands()

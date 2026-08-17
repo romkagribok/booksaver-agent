@@ -22,6 +22,24 @@ logger = logging.getLogger(__name__)
 
 Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
+InviteeDisclosure = Callable[[int], str | None]
+AcknowledgeDisclosure = Callable[[int], None]
+
+
+def _disclosure_prompt(disclosure: str) -> tuple[str, dict[str, Any]]:
+    return (
+        disclosure,
+        {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "I understand and continue",
+                        "callback_data": "connect:consent",
+                    }
+                ]
+            ]
+        },
+    )
 
 
 def _launch_message(
@@ -33,10 +51,13 @@ def _launch_message(
         launch = manager.create(telegram_user_id, chat_id)
     except (RemoteAuthBusy, RemoteAuthUnavailable) as exc:
         return str(exc), None
-    return (
+    text = (
         "Open the secure login below and sign in with your Booking.com email and password. "
         "Signing in with Google, Apple, or another external provider is disabled. "
-        "The link expires shortly; BookSaver never asks for your password in Telegram chat.",
+        "The link expires shortly; BookSaver never asks for your password in Telegram chat."
+    )
+    return (
+        text,
         {
             "inline_keyboard": [
                 [
@@ -58,7 +79,20 @@ def register_connect_command(
     send: Send,
     client: TelegramBotClient,
     manager: RemoteAuthenticationManager | None,
+    invitee_disclosure: InviteeDisclosure | None = None,
+    acknowledge_disclosure: AcknowledgeDisclosure | None = None,
 ) -> None:
+    def _begin(
+        telegram_user_id: int,
+        chat_id: int,
+    ) -> tuple[str, dict[str, Any] | None]:
+        if manager is None or not manager.enabled:
+            return "Secure Booking.com connection is not configured yet.", None
+        disclosure = invitee_disclosure(telegram_user_id) if invitee_disclosure else None
+        if disclosure is not None:
+            return _disclosure_prompt(disclosure)
+        return _launch_message(manager, telegram_user_id, chat_id)
+
     def _command(cmd: IncomingCommand) -> None:
         if manager is None or not manager.enabled:
             reply(
@@ -66,15 +100,11 @@ def register_connect_command(
                 "Secure Booking.com connection is not configured on this BookSaver server yet.",
             )
             return
-        text, markup = _launch_message(manager, cmd.user_id, cmd.chat_id)
+        text, markup = _begin(cmd.user_id, cmd.chat_id)
         send(cmd.chat_id, text, markup)
 
     def _callback(callback: IncomingCallback) -> None:
-        if manager is None or not manager.enabled:
-            text = "Secure Booking.com connection is not configured yet."
-            markup = None
-        else:
-            text, markup = _launch_message(manager, callback.user_id, callback.chat_id)
+        text, markup = _begin(callback.user_id, callback.chat_id)
         try:
             client.answer_callback_query(callback.callback_query_id)
         except Exception:
@@ -86,8 +116,35 @@ def register_connect_command(
         except Exception:
             logger.warning("Could not update reconnect message")
 
+    def _consent_callback(callback: IncomingCallback) -> None:
+        if acknowledge_disclosure is None:
+            text = "Agentic browser disclosure acknowledgement is not configured."
+            markup = None
+        else:
+            try:
+                acknowledge_disclosure(callback.user_id)
+                text, markup = _begin(callback.user_id, callback.chat_id)
+            except Exception:
+                logger.warning("Could not record agentic browser disclosure consent")
+                text = "Could not record your disclosure acknowledgement. Try /connect again."
+                markup = None
+        try:
+            client.answer_callback_query(callback.callback_query_id)
+        except Exception:
+            logger.warning("Could not answer disclosure callback")
+        try:
+            client.edit_message_text(
+                callback.chat_id,
+                callback.message_id,
+                text,
+                reply_markup=markup,
+            )
+        except Exception:
+            logger.warning("Could not update disclosure prompt")
+
     router.register("/connect", _command)
     callback_router.register("connect:start", _callback)
+    callback_router.register("connect:consent", _consent_callback)
 
 
 class ReconnectNotifier:
@@ -120,11 +177,7 @@ class ReconnectNotifier:
             if user is None or not user.is_active or user.telegram_user_id is None:
                 self.clear(local_user_id)
                 return
-            chat_id = (
-                self._bot_settings.owner_chat_id
-                if user.is_owner
-                else user.telegram_user_id
-            )
+            chat_id = self._bot_settings.owner_chat_id if user.is_owner else user.telegram_user_id
             if chat_id is None:
                 self.clear(local_user_id)
                 return

@@ -477,6 +477,47 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-138` | Notify owner of maintenance required | Adaptive Resilience | Complete | `003-dom-drift-incident-operations/stories/002-notify-owner-of-maintenance-required.md` |
 | `US-139` | Retain encrypted incident diagnostics | Adaptive Resilience | Complete | `003-dom-drift-incident-operations/stories/003-retain-encrypted-incident-diagnostics.md` |
 
+## 023-replaceable-agentic-browser-executor
+
+| Unit | Stories | Status |
+|------|---------|--------|
+| `001-agentic-executor-control-plane` | 4 stories | Complete (bolt 050) |
+| `002-local-agentic-price-executor` | 4 stories | Complete (bolt 051) |
+| `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
+| `004-post-promotion-browser-migration` | 2 stories | Blocked (bolt 053; post-promotion) |
+
+### 001-agentic-executor-control-plane: Agentic Executor Control Plane
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-143` | Define the executor evidence contract | Agentic Browser | Complete | `001-agentic-executor-control-plane/stories/001-define-executor-evidence-contract.md` |
+| `US-144` | Validate every observation independently | Agentic Browser | Complete | `001-agentic-executor-control-plane/stories/002-validate-every-observation-independently.md` |
+| `US-145` | Lease transient owner sessions safely | Agentic Browser | Complete | `001-agentic-executor-control-plane/stories/003-lease-transient-owner-sessions-safely.md` |
+| `US-146` | Route and account for bounded execution | Agentic Browser | Complete | `001-agentic-executor-control-plane/stories/004-route-and-account-for-bounded-execution.md` |
+
+### 002-local-agentic-price-executor: Local Agentic Price Executor
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-147` | Run Stagehand in a transient local browser | Agentic Browser | Complete | `002-local-agentic-price-executor/stories/001-run-stagehand-in-transient-local-browser.md` |
+| `US-148` | Guard semantic navigation and extract typed rates | Agentic Browser | Complete | `002-local-agentic-price-executor/stories/002-guard-semantic-navigation-and-extract-rates.md` |
+| `US-149` | Recover visually through guarded computer use | Agentic Browser | Complete | `002-local-agentic-price-executor/stories/003-recover-visually-through-guarded-computer-use.md` |
+| `US-150` | Confine content and disclose Anthropic processing | Agentic Browser | Complete | `002-local-agentic-price-executor/stories/004-confine-content-and-disclose-processing.md` |
+
+### 003-agentic-browser-qualification: Agentic Browser Qualification
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-151` | Prove DOM resilience and privacy boundaries | Agentic Browser | Complete | `003-agentic-browser-qualification/stories/001-prove-dom-resilience-and-privacy-boundaries.md` |
+| `US-152` | Govern canary promotion and regression rollback | Agentic Browser | In progress | `003-agentic-browser-qualification/stories/002-govern-canary-promotion-and-regression-rollback.md` |
+
+### 004-post-promotion-browser-migration: Post-Promotion Browser Migration
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-153` | Migrate inventory perception after promotion | Agentic Browser | Blocked | `004-post-promotion-browser-migration/stories/001-migrate-inventory-perception-after-promotion.md` |
+| `US-154` | Retire legacy price selectors after rollback window | Agentic Browser | Blocked | `004-post-promotion-browser-migration/stories/002-retire-legacy-price-selectors-after-rollback.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -503,6 +544,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
+| `023-replaceable-agentic-browser-executor` | 4 | 12 | In construction (bolts 050–052); post-promotion bolt 053 blocked |
 
-All 142 stories (140 complete in-scope stories and 2 post-MVP extensibility stories) are assigned
-exactly once.
+All 154 stories (149 complete in-scope, 2 post-MVP extensibility, and 3 live-gated/blocked stories) are
+assigned exactly once.

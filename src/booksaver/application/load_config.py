@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from booksaver.domain.agent import AgentSettings
+from booksaver.domain.browser_executor import AgenticBrowserSettings, ExecutionRoutingMode
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.models import Config
@@ -284,6 +285,23 @@ def load_config(source: ConfigSource) -> Config:
     except (ValueError, TypeError) as e:
         errors.append(f"remote_auth: {e}")
 
+    agentic_browser_settings: AgenticBrowserSettings | None = None
+    agentic_browser_raw = raw.get("agentic_browser", {})
+    try:
+        agentic_defaults = AgenticBrowserSettings()
+        agentic_browser_settings = AgenticBrowserSettings(
+            routing=ExecutionRoutingMode.parse(
+                agentic_browser_raw.get("routing", agentic_defaults.routing.value)
+            ),
+            disclosure_version=str(
+                agentic_browser_raw.get(
+                    "disclosure_version", agentic_defaults.disclosure_version
+                )
+            ),
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"agentic_browser: {e}")
+
     if errors:
         raise ConfigValidationError(errors)
 
@@ -294,6 +312,7 @@ def load_config(source: ConfigSource) -> Config:
     assert limits_settings is not None
     assert mobile_web_settings is not None
     assert remote_auth_settings is not None
+    assert agentic_browser_settings is not None
 
     notifications_raw = raw.get("notifications", {})
     notification_settings = NotificationSettings(
@@ -333,4 +352,5 @@ def load_config(source: ConfigSource) -> Config:
         mobile_web_settings=mobile_web_settings,
         remote_auth_settings=remote_auth_settings,
         schedule_settings=schedule_settings,
+        agentic_browser_settings=agentic_browser_settings,
     )

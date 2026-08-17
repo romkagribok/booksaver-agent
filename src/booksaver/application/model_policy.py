@@ -88,10 +88,13 @@ class BrowserJobCostBudget:
         day_limit: UsdAmount = UsdAmount(10_000_000),
         opus_diagnostic_envelope: TokenEnvelope = TokenEnvelope(30_000, 1_024),
         preserve_opus_diagnostic: bool = True,
+        initial_attempt_ordinal: int = 1,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if not job_id:
             raise ValueError("job_id is required")
+        if isinstance(initial_attempt_ordinal, bool) or initial_attempt_ordinal < 1:
+            raise ValueError("initial_attempt_ordinal must be positive")
         self.job_id = job_id
         self.job_kind = job_kind
         self.caller_key_ref = caller_key_ref
@@ -103,7 +106,7 @@ class BrowserJobCostBudget:
         self._preserve_opus_diagnostic = preserve_opus_diagnostic
         self._clock = clock
         self._ordinal_lock = Lock()
-        self._next_attempt_ordinal = 1
+        self._next_attempt_ordinal = initial_attempt_ordinal
 
     def admit(self, plan: ModelAttemptPlan, envelope: TokenEnvelope) -> AttemptAdmission:
         now = self._clock()

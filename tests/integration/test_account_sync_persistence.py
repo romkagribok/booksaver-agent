@@ -561,7 +561,7 @@ def test_schema_v13_migration_preserves_v12_sync_runs(tmp_path: Path) -> None:
         repo = SqliteAccountReservationRepository(store)
         legacy = repo.latest_run_for_user(1)
 
-        assert version == SCHEMA_VERSION == 15
+        assert version == SCHEMA_VERSION == 16
         assert {
             "recovery_outcome",
             "recovery_step",

@@ -19,7 +19,8 @@ classifiers = [
 ]
 dependencies = [
     "playwright>=1.40",   # browser automation (ADR-007); run `playwright install chromium`
-    "anthropic>=0.40",    # LLM extraction fallback (ADR-009)
+    "anthropic>=0.116",   # Sonnet 5 + computer-use 2025-11-24 tools (ADR-009/ADR-037)
+    "stagehand==4.0.1",   # local semantic browser executor (ADR-037)
     "cryptography>=42",   # Fernet encryption of personal Anthropic keys at rest (ADR-019)
 ]
 

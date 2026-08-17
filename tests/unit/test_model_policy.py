@@ -177,6 +177,29 @@ def test_two_sessions_share_job_global_attempt_order() -> None:
     ] == [1, 2, 3]
 
 
+def test_follow_on_budget_can_continue_one_persisted_job_attempt_order() -> None:
+    ledger = _Ledger()
+    follow_on = BrowserJobCostBudget(
+        job_id="job-1",
+        job_kind=BrowserJobKind.CHECK_NOW,
+        caller_key_ref=CallerKeyRef(1, "shared", "owner_env"),
+        ledger=ledger,
+        estimator=ModelCostEstimator(),
+        initial_attempt_ordinal=4,
+        clock=lambda: datetime(2026, 8, 13, tzinfo=UTC),
+    )
+
+    admitted = AdaptiveModelSession(
+        role=ModelRole.RECOVERY,
+        prompt_version="agentic-follow-on-v1",
+        budget=follow_on,
+    ).start(TokenEnvelope(1_000, 100))
+
+    assert admitted.attempt is not None
+    assert admitted.attempt.plan.ordinal == 4
+    assert ledger.requests[0].job_id == "job-1"
+
+
 def test_cost_estimation_and_reconciliation_use_exact_microdollars() -> None:
     portfolio = AdaptiveModelPortfolio()
     profile = portfolio.primary(ModelRole.EXTRACTION, "extract-v1")

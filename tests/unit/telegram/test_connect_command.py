@@ -63,6 +63,8 @@ class FakeClient:
 
 def _register(
     manager: StubManager | None,
+    invitee_disclosure: Any = None,
+    acknowledge_disclosure: Any = None,
 ) -> tuple[CommandRouter, CallbackRouter, FakeClient, list[tuple[int, str, object]]]:
     router = CommandRouter()
     callbacks = CallbackRouter()
@@ -75,6 +77,8 @@ def _register(
         send=lambda chat_id, text, markup: sent.append((chat_id, text, markup)),
         client=client,  # type: ignore[arg-type]
         manager=manager,  # type: ignore[arg-type]
+        invitee_disclosure=invitee_disclosure,
+        acknowledge_disclosure=acknowledge_disclosure,
     )
     return router, callbacks, client, sent
 
@@ -98,6 +102,59 @@ def test_connect_uses_telegram_web_app_button_without_chat_credentials() -> None
         "text": "Open secure Booking.com login",
         "web_app": {"url": "https://connect.example.test/connect/one-time-token"},
     }
+
+
+def test_connect_shows_versioned_agentic_disclosure_when_caller_is_invited() -> None:
+    manager = StubManager()
+    disclosure = (
+        "Privacy disclosure (anthropic-visible-booking-page-v1): the deployment "
+        "owner's Anthropic account may process visible page content and screenshots."
+    )
+    router, _callbacks, _client, sent = _register(
+        manager,
+        invitee_disclosure=lambda _user_id: disclosure,
+    )
+
+    router.dispatch(IncomingCommand(123, 123, "/connect", "", "/connect"))
+
+    assert disclosure in sent[0][1]
+    assert manager.created == []
+    assert sent[0][2] == {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "I understand and continue",
+                    "callback_data": "connect:consent",
+                }
+            ]
+        ]
+    }
+
+
+def test_invitee_consent_is_recorded_before_secure_login_launch() -> None:
+    manager = StubManager()
+    pending = {123: True}
+    acknowledgements: list[int] = []
+
+    def disclosure(user_id: int) -> str | None:
+        return "versioned disclosure" if pending.get(user_id) else None
+
+    def acknowledge(user_id: int) -> None:
+        acknowledgements.append(user_id)
+        pending[user_id] = False
+
+    _router, callbacks, client, _sent = _register(
+        manager,
+        invitee_disclosure=disclosure,
+        acknowledge_disclosure=acknowledge,
+    )
+
+    callbacks.dispatch(IncomingCallback(123, 123, "consent-1", 8, "connect:consent"))
+
+    assert acknowledgements == [123]
+    assert manager.created == [(123, 123)]
+    assert client.answers == ["consent-1"]
+    assert "Open the secure login" in client.edits[0][2]
 
 
 def test_reconnect_callback_is_acknowledged_and_replaces_prompt() -> None:
@@ -151,7 +208,5 @@ def test_reconnect_notifier_scopes_delivery_and_applies_cooldown(tmp_path: Path)
     assert chat_id == 222
     assert "missing or expired" in text
     assert markup == {
-        "inline_keyboard": [
-            [{"text": "Reconnect Booking.com", "callback_data": "connect:start"}]
-        ]
+        "inline_keyboard": [[{"text": "Reconnect Booking.com", "callback_data": "connect:start"}]]
     }

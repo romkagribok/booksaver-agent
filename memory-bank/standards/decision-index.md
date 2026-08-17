@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-16T16:29:00Z
-total_decisions: 35
+last_updated: 2026-08-16T19:18:41Z
+total_decisions: 38
 ---
 
 # Decision Index
@@ -17,6 +17,39 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-038: Owner-only canary, consented promotion, and rollback window
+- **Status**: accepted
+- **Date**: 2026-08-16
+- **Bolt**: 052-agentic-browser-qualification (agentic-browser-qualification)
+- **Path**: `bolts/052-agentic-browser-qualification/adr-038-owner-canary-promotion-and-rollback.md`
+- **Summary**: Legacy stays default while an owner-only live canary proves safety, correctness,
+  reliability, cost, and duration. Invited-user routing additionally requires explicit disclosure
+  consent and owner promotion; regressions return to legacy during a 30-day rollback window.
+- **Read when**: Changing agentic routing, qualification thresholds, canary records, invitee consent,
+  promotion, rollback, or legacy price-path retirement.
+
+### ADR-037: Local Stagehand with guarded Anthropic computer use
+- **Status**: accepted
+- **Date**: 2026-08-16
+- **Bolt**: 051-local-agentic-price-executor (local-agentic-price-executor)
+- **Path**: `bolts/051-local-agentic-price-executor/adr-037-local-stagehand-and-guarded-computer-use.md`
+- **Summary**: Pin and run Stagehand locally for observe/guard/replay semantic execution and typed
+  extraction, then allow one six-action Sonnet computer-use episode on the same transient browser.
+  BookSaver executes and verifies every action; managed browsers and custom caches are excluded.
+- **Read when**: Changing Stagehand, computer use, browser custody, semantic actions, screenshots,
+  telemetry, provider tools, Chromium packaging, or action guards.
+
+### ADR-036: Trusted control plane and provider-neutral browser executor port
+- **Status**: accepted
+- **Date**: 2026-08-16
+- **Bolt**: 050-agentic-executor-control-plane (agentic-executor-control-plane)
+- **Path**: `bolts/050-agentic-executor-control-plane/adr-036-trusted-control-plane-and-executor-port.md`
+- **Summary**: Browser harnesses return only untrusted typed evidence through a provider-neutral port.
+  BookSaver retains session custody and sole authority for validation, equivalence, savings,
+  persistence, notifications, and transactions.
+- **Read when**: Changing browser executor contracts, price evidence, session leases, routing,
+  adapter replaceability, validation authority, or sensitive-data boundaries.
 
 ### ADR-035: Server-backed remote authentication verification
 - **Status**: accepted

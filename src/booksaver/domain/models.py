@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import Enum
 
 from .agent import AgentSettings
+from .browser_executor import AgenticBrowserSettings
 from .mobile_web import MobileWebSettings
 from .remote_auth import RemoteAuthSettings
 from .schedule import ScheduleSettings
@@ -91,3 +92,6 @@ class Config:
     mobile_web_settings: MobileWebSettings = field(default_factory=MobileWebSettings)
     remote_auth_settings: RemoteAuthSettings = field(default_factory=RemoteAuthSettings)
     schedule_settings: ScheduleSettings = field(default_factory=ScheduleSettings)
+    agentic_browser_settings: AgenticBrowserSettings = field(
+        default_factory=AgenticBrowserSettings
+    )
