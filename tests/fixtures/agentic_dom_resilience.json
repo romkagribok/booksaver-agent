@@ -1,0 +1,38 @@
+[
+  {
+    "id": "css-classes-replaced",
+    "provider_selector": "a.x-2026-randomized-card",
+    "dimension": "css_classes",
+    "requires_visual": false
+  },
+  {
+    "id": "test-ids-removed",
+    "provider_selector": "xpath=//a[normalize-space()='Hotel Example']",
+    "dimension": "test_ids",
+    "requires_visual": false
+  },
+  {
+    "id": "deeply-nested-card",
+    "provider_selector": "main section article div div a.result-link",
+    "dimension": "nesting",
+    "requires_visual": false
+  },
+  {
+    "id": "dismissible-overlay",
+    "provider_selector": "a.visible-property-after-overlay",
+    "dimension": "overlays",
+    "requires_visual": true
+  },
+  {
+    "id": "property-inside-iframe-shadow",
+    "provider_selector": "pierce/iframe >> shadow=hotel-card >> text=Hotel Example",
+    "dimension": "iframe_shadow",
+    "requires_visual": true
+  },
+  {
+    "id": "poor-accessibility-tree",
+    "provider_selector": "canvas + div:nth-child(7)",
+    "dimension": "accessibility_quality",
+    "requires_visual": true
+  }
+]

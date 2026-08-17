@@ -78,6 +78,11 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # screenshot_after_no_progress = 2     # force fresh visual evidence after no progress
 # max_semantic_action_executions = 2   # never execute an equivalent target a third time
 
+[agentic_browser]
+# Keep legacy as the default until the owner canary passes every local promotion gate.
+# routing = "legacy"        # legacy | owner_canary | agentic
+# disclosure_version = "anthropic-visible-booking-page-v1"
+
 [telegram_bot]
 # Private invite-only Telegram bot gateway. Token: export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
 # enabled = false
@@ -190,6 +195,11 @@ def cmd_config_validate(args: argparse.Namespace) -> int:
     print(
         f"  deployment_daily_cost_usd : {agent.max_deployment_daily_cost_micro_usd / 1_000_000:.2f}"
     )
+    print(f"  agentic_browser.routing    : {cfg.agentic_browser_settings.routing.value}")
+    print(
+        "  agentic_browser.disclosure: "
+        f"{cfg.agentic_browser_settings.disclosure_version}"
+    )
     return 0
 
 
@@ -216,6 +226,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     remote_auth = cfg.remote_auth_settings
     schedule = cfg.schedule_settings
     agent = cfg.agent_settings
+    agentic = cfg.agentic_browser_settings
     print(f"schedule.checks_per_booking/day: {schedule.checks_per_booking_per_day}")
     print(f"schedule.minimum_spacing     : {schedule.minimum_spacing}")
     print(f"schedule.missed_run_grace    : {schedule.missed_run_grace}")
@@ -245,6 +256,8 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"agent.recovery_timeout_s     : {agent.recovery_timeout_seconds}")
     print(f"agent.screenshot_after_no_progress: {agent.screenshot_after_no_progress}")
     print(f"agent.semantic_action_executions: {agent.max_semantic_action_executions}")
+    print(f"agentic_browser.routing      : {agentic.routing.value}")
+    print(f"agentic_browser.disclosure   : {agentic.disclosure_version}")
     print(f"remote_auth.enabled          : {remote_auth.enabled}")
     print(f"remote_auth.public_url       : {remote_auth.public_url or '(not set)'}")
     smtp = "(set)" if os.environ.get("BOOKSAVER_SMTP_PASSWORD") else "(not set)"
@@ -555,6 +568,20 @@ def _make_check_coordinator(
         EncryptedDiagnosticStore,
     )
 
+    api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
+
+    def _agentic_executor(budget: Any, lease_broker: Any) -> Any:
+        from booksaver.infrastructure.browser.agentic_executor import (
+            LocalAgenticPriceExecutor,
+        )
+
+        assert api_key is not None
+        return LocalAgenticPriceExecutor(
+            api_key=api_key,
+            lease_broker=lease_broker,
+            budget=budget,
+        )
+
     @contextmanager
     def _incident_recorder() -> Iterator[DomIncidentRecorder]:
         # CheckCoordinator enters this only after the relevant browser context
@@ -574,6 +601,7 @@ def _make_check_coordinator(
         auth_required_notifier=auth_required_notifier,
         execution_gate=execution_gate,
         incident_recorder_factory=_incident_recorder,
+        agentic_executor_factory=_agentic_executor if api_key else None,
     )
 
 
@@ -1238,8 +1266,7 @@ def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
             )
             for fixture_metrics in profile.fixtures:
                 outcomes = ",".join(
-                    f"{category}:{count}"
-                    for category, count in fixture_metrics.outcome_categories
+                    f"{category}:{count}" for category, count in fixture_metrics.outcome_categories
                 )
                 print(
                     f"  {fixture_metrics.fixture_id}: "
@@ -1341,6 +1368,128 @@ def cmd_validate_model_qualification(args: argparse.Namespace) -> int:
     print(
         f"Model qualification is valid for Sonnet 5 and Opus 5 ({PACKAGED_QUALIFICATION_VERSION})."
     )
+    return 0
+
+
+def cmd_agentic_status(args: argparse.Namespace) -> int:
+    """Show only redacted local canary metrics and exact remaining gates."""
+    from booksaver.domain.agentic_qualification import evaluate_agentic_canary
+    from booksaver.infrastructure.persistence.sqlite_store import (
+        SqliteAgenticQualificationRepository,
+    )
+
+    cfg = _load_config_for_args(args)
+    with SqliteStore(cfg.data_directory.path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        repository = SqliteAgenticQualificationRepository(store)
+        state = repository.qualification_state()
+        evidence = repository.list_checks(owner.user_id)
+        verdict = evaluate_agentic_canary(
+            evidence,
+            deployment_owner_user_id=owner.user_id,
+            owner_approved=False,
+        )
+    metrics = verdict.metrics
+    print(f"Routing config  : {cfg.agentic_browser_settings.routing.value}")
+    print(f"Qualification   : {state.status.value}")
+    print(f"Owner checks    : {metrics.checks}")
+    print(f"Canary span     : {metrics.elapsed_days:.2f} days")
+    print(
+        "Valid eligible : "
+        f"{metrics.valid_observations}/{metrics.eligible_unblocked_checks}"
+    )
+    print(f"Manual compares : {metrics.manual_comparisons}/10")
+    print(f"Average cost    : ${metrics.average_cost.as_decimal_string()}")
+    print(f"p95 cost        : ${metrics.p95_cost.as_decimal_string()}")
+    print(f"p95 duration    : {metrics.p95_duration_ms}ms")
+    print(f"Fallback rate   : {metrics.fallback_rate:.1%}")
+    non_approval = [
+        blocker.value
+        for blocker in verdict.blockers
+        if blocker.value != "owner_approval_required"
+    ]
+    print("Remaining gates : " + (", ".join(non_approval) or "owner promotion approval"))
+    return 0
+
+
+def cmd_agentic_compare(args: argparse.Namespace) -> int:
+    from booksaver.infrastructure.persistence.sqlite_store import (
+        SqliteAgenticQualificationRepository,
+    )
+
+    cfg = _load_config_for_args(args)
+    correct = bool(args.correct)
+    with SqliteStore(cfg.data_directory.path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        try:
+            SqliteAgenticQualificationRepository(store).record_manual_comparison(
+                owner_user_id=owner.user_id,
+                check_id=args.check_id,
+                correct=correct,
+            )
+        except (PermissionError, ValueError) as exc:
+            print(f"Manual comparison rejected: {exc}", file=sys.stderr)
+            return 2
+    print(
+        f"Recorded manual canary comparison for {args.check_id}: "
+        + ("correct" if correct else "incorrect")
+    )
+    return 0
+
+
+def cmd_agentic_promote(args: argparse.Namespace) -> int:
+    from booksaver.domain.agentic_qualification import evaluate_agentic_canary
+    from booksaver.infrastructure.persistence.sqlite_store import (
+        SqliteAgenticQualificationRepository,
+    )
+
+    cfg = _load_config_for_args(args)
+    approved_at = datetime.now(UTC)
+    with SqliteStore(cfg.data_directory.path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        repository = SqliteAgenticQualificationRepository(store)
+        verdict = evaluate_agentic_canary(
+            repository.list_checks(owner.user_id),
+            deployment_owner_user_id=owner.user_id,
+            owner_approved=True,
+            now=approved_at,
+        )
+        if not verdict.promotable:
+            print(
+                "Agentic promotion blocked: "
+                + ", ".join(blocker.value for blocker in verdict.blockers),
+                file=sys.stderr,
+            )
+            return 1
+        repository.promote(
+            owner_user_id=owner.user_id,
+            approved_at=approved_at,
+        )
+    print(
+        "Agentic qualification promoted locally. Set [agentic_browser] routing = "
+        '"agentic" and restart when you intend to admit consenting invited users.'
+    )
+    return 0
+
+
+def cmd_agentic_regress(args: argparse.Namespace) -> int:
+    from booksaver.infrastructure.persistence.sqlite_store import (
+        SqliteAgenticQualificationRepository,
+    )
+
+    cfg = _load_config_for_args(args)
+    with SqliteStore(cfg.data_directory.path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        try:
+            SqliteAgenticQualificationRepository(store).regress(
+                owner_user_id=owner.user_id,
+                regression_code=args.code,
+                observed_at=datetime.now(UTC),
+            )
+        except (PermissionError, ValueError) as exc:
+            print(f"Agentic regression rejected: {exc}", file=sys.stderr)
+            return 2
+    print("Agentic routing marked regressed; all effective routing is now legacy.")
     return 0
 
 
@@ -1512,6 +1661,39 @@ def create_parser() -> argparse.ArgumentParser:
         help="Required owner audit reason when --override is used",
     )
     p_eval_qualification.set_defaults(func=cmd_validate_model_qualification)
+
+    # agentic browser qualification (local operator control plane)
+    p_agentic = sub.add_parser(
+        "agentic",
+        help="Inspect and govern the local agentic-browser canary",
+    )
+    p_agentic.set_defaults(func=_no_subcommand(p_agentic))
+    agentic_sub = p_agentic.add_subparsers(dest="agentic_command")
+    p_agentic_status = agentic_sub.add_parser(
+        "status",
+        help="Show redacted canary evidence and remaining promotion gates",
+    )
+    p_agentic_status.set_defaults(func=cmd_agentic_status)
+    p_agentic_compare = agentic_sub.add_parser(
+        "compare",
+        help="Record the owner's manual price comparison for one canary check",
+    )
+    p_agentic_compare.add_argument("check_id", metavar="CHECK_ID")
+    comparison = p_agentic_compare.add_mutually_exclusive_group(required=True)
+    comparison.add_argument("--correct", action="store_true")
+    comparison.add_argument("--incorrect", action="store_true")
+    p_agentic_compare.set_defaults(func=cmd_agentic_compare)
+    p_agentic_promote = agentic_sub.add_parser(
+        "promote",
+        help="Promote only when every persisted canary gate passes",
+    )
+    p_agentic_promote.set_defaults(func=cmd_agentic_promote)
+    p_agentic_regress = agentic_sub.add_parser(
+        "regress",
+        help="Fail closed to legacy routing after a safety, privacy, or reliability regression",
+    )
+    p_agentic_regress.add_argument("code", metavar="CODE")
+    p_agentic_regress.set_defaults(func=cmd_agentic_regress)
 
     # savings
     p_sv = sub.add_parser("savings", help="Savings opportunity commands")

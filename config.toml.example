@@ -13,6 +13,13 @@ device_profile = "android-chromium"
 locale = "en-US"
 timezone_id = "UTC"
 
+[agentic_browser]
+# Keep legacy until the deployment owner intentionally starts the qualification canary.
+# owner_canary routes only the owner; invited users remain legacy. agentic requires the
+# separately recorded live qualification and current disclosure consent.
+routing = "legacy" # legacy | owner_canary | agentic
+disclosure_version = "anthropic-visible-booking-page-v1"
+
 [extraction]
 # Legacy extraction model settings normalize to the fixed primary profile below.
 

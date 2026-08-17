@@ -43,12 +43,11 @@ issues are exploratory future capabilities, not missing parts of the current hot
    broad part of the day. At each slot it synchronizes that user's account once, then opens a fresh
    authenticated mobile Chromium context for every eligible booking. `/checknow` remains available
    for an immediate check.
-3. Deterministic code drives the normal journey. If one step fails, an LLM browser agent may use a
-   limited click/fill/select/scroll vocabulary. An adapter-level guard blocks reservation,
-   checkout, payment, and cancellation destinations. Recovery distinguishes an executed click from
-   verified page progress, treats changed element references as the same semantic target, forces a
-   fresh screenshot after two no-progress outcomes, and stops after at most four model calls or 60
-   seconds for that step.
+3. The default `legacy` route drives the current deterministic journey. The separately opt-in
+   `owner_canary` route uses local Stagehand semantic observation and, only when necessary, one
+   guarded Anthropic computer-use episode in a fresh local Chromium profile. Every proposed action
+   is code-authorized; reservation, checkout, payment, cancellation, credential, MFA/captcha,
+   arbitrary navigation, shell, clipboard, upload, and download capabilities are absent.
 4. Only a cheaper, currency-aligned, still-refundable equivalent offer becomes a savings result.
 5. Telegram or email reports the result. You independently review and make any change in
    Booking.com; the next synchronization observes the updated account state.
@@ -81,6 +80,45 @@ max_semantic_action_executions = 2
 Older config files remain valid and receive these defaults automatically. The inner limits cannot
 expand the outer per-check or per-user daily LLM budgets.
 
+The replaceable agentic price executor is disabled by default:
+
+```toml
+[agentic_browser]
+routing = "legacy" # legacy | owner_canary | agentic
+disclosure_version = "anthropic-visible-booking-page-v1"
+```
+
+`owner_canary` is the only pre-qualification agentic mode and routes only the deployment owner.
+It runs Stagehand 4.0.1 in-process against the installed Playwright Chromium, injects encrypted
+Booking.com cookies through a code-owned local CDP connection, disables cross-run caching and
+self-healing, and sends visible page content to Sonnet 5 using `BOOKSAVER_LLM_API_KEY`. Stagehand
+semantic calls are the primary path; a screenshot-based computer-use fallback receives at most six
+of the shared 15 actions. USD 1 per-check, USD 10 deployment-day, and 180-second limits remain hard.
+
+The executor returns observations only. BookSaver still verifies property, dates, occupancy,
+authentication, Genius evidence, currency, all-in totals, explicit refundability, room equivalence,
+and the cheapest valid offer before any savings alert. Agentic failure is terminal for that check;
+the legacy browser is a configured rollback route, not an automatic second attempt. Invited users
+cannot receive agentic routing until the live promotion gate and their current versioned `/connect`
+disclosure consent are recorded.
+
+The owner governs that release entirely from the local VPS:
+
+```bash
+booksaver agentic status
+booksaver agentic compare <CHECK_ID> --correct   # or --incorrect
+booksaver agentic promote
+booksaver agentic regress <MACHINE_CODE>
+```
+
+Promotion reads the persisted evidence itself and cannot be supplied a fabricated verdict. It
+requires 30 owner checks over at least 14 days, ten correct manual comparisons, at least 95% valid
+eligible observations, average cost at most USD 0.10, p95 cost at most USD 0.50, p95 duration at
+most 180 seconds, fallback use at most 20%, zero critical violations, and explicit owner execution
+of `promote`. During the 30-day rollback window, a critical violation or three consecutive eligible
+failures automatically regresses routing to `legacy`. Offline fixtures qualify the adapter and
+safety boundary; they do not substitute for this live owner evidence.
+
 Model behavior can be measured without opening Booking.com or reading local sessions/database.
 The explicit qualification command replays the packaged synthetic corpus ten times per fixture for
 both approved profiles and requires at least nine correct runs per fixture with zero prohibited
@@ -107,7 +145,8 @@ seven days and are never sent through Telegram.
 
 - a Linux host with Docker Compose v2, 2 GB RAM minimum, and a DNS name if `/connect` is enabled;
 - a private Telegram bot token from BotFather and your numeric Telegram chat ID;
-- an Anthropic API key for LLM extraction/recovery (without one, checks are scripted/DOM-only);
+- an Anthropic API key for LLM extraction/recovery and the opt-in agentic executor (without one,
+  the default legacy route can still run scripted checks);
 - acceptance of the trust boundary: the VPS runs the temporary login browser and must be under
   your control.
 

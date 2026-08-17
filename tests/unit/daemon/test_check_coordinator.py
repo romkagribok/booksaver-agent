@@ -400,6 +400,64 @@ def test_adaptive_job_charges_legacy_counter_for_each_physical_reservation(
     assert calls.count(user_id) == 2
 
 
+def test_agentic_follow_on_shares_outer_job_cap_but_uses_owner_env_provenance(
+    tmp_path: Path,
+) -> None:
+    class AdaptiveFactory:
+        def caller_key_ref_for_user(self, user_id: int) -> CallerKeyRef:
+            return CallerKeyRef(user_id, "personal", "encrypted_user_key")
+
+        def adaptive_runtime_for_user(self, _user_id: int, _budget: Any) -> object:
+            return object()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: AdaptiveFactory(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+    )
+    user_id, _bookings = _add(tmp_path, 101)
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        context = coordinator._build_adaptive_job_context(  # noqa: SLF001
+            store,
+            user_id,
+            BrowserJobKind.CHECK_NOW,
+        )
+        assert context is not None
+        first = AdaptiveModelSession(
+            role=ModelRole.INTERPRETATION,
+            prompt_version="inventory-test-v1",
+            budget=context.budget,
+        ).start(TokenEnvelope(1, 1))
+        assert first.attempt is not None
+
+        agentic_budget = coordinator._build_agentic_cost_budget(  # noqa: SLF001
+            store,
+            user_id,
+            BrowserJobKind.CHECK_NOW,
+            shared_job_id=context.budget.job_id,
+            initial_attempt_ordinal=2,
+        )
+        second = AdaptiveModelSession(
+            role=ModelRole.RECOVERY,
+            prompt_version="agentic-test-v1",
+            budget=agentic_budget,
+        ).start(TokenEnvelope(1, 1))
+        rows = store.conn.execute(
+            "SELECT job_id, attempt_ordinal FROM llm_cost_reservations "
+            "ORDER BY attempt_ordinal"
+        ).fetchall()
+
+    assert second.attempt is not None
+    assert agentic_budget.caller_key_ref == CallerKeyRef(user_id, "shared", "owner_env")
+    assert [(row["job_id"], row["attempt_ordinal"]) for row in rows] == [
+        (context.budget.job_id, 1),
+        (context.budget.job_id, 2),
+    ]
+
+
 def test_scheduled_slot_terminalizes_after_unexpected_check_failure(
     tmp_path: Path,
 ) -> None:

@@ -43,7 +43,7 @@ def _downgrade_fixture(db_path: Path, version: int) -> None:
     conn.close()
 
 
-def test_v13_to_v15_is_additive_and_preserves_existing_data(tmp_path: Path) -> None:
+def test_v13_to_v16_is_additive_and_preserves_existing_data(tmp_path: Path) -> None:
     db_path = tmp_path / "v13.db"
     _downgrade_fixture(db_path, 13)
 
@@ -67,10 +67,10 @@ def test_v13_to_v15_is_additive_and_preserves_existing_data(tmp_path: Path) -> N
             ).fetchall()
         }
 
-    assert versions[-3:] == [13, 14, 15]
+    assert versions[-4:] == [13, 14, 15, 16]
     assert owner[0] == 111
     assert invite[0] == "preserve-me"
-    assert SCHEMA_VERSION == 15
+    assert SCHEMA_VERSION == 16
     assert {
         "llm_spend_days",
         "llm_cost_reservations",
@@ -127,4 +127,4 @@ def test_v14_to_v15_preserves_spend_and_qualification_rows(tmp_path: Path) -> No
 
     assert tuple(spend) == (100, 200)
     assert qualification[0] == "passed"
-    assert version[0] == SCHEMA_VERSION == 15
+    assert version[0] == SCHEMA_VERSION == 16

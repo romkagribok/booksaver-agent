@@ -21,6 +21,9 @@ def test_init_config_uses_requested_data_directory(tmp_path) -> None:
     assert '# primary_model = "claude-sonnet-5"' in config_text
     assert '# escalation_model = "claude-opus-5"' in config_text
     assert '# max_job_cost_usd = "1.00"' in config_text
+    assert '[agentic_browser]' in config_text
+    assert '# routing = "legacy"' in config_text
+    assert '# disclosure_version = "anthropic-visible-booking-page-v1"' in config_text
 
 
 def test_config_commands_show_effective_recovery_defaults(tmp_path, capsys) -> None:
@@ -39,6 +42,7 @@ def test_config_commands_show_effective_recovery_defaults(tmp_path, capsys) -> N
     validate_output = capsys.readouterr().out
     assert "agent_recovery_calls/step  : 4" in validate_output
     assert "agent_recovery_timeout_s   : 60" in validate_output
+    assert "agentic_browser.routing    : legacy" in validate_output
 
     assert cmd_config_show(args) == 0
     show_output = capsys.readouterr().out
@@ -46,3 +50,5 @@ def test_config_commands_show_effective_recovery_defaults(tmp_path, capsys) -> N
     assert "agent.recovery_timeout_s     : 60" in show_output
     assert "agent.screenshot_after_no_progress: 2" in show_output
     assert "agent.semantic_action_executions: 2" in show_output
+    assert "agentic_browser.routing      : legacy" in show_output
+    assert "agentic_browser.disclosure   : anthropic-visible-booking-page-v1" in show_output

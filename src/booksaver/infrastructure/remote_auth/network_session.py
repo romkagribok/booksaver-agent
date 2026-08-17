@@ -61,6 +61,41 @@ _CHALLENGE_MARKERS = (
 )
 
 
+def is_authenticated_account_probe_response(
+    *,
+    status: int,
+    headers: Mapping[str, str],
+    response_url: str,
+    body: bytes,
+) -> bool:
+    """Return code-owned authentication proof for the fixed protected resource.
+
+    This is deliberately narrower than page interpretation: it accepts only the exact successful
+    server response already defined by the remote-auth contract.  Browser executors may reuse the
+    predicate when deciding whether refreshed local cookies are eligible for persistence.
+    """
+    normalized_headers = {
+        str(key).casefold(): str(value) for key, value in headers.items()
+    }
+    content_type = normalized_headers.get("content-type", "").split(";", 1)[0]
+    try:
+        parsed = urlsplit(response_url)
+    except ValueError:
+        return False
+    return (
+        status == 200
+        and content_type.strip().casefold() == "text/html"
+        and "location" not in normalized_headers
+        and 0 < len(body) <= _MAX_RESPONSE_BYTES
+        and not any(marker in body[:_MAX_RESPONSE_BYTES].lower() for marker in _CHALLENGE_MARKERS)
+        and parsed.scheme == "https"
+        and parsed.hostname == _PROBE_HOST
+        and parsed.path == _PROBE_PATH
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
 def _is_booking_cookie_domain(domain: str) -> bool:
     normalized = domain.casefold().lstrip(".").rstrip(".")
     return normalized == "booking.com" or normalized.endswith(".booking.com")
@@ -435,12 +470,11 @@ class BookingServerSessionVerifier:
             and exact_probe_url
         ):
             return _ProbeResult(ServerSessionProbeOutcome.SIGNED_OUT, evidence)
-        if (
-            status == 200
-            and media is ServerMediaClass.HTML
-            and redirect is ServerRedirectClass.NONE
-            and size is ServerSizeClass.BOUNDED
-            and exact_probe_url
+        if is_authenticated_account_probe_response(
+            status=status,
+            headers=headers,
+            response_url=response_url,
+            body=body,
         ):
             return _ProbeResult(ServerSessionProbeOutcome.AUTHENTICATED, evidence)
         return _ProbeResult(ServerSessionProbeOutcome.CONTRACT_CHANGED, evidence)

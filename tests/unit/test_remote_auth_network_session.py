@@ -22,6 +22,7 @@ from booksaver.infrastructure.remote_auth.network_session import (
     ACCOUNT_PROBE_URL,
     BookingServerSessionVerifier,
     CandidateSnapshotStabilizer,
+    is_authenticated_account_probe_response,
 )
 
 NOW = datetime(2026, 8, 15, 22, 0, tzinfo=UTC)
@@ -103,6 +104,30 @@ def signed_out() -> Response:
 
 def authenticated() -> Response:
     return Response(200)
+
+
+def test_shared_account_probe_predicate_is_exact_and_challenge_safe() -> None:
+    assert is_authenticated_account_probe_response(
+        status=200,
+        headers={"content-type": "text/html; charset=utf-8"},
+        response_url=ACCOUNT_PROBE_URL,
+        body=b"protected account resource",
+    )
+    assert not is_authenticated_account_probe_response(
+        status=200,
+        headers={"content-type": "text/html"},
+        response_url=ACCOUNT_PROBE_URL,
+        body=b"verify you are human",
+    )
+    assert not is_authenticated_account_probe_response(
+        status=200,
+        headers={
+            "content-type": "text/html",
+            "location": "https://account.booking.com/auth/oauth2",
+        },
+        response_url=ACCOUNT_PROBE_URL,
+        body=b"protected account resource",
+    )
 
 
 def edge_pending() -> Response:

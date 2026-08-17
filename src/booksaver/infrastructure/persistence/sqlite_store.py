@@ -6,7 +6,7 @@ import sqlite3
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -30,6 +30,13 @@ from booksaver.domain.account_sync import (
     remote_key_hash,
 )
 from booksaver.domain.agent import CheckTrace, TraceEvent, TraceKind
+from booksaver.domain.agentic_qualification import (
+    AgenticCanaryCheck,
+    AgenticDisclosureConsent,
+    CriticalAgenticViolation,
+    evaluate_agentic_canary,
+)
+from booksaver.domain.browser_executor import QualificationState, QualificationStatus
 from booksaver.domain.check_result import (
     CheckOutcome,
     CheckResult,
@@ -47,6 +54,7 @@ from booksaver.domain.mobile_web import (
     PriceSourceChannel,
     PriceSourceProvenance,
 )
+from booksaver.domain.model_policy import UsdAmount
 from booksaver.domain.models import Booking, BookingStatus
 from booksaver.domain.post_rebook import (
     MonitoringDisposition,
@@ -80,7 +88,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 
 
@@ -93,6 +101,7 @@ class AdminUserAggregate:
     role: UserRole
     access_state: UserAccessState
     active_booking_count: int
+
 
 # Columns shared by the v2/v4 and v5 check_history definitions (v5 only relaxes
 # the extraction_method CHECK to include 'agent'); used to copy data across the
@@ -180,11 +189,11 @@ def _has_active_rebook_session(conn: sqlite3.Connection, booking_id: str) -> boo
         RebookSessionState.ERROR.value,
     )
     row = conn.execute(
-        "SELECT 1 FROM rebook_sessions WHERE booking_id = ? "
-        "AND state NOT IN (?, ?, ?) LIMIT 1",
+        "SELECT 1 FROM rebook_sessions WHERE booking_id = ? AND state NOT IN (?, ?, ?) LIMIT 1",
         (booking_id, *terminal_states),
     ).fetchone()
     return row is not None
+
 
 def _migrate_v2(conn: sqlite3.Connection) -> None:
     # The v1 check_history table was a contract-only stub (id, booking_id,
@@ -199,10 +208,7 @@ def _migrate_v5(conn: sqlite3.Connection) -> None:
     # SQLite cannot alter a CHECK constraint in place. Guarded per table: a very
     # old database may not have these tables yet (schema.sql creates them fresh,
     # already in v5 shape, after migrations run).
-    tables = {
-        r[0]
-        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    }
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
     if "bookings" in tables:
         columns = {r[1] for r in conn.execute("PRAGMA table_info(bookings)")}
@@ -300,10 +306,7 @@ def _migrate_v7(conn: sqlite3.Connection) -> None:
     conn.commit()
     conn.execute("PRAGMA foreign_keys=OFF")
 
-    tables = {
-        r[0]
-        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    }
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
     if "users" not in tables:
         conn.execute(
@@ -374,10 +377,7 @@ def _migrate_v9(conn: sqlite3.Connection) -> None:
     partially applied migration is safe. Fresh databases already receive the
     v9 shape from ``schema.sql``.
     """
-    tables = {
-        r[0]
-        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    }
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     if "users" not in tables:
         return
 
@@ -388,10 +388,7 @@ def _migrate_v9(conn: sqlite3.Connection) -> None:
 
 def _migrate_v10(conn: sqlite3.Connection) -> None:
     """Add durable, non-secret authenticated mobile price provenance."""
-    tables = {
-        row[0]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    }
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     if "check_history" not in tables:
         return
     columns = {row[1] for row in conn.execute("PRAGMA table_info(check_history)")}
@@ -415,10 +412,7 @@ def _migrate_v11(conn: sqlite3.Connection) -> None:
     state. Preserve access/session/key data, remove every booking-scoped row,
     and rebuild `bookings` with caller-scoped confirmation uniqueness.
     """
-    tables = {
-        row[0]
-        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    }
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     # Earlier version upgrades run in the same connection transaction. Commit
     # those non-destructive steps before starting the all-or-nothing v11 cutover.
     conn.commit()
@@ -567,14 +561,11 @@ def _migrate_v12(conn: sqlite3.Connection) -> None:
 def _migrate_v13(conn: sqlite3.Connection) -> None:
     """Add content-free inventory recovery audit fields to v12 sync runs."""
     table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-        "AND name = 'booking_sync_runs'"
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'booking_sync_runs'"
     ).fetchone()
     if table is None:
         return
-    existing = {
-        row[1] for row in conn.execute("PRAGMA table_info(booking_sync_runs)")
-    }
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(booking_sync_runs)")}
     additions = {
         "recovery_outcome": (
             "TEXT CHECK(recovery_outcome IS NULL OR recovery_outcome IN ("
@@ -590,16 +581,13 @@ def _migrate_v13(conn: sqlite3.Connection) -> None:
             "INTEGER CHECK(recovery_llm_calls IS NULL OR recovery_llm_calls >= 0)"
         ),
         "recovery_input_tokens": (
-            "INTEGER CHECK(recovery_input_tokens IS NULL "
-            "OR recovery_input_tokens >= 0)"
+            "INTEGER CHECK(recovery_input_tokens IS NULL OR recovery_input_tokens >= 0)"
         ),
         "recovery_output_tokens": (
-            "INTEGER CHECK(recovery_output_tokens IS NULL "
-            "OR recovery_output_tokens >= 0)"
+            "INTEGER CHECK(recovery_output_tokens IS NULL OR recovery_output_tokens >= 0)"
         ),
         "recovery_action_count": (
-            "INTEGER CHECK(recovery_action_count IS NULL "
-            "OR recovery_action_count >= 0)"
+            "INTEGER CHECK(recovery_action_count IS NULL OR recovery_action_count >= 0)"
         ),
         "recovery_duration_ms": (
             "INTEGER CHECK(recovery_duration_ms IS NULL OR recovery_duration_ms >= 0)"
@@ -608,9 +596,7 @@ def _migrate_v13(conn: sqlite3.Connection) -> None:
     }
     for name, declaration in additions.items():
         if name not in existing:
-            conn.execute(
-                f"ALTER TABLE booking_sync_runs ADD COLUMN {name} {declaration}"
-            )
+            conn.execute(f"ALTER TABLE booking_sync_runs ADD COLUMN {name} {declaration}")
 
 
 def _migrate_v14(conn: sqlite3.Connection) -> None:
@@ -625,6 +611,14 @@ def _migrate_v15(conn: sqlite3.Connection) -> None:
     """Add content-free DOM-drift incidents and encrypted diagnostics."""
     schema = _SCHEMA_SQL.read_text()
     start = schema.index("CREATE TABLE IF NOT EXISTS dom_drift_incidents")
+    end = schema.index("-- v16: redacted agentic-browser", start)
+    conn.executescript(schema[start:end])
+
+
+def _migrate_v16(conn: sqlite3.Connection) -> None:
+    """Add redacted agentic canary, promotion, and disclosure-consent state."""
+    schema = _SCHEMA_SQL.read_text()
+    start = schema.index("CREATE TABLE IF NOT EXISTS agentic_canary_checks")
     end = schema.index("-- v2: finalised by Unit 2", start)
     conn.executescript(schema[start:end])
 
@@ -643,6 +637,7 @@ def _migrate_v15(conn: sqlite3.Connection) -> None:
 # v12 -> v13: caller-scoped inventory recovery audit columns, additive.
 # v13 -> v14: model spend/qualification ledgers, additive.
 # v14 -> v15: DOM-drift incidents, alert state, and encrypted diagnostics.
+# v15 -> v16: redacted agentic canary, promotion, and disclosure consent.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -654,6 +649,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     13: _migrate_v13,
     14: _migrate_v14,
     15: _migrate_v15,
+    16: _migrate_v16,
 }
 
 
@@ -839,8 +835,7 @@ class SqliteBookingRepository:
         except sqlite3.IntegrityError as exc:
             if "confirmation_id" in str(exc):
                 raise BookingRejectedError(
-                    f"Booking confirmation '{booking.confirmation_id.value}' "
-                    "is already registered"
+                    f"Booking confirmation '{booking.confirmation_id.value}' is already registered"
                 ) from exc
             raise
 
@@ -898,8 +893,7 @@ class SqliteBookingRepository:
             raise PostRebookRejected(PostRebookRejection.STALE)
 
         handoff = conn.execute(
-            "SELECT 1 FROM rebook_events WHERE session_id = ? "
-            "AND detail LIKE ? LIMIT 1",
+            "SELECT 1 FROM rebook_events WHERE session_id = ? AND detail LIKE ? LIMIT 1",
             (context.session_id, f"telegram_handoff kind={handoff_kind} %"),
         ).fetchone()
         if handoff is None:
@@ -942,9 +936,7 @@ class SqliteBookingRepository:
             archived_source = replace(context.source_booking, status=BookingStatus.ARCHIVED)
             if current == archived_source and already_archived:
                 conn.commit()
-                return PostRebookResult(
-                    MonitoringDisposition.SOURCE_ALREADY_ARCHIVED, current
-                )
+                return PostRebookResult(MonitoringDisposition.SOURCE_ALREADY_ARCHIVED, current)
             if current != context.source_booking:
                 raise PostRebookRejected(PostRebookRejection.STALE)
 
@@ -988,9 +980,7 @@ class SqliteBookingRepository:
             )
             if current == replacement and already_activated:
                 conn.commit()
-                return PostRebookResult(
-                    MonitoringDisposition.REPLACEMENT_ALREADY_ACTIVE, current
-                )
+                return PostRebookResult(MonitoringDisposition.REPLACEMENT_ALREADY_ACTIVE, current)
 
             archived_source = replace(context.source_booking, status=BookingStatus.ARCHIVED)
             source_is_valid = current == context.source_booking or (
@@ -1163,9 +1153,7 @@ def _load_recovery_code_list(raw: object, *, field_name: str) -> tuple[str, ...]
     try:
         values = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"Stored inventory recovery {field_name} are invalid"
-        ) from exc
+        raise ValueError(f"Stored inventory recovery {field_name} are invalid") from exc
     if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
         raise ValueError(f"Stored inventory recovery {field_name} are invalid")
     return tuple(values)
@@ -1182,9 +1170,7 @@ def _load_recovery_trace(raw: object) -> tuple[InventoryRecoveryTraceEvent, ...]
         raise ValueError("Stored inventory recovery trace is invalid")
     events: list[InventoryRecoveryTraceEvent] = []
     for value in values:
-        if not isinstance(value, dict) or not all(
-            isinstance(key, str) for key in value
-        ):
+        if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
             raise ValueError("Stored inventory recovery trace is invalid")
         event: dict[str, str | bool | int] = {}
         for key, item in value.items():
@@ -1214,15 +1200,9 @@ def _inventory_recovery_audit_from_row(
     return InventoryRecoveryAudit(
         outcome=InventoryRecoveryOutcome(outcome),
         step=row["recovery_step"],
-        providers=_load_recovery_code_list(
-            row["recovery_providers_json"], field_name="providers"
-        ),
-        models=_load_recovery_code_list(
-            row["recovery_models_json"], field_name="models"
-        ),
-        roles=_load_recovery_code_list(
-            row["recovery_roles_json"], field_name="roles"
-        ),
+        providers=_load_recovery_code_list(row["recovery_providers_json"], field_name="providers"),
+        models=_load_recovery_code_list(row["recovery_models_json"], field_name="models"),
+        roles=_load_recovery_code_list(row["recovery_roles_json"], field_name="roles"),
         prompt_versions=_load_recovery_code_list(
             row["recovery_prompt_versions_json"], field_name="prompt versions"
         ),
@@ -1272,9 +1252,7 @@ class SqliteAccountReservationRepository:
                 "SELECT access_state FROM users WHERE user_id = ?", (user_id,)
             ).fetchone()
             if owner is None or owner["access_state"] != UserAccessState.ACTIVE.value:
-                raise PermissionError(
-                    "Synchronization owner is no longer an active user"
-                )
+                raise PermissionError("Synchronization owner is no longer an active user")
             conn.execute(
                 """
                 INSERT INTO booking_sync_runs (
@@ -1374,11 +1352,7 @@ class SqliteAccountReservationRepository:
         if row is None:
             return None
         audit = _inventory_recovery_audit_from_row(row)
-        code = (
-            SynchronizationFailureCode(row["failure_code"])
-            if row["failure_code"]
-            else None
-        )
+        code = SynchronizationFailureCode(row["failure_code"]) if row["failure_code"] else None
         return SynchronizationReport(
             run_id=row["run_id"],
             completeness=InventoryCompleteness(row["completeness"]),
@@ -1388,9 +1362,7 @@ class SqliteAccountReservationRepository:
             failure_code=code,
             failure_detail=row["failure_detail"],
             recovery_outcome=(
-                audit.outcome
-                if audit is not None
-                else InventoryRecoveryOutcome.NOT_NEEDED
+                audit.outcome if audit is not None else InventoryRecoveryOutcome.NOT_NEEDED
             ),
             recovery_step=audit.step if audit is not None else None,
             llm_calls_used=audit.llm_calls_used if audit is not None else 0,
@@ -1455,9 +1427,7 @@ class SqliteAccountReservationRepository:
             raise ValueError("Synchronization recovery audit is already attached")
         self._store.conn.commit()
 
-    def recovery_audit_for_run(
-        self, *, user_id: int, run_id: str
-    ) -> InventoryRecoveryAudit | None:
+    def recovery_audit_for_run(self, *, user_id: int, run_id: str) -> InventoryRecoveryAudit | None:
         """Return only the audit attached to the caller-owned run."""
         if not run_id.strip():
             raise ValueError("Synchronization run id must be non-empty")
@@ -1481,14 +1451,10 @@ class SqliteAccountReservationRepository:
     ) -> None:
         fingerprint = remote_key_hash(user_id, observation.remote_id)
         existing = conn.execute(
-            "SELECT * FROM account_reservations "
-            "WHERE user_id = ? AND remote_key_hash = ?",
+            "SELECT * FROM account_reservations WHERE user_id = ? AND remote_key_hash = ?",
             (user_id, fingerprint),
         ).fetchone()
-        if (
-            existing is not None
-            and observation.extraction_method == "llm_inventory"
-        ):
+        if existing is not None and observation.extraction_method == "llm_inventory":
             self._merge_assisted_existing_observation(
                 conn,
                 existing=existing,
@@ -1646,11 +1612,7 @@ class SqliteAccountReservationRepository:
                 else None
             ),
             observation.refund_note,
-            (
-                observation.refund_deadline.isoformat()
-                if observation.refund_deadline
-                else None
-            ),
+            (observation.refund_deadline.isoformat() if observation.refund_deadline else None),
             occupancy.adults if occupancy else None,
             occupancy.children if occupancy else None,
             occupancy.rooms if occupancy else None,
@@ -1688,11 +1650,7 @@ class SqliteAccountReservationRepository:
             str(observation.booked_total.amount),
             observation.booked_total.currency,
             observation.refund_note,
-            (
-                observation.refund_deadline.isoformat()
-                if observation.refund_deadline
-                else None
-            ),
+            (observation.refund_deadline.isoformat() if observation.refund_deadline else None),
             observation.occupancy.adults,
             observation.occupancy.children,
             observation.occupancy.rooms,
@@ -1734,22 +1692,17 @@ class SqliteAccountReservationRepository:
             (*values, booking_id, user_id),
         )
         if changed:
-            conn.execute(
-                "DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,)
-            )
+            conn.execute("DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,))
         return booking_id
 
     @staticmethod
     def _archive_projection(conn: sqlite3.Connection, booking_id: str) -> None:
         cursor = conn.execute(
-            "UPDATE bookings SET status = 'archived' "
-            "WHERE booking_id = ? AND status != 'archived'",
+            "UPDATE bookings SET status = 'archived' WHERE booking_id = ? AND status != 'archived'",
             (booking_id,),
         )
         if cursor.rowcount:
-            conn.execute(
-                "DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,)
-            )
+            conn.execute("DELETE FROM savings_opportunities WHERE booking_id = ?", (booking_id,))
 
     def _mark_unseen_absent(
         self,
@@ -1802,14 +1755,10 @@ class SqliteAccountReservationRepository:
             check_out=date.fromisoformat(row["check_out"]) if row["check_out"] else None,
             room_type=row["room_type"],
             booked_total=total,
-            refundable=(
-                bool(row["refundable"]) if row["refundable"] is not None else None
-            ),
+            refundable=(bool(row["refundable"]) if row["refundable"] is not None else None),
             refund_note=row["refund_note"],
             refund_deadline=(
-                date.fromisoformat(row["refund_deadline"])
-                if row["refund_deadline"]
-                else None
+                date.fromisoformat(row["refund_deadline"]) if row["refund_deadline"] else None
             ),
             occupancy=occupancy,
             observed_at=datetime.fromisoformat(row["last_observed_at"]),
@@ -1823,9 +1772,7 @@ class SqliteAccountReservationRepository:
             user_id=row["user_id"],
             remote_key_hash=row["remote_key_hash"],
             observation=observation,
-            eligibility=EligibilityDecision(
-                EligibilityStatus(row["eligibility_status"]), reasons
-            ),
+            eligibility=EligibilityDecision(EligibilityStatus(row["eligibility_status"]), reasons),
             monitoring_booking_id=row["monitoring_booking_id"],
             first_observed_at=datetime.fromisoformat(row["first_observed_at"]),
             last_observed_at=datetime.fromisoformat(row["last_observed_at"]),
@@ -1860,11 +1807,7 @@ class SqliteCheckHistoryRepository:
                 str(result.live_price.amount) if result.live_price else None,
                 result.live_price.currency if result.live_price else None,
                 (None if ri is None or ri.is_refundable is None else int(ri.is_refundable)),
-                (
-                    ri.cancellation_deadline.isoformat()
-                    if ri and ri.cancellation_deadline
-                    else None
-                ),
+                (ri.cancellation_deadline.isoformat() if ri and ri.cancellation_deadline else None),
                 ri.raw_text if ri else None,
                 ef.property_name if ef else None,
                 ef.room_label if ef else None,
@@ -1923,8 +1866,12 @@ class SqliteCheckHistoryRepository:
         extracted_fields = None
         if any(
             row[k]
-            for k in ("extracted_property", "extracted_room", "extracted_check_in",
-                      "extracted_check_out")
+            for k in (
+                "extracted_property",
+                "extracted_room",
+                "extracted_check_in",
+                "extracted_check_out",
+            )
         ):
             extracted_fields = ExtractedBookingFields(
                 property_name=row["extracted_property"],
@@ -2273,6 +2220,330 @@ class SqliteCheckTraceRepository:
         )
 
 
+class SqliteAgenticQualificationRepository:
+    """Durable content-free owner canary and explicit promotion state."""
+
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def record_check(self, check: AgenticCanaryCheck) -> None:
+        self._require_owner(check.owner_user_id)
+        self._store.conn.execute(
+            """
+            INSERT INTO agentic_canary_checks (
+                check_id, owner_user_id, observed_at, eligible_unblocked,
+                valid_observation, manual_price_correct, model_cost_micro_usd,
+                duration_ms, fallback_used, violations_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                check.check_id,
+                check.owner_user_id,
+                check.observed_at.astimezone(UTC).isoformat(),
+                int(check.eligible_unblocked),
+                int(check.valid_observation),
+                (None if check.manual_price_correct is None else int(check.manual_price_correct)),
+                check.model_cost.micro_usd,
+                check.duration_ms,
+                int(check.fallback_used),
+                json.dumps(
+                    sorted(item.value for item in check.violations),
+                    separators=(",", ":"),
+                ),
+            ),
+        )
+        self._auto_regress_if_needed(
+            check.owner_user_id,
+            observed_at=check.observed_at,
+            immediate_code=("critical_violation" if check.violations else None),
+        )
+        self._store.conn.commit()
+
+    def record_manual_comparison(
+        self,
+        *,
+        owner_user_id: int,
+        check_id: str,
+        correct: bool,
+    ) -> None:
+        self._require_owner(owner_user_id)
+        cursor = self._store.conn.execute(
+            """
+            UPDATE agentic_canary_checks
+            SET manual_price_correct = ?
+            WHERE check_id = ? AND owner_user_id = ? AND valid_observation = 1
+            """,
+            (int(correct), check_id, owner_user_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("manual comparison requires one valid owner canary check")
+        if not correct:
+            row = self._store.conn.execute(
+                "SELECT observed_at, violations_json FROM agentic_canary_checks "
+                "WHERE check_id = ? AND owner_user_id = ?",
+                (check_id, owner_user_id),
+            ).fetchone()
+            assert row is not None
+            raw_violations = json.loads(row["violations_json"])
+            if not isinstance(raw_violations, list):
+                raise ValueError("stored agentic violations must be a list")
+            violations = {
+                str(item) for item in raw_violations
+            } | {CriticalAgenticViolation.FALSE_ACCEPTED_OFFER.value}
+            self._store.conn.execute(
+                "UPDATE agentic_canary_checks SET violations_json = ? WHERE check_id = ?",
+                (json.dumps(sorted(violations), separators=(",", ":")), check_id),
+            )
+            self._auto_regress_if_needed(
+                owner_user_id,
+                observed_at=datetime.now(UTC),
+                immediate_code="false_accepted_offer",
+            )
+        self._store.conn.commit()
+
+    def list_checks(self, owner_user_id: int) -> tuple[AgenticCanaryCheck, ...]:
+        rows = self._store.conn.execute(
+            """
+            SELECT * FROM agentic_canary_checks
+            WHERE owner_user_id = ? ORDER BY observed_at, check_id
+            """,
+            (owner_user_id,),
+        ).fetchall()
+        checks: list[AgenticCanaryCheck] = []
+        for row in rows:
+            raw_violations = json.loads(row["violations_json"])
+            if not isinstance(raw_violations, list):
+                raise ValueError("stored agentic violations must be a list")
+            checks.append(
+                AgenticCanaryCheck(
+                    check_id=row["check_id"],
+                    owner_user_id=int(row["owner_user_id"]),
+                    observed_at=datetime.fromisoformat(row["observed_at"]),
+                    eligible_unblocked=bool(row["eligible_unblocked"]),
+                    valid_observation=bool(row["valid_observation"]),
+                    manual_price_correct=(
+                        None
+                        if row["manual_price_correct"] is None
+                        else bool(row["manual_price_correct"])
+                    ),
+                    model_cost=UsdAmount(int(row["model_cost_micro_usd"])),
+                    duration_ms=int(row["duration_ms"]),
+                    fallback_used=bool(row["fallback_used"]),
+                    violations=frozenset(
+                        CriticalAgenticViolation(str(item)) for item in raw_violations
+                    ),
+                )
+            )
+        return tuple(checks)
+
+    def qualification_state(self) -> QualificationState:
+        row = self._store.conn.execute(
+            "SELECT * FROM agentic_promotion_state WHERE singleton_id = 1"
+        ).fetchone()
+        if row is None:
+            return QualificationState()
+        status = QualificationStatus(row["status"])
+        qualified_at = (
+            datetime.fromisoformat(row["qualified_at"]) if row["qualified_at"] is not None else None
+        )
+        return QualificationState(
+            status=status,
+            policy_version=row["policy_version"],
+            qualified_at=qualified_at,
+        )
+
+    def promote(
+        self,
+        *,
+        owner_user_id: int,
+        approved_at: datetime,
+    ) -> QualificationState:
+        self._require_owner(owner_user_id)
+        verdict = evaluate_agentic_canary(
+            self.list_checks(owner_user_id),
+            deployment_owner_user_id=owner_user_id,
+            owner_approved=True,
+            now=approved_at,
+        )
+        if not verdict.promotable:
+            raise ValueError("agentic promotion gates have not passed")
+        if approved_at.tzinfo is None or approved_at.utcoffset() is None:
+            raise ValueError("promotion approval time must be timezone-aware")
+        approved = approved_at.astimezone(UTC)
+        policy_version = "agentic-price-v1"
+        self._store.conn.execute(
+            """
+            INSERT INTO agentic_promotion_state (
+                singleton_id, status, policy_version, qualified_at,
+                approved_by_owner_user_id, owner_approved_at, rollback_until,
+                regression_code, updated_at
+            ) VALUES (1, 'qualified', ?, ?, ?, ?, ?, NULL, ?)
+            ON CONFLICT(singleton_id) DO UPDATE SET
+                status = 'qualified', policy_version = excluded.policy_version,
+                qualified_at = excluded.qualified_at,
+                approved_by_owner_user_id = excluded.approved_by_owner_user_id,
+                owner_approved_at = excluded.owner_approved_at,
+                rollback_until = excluded.rollback_until,
+                regression_code = NULL, updated_at = excluded.updated_at
+            """,
+            (
+                policy_version,
+                approved.isoformat(),
+                owner_user_id,
+                approved.isoformat(),
+                (approved + timedelta(days=30)).isoformat(),
+                approved.isoformat(),
+            ),
+        )
+        self._store.conn.commit()
+        return QualificationState(
+            QualificationStatus.QUALIFIED,
+            policy_version,
+            approved,
+        )
+
+    def regress(
+        self,
+        *,
+        owner_user_id: int,
+        regression_code: str,
+        observed_at: datetime,
+    ) -> QualificationState:
+        self._require_owner(owner_user_id)
+        if (
+            not regression_code.strip()
+            or len(regression_code) > 128
+            or not regression_code.replace("_", "").replace("-", "").isalnum()
+        ):
+            raise ValueError("regression code must be a bounded machine code")
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            raise ValueError("regression time must be timezone-aware")
+        observed = observed_at.astimezone(UTC)
+        self._store.conn.execute(
+            """
+            INSERT INTO agentic_promotion_state (
+                singleton_id, status, policy_version, qualified_at,
+                regression_code, updated_at
+            ) VALUES (1, 'regressed', 'agentic-price-v1', NULL, ?, ?)
+            ON CONFLICT(singleton_id) DO UPDATE SET
+                status = 'regressed', qualified_at = NULL,
+                regression_code = excluded.regression_code,
+                updated_at = excluded.updated_at
+            """,
+            (regression_code, observed.isoformat()),
+        )
+        self._store.conn.commit()
+        return QualificationState(QualificationStatus.REGRESSED)
+
+    def _require_owner(self, user_id: int) -> None:
+        row = self._store.conn.execute(
+            "SELECT role, access_state FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None or row["role"] != "owner" or row["access_state"] != "active":
+            raise PermissionError("agentic canary and promotion require the active owner")
+
+    def _auto_regress_if_needed(
+        self,
+        owner_user_id: int,
+        *,
+        observed_at: datetime,
+        immediate_code: str | None,
+    ) -> None:
+        """Fail closed only while the qualified release still has a legacy rollback path."""
+        state = self._store.conn.execute(
+            "SELECT status, qualified_at, rollback_until FROM agentic_promotion_state "
+            "WHERE singleton_id = 1"
+        ).fetchone()
+        if state is None or state["status"] != QualificationStatus.QUALIFIED.value:
+            return
+        if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+            raise ValueError("automatic regression time must be timezone-aware")
+        observed = observed_at.astimezone(UTC)
+        rollback_until = datetime.fromisoformat(state["rollback_until"])
+        if observed > rollback_until:
+            return
+        code = immediate_code
+        if code is None:
+            recent = self._store.conn.execute(
+                """
+                SELECT valid_observation FROM agentic_canary_checks
+                WHERE owner_user_id = ? AND observed_at >= ? AND eligible_unblocked = 1
+                ORDER BY observed_at DESC, check_id DESC LIMIT 3
+                """,
+                (owner_user_id, state["qualified_at"]),
+            ).fetchall()
+            if len(recent) == 3 and all(not bool(row["valid_observation"]) for row in recent):
+                code = "repeated_reliability"
+        if code is None:
+            return
+        self._store.conn.execute(
+            """
+            UPDATE agentic_promotion_state
+            SET status = 'regressed', qualified_at = NULL,
+                regression_code = ?, updated_at = ?
+            WHERE singleton_id = 1
+            """,
+            (code, observed.isoformat()),
+        )
+
+
+class SqliteAgenticDisclosureConsentRepository:
+    """Store only the current invitee disclosure version and acknowledgement time."""
+
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def get(self, user_id: int) -> AgenticDisclosureConsent | None:
+        row = self._store.conn.execute(
+            "SELECT * FROM agentic_disclosure_consents WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return AgenticDisclosureConsent(
+            user_id=int(row["user_id"]),
+            disclosure_version=row["disclosure_version"],
+            acknowledged_at=datetime.fromisoformat(row["acknowledged_at"]),
+        )
+
+    def acknowledge(
+        self,
+        *,
+        user_id: int,
+        disclosure_version: str,
+        acknowledged_at: datetime,
+    ) -> AgenticDisclosureConsent:
+        user = self._store.conn.execute(
+            "SELECT access_state FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if user is None or user["access_state"] != "active":
+            raise PermissionError("disclosure consent requires an active user")
+        consent = AgenticDisclosureConsent(
+            user_id,
+            disclosure_version,
+            acknowledged_at.astimezone(UTC),
+        )
+        self._store.conn.execute(
+            """
+            INSERT INTO agentic_disclosure_consents (
+                user_id, disclosure_version, acknowledged_at
+            ) VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                disclosure_version = excluded.disclosure_version,
+                acknowledged_at = excluded.acknowledged_at
+            """,
+            (
+                consent.user_id,
+                consent.disclosure_version,
+                consent.acknowledged_at.isoformat(),
+            ),
+        )
+        self._store.conn.commit()
+        return consent
+
+
 class SqliteUserRepository:
     """Schema v9 (US-029/US-063). Exactly one owner row is guaranteed by
     `_ensure_owner_user` (called on every connect) and the DB-level partial
@@ -2321,9 +2592,7 @@ class SqliteUserRepository:
         return created
 
     def list_all(self) -> list[User]:
-        rows = self._store.conn.execute(
-            "SELECT * FROM users ORDER BY created_at"
-        ).fetchall()
+        rows = self._store.conn.execute("SELECT * FROM users ORDER BY created_at").fetchall()
         return [self._row_to_user(r) for r in rows]
 
     def list_active(self) -> list[User]:
@@ -2382,15 +2651,12 @@ class SqliteUserRepository:
         the config-designated owner chat to the owner row on first contact).
         Only fills a NULL telegram_user_id — never rebinds an existing one."""
         self._store.conn.execute(
-            "UPDATE users SET telegram_user_id = ? "
-            "WHERE user_id = ? AND telegram_user_id IS NULL",
+            "UPDATE users SET telegram_user_id = ? WHERE user_id = ? AND telegram_user_id IS NULL",
             (telegram_user_id, user_id),
         )
         self._store.conn.commit()
 
-    def set_telegram_username(
-        self, user_id: int, telegram_username: str | None
-    ) -> bool:
+    def set_telegram_username(self, user_id: int, telegram_username: str | None) -> bool:
         """Store current optional Telegram username display metadata.
 
         Usernames are normalized without leading ``@`` characters. Whitespace
@@ -2453,9 +2719,7 @@ class SqliteUserRepository:
         conn = self._store.conn
         booking_ids = [
             r[0]
-            for r in conn.execute(
-                "SELECT booking_id FROM bookings WHERE user_id = ?", (user_id,)
-            )
+            for r in conn.execute("SELECT booking_id FROM bookings WHERE user_id = ?", (user_id,))
         ]
         # Account rows own the optional monitoring projection FK, so remove
         # them before the ordinary booking-scoped deletion cascade.
@@ -2469,9 +2733,7 @@ class SqliteUserRepository:
         conn.execute("DELETE FROM scheduled_check_slots WHERE user_id = ?", (user_id,))
         # Remove caller-linked detail but retain deployment-day aggregates so
         # privacy purge cannot reopen already consumed allowance.
-        conn.execute(
-            "DELETE FROM llm_cost_reservations WHERE caller_user_id = ?", (user_id,)
-        )
+        conn.execute("DELETE FROM llm_cost_reservations WHERE caller_user_id = ?", (user_id,))
         conn.execute("DELETE FROM invite_codes WHERE used_by = ?", (user_id,))
         conn.execute("UPDATE invite_codes SET issued_by = NULL WHERE issued_by = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
@@ -2504,8 +2766,7 @@ class SqliteInviteCodeRepository:
         issued_at = datetime.now(UTC)
         expires_at_str = expires_at.isoformat() if expires_at else None
         self._store.conn.execute(
-            "INSERT INTO invite_codes (code, issued_by, issued_at, expires_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO invite_codes (code, issued_by, issued_at, expires_at) VALUES (?, ?, ?, ?)",
             (code, issued_by, issued_at.isoformat(), expires_at_str),
         )
         self._store.conn.commit()
@@ -2528,8 +2789,7 @@ class SqliteInviteCodeRepository:
         if invite is None or invite.is_used or invite.is_expired(now):
             return None
         cursor = self._store.conn.execute(
-            "UPDATE invite_codes SET used_by = ?, used_at = ? "
-            "WHERE code = ? AND used_by IS NULL",
+            "UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL",
             (used_by, now.isoformat(), code),
         )
         self._store.conn.commit()
@@ -2542,9 +2802,7 @@ class SqliteInviteCodeRepository:
             code=row["code"],
             issued_by=row["issued_by"],
             issued_at=datetime.fromisoformat(row["issued_at"]),
-            expires_at=(
-                datetime.fromisoformat(row["expires_at"]) if row["expires_at"] else None
-            ),
+            expires_at=(datetime.fromisoformat(row["expires_at"]) if row["expires_at"] else None),
             used_by=row["used_by"],
             used_at=datetime.fromisoformat(row["used_at"]) if row["used_at"] else None,
         )

@@ -51,4 +51,4 @@ class TestCheckTraceRepository:
     def test_fresh_db_is_latest_schema(self, tmp_path):
         with SqliteStore(tmp_path / "t.db") as store:
             row = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
-        assert row[0] == SCHEMA_VERSION == 15
+        assert row[0] == SCHEMA_VERSION == 16
