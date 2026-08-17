@@ -47,7 +47,14 @@ class AsyncLoopRunner:
         try:
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError as exc:
-            future.cancel()
+            # The result can win the race between ``result`` timing out and this
+            # thread requesting cancellation. Reclaim that completed result;
+            # otherwise the caller would report a false timeout at the boundary.
+            if future.done():
+                return future.result()
+            cancelled = future.cancel()
+            if not cancelled and future.done():
+                return future.result()
             raise TimeoutError("agentic browser operation timed out") from exc
 
     def close(self) -> None:

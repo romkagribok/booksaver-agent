@@ -9,8 +9,8 @@ status: complete
 
 ## Summary
 
-- **Focused agentic/guard/session/routing tests**: 148 passed.
-- **Repository suite**: 1,691 passed, 55 existing schedule-deprecation warnings.
+- **Focused agentic/guard/session/routing tests**: 151 passed.
+- **Repository suite**: 1,694 passed, 55 existing schedule-deprecation warnings.
 - **Ruff**: all source and tests passed.
 - **Strict mypy**: 124 source files passed.
 - **Transient browser smoke**: Stagehand 4.0.1 launched the installed Chromium, accepted a
@@ -40,6 +40,8 @@ status: complete
   billed calls reconcile into exact redacted usage.
 - The 15 total-action, six computer-action, and 180-second ceilings fail closed. A sixth visual
   action may be followed only by a typed terminal submission, never a seventh browser action.
+- Rejected or uninspectable semantic proposals hand the unchanged browser to the guarded visual
+  fallback, and a result that wins the timeout/cancellation race is not discarded as a timeout.
 - Signed-out, MFA, captcha, bot wall, unavailable, provider-failure, no-observation, budget, unsafe,
   and timeout paths are closed typed outcomes. Agentic failure never triggers an automatic legacy
   retry.

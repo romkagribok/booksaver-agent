@@ -349,6 +349,42 @@ def test_semantic_failure_hands_same_browser_to_guarded_computer_use() -> None:
     assert model.prior_ids == [None, "tool-1"]
 
 
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        _Runtime(
+            observe_action=SemanticAction(
+                "Scroll to Hotel Example",
+                "scroll",
+                "body",
+                object(),
+            )
+        ),
+        _Runtime(inspected=None),
+    ],
+    ids=("unsupported-semantic-method", "uninspectable-semantic-target"),
+)
+def test_rejected_semantic_proposal_uses_guarded_visual_fallback(
+    runtime: _Runtime,
+) -> None:
+    model = _ComputerModel(
+        [
+            ComputerTurn(
+                ComputerTurnKind.SUBMISSION,
+                ProviderUsage(LLMUsage(100, 20), 10),
+                observation=_observation(),
+            )
+        ]
+    )
+
+    outcome, _ledger = _execute(runtime, model)
+
+    assert outcome.result.status is PriceExecutionStatus.OBSERVED
+    assert outcome.result.fallback_used
+    assert runtime.replayed == 0
+    assert runtime.visual_actions == 0
+
+
 def test_unsafe_computer_click_is_terminal_and_never_executed() -> None:
     runtime = _Runtime(
         observe_action=None,

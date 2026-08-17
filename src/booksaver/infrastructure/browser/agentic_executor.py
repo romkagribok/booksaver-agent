@@ -94,7 +94,7 @@ _SAFE_TYPED_VALUES = frozenset(
 
 class SemanticFailure(Enum):
     NO_ACTION = "no_action"
-    UNSAFE_ACTION = "unsafe_action"
+    PROPOSAL_REJECTED = "proposal_rejected"
     ACTION_FAILED = "action_failed"
     EXTRACTION_INVALID = "extraction_invalid"
     DESTINATION_CHANGED = "destination_changed"
@@ -1214,8 +1214,6 @@ class StagehandPriceBrowserExecutor:
                     fallback_used=False,
                 )
                 return await self._with_verified_refresh(runtime, request, result, started)
-            if semantic is SemanticFailure.UNSAFE_ACTION:
-                return self._terminal(PriceExecutionStatus.UNSAFE_ACTION, meter, started)
             if semantic is SemanticFailure.DESTINATION_CHANGED:
                 return self._terminal(
                     PriceExecutionStatus.UNSAFE_ACTION,
@@ -1314,10 +1312,10 @@ class StagehandPriceBrowserExecutor:
         if action is None:
             return SemanticFailure.NO_ACTION
         if action.method not in {"click", "locator.click"}:
-            return SemanticFailure.UNSAFE_ACTION
+            return SemanticFailure.PROPOSAL_REJECTED
         inspected = await runtime.inspect(action)
         if inspected is None or not inspected.visible or not inspected.enabled:
-            return SemanticFailure.UNSAFE_ACTION
+            return SemanticFailure.PROPOSAL_REJECTED
         before = await runtime.destination()
         proposal = BrowserActionProposal(
             action=BrowserActionType.CLICK,
@@ -1327,7 +1325,7 @@ class StagehandPriceBrowserExecutor:
             destination=inspected.href,
         )
         if not self._guard.evaluate(proposal).allowed:
-            return SemanticFailure.UNSAFE_ACTION
+            return SemanticFailure.PROPOSAL_REJECTED
         meter.record_action()
         try:
             await runtime.replay(action)
