@@ -29,6 +29,7 @@ stages_completed:
     artifact: ddd-03-test-report.md
 requires_bolts:
   - 051-local-agentic-price-executor
+  - 054-local-agentic-price-executor
 enables_bolts:
   - 053-post-promotion-browser-migration
 requires_units:

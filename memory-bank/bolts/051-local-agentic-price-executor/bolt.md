@@ -33,6 +33,7 @@ requires_bolts:
   - 050-agentic-executor-control-plane
 enables_bolts:
   - 052-agentic-browser-qualification
+  - 054-local-agentic-price-executor
 requires_units:
   - 001-agentic-executor-control-plane
 blocks: false

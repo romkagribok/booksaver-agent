@@ -482,7 +482,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Unit | Stories | Status |
 |------|---------|--------|
 | `001-agentic-executor-control-plane` | 4 stories | Complete (bolt 050) |
-| `002-local-agentic-price-executor` | 4 stories | Complete (bolt 051) |
+| `002-local-agentic-price-executor` | 5 stories | In progress (bolt 054; Docker compatibility correction) |
 | `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
 | `004-post-promotion-browser-migration` | 2 stories | Blocked (bolt 053; post-promotion) |
 
@@ -503,6 +503,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-148` | Guard semantic navigation and extract typed rates | Agentic Browser | Complete | `002-local-agentic-price-executor/stories/002-guard-semantic-navigation-and-extract-rates.md` |
 | `US-149` | Recover visually through guarded computer use | Agentic Browser | Complete | `002-local-agentic-price-executor/stories/003-recover-visually-through-guarded-computer-use.md` |
 | `US-150` | Confine content and disclose Anthropic processing | Agentic Browser | Complete | `002-local-agentic-price-executor/stories/004-confine-content-and-disclose-processing.md` |
+| `US-155` | Launch Stagehand in the Docker runtime | Agentic Browser | Draft | `002-local-agentic-price-executor/stories/005-launch-stagehand-in-docker-runtime.md` |
 
 ### 003-agentic-browser-qualification: Agentic Browser Qualification
 
@@ -544,7 +545,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 4 | 12 | In construction (bolts 050–052); post-promotion bolt 053 blocked |
+| `023-replaceable-agentic-browser-executor` | 4 | 13 | In construction (bolts 050–052 and 054); post-promotion bolt 053 blocked |
 
-All 154 stories (149 complete in-scope, 2 post-MVP extensibility, and 3 live-gated/blocked stories) are
+All 155 stories (149 complete in-scope, 1 correction in construction, 2 post-MVP extensibility, and 3 live-gated/blocked stories) are
 assigned exactly once.
