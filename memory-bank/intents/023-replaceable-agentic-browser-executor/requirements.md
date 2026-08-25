@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-08-16T19:18:41Z
+updated: 2026-08-25T01:10:13Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -68,6 +68,8 @@ inventory and other DOM-dependent workflows migrate only after price-check promo
     direct actions.
   - Typed extraction performs rate perception and produces the provider-neutral observation schema.
   - Stagehand external telemetry and external log export are disabled or confined to loopback.
+  - Container execution passes an explicit Chromium sandbox setting compatible with the existing
+    non-root Playwright image and does not depend on a generic `CI` environment signal.
   - No managed browser service, persistent browser profile, selector cache, generated-script repair,
     or cross-run action cache is introduced.
 - **Priority**: Must
@@ -194,7 +196,7 @@ inventory and other DOM-dependent workflows migrate only after price-check promo
 |------------|-----------------|------------|
 | Anthropic processing of visible authenticated page data is acceptable after disclosure | Invitees may reject the privacy boundary | Keep them on legacy routing and make consent revocable |
 | Stagehand semantic execution reduces selector maintenance | It may fail under severe visual or accessibility degradation | Require visual fixtures and bounded computer-use fallback |
-| Existing Chromium can be shared by executable path, not profile | Packaging mismatch could break VPS startup | Adapter startup test and explicit executable discovery failure |
+| Existing Chromium can be shared by executable path, not profile | Packaging mismatch could break VPS startup | Adapter startup test, explicit executable discovery failure, and exact-image Stagehand launch smoke |
 | The live canary can be run by the owner without automation of manual comparison | Promotion may take longer than 14 days | Keep legacy default and expose auditable qualification records |
 
 ## Approved Architecture Decisions

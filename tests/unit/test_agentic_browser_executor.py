@@ -51,6 +51,7 @@ from booksaver.infrastructure.browser.agentic_executor import (
     ComputerTurn,
     ComputerTurnKind,
     InspectedElement,
+    LocalStagehandRuntime,
     ProviderUsage,
     SemanticAction,
     SemanticObservationResult,
@@ -461,6 +462,61 @@ def test_stagehand_is_exactly_pinned() -> None:
     pyproject = Path(__file__).parents[2] / "pyproject.toml"
     assert '"stagehand==4.0.1"' in pyproject.read_text()
     assert importlib.metadata.version("stagehand") == "4.0.1"
+
+
+def test_local_stagehand_launch_explicitly_uses_container_compatible_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from playwright import async_api
+    from stagehand import local_browser
+
+    launch_arguments: dict[str, object] = {}
+
+    class FakePlaywright:
+        class Chromium:
+            executable_path = "/opt/playwright-browsers/chromium/chrome"
+
+        chromium = Chromium()
+        stopped = False
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    class FakePlaywrightStarter:
+        async def start(self) -> FakePlaywright:
+            return fake_playwright
+
+    class FakeBrowser:
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    fake_playwright = FakePlaywright()
+    fake_browser = FakeBrowser()
+
+    def fake_async_playwright() -> FakePlaywrightStarter:
+        return FakePlaywrightStarter()
+
+    async def fake_launch(**kwargs: object) -> FakeBrowser:
+        launch_arguments.update(kwargs)
+        return fake_browser
+
+    monkeypatch.setattr(async_api, "async_playwright", fake_async_playwright)
+    monkeypatch.setattr(local_browser, "launch", fake_launch)
+
+    async def exercise() -> None:
+        runtime = LocalStagehandRuntime()
+        await runtime.launch()
+        assert launch_arguments["chromium_sandbox"] is False
+        assert launch_arguments["executable_path"] == fake_playwright.chromium.executable_path
+        assert launch_arguments["headless"] is True
+        assert launch_arguments["keep_alive"] is False
+        assert fake_playwright.stopped
+        await runtime.close()
+        assert fake_browser.closed
+
+    asyncio.run(exercise())
 
 
 def test_computer_type_requires_exact_trusted_query_value_and_focused_input() -> None:

@@ -3,8 +3,8 @@ unit: 002-local-agentic-price-executor
 intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
-created: '2026-08-16T19:18:41Z'
-updated: '2026-08-16T19:18:41Z'
+created: "2026-08-16T19:18:41Z"
+updated: "2026-08-25T01:10:13Z"
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -50,8 +50,8 @@ one guarded Anthropic computer-use fallback on the same transient Chromium.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 4 |
-| Must Have | 4 |
+| Total Stories | 5 |
+| Must Have | 5 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -61,17 +61,21 @@ one guarded Anthropic computer-use fallback on the same transient Chromium.
 | US-148 | Guard semantic navigation and extract typed rates | Must | Complete |
 | US-149 | Recover visually through guarded computer use | Must | Complete |
 | US-150 | Confine content and disclose Anthropic processing | Must | Complete |
+| US-155 | Launch Stagehand in the Docker runtime | Must | Complete |
 
 ## Dependencies
 
 - Unit 001 contracts and routing.
 - Stagehand 4.0.1, Anthropic SDK, installed Chromium, Booking.com, and existing global browser lease.
+- Existing non-root Docker image and Playwright's container-compatible Chromium launch behavior.
 
 ## Constraints
 
 - One in-process async runner; no sidecar or managed browser.
 - One fallback episode and six computer-use actions maximum.
 - Stagehand external telemetry is disabled or loopback-only.
+- Docker compatibility must be explicit at the Stagehand launch boundary and must not depend on the
+  generic `CI` environment variable.
 
 ## Success Criteria
 
@@ -84,3 +88,4 @@ one guarded Anthropic computer-use fallback on the same transient Chromium.
 ## Bolt Suggestions
 
 - `051-local-agentic-price-executor`: US-147 through US-150 after bolt 050.
+- `054-local-agentic-price-executor`: US-155 production-container correction after bolt 051.

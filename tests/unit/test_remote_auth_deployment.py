@@ -7,6 +7,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_image_contains_transient_remote_browser_dependencies() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text()
+    assert "USER booksaver" in dockerfile
+    assert "CI=1" not in dockerfile
     for package in ("novnc", "websockify", "x11vnc", "xvfb"):
         assert package in dockerfile
     for module in ("rfb.js", "keyboard.js", "keysym.js", "keysymdef.js"):

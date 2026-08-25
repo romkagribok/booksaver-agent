@@ -28,9 +28,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test -f /usr/share/novnc/core/input/keysymdef.js \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user the daemon runs as. Chromium refuses to run as root without
-# --no-sandbox, and we do not want to disable the sandbox, so we install and
-# run as an unprivileged user from the start.
+# Non-root user the daemon and Chromium run as. Playwright and Stagehand use
+# Chromium's container-compatible --no-sandbox mode in this image; the process
+# still stays unprivileged, and BookSaver's action/destination guards remain
+# the browser authority boundary.
 RUN useradd --create-home --shell /usr/sbin/nologin booksaver
 
 WORKDIR /app

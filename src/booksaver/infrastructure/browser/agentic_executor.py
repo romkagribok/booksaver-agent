@@ -338,6 +338,7 @@ class LocalStagehandRuntime:
             viewport_height=_VIEWPORT_HEIGHT,
             device_scale_factor=1,
             has_touch=True,
+            chromium_sandbox=False,
             accept_downloads=False,
             keep_alive=False,
         )
