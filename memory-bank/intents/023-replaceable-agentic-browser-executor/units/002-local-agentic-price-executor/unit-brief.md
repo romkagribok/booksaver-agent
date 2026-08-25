@@ -2,9 +2,9 @@
 unit: 002-local-agentic-price-executor
 intent: 023-replaceable-agentic-browser-executor
 phase: inception
-status: in-progress
-created: '2026-08-16T19:18:41Z'
-updated: '2026-08-25T01:10:13Z'
+status: complete
+created: "2026-08-16T19:18:41Z"
+updated: "2026-08-25T01:10:13Z"
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -61,7 +61,7 @@ one guarded Anthropic computer-use fallback on the same transient Chromium.
 | US-148 | Guard semantic navigation and extract typed rates | Must | Complete |
 | US-149 | Recover visually through guarded computer use | Must | Complete |
 | US-150 | Confine content and disclose Anthropic processing | Must | Complete |
-| US-155 | Launch Stagehand in the Docker runtime | Must | Draft |
+| US-155 | Launch Stagehand in the Docker runtime | Must | Complete |
 
 ## Dependencies
 

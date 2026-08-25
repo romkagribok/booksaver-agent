@@ -2,11 +2,11 @@
 id: 005-launch-stagehand-in-docker-runtime
 unit: 002-local-agentic-price-executor
 intent: 023-replaceable-agentic-browser-executor
-status: draft
+status: complete
 priority: must
 created: 2026-08-25T01:10:13Z
 assigned_bolt: 054-local-agentic-price-executor
-implemented: false
+implemented: true
 ---
 
 # Story: Launch Stagehand in the Docker Runtime
@@ -19,14 +19,14 @@ implemented: false
 
 ## Acceptance Criteria
 
-- [ ] Stagehand receives an explicit container-compatible Chromium sandbox setting that matches the
+- [x] Stagehand receives an explicit container-compatible Chromium sandbox setting that matches the
   existing Playwright runtime instead of inferring it from `CI`.
-- [ ] Chromium and BookSaver continue to run as the unprivileged container user; no root browser,
+- [x] Chromium and BookSaver continue to run as the unprivileged container user; no root browser,
   privileged container, host browser service, or broader container capability is introduced.
-- [ ] A regression test proves the local Stagehand launch request contains the explicit setting.
-- [ ] A production-image smoke launches Stagehand, attaches through loopback CDP, and tears down
+- [x] A regression test proves the local Stagehand launch request contains the explicit setting.
+- [x] A production-image smoke launches Stagehand, attaches through loopback CDP, and tears down
   without setting `CI`.
-- [ ] Session custody, browser-action guards, destination checks, routing modes, and qualification
+- [x] Session custody, browser-action guards, destination checks, routing modes, and qualification
   gates remain unchanged.
 
 ## Dependencies
