@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-16T19:18:41Z
+updated: 2026-08-25T13:00:00Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
@@ -31,12 +31,19 @@ updated: 2026-08-16T19:18:41Z
 - **Assigned Requirements**: FR-9
 - **Dependencies**: Units 001 and 002.
 
-### 004-post-promotion-browser-migration
+### 004-agentic-inventory-executor
 
-- **Purpose**: After approved price-check promotion, migrate inventory and remaining DOM-dependent
-  account perception and retire legacy price selectors after the rollback window.
+- **Purpose**: Replace selector-dependent inventory perception with a provider-neutral Stagehand
+  executor for every disclosed authorized user while preserving positive-only reconciliation.
 - **Assigned Requirements**: FR-10
-- **Dependencies**: Unit 003 promotion approval.
+- **Dependencies**: Units 001 and 002; existing account synchronization and reconciliation policy.
+
+### 005-legacy-price-selector-retirement
+
+- **Purpose**: Retire the legacy price path only after price promotion and the complete rollback
+  window.
+- **Assigned Requirements**: FR-11
+- **Dependencies**: Unit 003 promotion approval and 30 days without rollback.
 
 ## Requirement-to-Unit Mapping
 
@@ -45,7 +52,8 @@ updated: 2026-08-16T19:18:41Z
 | FR-1, FR-2, FR-3, FR-6, FR-7 | `001-agentic-executor-control-plane` |
 | FR-4, FR-5, FR-8 | `002-local-agentic-price-executor` |
 | FR-9 | `003-agentic-browser-qualification` |
-| FR-10 | `004-post-promotion-browser-migration` |
+| FR-10 | `004-agentic-inventory-executor` |
+| FR-11 | `005-legacy-price-selector-retirement` |
 
 Each functional requirement is assigned exactly once. Cross-unit constraints remain traced through
 dependencies and story acceptance criteria.
@@ -57,7 +65,9 @@ flowchart LR
     u1["001 Control plane"] --> u2["002 Local price executor"]
     u1 --> u3["003 Qualification"]
     u2 --> u3
-    u3 -->|"human promotion gate"| u4["004 Post-promotion migration"]
+    u1 --> u4["004 Agentic inventory executor"]
+    u2 --> u4
+    u3 -->|"promotion plus rollback window"| u5["005 Legacy selector retirement"]
 ```
 
 ## Construction Sequence
@@ -66,4 +76,7 @@ flowchart LR
 2. Bolt 051: Stagehand/computer-use adapter and routing modes; `legacy` remains default.
 3. Bolt 052: fixtures, privacy/egress tests, canary ledger, and promotion evaluator. Software can be
    completed, but live qualification remains a real 14-day owner checkpoint.
-4. Bolt 053: planned and blocked until the live promotion gate passes.
+4. Bolt 053: agentic inventory contracts, adapter, routing, positive-only reconciliation, and
+   single-refresh `/checknow`; construction is authorized before price promotion.
+5. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
+   window pass.

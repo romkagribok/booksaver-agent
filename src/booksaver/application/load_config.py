@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from booksaver.domain.agent import AgentSettings
-from booksaver.domain.browser_executor import AgenticBrowserSettings, ExecutionRoutingMode
+from booksaver.domain.browser_executor import (
+    AgenticBrowserSettings,
+    ExecutionRoutingMode,
+    InventoryExecutionRoutingMode,
+)
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.models import Config
@@ -292,6 +296,11 @@ def load_config(source: ConfigSource) -> Config:
         agentic_browser_settings = AgenticBrowserSettings(
             routing=ExecutionRoutingMode.parse(
                 agentic_browser_raw.get("routing", agentic_defaults.routing.value)
+            ),
+            inventory_routing=InventoryExecutionRoutingMode.parse(
+                agentic_browser_raw.get(
+                    "inventory_routing", agentic_defaults.inventory_routing.value
+                )
             ),
             disclosure_version=str(
                 agentic_browser_raw.get(

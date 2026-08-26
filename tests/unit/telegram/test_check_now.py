@@ -9,12 +9,6 @@ from booksaver.daemon.check_coordinator import (
     ImmediateAdmission,
     ImmediateCompletion,
     ImmediateCompletionKind,
-    InventoryCompletion,
-)
-from booksaver.domain.account_sync import (
-    InventoryCompleteness,
-    SynchronizationFailureCode,
-    SynchronizationReport,
 )
 from booksaver.domain.check_result import (
     CheckResult,
@@ -77,19 +71,11 @@ class FakeCoordinator:
         self.admission = admission
         self.requests: list[tuple[int, str]] = []
         self.completions: list[Any] = []
-        self.inventory_completions: list[Any] = []
 
     def request_immediate(self, user_id: int, booking_id: str, callback: Any) -> Any:
         self.requests.append((user_id, booking_id))
         self.completions.append(callback)
         return self.admission
-
-    def request_inventory(
-        self, user_id: int, callback: Any, *, trigger: Any
-    ) -> ImmediateAdmission:
-        self.inventory_completions.append(callback)
-        return self.admission
-
 
 def _booking(booking_id: str, name: str) -> Booking:
     return Booking(
@@ -107,7 +93,7 @@ def _booking(booking_id: str, name: str) -> Booking:
     )
 
 
-def _setup(tmp_path: Path, coordinator: FakeCoordinator):
+def _setup(tmp_path: Path, coordinator: FakeCoordinator | None):
     db_path = tmp_path / "booksaver.db"
     router, callbacks = CommandRouter(), CallbackRouter()
     client = FakeClient()
@@ -142,7 +128,7 @@ def _price_source(genius: GeniusEvidence) -> PriceSourceProvenance:
 
 
 def test_no_arg_picker_is_scoped_and_callback_payload_is_safe(tmp_path: Path) -> None:
-    coordinator = FakeCoordinator()
+    coordinator = FakeCoordinator(ImmediateAdmission.BUSY)
     db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
     own = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
     foreign = _booking("22222222-2222-4222-8222-222222222222", "Foreign Hotel")
@@ -150,19 +136,8 @@ def test_no_arg_picker_is_scoped_and_callback_payload_is_safe(tmp_path: Path) ->
     _add_user_booking(db_path, 202, foreign)
 
     router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
-    assert "Refreshing" in sent[-1][1]
-    coordinator.inventory_completions[0](
-        InventoryCompletion(
-            SynchronizationReport(
-                run_id="run-1",
-                completeness=InventoryCompleteness.COMPLETE,
-                discovered=1,
-                eligible=1,
-                ineligible=0,
-            )
-        )
-    )
 
+    assert coordinator.requests == []
     markup = sent[-1][2]
     assert markup is not None
     button = markup["inline_keyboard"][0][0]
@@ -172,76 +147,27 @@ def test_no_arg_picker_is_scoped_and_callback_payload_is_safe(tmp_path: Path) ->
     assert len(button["callback_data"].encode()) <= 64
 
 
-def test_no_arg_refresh_unavailable_does_not_render_stale_picker(tmp_path: Path) -> None:
-    coordinator = FakeCoordinator()
-    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
-    _add_user_booking(
-        db_path,
-        101,
-        _booking("11111111-1111-4111-8111-111111111111", "Stale Hotel"),
-    )
-
-    router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
-    coordinator.inventory_completions[0](InventoryCompletion(None))
-
-    assert sent[-1][2] is None
-    assert "refresh was unavailable" in sent[-1][1]
-    assert "No fresh inventory conclusion" in sent[-1][1]
-    assert "Stale Hotel" not in sent[-1][1]
-
-
-def test_no_arg_incomplete_refresh_does_not_render_stale_picker(tmp_path: Path) -> None:
-    coordinator = FakeCoordinator()
-    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
-    _add_user_booking(
-        db_path,
-        101,
-        _booking("11111111-1111-4111-8111-111111111111", "Stale Hotel"),
-    )
-
-    router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
-    coordinator.inventory_completions[0](
-        InventoryCompletion(
-            SynchronizationReport(
-                run_id="run-2",
-                completeness=InventoryCompleteness.INCOMPLETE,
-                discovered=1,
-                eligible=1,
-                ineligible=0,
-                failure_code=SynchronizationFailureCode.PAGINATION_INCOMPLETE,
-                failure_detail="Could not confirm every reservation page.",
-            )
-        )
-    )
-
-    assert sent[-1][2] is None
-    assert "refresh was incomplete" in sent[-1][1]
-    assert "No check was started from saved reservation data" in sent[-1][1]
-    assert "Stale Hotel" not in sent[-1][1]
-
-
-def test_no_arg_auth_refresh_failure_directs_user_to_connect(tmp_path: Path) -> None:
+def test_no_arg_without_saved_booking_does_not_start_browser_work(tmp_path: Path) -> None:
     coordinator = FakeCoordinator()
     _db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
 
     router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
-    coordinator.inventory_completions[0](
-        InventoryCompletion(
-            SynchronizationReport(
-                run_id="run-3",
-                completeness=InventoryCompleteness.FAILED,
-                discovered=0,
-                eligible=0,
-                ineligible=0,
-                failure_code=SynchronizationFailureCode.AUTH_REQUIRED,
-                failure_detail="Booking.com authentication is required.",
-            )
-        )
-    )
 
+    assert coordinator.requests == []
     assert sent[-1][2] is None
-    assert "refresh failed" in sent[-1][1]
-    assert "Send /connect" in sent[-1][1]
+    assert "No reservations are currently eligible" in sent[-1][1]
+
+
+def test_no_arg_picker_remains_available_without_running_coordinator(tmp_path: Path) -> None:
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, None)
+    booking = _booking("11111111-1111-4111-8111-111111111111", "Saved Hotel")
+    _add_user_booking(db_path, 101, booking)
+
+    router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
+
+    markup = sent[-1][2]
+    assert markup is not None
+    assert "Saved Hotel" in str(markup)
 
 
 def test_typed_unique_prefix_starts_background_request(tmp_path: Path) -> None:
@@ -279,8 +205,33 @@ def test_callback_rechecks_scope_acknowledges_and_handles_busy(tmp_path: Path) -
 
     callbacks.dispatch(IncomingCallback(101, 101, "cb-1", 9, f"checknow:{booking.booking_id}"))
 
+    assert coordinator.requests == [(101, booking.booking_id)]
     assert client.answers == ["cb-1"]
     assert "already running" in client.edits[-1]
+
+
+def test_typed_selection_preserves_stopping_response_without_inventory_request(
+    tmp_path: Path,
+) -> None:
+    coordinator = FakeCoordinator(ImmediateAdmission.STOPPING)
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+    booking = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
+    _add_user_booking(db_path, 101, booking)
+
+    router.dispatch(IncomingCommand(101, 101, "/checknow", booking.booking_id, "raw"))
+
+    assert coordinator.requests == [(101, booking.booking_id)]
+    assert "shutting down" in sent[-1][1]
+
+
+def test_typed_selection_without_coordinator_reports_unavailable(tmp_path: Path) -> None:
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, None)
+    booking = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
+    _add_user_booking(db_path, 101, booking)
+
+    router.dispatch(IncomingCommand(101, 101, "/checknow", booking.booking_id, "raw"))
+
+    assert "unavailable until the daemon is restarted" in sent[-1][1]
 
 
 def test_background_completion_is_sent_to_requesting_chat(tmp_path: Path) -> None:

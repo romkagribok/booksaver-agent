@@ -80,6 +80,8 @@ class RefundabilityEvidence(Enum):
 class ObservationSource(Enum):
     STAGEHAND_EXTRACT = "stagehand_extract"
     COMPUTER_USE_SUBMISSION = "computer_use_submission"
+    STAGEHAND_INVENTORY_EXTRACT = "stagehand_inventory_extract"
+    COMPUTER_USE_INVENTORY_SUBMISSION = "computer_use_inventory_submission"
     FAKE = "fake"
 
 
@@ -95,6 +97,23 @@ class ExecutionRoutingMode(Enum):
         except ValueError as exc:
             allowed = ", ".join(mode.value for mode in cls)
             raise ValueError(f"agentic_browser.routing must be one of: {allowed}") from exc
+
+
+class InventoryExecutionRoutingMode(Enum):
+    """Capability-specific inventory route, independent from price qualification."""
+
+    LEGACY = "legacy"
+    AGENTIC = "agentic"
+
+    @classmethod
+    def parse(cls, raw: object) -> InventoryExecutionRoutingMode:
+        try:
+            return cls(str(raw).strip().lower())
+        except ValueError as exc:
+            allowed = ", ".join(mode.value for mode in cls)
+            raise ValueError(
+                f"agentic_browser.inventory_routing must be one of: {allowed}"
+            ) from exc
 
 
 class RoutingReason(Enum):
@@ -130,6 +149,7 @@ class ValidationRejection(Enum):
 class AgenticBrowserSettings:
     routing: ExecutionRoutingMode = ExecutionRoutingMode.LEGACY
     disclosure_version: str = "anthropic-visible-booking-page-v1"
+    inventory_routing: InventoryExecutionRoutingMode = InventoryExecutionRoutingMode.AGENTIC
 
     def __post_init__(self) -> None:
         _require_safe_id(self.disclosure_version, "agentic_browser.disclosure_version")
@@ -160,18 +180,47 @@ class TrustedPriceQuery:
         object.__setattr__(self, "currency", normalized_currency)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class SessionLeaseReference:
     lease_id: str
     owner_user_id: int
-    booking_id: str
+    subject_id: str
     execution_id: str
     expires_at: datetime
+
+    def __init__(
+        self,
+        lease_id: str,
+        owner_user_id: int,
+        subject_id: str | None = None,
+        execution_id: str = "",
+        expires_at: datetime | None = None,
+        *,
+        booking_id: str | None = None,
+    ) -> None:
+        """Create a capability-neutral lease reference.
+
+        ``booking_id`` remains a temporary keyword-only compatibility alias for the existing price
+        executor while callers migrate to ``subject_id``.  Supplying both is rejected.
+        """
+        if subject_id is not None and booking_id is not None:
+            raise ValueError("provide subject_id or booking_id, not both")
+        selected_subject = subject_id if subject_id is not None else booking_id
+        if selected_subject is None:
+            raise ValueError("session lease subject_id is required")
+        if expires_at is None:
+            raise ValueError("session lease expiry is required")
+        object.__setattr__(self, "lease_id", lease_id)
+        object.__setattr__(self, "owner_user_id", owner_user_id)
+        object.__setattr__(self, "subject_id", selected_subject)
+        object.__setattr__(self, "execution_id", execution_id)
+        object.__setattr__(self, "expires_at", expires_at)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         for value, field in (
             (self.lease_id, "lease_id"),
-            (self.booking_id, "booking_id"),
+            (self.subject_id, "subject_id"),
             (self.execution_id, "execution_id"),
         ):
             _require_safe_id(value, field)
@@ -182,6 +231,11 @@ class SessionLeaseReference:
 
     def is_expired(self, now: datetime | None = None) -> bool:
         return (now or datetime.now(UTC)) >= self.expires_at
+
+    @property
+    def booking_id(self) -> str:
+        """Compatibility view for price-only callers; new capabilities use ``subject_id``."""
+        return self.subject_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,7 +286,7 @@ class PriceExecutionRequest:
             raise ValueError("owner_user_id must be positive")
         if (
             self.session_lease.owner_user_id != self.owner_user_id
-            or self.session_lease.booking_id != self.booking_id
+            or self.session_lease.subject_id != self.booking_id
             or self.session_lease.execution_id != self.execution_id
         ):
             raise ValueError("session lease binding does not match the execution request")

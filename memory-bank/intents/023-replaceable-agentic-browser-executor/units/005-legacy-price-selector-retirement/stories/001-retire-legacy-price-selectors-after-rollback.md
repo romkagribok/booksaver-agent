@@ -1,11 +1,12 @@
 ---
-id: 002-retire-legacy-price-selectors-after-rollback
-unit: 004-post-promotion-browser-migration
+id: 001-retire-legacy-price-selectors-after-rollback
+unit: 005-legacy-price-selector-retirement
 intent: 023-replaceable-agentic-browser-executor
 status: blocked
 priority: should
 created: 2026-08-16T19:18:41Z
-assigned_bolt: 053-post-promotion-browser-migration
+updated: 2026-08-25T13:00:00Z
+assigned_bolt: 055-legacy-price-selector-retirement
 implemented: false
 ---
 

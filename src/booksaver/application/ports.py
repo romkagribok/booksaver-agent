@@ -17,6 +17,10 @@ from booksaver.domain.browser_resilience import (
     PopupAdoptionResult,
 )
 from booksaver.domain.check_result import CheckResult
+from booksaver.domain.inventory_executor import (
+    InventoryExecutionRequest,
+    InventoryExecutionResult,
+)
 from booksaver.domain.model_policy import EscalationTrigger
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
@@ -196,6 +200,13 @@ class PriceBrowserExecutor(Protocol):
     """Replaceable, untrusted perception/navigation executor (ADR-036)."""
 
     def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult: ...
+
+
+@runtime_checkable
+class InventoryBrowserExecutor(Protocol):
+    """Replaceable, untrusted positive-only account perception executor (ADR-039)."""
+
+    def execute(self, request: InventoryExecutionRequest) -> InventoryExecutionResult: ...
 
 
 @runtime_checkable

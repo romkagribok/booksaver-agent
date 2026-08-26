@@ -79,8 +79,10 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # max_semantic_action_executions = 2   # never execute an equivalent target a third time
 
 [agentic_browser]
-# Keep legacy as the default until the owner canary passes every local promotion gate.
-# routing = "legacy"        # legacy | owner_canary | agentic
+# Price execution stays legacy until the owner canary passes every local promotion gate.
+# Inventory execution is independently agentic by default; legacy is its rollback route.
+# routing = "legacy"           # price: legacy | owner_canary | agentic
+# inventory_routing = "agentic" # inventory: legacy | agentic
 # disclosure_version = "anthropic-visible-booking-page-v1"
 
 [telegram_bot]
@@ -197,6 +199,10 @@ def cmd_config_validate(args: argparse.Namespace) -> int:
     )
     print(f"  agentic_browser.routing    : {cfg.agentic_browser_settings.routing.value}")
     print(
+        "  agentic_browser.inventory_routing: "
+        f"{cfg.agentic_browser_settings.inventory_routing.value}"
+    )
+    print(
         "  agentic_browser.disclosure: "
         f"{cfg.agentic_browser_settings.disclosure_version}"
     )
@@ -257,6 +263,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"agent.screenshot_after_no_progress: {agent.screenshot_after_no_progress}")
     print(f"agent.semantic_action_executions: {agent.max_semantic_action_executions}")
     print(f"agentic_browser.routing      : {agentic.routing.value}")
+    print(f"agentic_browser.inventory_routing: {agentic.inventory_routing.value}")
     print(f"agentic_browser.disclosure   : {agentic.disclosure_version}")
     print(f"remote_auth.enabled          : {remote_auth.enabled}")
     print(f"remote_auth.public_url       : {remote_auth.public_url or '(not set)'}")
@@ -582,6 +589,18 @@ def _make_check_coordinator(
             budget=budget,
         )
 
+    def _agentic_inventory_executor(budget: Any, lease_broker: Any) -> Any:
+        from booksaver.infrastructure.browser.agentic_inventory_executor import (
+            LocalAgenticInventoryExecutor,
+        )
+
+        assert api_key is not None
+        return LocalAgenticInventoryExecutor(
+            api_key=api_key,
+            lease_broker=lease_broker,
+            budget=budget,
+        )
+
     @contextmanager
     def _incident_recorder() -> Iterator[DomIncidentRecorder]:
         # CheckCoordinator enters this only after the relevant browser context
@@ -602,6 +621,9 @@ def _make_check_coordinator(
         execution_gate=execution_gate,
         incident_recorder_factory=_incident_recorder,
         agentic_executor_factory=_agentic_executor if api_key else None,
+        agentic_inventory_executor_factory=(
+            _agentic_inventory_executor if api_key else None
+        ),
     )
 
 
@@ -1391,6 +1413,7 @@ def cmd_agentic_status(args: argparse.Namespace) -> int:
         )
     metrics = verdict.metrics
     print(f"Routing config  : {cfg.agentic_browser_settings.routing.value}")
+    print(f"Inventory route : {cfg.agentic_browser_settings.inventory_routing.value}")
     print(f"Qualification   : {state.status.value}")
     print(f"Owner checks    : {metrics.checks}")
     print(f"Canary span     : {metrics.elapsed_days:.2f} days")

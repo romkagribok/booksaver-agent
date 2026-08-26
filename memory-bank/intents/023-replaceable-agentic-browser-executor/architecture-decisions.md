@@ -2,7 +2,7 @@
 intent: 023-replaceable-agentic-browser-executor
 status: accepted
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-16T19:18:41Z
+updated: 2026-08-25T13:00:00Z
 ---
 
 # Architecture Decisions: Replaceable Agentic Browser Executor
@@ -51,8 +51,18 @@ Only the deployment owner's Anthropic account processes bounded visible page con
 must acknowledge a versioned disclosure before agentic routing. External Stagehand telemetry/log
 export is disabled, persistence is redacted, and egress tests enforce the approved destinations.
 
+## Decision 8: Agentic inventory advances with positive-only reconciliation
+
+Legacy inventory blocks the price canary, so inventory is no longer sequenced after price
+promotion. A separate provider-neutral inventory capability uses the same local Stagehand and
+guarded computer-use architecture for every disclosed authorized user. BookSaver accepts only
+current-run positive observations, never lets agentic evidence mark unseen reservations absent, and
+requires a selected reservation to be re-observed before its price check. Price and inventory routes
+remain independently reversible, and bare `/checknow` no longer performs a duplicate inventory run.
+
 ## Formal ADRs
 
 - ADR-036: Trusted control plane and provider-neutral browser-executor port.
 - ADR-037: In-process Stagehand v4 with guarded Anthropic computer-use fallback.
 - ADR-038: Owner-only qualification, consented promotion, and rollback window.
+- ADR-039: Capability-specific agentic inventory with positive-only reconciliation.

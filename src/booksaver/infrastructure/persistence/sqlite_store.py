@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import sqlite3
 import uuid
@@ -88,8 +89,9 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
+_MACHINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +103,64 @@ class AdminUserAggregate:
     role: UserRole
     access_state: UserAccessState
     active_booking_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryExecutionMetrics:
+    """Content-free operational metrics for one agentic inventory sync run."""
+
+    run_id: str
+    user_id: int
+    source: str
+    terminal_status: str
+    accepted_count: int
+    rejected_count: int
+    scope_count: int
+    page_count: int
+    detail_count: int
+    semantic_action_count: int
+    computer_action_count: int
+    input_tokens: int
+    output_tokens: int
+    model_cost_micro_usd: int
+    latency_ms: int
+    fallback_used: bool
+    safety_codes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in ("run_id", "source", "terminal_status"):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or _MACHINE_CODE.fullmatch(value) is None:
+                raise ValueError(f"{field_name} must be bounded machine metadata")
+        if type(self.user_id) is not int or self.user_id <= 0:
+            raise ValueError("user_id must be a positive integer")
+        for field_name in (
+            "accepted_count",
+            "rejected_count",
+            "scope_count",
+            "page_count",
+            "detail_count",
+            "semantic_action_count",
+            "computer_action_count",
+            "input_tokens",
+            "output_tokens",
+            "model_cost_micro_usd",
+            "latency_ms",
+        ):
+            value = getattr(self, field_name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{field_name} must be a non-negative integer")
+        if type(self.fallback_used) is not bool:
+            raise ValueError("fallback_used must be a boolean")
+        if not isinstance(self.safety_codes, tuple) or len(self.safety_codes) > 16:
+            raise ValueError("safety_codes must contain at most 16 machine codes")
+        if len(set(self.safety_codes)) != len(self.safety_codes):
+            raise ValueError("safety_codes must not contain duplicates")
+        if any(
+            not isinstance(code, str) or _MACHINE_CODE.fullmatch(code) is None
+            for code in self.safety_codes
+        ):
+            raise ValueError("safety_codes must contain bounded machine metadata")
 
 
 # Columns shared by the v2/v4 and v5 check_history definitions (v5 only relaxes
@@ -619,6 +679,14 @@ def _migrate_v16(conn: sqlite3.Connection) -> None:
     """Add redacted agentic canary, promotion, and disclosure-consent state."""
     schema = _SCHEMA_SQL.read_text()
     start = schema.index("CREATE TABLE IF NOT EXISTS agentic_canary_checks")
+    end = schema.index("-- v17: content-free agentic inventory", start)
+    conn.executescript(schema[start:end])
+
+
+def _migrate_v17(conn: sqlite3.Connection) -> None:
+    """Add content-free agentic inventory execution metrics."""
+    schema = _SCHEMA_SQL.read_text()
+    start = schema.index("CREATE TABLE IF NOT EXISTS agentic_inventory_executions")
     end = schema.index("-- v2: finalised by Unit 2", start)
     conn.executescript(schema[start:end])
 
@@ -638,6 +706,7 @@ def _migrate_v16(conn: sqlite3.Connection) -> None:
 # v13 -> v14: model spend/qualification ledgers, additive.
 # v14 -> v15: DOM-drift incidents, alert state, and encrypted diagnostics.
 # v15 -> v16: redacted agentic canary, promotion, and disclosure consent.
+# v16 -> v17: content-free agentic inventory execution metrics.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -650,6 +719,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     14: _migrate_v14,
     15: _migrate_v15,
     16: _migrate_v16,
+    17: _migrate_v17,
 }
 
 
@@ -1369,6 +1439,42 @@ class SqliteAccountReservationRepository:
             recovery_audit=audit,
         )
 
+    def positively_observed_booking_ids_for_run(
+        self,
+        *,
+        user_id: int,
+        run_id: str,
+    ) -> tuple[str, ...]:
+        """Return active monitoring projections positively observed in this exact run.
+
+        Complete reconciliation also stamps unseen rows with the current run id
+        when marking them absent. Requiring eligible, non-absent reservation
+        state and an active projection prevents those negative observations from
+        being mistaken for positive evidence.
+        """
+        if type(user_id) is not int or user_id <= 0:
+            raise ValueError("user_id must be a positive integer")
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("Synchronization run id must be non-empty")
+        rows = self._store.conn.execute(
+            """
+            SELECT ar.monitoring_booking_id
+            FROM account_reservations AS ar
+            JOIN bookings AS b
+              ON b.booking_id = ar.monitoring_booking_id
+             AND b.user_id = ar.user_id
+            WHERE ar.user_id = ?
+              AND ar.last_sync_run_id = ?
+              AND ar.monitoring_booking_id IS NOT NULL
+              AND ar.eligibility_status = 'eligible'
+              AND ar.remote_lifecycle != 'absent'
+              AND b.status = 'active'
+            ORDER BY ar.monitoring_booking_id
+            """,
+            (user_id, run_id),
+        ).fetchall()
+        return tuple(str(row["monitoring_booking_id"]) for row in rows)
+
     def attach_recovery_audit(
         self,
         *,
@@ -1454,6 +1560,16 @@ class SqliteAccountReservationRepository:
             "SELECT * FROM account_reservations WHERE user_id = ? AND remote_key_hash = ?",
             (user_id, fingerprint),
         ).fetchone()
+        if existing is not None and observation.extraction_method == "agentic_inventory":
+            if self._agentic_observation_conflicts(existing, observation):
+                raise sqlite3.IntegrityError(
+                    "Agentic inventory conflicts with last-safe reservation facts"
+                )
+            observation = self._merge_agentic_existing_observation(
+                existing,
+                observation,
+            )
+            decision = evaluate_eligibility(observation, today=observed_at.date())
         if existing is not None and observation.extraction_method == "llm_inventory":
             self._merge_assisted_existing_observation(
                 conn,
@@ -1552,6 +1668,137 @@ class SqliteAccountReservationRepository:
                 monitoring_booking_id,
                 existing["account_reservation_id"],
             ),
+        )
+
+    @staticmethod
+    def _agentic_observation_conflicts(
+        existing: sqlite3.Row,
+        observation: ReservationObservation,
+    ) -> bool:
+        """Reject explicit model facts that disagree with persisted last-safe authority."""
+
+        def _different(column: str, observed: object | None) -> bool:
+            stored = existing[column]
+            return observed is not None and stored is not None and str(observed) != str(stored)
+
+        if any(
+            (
+                _different("confirmation_id", observation.confirmation_id),
+                _different("property_name", observation.property_name),
+                _different("property_ref", observation.property_ref),
+                _different(
+                    "check_in",
+                    observation.check_in.isoformat() if observation.check_in else None,
+                ),
+                _different(
+                    "check_out",
+                    observation.check_out.isoformat() if observation.check_out else None,
+                ),
+                _different("room_type", observation.room_type),
+                _different(
+                    "refund_deadline",
+                    observation.refund_deadline.isoformat()
+                    if observation.refund_deadline
+                    else None,
+                ),
+                _different(
+                    "occ_adults",
+                    observation.occupancy.adults if observation.occupancy else None,
+                ),
+                _different(
+                    "occ_children",
+                    observation.occupancy.children if observation.occupancy else None,
+                ),
+                _different(
+                    "occ_rooms",
+                    observation.occupancy.rooms if observation.occupancy else None,
+                ),
+            )
+        ):
+            return True
+        if (
+            observation.lifecycle is not ReservationLifecycle.UNKNOWN
+            and existing["remote_lifecycle"] != ReservationLifecycle.UNKNOWN.value
+            and existing["remote_lifecycle"] != observation.lifecycle.value
+        ):
+            return True
+        if observation.booked_total is not None:
+            stored_amount = existing["baseline_amount"]
+            stored_currency = existing["baseline_currency"]
+            if stored_amount is not None and Decimal(str(stored_amount)) != (
+                observation.booked_total.amount
+            ):
+                return True
+            if stored_currency is not None and str(stored_currency) != (
+                observation.booked_total.currency
+            ):
+                return True
+        if observation.refundable is not None and existing["refundable"] is not None:
+            if bool(existing["refundable"]) is not observation.refundable:
+                return True
+        return False
+
+    @staticmethod
+    def _merge_agentic_existing_observation(
+        existing: sqlite3.Row,
+        observation: ReservationObservation,
+    ) -> ReservationObservation:
+        """Fill only missing persisted facts after explicit conflict checks have passed."""
+        stored_total = (
+            Money(
+                Decimal(str(existing["baseline_amount"])),
+                str(existing["baseline_currency"]),
+            )
+            if existing["baseline_amount"] is not None
+            and existing["baseline_currency"] is not None
+            else None
+        )
+        stored_occupancy = (
+            Occupancy(
+                int(existing["occ_adults"]),
+                int(existing["occ_children"]),
+                int(existing["occ_rooms"]),
+            )
+            if existing["occ_adults"] is not None
+            and existing["occ_children"] is not None
+            and existing["occ_rooms"] is not None
+            else None
+        )
+        stored_lifecycle = ReservationLifecycle(existing["remote_lifecycle"])
+        return replace(
+            observation,
+            lifecycle=(
+                stored_lifecycle
+                if stored_lifecycle is not ReservationLifecycle.UNKNOWN
+                else observation.lifecycle
+            ),
+            confirmation_id=existing["confirmation_id"] or observation.confirmation_id,
+            property_name=existing["property_name"] or observation.property_name,
+            property_ref=existing["property_ref"] or observation.property_ref,
+            check_in=(
+                date.fromisoformat(existing["check_in"])
+                if existing["check_in"]
+                else observation.check_in
+            ),
+            check_out=(
+                date.fromisoformat(existing["check_out"])
+                if existing["check_out"]
+                else observation.check_out
+            ),
+            room_type=existing["room_type"] or observation.room_type,
+            booked_total=stored_total or observation.booked_total,
+            refundable=(
+                bool(existing["refundable"])
+                if existing["refundable"] is not None
+                else observation.refundable
+            ),
+            refund_note=existing["refund_note"] or observation.refund_note,
+            refund_deadline=(
+                date.fromisoformat(existing["refund_deadline"])
+                if existing["refund_deadline"]
+                else observation.refund_deadline
+            ),
+            occupancy=stored_occupancy or observation.occupancy,
         )
 
     @staticmethod
@@ -1777,6 +2024,100 @@ class SqliteAccountReservationRepository:
             first_observed_at=datetime.fromisoformat(row["first_observed_at"]),
             last_observed_at=datetime.fromisoformat(row["last_observed_at"]),
             snapshot_revision=row["snapshot_revision"],
+        )
+
+
+class SqliteInventoryExecutionMetricsRepository:
+    """Caller-scoped, content-free metrics for agentic inventory execution."""
+
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def record(self, metrics: InventoryExecutionMetrics) -> None:
+        run = self._store.conn.execute(
+            "SELECT 1 FROM booking_sync_runs WHERE run_id = ? AND user_id = ?",
+            (metrics.run_id, metrics.user_id),
+        ).fetchone()
+        if run is None:
+            raise LookupError("Caller-scoped synchronization run was not found")
+        cursor = self._store.conn.execute(
+            """
+            INSERT INTO agentic_inventory_executions (
+                run_id, user_id, source, terminal_status, accepted_count,
+                rejected_count, scope_count, page_count, detail_count,
+                semantic_action_count, computer_action_count, input_tokens,
+                output_tokens, model_cost_micro_usd, latency_ms, fallback_used,
+                safety_codes_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, user_id) DO NOTHING
+            """,
+            (
+                metrics.run_id,
+                metrics.user_id,
+                metrics.source,
+                metrics.terminal_status,
+                metrics.accepted_count,
+                metrics.rejected_count,
+                metrics.scope_count,
+                metrics.page_count,
+                metrics.detail_count,
+                metrics.semantic_action_count,
+                metrics.computer_action_count,
+                metrics.input_tokens,
+                metrics.output_tokens,
+                metrics.model_cost_micro_usd,
+                metrics.latency_ms,
+                int(metrics.fallback_used),
+                json.dumps(metrics.safety_codes, separators=(",", ":")),
+            ),
+        )
+        if cursor.rowcount == 0:
+            existing = self.get_for_run(user_id=metrics.user_id, run_id=metrics.run_id)
+            self._store.conn.rollback()
+            if existing == metrics:
+                return
+            raise ValueError("Inventory execution metrics are already recorded for this run")
+        self._store.conn.commit()
+
+    def get_for_run(
+        self,
+        *,
+        user_id: int,
+        run_id: str,
+    ) -> InventoryExecutionMetrics | None:
+        if type(user_id) is not int or user_id <= 0:
+            raise ValueError("user_id must be a positive integer")
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise ValueError("Synchronization run id must be non-empty")
+        row = self._store.conn.execute(
+            "SELECT * FROM agentic_inventory_executions WHERE run_id = ? AND user_id = ?",
+            (run_id, user_id),
+        ).fetchone()
+        if row is None:
+            return None
+        raw_safety_codes = json.loads(row["safety_codes_json"])
+        if not isinstance(raw_safety_codes, list) or any(
+            not isinstance(code, str) for code in raw_safety_codes
+        ):
+            raise ValueError("Stored inventory safety codes are invalid")
+        return InventoryExecutionMetrics(
+            run_id=str(row["run_id"]),
+            user_id=int(row["user_id"]),
+            source=str(row["source"]),
+            terminal_status=str(row["terminal_status"]),
+            accepted_count=int(row["accepted_count"]),
+            rejected_count=int(row["rejected_count"]),
+            scope_count=int(row["scope_count"]),
+            page_count=int(row["page_count"]),
+            detail_count=int(row["detail_count"]),
+            semantic_action_count=int(row["semantic_action_count"]),
+            computer_action_count=int(row["computer_action_count"]),
+            input_tokens=int(row["input_tokens"]),
+            output_tokens=int(row["output_tokens"]),
+            model_cost_micro_usd=int(row["model_cost_micro_usd"]),
+            latency_ms=int(row["latency_ms"]),
+            fallback_used=bool(row["fallback_used"]),
+            safety_codes=tuple(raw_safety_codes),
         )
 
 
@@ -2726,6 +3067,8 @@ class SqliteUserRepository:
         conn.execute("DELETE FROM account_reservations WHERE user_id = ?", (user_id,))
         for booking_id in booking_ids:
             _delete_booking_rows(conn, booking_id)
+        # Keep this explicit for legacy connections with foreign keys disabled.
+        conn.execute("DELETE FROM agentic_inventory_executions WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM booking_sync_runs WHERE user_id = ?", (user_id,))
         # Keep this explicit even though schema v12 also declares ON DELETE
         # CASCADE: purge must remain safe if a legacy connection disabled

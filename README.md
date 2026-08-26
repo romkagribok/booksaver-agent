@@ -37,14 +37,15 @@ issues are exploratory future capabilities, not missing parts of the current hot
 
 ## How it works
 
-1. You connect your Booking.com account; BookSaver synchronizes every visible reservation and uses
-   only complete, upcoming, refundable records for monitoring.
+1. You connect your Booking.com account; BookSaver synchronizes positively observed reservations,
+   preserves unseen saved rows when a refresh is partial or fails, and uses only current-run,
+   upcoming, refundable observations for monitoring.
 2. Three times per UTC day by default, BookSaver gives each user one randomized slot in a different
    broad part of the day. At each slot it synchronizes that user's account once, then opens a fresh
    authenticated mobile Chromium context for every eligible booking. `/checknow` remains available
    for an immediate check.
-3. The default `legacy` route drives the current deterministic journey. The separately opt-in
-   `owner_canary` route uses local Stagehand semantic observation and, only when necessary, one
+3. Price execution defaults to the `legacy` deterministic journey. The separately opt-in
+   `owner_canary` price route uses local Stagehand semantic observation and, only when necessary, one
    guarded Anthropic computer-use episode in a fresh local Chromium profile. Every proposed action
    is code-authorized; reservation, checkout, payment, cancellation, credential, MFA/captcha,
    arbitrary navigation, shell, clipboard, upload, and download capabilities are absent.
@@ -80,20 +81,28 @@ max_semantic_action_executions = 2
 Older config files remain valid and receive these defaults automatically. The inner limits cannot
 expand the outer per-check or per-user daily LLM budgets.
 
-The replaceable agentic price executor is disabled by default:
+Inventory and price use independent browser-executor routes. Agentic inventory is the default;
+the agentic price executor remains disabled by default:
 
 ```toml
 [agentic_browser]
-routing = "legacy" # legacy | owner_canary | agentic
+routing = "legacy" # price: legacy | owner_canary | agentic
+inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"
 ```
 
-`owner_canary` is the only pre-qualification agentic mode and routes only the deployment owner.
-It runs Stagehand 4.0.1 in-process against the installed Playwright Chromium, injects encrypted
-Booking.com cookies through a code-owned local CDP connection, disables cross-run caching and
-self-healing, and sends visible page content to Sonnet 5 using `BOOKSAVER_LLM_API_KEY`. Stagehand
-semantic calls are the primary path; a screenshot-based computer-use fallback receives at most six
-of the shared 15 actions. USD 1 per-check, USD 10 deployment-day, and 180-second limits remain hard.
+`inventory_routing = "agentic"` uses Stagehand for read-only account discovery for authorized users
+covered by the current disclosure. BookSaver accepts only positively observed reservations from
+that run and never lets model output mark an unseen saved reservation absent. Set it to `legacy`
+only as a capability-specific rollback; this setting does not promote the price executor.
+
+For price execution, `owner_canary` is the only pre-qualification agentic mode and routes only the
+deployment owner. The executor runs Stagehand 4.0.1 in-process against the installed Playwright
+Chromium, injects encrypted Booking.com cookies through a code-owned local CDP connection, disables
+cross-run caching and self-healing, and sends visible page content to Sonnet 5 using
+`BOOKSAVER_LLM_API_KEY`. Stagehand semantic calls are the primary path; a screenshot-based
+computer-use fallback receives at most six of the shared 15 actions. USD 1 per-check, USD 10
+deployment-day, and 180-second limits remain hard.
 
 The executor returns observations only. BookSaver still verifies property, dates, occupancy,
 authentication, Genius evidence, currency, all-in totals, explicit refundability, room equivalence,
@@ -145,8 +154,8 @@ seven days and are never sent through Telegram.
 
 - a Linux host with Docker Compose v2, 2 GB RAM minimum, and a DNS name if `/connect` is enabled;
 - a private Telegram bot token from BotFather and your numeric Telegram chat ID;
-- an Anthropic API key for LLM extraction/recovery and the opt-in agentic executor (without one,
-  the default legacy route can still run scripted checks);
+- an Anthropic API key for the default agentic inventory route and LLM price extraction/recovery
+  (without one, set `agentic_browser.inventory_routing = "legacy"` to use scripted inventory);
 - acceptance of the trust boundary: the VPS runs the temporary login browser and must be under
   your control.
 
@@ -171,8 +180,10 @@ docker compose logs -f booksaver
 ```
 
 In a private chat with the bot, send `/start`, then `/connect`. BookSaver discovers your
-Booking.com reservations automatically. Use `/bookings` to refresh the full account inventory and
-see why any reservation is ineligible for price-drop checks; use `/checknow` for an immediate check.
+Booking.com reservations automatically. Use `/bookings` to refresh the account inventory and see
+why any reservation is ineligible for price-drop checks. Bare `/checknow` immediately shows saved
+caller-owned choices; selecting one runs a single fresh inventory verification and immediate price
+check through the coordinator.
 The first real Booking.com check is a required deployment test; VPS IPs can encounter bot walls.
 
 The [VPS deployment runbook](memory-bank/operations/vps-deployment-runbook.md) covers DNS/TLS,

@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-08-25T01:10:13Z
+updated: 2026-08-25T13:00:00Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -21,8 +21,10 @@ but it never becomes authoritative for identity, authentication, equivalence, re
 pricing eligibility, savings, persistence, notification, or any transaction.
 
 The first vertical slice replaces both navigation and rate-table perception for owner price checks.
-Legacy price checks remain the default and rollback path until qualification succeeds. Account
-inventory and other DOM-dependent workflows migrate only after price-check promotion.
+Legacy price checks remain the default and rollback path until qualification succeeds. Agentic
+inventory is pulled forward because the legacy inventory prerequisite prevents the price canary
+from running. It rolls out to every authorized, disclosed user with positive-only reconciliation;
+legacy inventory remains a capability-specific rollback path.
 
 ## Functional Requirements
 
@@ -98,13 +100,15 @@ inventory and other DOM-dependent workflows migrate only after price-check promo
     production routing until it passes identical gates; Opus is diagnosis-only.
 - **Priority**: Must
 
-### FR-7: Incremental routing and rollback
-- **Description**: Add `legacy`, `owner_canary`, and `agentic` routing modes while preserving the
-  current deterministic price path.
+### FR-7: Capability-specific routing and rollback
+- **Description**: Route price and inventory capabilities independently while preserving legacy
+  price and inventory paths as explicit rollback modes.
 - **Acceptance Criteria**:
-  - `legacy` remains the default before qualification.
-  - `owner_canary` can route only the deployment owner; invited users remain legacy.
-  - `agentic` requires an explicit qualified state and invitee consent.
+  - Price routing keeps the existing `legacy`, `owner_canary`, and `agentic` qualification rules.
+  - Inventory routing is `agentic` for every authorized user who has accepted the current
+    disclosure; it does not wait for price qualification.
+  - A capability can regress to `legacy` without changing the other capability's route.
+  - An inconclusive agentic inventory run fails closed without a same-job selector fallback.
   - After promotion, the legacy price path is rollback-only for 30 days and is not maintained for
     selector drift; its later removal is an explicit release action.
 - **Priority**: Must
@@ -121,9 +125,9 @@ inventory and other DOM-dependent workflows migrate only after price-check promo
   - An egress test proves authenticated jobs contact only Booking.com, Anthropic, and loopback.
 - **Priority**: Must
 
-### FR-9: Qualification and automatic regression response
+### FR-9: Price qualification and automatic regression response
 - **Description**: Qualify the agentic price path against adversarial fixtures and an owner-only
-  live canary before invited-user promotion.
+  live canary before invited-user price promotion.
 - **Acceptance Criteria**:
   - Fixtures vary classes, test IDs, nesting, overlays, iframe/shadow placement, and accessibility
     quality without changing BookSaver selectors.
@@ -137,13 +141,40 @@ inventory and other DOM-dependent workflows migrate only after price-check promo
     invalid observations are a repeated reliability regression and return routing to legacy.
 - **Priority**: Must
 
-### FR-10: Post-promotion capability migration
-- **Description**: After agentic price checks pass promotion, migrate inventory perception and
-  remaining DOM-dependent account checks through separate executor capabilities while retaining the
-  `/connect` server-verification boundary.
+### FR-10: Provider-neutral agentic inventory execution
+- **Description**: Add a separate `InventoryBrowserExecutor` and use local Stagehand plus one
+  guarded computer-use episode for every authorized user's account-inventory perception, without
+  inserting Stagehand as another recovery tier inside the legacy selector parser.
 - **Acceptance Criteria**:
-  - Inventory migration cannot begin before price-check qualification is approved.
-  - Completeness-gated reconciliation and all existing inventory safety rules remain BookSaver-owned.
+  - The request contains an execution ID, authorized user/account binding, fixed required scopes,
+    opaque session lease, absolute deadline, action limit, and cost limit; the result contains only
+    typed positive observations, traversal evidence, terminal metadata, refreshed-session
+    eligibility, redacted provenance, usage, cost, latency, fallback, and safety outcomes.
+  - `/bookings`, post-connect synchronization, `/checknow`, and scheduled synchronization route
+    through the inventory executor; `/connect` authentication verification remains unchanged.
+  - BookSaver owns the traversal work queue, validates every stable reservation identity and fact,
+    derives eligibility, and is the only component allowed to reconcile inventory.
+  - Only reservations positively observed in the current run are inserted or refreshed. Agentic
+    evidence never removes, archives, cancels, or marks an unseen reservation absent, even when the
+    model claims that inventory is empty or complete.
+  - An incomplete run may unblock a price check only for a reservation positively re-observed and
+    validated in that same run; cached-only reservations cannot proceed.
+  - Bare `/checknow` renders its picker from saved caller-owned state, then the selected request runs
+    exactly one inventory verification before any price execution. Inventory and price share the
+    containing job's cost ledger and absolute deadline.
+  - Inventory-specific guards permit only read-only scope, pagination, and detail navigation;
+    typing, login, credentials, MFA/captcha, modification, cancellation, reservation, payment, and
+    purchase actions are prohibited.
+  - The legacy inventory parser remains unchanged and available only as a capability-specific
+    rollback path.
+- **Priority**: Must
+
+### FR-11: Deferred legacy price-selector retirement
+- **Description**: Retire the legacy price path only after price promotion and its complete rollback
+  window; inventory rollout does not advance that removal.
+- **Acceptance Criteria**:
+  - Legacy price selectors remain available throughout the price canary and 30-day rollback window.
+  - Removal requires a separate release decision after 30 complete days without rollback.
   - Playwright remains available for `/connect` until a separately qualified replacement is accepted.
 - **Priority**: Should
 
@@ -162,10 +193,14 @@ inventory and other DOM-dependent workflows migrate only after price-check promo
 - Ordinary DOM churn should be absorbed without BookSaver selector changes; qualification measures
   this claim. Unknown, blocked, challenged, signed-out, timed-out, or provider-failed states are
   typed and fail closed.
+- Failed or partial inventory preserves last-safe rows, while only current-run positive observations
+  may unblock monitoring.
 
 ### NFR-4: Cost
 - Promotion requires average model cost no greater than USD 0.10/check, approximating USD 9 per
   booking-month at three checks per day, while preserving the USD 1/check and USD 10/day hard caps.
+- Inventory and price phases in one operation share admission, reconciliation, and one absolute
+  deadline; duplicate `/checknow` inventory execution is prohibited.
 
 ### NFR-5: Performance
 - Promotion requires p95 end-to-end execution within the existing 180-second deadline.
@@ -198,9 +233,13 @@ inventory and other DOM-dependent workflows migrate only after price-check promo
 | Stagehand semantic execution reduces selector maintenance | It may fail under severe visual or accessibility degradation | Require visual fixtures and bounded computer-use fallback |
 | Existing Chromium can be shared by executable path, not profile | Packaging mismatch could break VPS startup | Adapter startup test, explicit executable discovery failure, and exact-image Stagehand launch smoke |
 | The live canary can be run by the owner without automation of manual comparison | Promotion may take longer than 14 days | Keep legacy default and expose auditable qualification records |
+| Positive-only agentic inventory can safely unblock known reservations | A reservation may remain preserved after disappearing from Booking.com | Require same-run positive evidence for checks and defer absence authority |
 
 ## Approved Architecture Decisions
 
-All four inception checkpoints were approved by the product owner in the implementation directive
-dated 2026-08-16. Detailed decisions and rejected alternatives are recorded in
-`architecture-decisions.md` and ADR-036 through ADR-038.
+All four original inception checkpoints were approved by the product owner in the implementation
+directive dated 2026-08-16. On 2026-08-25 the owner approved an inception amendment that advances
+agentic inventory for every authorized user, preserves positive-only reconciliation, removes the
+duplicate `/checknow` synchronization, and authorizes construction through final merge. Detailed
+decisions and rejected alternatives are recorded in `architecture-decisions.md` and ADR-036 through
+ADR-039.

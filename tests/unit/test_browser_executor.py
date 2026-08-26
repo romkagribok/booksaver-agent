@@ -21,6 +21,7 @@ from booksaver.domain.browser_executor import (
     ExecutionLimits,
     ExecutionRoutingMode,
     ExecutionUsage,
+    InventoryExecutionRoutingMode,
     ObservationSource,
     ObservedOffer,
     ObservedQueryFacts,
@@ -438,24 +439,48 @@ def test_execution_meter_counts_computer_use_inside_total_and_caps_cost() -> Non
 
 
 class _ConfigSource:
-    def __init__(self, routing: str | None = None) -> None:
+    def __init__(
+        self,
+        routing: str | None = None,
+        inventory_routing: str | None = None,
+    ) -> None:
         self.routing = routing
+        self.inventory_routing = inventory_routing
 
     def read(self) -> dict[str, object]:
         data: dict[str, object] = {
             "storage": {"data_directory": "/tmp/booksaver-test"}
         }
+        agentic_browser: dict[str, str] = {}
         if self.routing is not None:
-            data["agentic_browser"] = {"routing": self.routing}
+            agentic_browser["routing"] = self.routing
+        if self.inventory_routing is not None:
+            agentic_browser["inventory_routing"] = self.inventory_routing
+        if agentic_browser:
+            data["agentic_browser"] = agentic_browser
         return data
 
 
 def test_config_defaults_agentic_browser_to_legacy() -> None:
-    assert load_config(_ConfigSource()).agentic_browser_settings.routing is (
-        ExecutionRoutingMode.LEGACY
-    )
+    settings = load_config(_ConfigSource()).agentic_browser_settings
+    assert settings.routing is ExecutionRoutingMode.LEGACY
+    assert settings.inventory_routing is InventoryExecutionRoutingMode.AGENTIC
+
+
+def test_config_inventory_routing_is_independent_from_price() -> None:
+    settings = load_config(
+        _ConfigSource(routing="owner_canary", inventory_routing="legacy")
+    ).agentic_browser_settings
+
+    assert settings.routing is ExecutionRoutingMode.OWNER_CANARY
+    assert settings.inventory_routing is InventoryExecutionRoutingMode.LEGACY
 
 
 def test_config_rejects_unknown_agentic_routing() -> None:
     with pytest.raises(ConfigValidationError, match="agentic_browser.routing"):
         load_config(_ConfigSource("maybe"))
+
+
+def test_config_rejects_owner_canary_inventory_routing() -> None:
+    with pytest.raises(ConfigValidationError, match="agentic_browser.inventory_routing"):
+        load_config(_ConfigSource(inventory_routing="owner_canary"))

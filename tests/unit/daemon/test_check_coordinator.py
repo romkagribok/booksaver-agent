@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import MethodType
@@ -10,10 +11,12 @@ from typing import Any
 
 import pytest
 
+from booksaver.application.inventory_executor import FakeInventoryBrowserExecutor
 from booksaver.application.model_policy import AdaptiveModelSession
 from booksaver.application.ports import PageContent
 from booksaver.daemon.check_coordinator import (
     AdaptiveBrowserJobContext,
+    AgenticBrowserJobContext,
     CheckCoordinator,
     ImmediateAdmission,
     ImmediateCompletion,
@@ -22,6 +25,7 @@ from booksaver.daemon.check_coordinator import (
 )
 from booksaver.domain.account_sync import (
     InventoryCompleteness,
+    InventoryDiscoveryResult,
     InventoryRecoveryOutcome,
     ReservationLifecycle,
     ReservationObservation,
@@ -37,6 +41,15 @@ from booksaver.domain.agent import (
     TraceEvent,
     TraceKind,
 )
+from booksaver.domain.browser_executor import (
+    AllInEvidence,
+    EvidenceCompleteness,
+    ExecutionRoutingMode,
+    ExecutionUsage,
+    ObservationSource,
+    RedactedProvenance,
+    RefundabilityEvidence,
+)
 from booksaver.domain.browser_resilience import (
     DiagnosisProvenance,
     DomStepId,
@@ -51,6 +64,13 @@ from booksaver.domain.check_result import (
     FailureReason,
 )
 from booksaver.domain.errors import UserKeyInvalidError
+from booksaver.domain.inventory_executor import (
+    InventoryExecutionResult,
+    InventoryExecutionStatus,
+    InventoryScope,
+    ObservedInventoryScope,
+    ObservedReservation,
+)
 from booksaver.domain.model_policy import (
     BrowserJobKind,
     CallerKeyRef,
@@ -87,6 +107,8 @@ from booksaver.infrastructure.persistence.scheduled_check_slots import (
     SqliteScheduledCheckSlotRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
+    SqliteAccountReservationRepository,
+    SqliteAgenticDisclosureConsentRepository,
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteCheckTraceRepository,
@@ -222,6 +244,108 @@ def _scheduled_slot(tmp_path: Path, user_id: int, planned_at: datetime) -> SlotI
     )
     with SqliteStore(tmp_path / "booksaver.db") as store:
         return SqliteScheduledCheckSlotRepository(store).insert_daily_schedule((slot,))[0].identity
+
+
+def _observed_inventory_reservation(booking: Any, remote_id: str) -> ObservedReservation:
+    return ObservedReservation(
+        remote_id=remote_id,
+        identity_evidence=EvidenceCompleteness.COMPLETE,
+        scope=InventoryScope.UPCOMING,
+        lifecycle=ReservationLifecycle.UPCOMING,
+        confirmation_id=booking.confirmation_id.value,
+        property_name=booking.property.name,
+        property_reference=booking.property.booking_com_ref,
+        check_in=booking.stay_dates.check_in,
+        check_out=booking.stay_dates.check_out,
+        room_type=booking.room_type.label,
+        booked_total=booking.baseline_price,
+        all_in=AllInEvidence.EXPLICIT,
+        refundability=RefundabilityEvidence.EXPLICIT_REFUNDABLE,
+        refundability_text=booking.refundability.note,
+        refund_deadline=booking.refundability.deadline,
+        occupancy=booking.occupancy,
+        completeness=EvidenceCompleteness.COMPLETE,
+    )
+
+
+def _agentic_inventory_result(
+    reservations: tuple[ObservedReservation, ...] = (),
+    *,
+    usage: ExecutionUsage = ExecutionUsage(),
+) -> InventoryExecutionResult:
+    scopes = tuple(
+        ObservedInventoryScope(
+            scope=scope,
+            requested_scope_visible=True,
+            explicit_empty=not any(item.scope is scope for item in reservations),
+            pagination_exhausted=True,
+            pages_observed=1,
+            visible_reservation_count=sum(item.scope is scope for item in reservations),
+            detail_count=sum(item.scope is scope for item in reservations),
+            completeness=EvidenceCompleteness.COMPLETE,
+        )
+        for scope in InventoryScope
+    )
+    return InventoryExecutionResult(
+        status=InventoryExecutionStatus.OBSERVED,
+        authenticated=True,
+        scopes=scopes,
+        reservations=reservations,
+        provenance=RedactedProvenance(
+            source=ObservationSource.FAKE,
+            action_count=usage.total_actions,
+            evidence_item_count=len(scopes) + len(reservations),
+            schema_version="inventory-observation-v1",
+        ),
+        usage=usage,
+        latency_ms=25,
+    )
+
+
+def _seed_inventory_projection(
+    tmp_path: Path,
+    *,
+    user_id: int,
+    remote_id: str,
+    booking: Any,
+) -> str:
+    observed_at = datetime.now(UTC)
+    observation = ReservationObservation(
+        remote_id=remote_id,
+        lifecycle=ReservationLifecycle.UPCOMING,
+        observed_at=observed_at,
+        confirmation_id=booking.confirmation_id.value,
+        property_name=booking.property.name,
+        property_ref=booking.property.booking_com_ref,
+        check_in=booking.stay_dates.check_in,
+        check_out=booking.stay_dates.check_out,
+        room_type=booking.room_type.label,
+        booked_total=booking.baseline_price,
+        refundable=True,
+        refund_note=booking.refundability.note,
+        refund_deadline=booking.refundability.deadline,
+        occupancy=booking.occupancy,
+    )
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repository = SqliteAccountReservationRepository(store)
+        repository.reconcile(
+            user_id=user_id,
+            run_id=f"seed-{remote_id}",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="seed-session",
+            result=InventoryDiscoveryResult(
+                observations=(observation,),
+                completeness=InventoryCompleteness.INCOMPLETE,
+            ),
+            observed_at=observed_at,
+        )
+        reservation = next(
+            item
+            for item in repository.list_for_user(user_id)
+            if item.observation.confirmation_id == booking.confirmation_id.value
+        )
+    assert reservation.monitoring_booking_id is not None
+    return reservation.monitoring_booking_id
 
 
 def test_scheduled_slot_is_not_claimed_until_shared_gate_is_available(
@@ -438,7 +562,6 @@ def test_agentic_follow_on_shares_outer_job_cap_but_uses_owner_env_provenance(
             user_id,
             BrowserJobKind.CHECK_NOW,
             shared_job_id=context.budget.job_id,
-            initial_attempt_ordinal=2,
         )
         second = AdaptiveModelSession(
             role=ModelRole.RECOVERY,
@@ -455,6 +578,63 @@ def test_agentic_follow_on_shares_outer_job_cap_but_uses_owner_env_provenance(
     assert [(row["job_id"], row["attempt_ordinal"]) for row in rows] == [
         (context.budget.job_id, 1),
         (context.budget.job_id, 2),
+    ]
+
+
+def test_adaptive_follow_on_reuses_agentic_inventory_job_and_next_ordinal(
+    tmp_path: Path,
+) -> None:
+    class AdaptiveFactory:
+        def caller_key_ref_for_user(self, user_id: int) -> CallerKeyRef:
+            return CallerKeyRef(user_id, "shared", "owner_env")
+
+        def adaptive_runtime_for_user(self, _user_id: int, _budget: Any) -> object:
+            return object()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: AdaptiveFactory(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+    )
+    user_id, _bookings = _add(tmp_path, 101)
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        agentic_budget = coordinator._build_agentic_cost_budget(  # noqa: SLF001
+            store,
+            user_id,
+            BrowserJobKind.CHECK_NOW,
+        )
+        first = AdaptiveModelSession(
+            role=ModelRole.EXTRACTION,
+            prompt_version="agentic-inventory-test-v1",
+            budget=agentic_budget,
+        ).start(TokenEnvelope(1, 1))
+        assert first.attempt is not None
+
+        adaptive = coordinator._build_adaptive_job_context(  # noqa: SLF001
+            store,
+            user_id,
+            BrowserJobKind.CHECK_NOW,
+            shared_job_id=agentic_budget.job_id,
+        )
+        assert adaptive is not None
+        second = AdaptiveModelSession(
+            role=ModelRole.RECOVERY,
+            prompt_version="legacy-price-test-v1",
+            budget=adaptive.budget,
+        ).start(TokenEnvelope(1, 1))
+        rows = store.conn.execute(
+            "SELECT job_id, attempt_ordinal FROM llm_cost_reservations "
+            "ORDER BY attempt_ordinal"
+        ).fetchall()
+
+    assert second.attempt is not None
+    assert adaptive.budget.job_id == agentic_budget.job_id
+    assert [(row["job_id"], row["attempt_ordinal"]) for row in rows] == [
+        (agentic_budget.job_id, 1),
+        (agentic_budget.job_id, 2),
     ]
 
 
@@ -1591,3 +1771,678 @@ def test_check_now_synchronizes_before_resolving_booking(tmp_path: Path) -> None
     assert completed.wait(1)
 
     assert events == [SynchronizationTrigger.CHECK_NOW.value, "price_check"]
+
+
+def test_agentic_inventory_routes_owner_and_disclosed_invitee_without_legacy_browser(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    disclosure_version = _config(tmp_path).agentic_browser_settings.disclosure_version
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        users = SqliteUserRepository(store)
+        owner = users.get_owner()
+        users.link_telegram_id(owner.user_id, 101)
+        invitee = users.get_or_create_by_telegram_id(202, UserRole.USER)
+        SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+            user_id=invitee.user_id,
+            disclosure_version=disclosure_version,
+            acknowledged_at=datetime.now(UTC),
+        )
+    _seed_session(sessions, owner.user_id)
+    _seed_session(sessions, invitee.user_id)
+    executor = FakeInventoryBrowserExecutor(
+        [_agentic_inventory_result(), _agentic_inventory_result()]
+    )
+    legacy_browser_opens: list[None] = []
+
+    def legacy_browser_factory() -> BrowserContext:
+        legacy_browser_opens.append(None)
+        return BrowserContext()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=legacy_browser_factory,
+        session_repository=sessions,
+        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+    )
+    completions: list[InventoryCompletion] = []
+
+    for telegram_user_id in (101, 202):
+        completed = threading.Event()
+        assert (
+            coordinator.request_inventory(
+                telegram_user_id,
+                lambda outcome, event=completed: (completions.append(outcome), event.set()),
+            )
+            is ImmediateAdmission.ACCEPTED
+        )
+        assert completed.wait(1)
+
+    assert [request.owner_user_id for request in executor.requests] == [
+        owner.user_id,
+        invitee.user_id,
+    ]
+    assert legacy_browser_opens == []
+    assert all(
+        completion.report is not None
+        and completion.report.completeness is InventoryCompleteness.INCOMPLETE
+        for completion in completions
+    )
+
+
+def test_undisclosed_invitee_stays_on_legacy_inventory_route(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        invitee = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER)
+    executor = FakeInventoryBrowserExecutor([_agentic_inventory_result()])
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+    )
+    legacy_calls: list[tuple[int, SynchronizationTrigger]] = []
+
+    def legacy_sync(
+        self: CheckCoordinator,
+        store: SqliteStore,
+        _browser: Any,
+        user_id: int,
+        trigger: SynchronizationTrigger,
+    ) -> SynchronizationReport:
+        legacy_calls.append((user_id, trigger))
+        return _complete_sync(store, _browser, user_id, trigger)
+
+    coordinator._synchronize_user = MethodType(legacy_sync, coordinator)  # type: ignore[method-assign]
+    completed = threading.Event()
+
+    assert (
+        coordinator.request_inventory(202, lambda _outcome: completed.set())
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert legacy_calls == [(invitee.user_id, SynchronizationTrigger.BOOKINGS)]
+    assert executor.requests == []
+
+
+def test_agentic_inventory_terminal_failure_never_falls_back_to_legacy_in_same_job(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        invitee = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER)
+        SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+            user_id=invitee.user_id,
+            disclosure_version=_config(tmp_path).agentic_browser_settings.disclosure_version,
+            acknowledged_at=datetime.now(UTC),
+        )
+    _seed_session(sessions, invitee.user_id)
+    executor = FakeInventoryBrowserExecutor(
+        [InventoryExecutionResult(InventoryExecutionStatus.PROVIDER_FAILURE)]
+    )
+    legacy_calls: list[None] = []
+
+    def legacy_browser_factory() -> BrowserContext:
+        legacy_calls.append(None)
+        return BrowserContext()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=legacy_browser_factory,
+        session_repository=sessions,
+        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+    )
+    completed = threading.Event()
+    completions: list[InventoryCompletion] = []
+
+    assert (
+        coordinator.request_inventory(
+            202,
+            lambda outcome: (completions.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert len(executor.requests) == 1
+    assert legacy_calls == []
+    assert completions[0].report is not None
+    assert completions[0].report.completeness is InventoryCompleteness.FAILED
+    assert completions[0].report.failure_code is SynchronizationFailureCode.NAVIGATION_FAILED
+
+
+def test_configured_agentic_inventory_without_executor_fails_closed(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        SqliteUserRepository(store).link_telegram_id(owner.user_id, 101)
+    _seed_session(sessions, owner.user_id)
+    legacy_browser_opens: list[None] = []
+
+    def legacy_browser_factory() -> BrowserContext:
+        legacy_browser_opens.append(None)
+        return BrowserContext()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=legacy_browser_factory,
+        session_repository=sessions,
+    )
+    completed = threading.Event()
+    completions: list[InventoryCompletion] = []
+
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda outcome: (completions.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert legacy_browser_opens == []
+    assert completions[0].report is not None
+    assert completions[0].report.completeness is InventoryCompleteness.FAILED
+    assert completions[0].report.failure_code is SynchronizationFailureCode.NAVIGATION_FAILED
+
+
+def test_current_agentic_positive_allows_selected_check_with_shared_residual_limits(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        invitee = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER)
+        SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+            user_id=invitee.user_id,
+            disclosure_version=_config(tmp_path).agentic_browser_settings.disclosure_version,
+            acknowledged_at=datetime.now(UTC),
+        )
+    _seed_session(sessions, invitee.user_id)
+    source_booking = make_booking("agentic-current-positive")
+    booking_id = _seed_inventory_projection(
+        tmp_path,
+        user_id=invitee.user_id,
+        remote_id="remote-current-positive",
+        booking=source_booking,
+    )
+    usage = ExecutionUsage(
+        total_actions=4,
+        computer_use_actions=2,
+        cost=UsdAmount(250_000),
+    )
+    executor = FakeInventoryBrowserExecutor(
+        [
+            _agentic_inventory_result(
+                (_observed_inventory_reservation(source_booking, "remote-current-positive"),),
+                usage=usage,
+            )
+        ]
+    )
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        session_repository=sessions,
+        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+    )
+    residual_limits: list[Any] = []
+    ran: list[str] = []
+    ran: list[str] = []
+
+    def run_selected(
+        self: CheckCoordinator,
+        _store: Any,
+        _browser: Any,
+        _owner: int,
+        booking: Any,
+    ) -> CheckResult:
+        context = self._current_agentic_job()  # noqa: SLF001
+        assert context is not None
+        residual_limits.append(context.remaining_limits())
+        ran.append(booking.booking_id)
+        return _failure(booking.booking_id)
+
+    coordinator._run_booking = MethodType(run_selected, coordinator)  # type: ignore[method-assign]
+    completed = threading.Event()
+    completions: list[ImmediateCompletion] = []
+
+    assert (
+        coordinator.request_immediate(
+            202,
+            booking_id,
+            lambda outcome: (completions.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert completions[0].kind is ImmediateCompletionKind.RESULT
+    assert completions[0].result is not None
+    assert executor.requests[0].limits.max_actions == 15
+    assert executor.requests[0].limits.max_computer_use_actions == 6
+    assert executor.requests[0].limits.max_job_cost == UsdAmount(1_000_000)
+    assert residual_limits[0] is not None
+    assert residual_limits[0].deadline == executor.requests[0].limits.deadline
+    assert residual_limits[0].max_actions == 11
+    assert residual_limits[0].max_computer_use_actions == 4
+    assert residual_limits[0].max_job_cost == UsdAmount(750_000)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        latest = SqliteAccountReservationRepository(store).latest_run_for_user(invitee.user_id)
+    assert latest is not None
+    assert latest.completeness is InventoryCompleteness.INCOMPLETE
+
+
+def test_selected_booking_without_current_agentic_positive_is_rejected(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        invitee = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER)
+        SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+            user_id=invitee.user_id,
+            disclosure_version=_config(tmp_path).agentic_browser_settings.disclosure_version,
+            acknowledged_at=datetime.now(UTC),
+        )
+    _seed_session(sessions, invitee.user_id)
+    stale_source = make_booking("agentic-stale")
+    current_source = make_booking("agentic-current")
+    stale_booking_id = _seed_inventory_projection(
+        tmp_path,
+        user_id=invitee.user_id,
+        remote_id="remote-stale",
+        booking=stale_source,
+    )
+    current_booking_id = _seed_inventory_projection(
+        tmp_path,
+        user_id=invitee.user_id,
+        remote_id="remote-current",
+        booking=current_source,
+    )
+    executor = FakeInventoryBrowserExecutor(
+        [
+            _agentic_inventory_result(
+                (_observed_inventory_reservation(current_source, "remote-current"),)
+            )
+        ]
+    )
+    price_browser_opens: list[None] = []
+
+    def browser_factory() -> BrowserContext:
+        price_browser_opens.append(None)
+        return BrowserContext()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=browser_factory,
+        session_repository=sessions,
+        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+    )
+    completed = threading.Event()
+    completions: list[ImmediateCompletion] = []
+
+    assert (
+        coordinator.request_immediate(
+            202,
+            stale_booking_id,
+            lambda outcome: (completions.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert completions[0].kind is ImmediateCompletionKind.UNAVAILABLE
+    assert "not positively verified" in (completions[0].unavailable_detail or "")
+    assert price_browser_opens == []
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        bookings = SqliteBookingRepository(store)
+        assert {item.booking_id for item in bookings.list_active_for_user(invitee.user_id)} == {
+            stale_booking_id,
+            current_booking_id,
+        }
+
+
+def test_selected_check_surfaces_agentic_inventory_terminal_detail(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        invitee = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER)
+        SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+            user_id=invitee.user_id,
+            disclosure_version=_config(tmp_path).agentic_browser_settings.disclosure_version,
+            acknowledged_at=datetime.now(UTC),
+        )
+    _seed_session(sessions, invitee.user_id)
+    source = make_booking("agentic-terminal-detail")
+    booking_id = _seed_inventory_projection(
+        tmp_path,
+        user_id=invitee.user_id,
+        remote_id="agentic-terminal-detail-remote",
+        booking=source,
+    )
+    executor = FakeInventoryBrowserExecutor(
+        [InventoryExecutionResult(InventoryExecutionStatus.BOT_WALL)]
+    )
+    price_browser_opens: list[None] = []
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=lambda: (
+            price_browser_opens.append(None) or BrowserContext()
+        ),
+        session_repository=sessions,
+        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+    )
+    completed = threading.Event()
+    completions: list[ImmediateCompletion] = []
+
+    assert (
+        coordinator.request_immediate(
+            202,
+            booking_id,
+            lambda outcome: (completions.append(outcome), completed.set()),
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert completed.wait(1)
+
+    assert completions[0].kind is ImmediateCompletionKind.UNAVAILABLE
+    assert "bot-verification wall" in (completions[0].unavailable_detail or "")
+    assert price_browser_opens == []
+
+
+def test_agentic_price_exhausted_shared_allowance_reports_budget(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    booking = make_booking("agentic-exhausted-shared-budget")
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        users = SqliteUserRepository(store)
+        owner = users.get_owner()
+        users.link_telegram_id(owner.user_id, 101)
+        SqliteBookingRepository(store).add(booking, user_id=owner.user_id)
+    _seed_session(sessions, owner.user_id)
+    config = _config(tmp_path)
+    config.agentic_browser_settings = replace(
+        config.agentic_browser_settings,
+        routing=ExecutionRoutingMode.OWNER_CANARY,
+    )
+    executor_calls: list[None] = []
+    coordinator = CheckCoordinator(
+        config,
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        session_repository=sessions,
+        agentic_executor_factory=lambda _budget, _leases: (
+            executor_calls.append(None) or object()
+        ),
+    )
+    exhausted = AgenticBrowserJobContext(
+        local_user_id=owner.user_id,
+        job_kind=BrowserJobKind.CHECK_NOW,
+        job_id="agentic-exhausted-shared-budget",
+        deadline=datetime.now(UTC) + timedelta(minutes=3),
+        job_limit_micro_usd=config.agent_settings.max_job_cost_micro_usd,
+        daily_limit_micro_usd=config.agent_settings.max_deployment_daily_cost_micro_usd,
+        total_actions=15,
+    )
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        with coordinator._resume_agentic_job(exhausted):  # noqa: SLF001
+            result = coordinator._run_booking(  # noqa: SLF001
+                store,
+                object(),
+                owner.user_id,
+                booking,
+            )
+        history = SqliteCheckHistoryRepository(store).get_recent(booking.booking_id)
+        trace = SqliteCheckTraceRepository(store).get(result.check_id)
+
+    assert result.failure_reason is not None
+    assert result.failure_reason.code is FailureCode.BUDGET_EXCEEDED
+    assert executor_calls == []
+    assert history == [result]
+    assert trace is not None
+
+
+def test_coordinated_job_never_starts_unbudgeted_legacy_llm_fallback(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    booking = make_booking("coordinated-no-unbudgeted-fallback")
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        users = SqliteUserRepository(store)
+        owner = users.get_owner()
+        users.link_telegram_id(owner.user_id, 101)
+        SqliteBookingRepository(store).add(booking, user_id=owner.user_id)
+    _seed_session(sessions, owner.user_id)
+    builder_calls: list[None] = []
+    observed_factories: list[object | None] = []
+
+    def build_factory(_cfg: Config, _store: SqliteStore) -> object:
+        builder_calls.append(None)
+        return object()
+
+    class Monitor:
+        last_agentic_outcome = None
+        last_agent_steps_used = 0
+        last_llm_calls_used = 0
+
+        def __init__(self, **kwargs: Any) -> None:
+            self.history = kwargs["check_history"]
+            observed_factories.append(kwargs["llm_factory"])
+
+        def set_llm_enabled(self, _enabled: bool) -> None:
+            return None
+
+        def run_authenticated(self, selected: Any, _snapshot: Any) -> CheckResult:
+            result = _failure(selected.booking_id)
+            self.history.add(result)
+            return result
+
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.BookingComSearchMonitor",
+        Monitor,
+    )
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=build_factory,
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        session_repository=sessions,
+    )
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        with coordinator._adaptive_job_scope(  # noqa: SLF001
+            store,
+            owner.user_id,
+            BrowserJobKind.CHECK_NOW,
+        ):
+            coordinator._run_booking(  # noqa: SLF001
+                store,
+                object(),
+                owner.user_id,
+                booking,
+            )
+
+    assert builder_calls == [None]
+    assert observed_factories == [None]
+
+
+def test_scheduled_agentic_plan_contains_only_current_run_positive_bookings(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        invitee = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER)
+        SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+            user_id=invitee.user_id,
+            disclosure_version=_config(tmp_path).agentic_browser_settings.disclosure_version,
+            acknowledged_at=datetime.now(UTC),
+        )
+    _seed_session(sessions, invitee.user_id)
+    stale_source = make_booking("scheduled-stale")
+    current_source = make_booking("scheduled-current")
+    stale_booking_id = _seed_inventory_projection(
+        tmp_path,
+        user_id=invitee.user_id,
+        remote_id="scheduled-remote-stale",
+        booking=stale_source,
+    )
+    current_booking_id = _seed_inventory_projection(
+        tmp_path,
+        user_id=invitee.user_id,
+        remote_id="scheduled-remote-current",
+        booking=current_source,
+    )
+    executor = FakeInventoryBrowserExecutor(
+        [
+            _agentic_inventory_result(
+                (
+                    _observed_inventory_reservation(
+                        current_source,
+                        "scheduled-remote-current",
+                    ),
+                )
+            )
+        ]
+    )
+    coordinator = CheckCoordinator(
+        _config(tmp_path, checks=10),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        session_repository=sessions,
+        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+    )
+    ran: list[str] = []
+
+    def run_planned(
+        _self: CheckCoordinator,
+        _store: Any,
+        _browser: Any,
+        _owner: int,
+        booking: Any,
+    ) -> CheckResult:
+        ran.append(booking.booking_id)
+        return _failure(booking.booking_id)
+
+    coordinator._run_booking = MethodType(run_planned, coordinator)  # type: ignore[method-assign]
+    planned_at = datetime.now(UTC) - timedelta(seconds=1)
+    identity = _scheduled_slot(tmp_path, invitee.user_id, planned_at)
+
+    assert (
+        coordinator.run_scheduled_slot(identity, ScheduleSettings(), datetime.now(UTC))
+        is ScheduledAdmission.COMPLETED
+    )
+
+    assert ran == [current_booking_id]
+    assert stale_booking_id not in ran
+
+
+def test_compatibility_scheduler_reuses_inventory_residual_agentic_limits(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        SqliteUserRepository(store).link_telegram_id(owner.user_id, 101)
+    _seed_session(sessions, owner.user_id)
+    source_booking = make_booking("scheduled-shared-residual")
+    current_booking_id = _seed_inventory_projection(
+        tmp_path,
+        user_id=owner.user_id,
+        remote_id="scheduled-shared-residual-remote",
+        booking=source_booking,
+    )
+    usage = ExecutionUsage(
+        total_actions=4,
+        computer_use_actions=2,
+        cost=UsdAmount(250_000),
+    )
+    executor = FakeInventoryBrowserExecutor(
+        [
+            _agentic_inventory_result(
+                (
+                    _observed_inventory_reservation(
+                        source_booking,
+                        "scheduled-shared-residual-remote",
+                    ),
+                ),
+                usage=usage,
+            )
+        ]
+    )
+    coordinator = CheckCoordinator(
+        _config(tmp_path, checks=10, llm_calls=20),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        session_repository=sessions,
+        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+    )
+    residual_limits: list[Any] = []
+    ran: list[str] = []
+
+    def run_planned(
+        self: CheckCoordinator,
+        _store: Any,
+        _browser: Any,
+        _owner: int,
+        booking: Any,
+    ) -> CheckResult:
+        context = self._current_agentic_job()  # noqa: SLF001
+        assert context is not None
+        residual_limits.append(context.remaining_limits())
+        ran.append(booking.booking_id)
+        return _failure(booking.booking_id)
+
+    coordinator._run_booking = MethodType(run_planned, coordinator)  # type: ignore[method-assign]
+
+    coordinator.run_scheduled()
+
+    assert ran == [current_booking_id]
+    assert len(residual_limits) == 1
+    assert residual_limits[0] is not None
+    assert residual_limits[0].deadline == executor.requests[0].limits.deadline
+    assert residual_limits[0].max_actions == 11
+    assert residual_limits[0].max_computer_use_actions == 4
+    assert residual_limits[0].max_job_cost == UsdAmount(750_000)
