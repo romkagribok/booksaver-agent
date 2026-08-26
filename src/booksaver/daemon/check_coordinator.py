@@ -1294,12 +1294,18 @@ class CheckCoordinator:
                                 )
                             )
                             if booking_id not in current_run_booking_ids:
-                                completion = ImmediateCompletion(
-                                    ImmediateCompletionKind.UNAVAILABLE,
-                                    unavailable_detail=(
+                                unavailable_detail = (
+                                    report.failure_detail
+                                    if report.completeness is InventoryCompleteness.FAILED
+                                    and report.failure_detail
+                                    else (
                                         "The selected reservation was not positively verified "
                                         "in the current Booking.com refresh."
-                                    ),
+                                    )
+                                )
+                                completion = ImmediateCompletion(
+                                    ImmediateCompletionKind.UNAVAILABLE,
+                                    unavailable_detail=unavailable_detail,
                                 )
                                 return
                         elif report.completeness is not InventoryCompleteness.COMPLETE:
@@ -2200,15 +2206,28 @@ class CheckCoordinator:
                 ),
             )
             agentic_limits = agentic_job.remaining_limits()
-            if agentic_limits is not None:
-                executor = self._agentic_executor_factory(
-                    agentic_budget,
-                    lease_broker,
+            if agentic_limits is None:
+                result = CheckResult.failure(
+                    booking.booking_id,
+                    datetime.now(UTC),
+                    FailureReason(
+                        FailureCode.BUDGET_EXCEEDED,
+                        "The shared inventory-and-price browser allowance was exhausted.",
+                    ),
                 )
-                agentic_price_check = OwnerBoundAgenticPriceCheck(
-                    AgenticPriceExecutionService(executor, lease_broker),
-                    lease_broker,
+                history.add(result)
+                SqliteCheckTraceRepository(store).add(
+                    TraceRecorder(booking.booking_id).finish(result)
                 )
+                return result
+            executor = self._agentic_executor_factory(
+                agentic_budget,
+                lease_broker,
+            )
+            agentic_price_check = OwnerBoundAgenticPriceCheck(
+                AgenticPriceExecutionService(executor, lease_broker),
+                lease_broker,
+            )
         monitor = BookingComSearchMonitor(
             browser=browser,
             # Kept only for the legacy run_all_active API; owner-bound daemon
@@ -2218,6 +2237,10 @@ class CheckCoordinator:
             booking_repo=SqliteBookingRepository(store),
             failure_tracker=FailureTracker(history),
             llm_factory=(
+                # A coordinated outer job must account for every provider call in its shared
+                # dollar ledger. If adaptive admission fails, the older factory path cannot
+                # reconcile into that ledger, so fail closed instead of starting unbudgeted LLM
+                # recovery. Standalone legacy callers without an outer job retain that fallback.
                 None
                 if adaptive_job is not None or agentic_job is not None
                 else self._llm_factory_builder(self._config, store)

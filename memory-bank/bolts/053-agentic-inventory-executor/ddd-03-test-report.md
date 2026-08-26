@@ -22,7 +22,7 @@ completed: 2026-08-26T04:23:56Z
 
 ## Verification
 
-- Full repository test suite: **1756 passed** with 55 pre-existing deprecation warnings.
+- Full repository test suite: **1759 passed** with 55 pre-existing deprecation warnings.
 - Ruff: `python3 -m ruff check src tests` — clean.
 - Mypy: `python3 -m mypy src` — clean across 127 source files.
 - CLI configuration: `python3 -m booksaver.cli --config config.toml.example config validate` —
@@ -48,8 +48,10 @@ completed: 2026-08-26T04:23:56Z
   and accessibility quality.
 - Coordinator tests cover agentic routing for disclosed owners and invitees, undisclosed-user
   legacy routing, missing-executor and terminal-failure fail-closed behavior, current-run positive
-  admission, stale-row rejection, scheduled checks, and one shared job id, ordinal sequence, cost,
-  action, and deadline allowance across inventory and either price route.
+  admission, stale-row rejection, terminal-detail reporting, explicit shared-budget exhaustion,
+  scheduled checks, and one shared job id, ordinal sequence, cost, action, and deadline allowance
+  across inventory and either price route. A coordinated job also proves that legacy LLM fallback
+  cannot bypass its shared dollar ledger when adaptive admission is unavailable.
 - Persistence and Telegram tests cover redacted metrics, schema migration, positive-only sync,
   non-destructive partial merging, safe completion of previously missing facts, conflicting-fact
   and lifecycle rejection, caller scoping, and removal of the duplicate bare `/checknow` inventory
