@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -22,8 +22,17 @@ from booksaver.application.browser_executor import (
 )
 from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
 from booksaver.application.dom_incident import build_incident_draft, is_dom_incident_eligible
+from booksaver.application.inventory_executor import (
+    InventoryExecutionService,
+    OwnerBoundAgenticInventoryExecution,
+)
 from booksaver.application.model_policy import BrowserJobCostBudget, SpendLedger
-from booksaver.application.ports import AgentBrain, InventoryInterpreter, PriceBrowserExecutor
+from booksaver.application.ports import (
+    AgentBrain,
+    InventoryBrowserExecutor,
+    InventoryInterpreter,
+    PriceBrowserExecutor,
+)
 from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
 from booksaver.application.user_sessions import (
     AuthenticatedSessionProvider,
@@ -55,8 +64,14 @@ from booksaver.domain.agentic_qualification import (
     CriticalAgenticViolation,
 )
 from booksaver.domain.browser_executor import (
+    MAX_COMPUTER_USE_ACTIONS,
+    MAX_EXECUTOR_ACTIONS,
+    MAX_EXECUTOR_SECONDS,
     MAX_JOB_COST_MICRO_USD,
+    ExecutionLimits,
+    ExecutionUsage,
     ExecutorSafetyViolation,
+    InventoryExecutionRoutingMode,
     PriceExecutionStatus,
     RoutingContext,
     resolve_execution_route,
@@ -109,12 +124,14 @@ from booksaver.infrastructure.persistence.scheduled_check_slots import (
     SqliteScheduledCheckSlotRepository,
 )
 from booksaver.infrastructure.persistence.sqlite_store import (
+    InventoryExecutionMetrics,
     SqliteAccountReservationRepository,
     SqliteAgenticDisclosureConsentRepository,
     SqliteAgenticQualificationRepository,
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteCheckTraceRepository,
+    SqliteInventoryExecutionMetricsRepository,
     SqliteSavingsRepository,
     SqliteStore,
     SqliteUserRepository,
@@ -143,6 +160,9 @@ InventorySynchronizer = Callable[
 IncidentRecorderFactory = Callable[[], AbstractContextManager[Any]]
 AgenticExecutorFactory = Callable[
     [BrowserJobCostBudget, InMemorySessionLeaseBroker], PriceBrowserExecutor
+]
+AgenticInventoryExecutorFactory = Callable[
+    [BrowserJobCostBudget, InMemorySessionLeaseBroker], InventoryBrowserExecutor
 ]
 
 _INCIDENT_STRUCTURAL_ROLE_ALIASES = {"input": "textbox"}
@@ -371,6 +391,59 @@ class AdaptiveBrowserJobContext:
                 usage.output_tokens += attempt.usage.output_tokens
 
 
+@dataclass(slots=True)
+class AgenticBrowserJobContext:
+    """One hard allowance shared by inventory and price inside a coordinator job."""
+
+    local_user_id: int
+    job_kind: BrowserJobKind
+    job_id: str
+    deadline: datetime
+    job_limit_micro_usd: int
+    daily_limit_micro_usd: int
+    budget: BrowserJobCostBudget | None = None
+    adaptive: AdaptiveBrowserJobContext | None = None
+    total_actions: int = 0
+    computer_actions: int = 0
+    cost_micro_usd: int = 0
+
+    def remaining_limits(self, *, now: datetime | None = None) -> ExecutionLimits | None:
+        current = now or datetime.now(UTC)
+        remaining_seconds = min(
+            MAX_EXECUTOR_SECONDS,
+            int((self.deadline - current).total_seconds()),
+        )
+        remaining_actions = MAX_EXECUTOR_ACTIONS - self.total_actions
+        remaining_cost = self.job_limit_micro_usd - self.cost_micro_usd
+        if remaining_seconds < 1 or remaining_actions < 1 or remaining_cost < 1:
+            return None
+        return ExecutionLimits(
+            deadline=self.deadline,
+            max_actions=remaining_actions,
+            max_computer_use_actions=min(
+                remaining_actions,
+                max(0, MAX_COMPUTER_USE_ACTIONS - self.computer_actions),
+            ),
+            timeout_seconds=remaining_seconds,
+            max_job_cost=UsdAmount(remaining_cost),
+            max_deployment_daily_cost=UsdAmount(self.daily_limit_micro_usd),
+        )
+
+    def consume(self, usage: ExecutionUsage) -> None:
+        self.total_actions += usage.total_actions
+        self.computer_actions += usage.computer_use_actions
+        self.cost_micro_usd += usage.cost.micro_usd
+
+    def consume_legacy(self, *, total_actions: int, total_cost: UsdAmount) -> None:
+        """Project legacy-agent work into the same outer operation allowance."""
+        if total_actions < 0:
+            raise ValueError("legacy action usage cannot be negative")
+        self.total_actions += total_actions
+        # Both provider budgets use the same persisted job id. The ledger total is authoritative
+        # and already includes inventory, so replace rather than add to avoid double counting.
+        self.cost_micro_usd = max(self.cost_micro_usd, total_cost.micro_usd)
+
+
 @dataclass(frozen=True)
 class AdaptiveBrowserJobAdmission:
     context: AdaptiveBrowserJobContext | None = None
@@ -431,6 +504,7 @@ class CheckCoordinator:
         incident_recorder_factory: IncidentRecorderFactory | None = None,
         execution_gate: threading.Lock | None = None,
         agentic_executor_factory: AgenticExecutorFactory | None = None,
+        agentic_inventory_executor_factory: AgenticInventoryExecutorFactory | None = None,
     ) -> None:
         self._config = config
         self._db_path = config.data_directory.path / "booksaver.db"
@@ -450,6 +524,7 @@ class CheckCoordinator:
         self._capped_notice_sent_today = capped_notice_sent_today or DailyCounter()
         self._execution_gate = execution_gate or threading.Lock()
         self._agentic_executor_factory = agentic_executor_factory
+        self._agentic_inventory_executor_factory = agentic_inventory_executor_factory
         self._job_local = threading.local()
 
     @property
@@ -471,21 +546,40 @@ class CheckCoordinator:
         job_kind: BrowserJobKind,
     ) -> Iterator[None]:
         previous = getattr(self._job_local, "adaptive", None)
-        self._job_local.adaptive = self._build_adaptive_job_context(
-            store,
-            user_id,
-            job_kind,
+        previous_agentic = getattr(self._job_local, "agentic", None)
+        settings = self._config.agent_settings
+        agentic_context = AgenticBrowserJobContext(
+            local_user_id=user_id,
+            job_kind=job_kind,
+            job_id=f"agentic-{job_kind.value}-{uuid.uuid4().hex}",
+            deadline=datetime.now(UTC) + timedelta(seconds=MAX_EXECUTOR_SECONDS),
+            job_limit_micro_usd=settings.max_job_cost_micro_usd,
+            daily_limit_micro_usd=settings.max_deployment_daily_cost_micro_usd,
         )
+        self._job_local.agentic = agentic_context
+        if self._uses_agentic_inventory(store, user_id):
+            agentic_context.adaptive = None
+        else:
+            agentic_context.adaptive = self._build_adaptive_job_context(
+                store,
+                user_id,
+                job_kind,
+                shared_job_id=agentic_context.job_id,
+            )
+        self._job_local.adaptive = agentic_context.adaptive
         try:
             yield
         finally:
             self._job_local.adaptive = previous
+            self._job_local.agentic = previous_agentic
 
     def _build_adaptive_job_context(
         self,
         store: SqliteStore,
         user_id: int,
         job_kind: BrowserJobKind,
+        *,
+        shared_job_id: str | None = None,
     ) -> AdaptiveBrowserJobContext | None:
         daily_limit = self._config.limits_settings.max_llm_calls_per_user_per_day
         if self._llm_calls_today.count(user_id) >= daily_limit:
@@ -505,8 +599,9 @@ class CheckCoordinator:
             daily_limit,
         )
         settings = self._config.agent_settings
+        job_id = shared_job_id or f"{job_kind.value}-{uuid.uuid4().hex}"
         budget = BrowserJobCostBudget(
-            job_id=f"{job_kind.value}-{uuid.uuid4().hex}",
+            job_id=job_id,
             job_kind=job_kind,
             caller_key_ref=key_ref,
             ledger=ledger,
@@ -514,6 +609,7 @@ class CheckCoordinator:
             job_limit=UsdAmount(settings.max_job_cost_micro_usd),
             day_limit=UsdAmount(settings.max_deployment_daily_cost_micro_usd),
             preserve_opus_diagnostic=(settings.reserve_opus_diagnostic_for_ambiguous_episode),
+            initial_attempt_ordinal=len(ledger.list_attempts(job_id)) + 1,
         )
         runtime = runtime_method(user_id, budget)
         if runtime is None:
@@ -527,6 +623,52 @@ class CheckCoordinator:
     def _current_adaptive_job(self) -> AdaptiveBrowserJobContext | None:
         current = getattr(self._job_local, "adaptive", None)
         return current if isinstance(current, AdaptiveBrowserJobContext) else None
+
+    def _current_agentic_job(self) -> AgenticBrowserJobContext | None:
+        current = getattr(self._job_local, "agentic", None)
+        return current if isinstance(current, AgenticBrowserJobContext) else None
+
+    @contextmanager
+    def _resume_agentic_job(
+        self,
+        context: AgenticBrowserJobContext | None,
+    ) -> Iterator[None]:
+        """Restore one previously admitted job so later work sees only its residual limits."""
+        previous = getattr(self._job_local, "agentic", None)
+        previous_adaptive = getattr(self._job_local, "adaptive", None)
+        self._job_local.agentic = context
+        self._job_local.adaptive = context.adaptive if context is not None else None
+        try:
+            yield
+        finally:
+            self._job_local.agentic = previous
+            self._job_local.adaptive = previous_adaptive
+
+    def _agentic_job_budget(
+        self,
+        store: SqliteStore,
+        user_id: int,
+        job_kind: BrowserJobKind,
+    ) -> tuple[AgenticBrowserJobContext, BrowserJobCostBudget]:
+        context = self._current_agentic_job()
+        if context is None or context.local_user_id != user_id:
+            settings = self._config.agent_settings
+            context = AgenticBrowserJobContext(
+                local_user_id=user_id,
+                job_kind=job_kind,
+                job_id=f"agentic-{job_kind.value}-{uuid.uuid4().hex}",
+                deadline=datetime.now(UTC) + timedelta(seconds=MAX_EXECUTOR_SECONDS),
+                job_limit_micro_usd=settings.max_job_cost_micro_usd,
+                daily_limit_micro_usd=settings.max_deployment_daily_cost_micro_usd,
+            )
+        if context.budget is None:
+            context.budget = self._build_agentic_cost_budget(
+                store,
+                user_id,
+                job_kind,
+                shared_job_id=context.job_id,
+            )
+        return context, context.budget
 
     def _build_agentic_cost_budget(
         self,
@@ -550,8 +692,13 @@ class CheckCoordinator:
             daily_limit,
         )
         settings = self._config.agent_settings
+        job_id = shared_job_id or f"agentic-{job_kind.value}-{uuid.uuid4().hex}"
+        resolved_ordinal = max(
+            initial_attempt_ordinal,
+            len(ledger.list_attempts(job_id)) + 1,
+        )
         return BrowserJobCostBudget(
-            job_id=shared_job_id or f"agentic-{job_kind.value}-{uuid.uuid4().hex}",
+            job_id=job_id,
             job_kind=job_kind,
             caller_key_ref=CallerKeyRef(
                 caller_user_id=user_id,
@@ -563,7 +710,22 @@ class CheckCoordinator:
             job_limit=UsdAmount(settings.max_job_cost_micro_usd),
             day_limit=UsdAmount(settings.max_deployment_daily_cost_micro_usd),
             preserve_opus_diagnostic=False,
-            initial_attempt_ordinal=initial_attempt_ordinal,
+            initial_attempt_ordinal=resolved_ordinal,
+        )
+
+    @staticmethod
+    def _job_cost(budget: BrowserJobCostBudget | None) -> UsdAmount:
+        if budget is None:
+            return UsdAmount()
+        return UsdAmount(
+            sum(
+                (
+                    attempt.charged_cost
+                    if attempt.charged_cost is not None
+                    else attempt.reserved_cost
+                ).micro_usd
+                for attempt in budget.ordered_attempts()
+            )
         )
 
     @contextmanager
@@ -1001,19 +1163,18 @@ class CheckCoordinator:
                     BrowserJobKind.BOOKINGS_SYNC,
                 ):
                     adaptive_job = self._current_adaptive_job()
-                    with self._browser_factory() as browser:
-                        report = self._synchronize_user(store, browser, user.user_id, trigger)
-                        evidence = self._capture_incident_evidence(
-                            browser=browser,
+                    report, evidence, used_agentic = self._synchronize_user_job(
+                        store,
+                        user.user_id,
+                        trigger,
+                    )
+                    if not used_agentic:
+                        self._record_post_browser_incidents(
+                            user_id=user.user_id,
                             adaptive_job=adaptive_job,
                             inventory_report=report,
+                            evidence=evidence,
                         )
-                    self._record_post_browser_incidents(
-                        user_id=user.user_id,
-                        adaptive_job=adaptive_job,
-                        inventory_report=report,
-                        evidence=evidence,
-                    )
                 reservations = tuple(
                     SqliteAccountReservationRepository(store).list_for_user(user.user_id)
                 )
@@ -1098,81 +1259,83 @@ class CheckCoordinator:
                     result: CheckResult | None = None
                     inventory_evidence = _SanitizedIncidentEvidence()
                     check_evidence = _SanitizedIncidentEvidence()
+                    used_agentic_inventory = False
                     try:
-                        with self._browser_factory() as browser:
-                            try:
-                                report = self._synchronize_user(
-                                    store,
-                                    browser,
-                                    user.user_id,
-                                    SynchronizationTrigger.CHECK_NOW,
-                                )
-                                inventory_evidence = self._capture_incident_evidence(
-                                    browser=browser,
-                                    adaptive_job=adaptive_job,
-                                    inventory_report=report,
-                                )
-                            except Exception:
-                                logger.exception(
-                                    "Immediate inventory synchronization failed for user %s",
-                                    user.user_id,
-                                )
-                                completion = ImmediateCompletion(
-                                    ImmediateCompletionKind.UNAVAILABLE,
-                                    unavailable_detail=(
-                                        "Booking.com reservations could not be refreshed. "
-                                        "Try /bookings again shortly."
-                                    ),
-                                )
-                                return
-                            if report.completeness is not InventoryCompleteness.COMPLETE:
-                                completion = ImmediateCompletion(
-                                    ImmediateCompletionKind.UNAVAILABLE,
-                                    unavailable_detail=(
-                                        report.failure_detail
-                                        or "Booking.com reservation refresh was incomplete."
-                                    ),
-                                )
-                                return
-                            booking = bookings.get_by_id(booking_id)
-                            if (
-                                booking is None
-                                or bookings.get_owner_user_id(booking_id) != user.user_id
-                                or all(
-                                    active.booking_id != booking_id
-                                    for active in bookings.list_active_for_user(user.user_id)
-                                )
-                            ):
-                                return
-                            if not self._checks_today.try_increment(
+                        try:
+                            (
+                                report,
+                                inventory_evidence,
+                                used_agentic_inventory,
+                            ) = self._synchronize_user_job(
+                                store,
                                 user.user_id,
-                                self._config.limits_settings.max_checks_per_user_per_day,
-                            ):
-                                result = self._limit_result(booking, "Immediate check skipped")
-                                SqliteCheckHistoryRepository(store).add(result)
-                                self._send_capped_notice(store, user.user_id)
-                            elif self._stop_event.is_set():
+                                SynchronizationTrigger.CHECK_NOW,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Immediate inventory synchronization failed for user %s",
+                                user.user_id,
+                            )
+                            completion = ImmediateCompletion(
+                                ImmediateCompletionKind.UNAVAILABLE,
+                                unavailable_detail=(
+                                    "Booking.com reservations could not be refreshed. "
+                                    "Try /bookings again shortly."
+                                ),
+                            )
+                            return
+                        if used_agentic_inventory:
+                            current_run_booking_ids = set(
+                                SqliteAccountReservationRepository(
+                                    store
+                                ).positively_observed_booking_ids_for_run(
+                                    user_id=user.user_id,
+                                    run_id=report.run_id,
+                                )
+                            )
+                            if booking_id not in current_run_booking_ids:
+                                completion = ImmediateCompletion(
+                                    ImmediateCompletionKind.UNAVAILABLE,
+                                    unavailable_detail=(
+                                        "The selected reservation was not positively verified "
+                                        "in the current Booking.com refresh."
+                                    ),
+                                )
                                 return
-                            else:
-                                try:
+                        elif report.completeness is not InventoryCompleteness.COMPLETE:
+                            completion = ImmediateCompletion(
+                                ImmediateCompletionKind.UNAVAILABLE,
+                                unavailable_detail=(
+                                    report.failure_detail
+                                    or "Booking.com reservation refresh was incomplete."
+                                ),
+                            )
+                            return
+                        booking = bookings.get_by_id(booking_id)
+                        if (
+                            booking is None
+                            or bookings.get_owner_user_id(booking_id) != user.user_id
+                            or all(
+                                active.booking_id != booking_id
+                                for active in bookings.list_active_for_user(user.user_id)
+                            )
+                        ):
+                            return
+                        if not self._checks_today.try_increment(
+                            user.user_id,
+                            self._config.limits_settings.max_checks_per_user_per_day,
+                        ):
+                            result = self._limit_result(booking, "Immediate check skipped")
+                            SqliteCheckHistoryRepository(store).add(result)
+                            self._send_capped_notice(store, user.user_id)
+                        elif self._stop_event.is_set():
+                            return
+                        else:
+                            try:
+                                with self._browser_factory() as browser:
                                     result = self._run_booking(
                                         store, browser, user.user_id, booking
                                     )
-                                except Exception as exc:
-                                    logger.exception(
-                                        "Immediate browser execution failed for booking %s",
-                                        booking_id,
-                                    )
-                                    result = CheckResult.failure(
-                                        booking.booking_id,
-                                        datetime.now(UTC),
-                                        FailureReason(
-                                            FailureCode.NAVIGATION_ERROR,
-                                            f"Could not start the live browser check: {exc}",
-                                        ),
-                                    )
-                                    SqliteCheckHistoryRepository(store).add(result)
-                                if result is not None:
                                     check_evidence = self._capture_incident_evidence(
                                         browser=browser,
                                         adaptive_job=adaptive_job,
@@ -1181,13 +1344,28 @@ class CheckCoordinator:
                                             store, result
                                         ),
                                     )
+                            except Exception as exc:
+                                logger.exception(
+                                    "Immediate browser execution failed for booking %s",
+                                    booking_id,
+                                )
+                                result = CheckResult.failure(
+                                    booking.booking_id,
+                                    datetime.now(UTC),
+                                    FailureReason(
+                                        FailureCode.NAVIGATION_ERROR,
+                                        f"Could not start the live browser check: {exc}",
+                                    ),
+                                )
+                                SqliteCheckHistoryRepository(store).add(result)
                     finally:
-                        self._record_post_browser_incidents(
-                            user_id=user.user_id,
-                            adaptive_job=adaptive_job,
-                            inventory_report=report,
-                            evidence=inventory_evidence,
-                        )
+                        if not used_agentic_inventory:
+                            self._record_post_browser_incidents(
+                                user_id=user.user_id,
+                                adaptive_job=adaptive_job,
+                                inventory_report=report,
+                                evidence=inventory_evidence,
+                            )
                         self._record_post_browser_incidents(
                             user_id=user.user_id,
                             adaptive_job=adaptive_job,
@@ -1226,6 +1404,7 @@ class CheckCoordinator:
             bookings = SqliteBookingRepository(store)
             active_users = users.list_active()
             bookings_by_user: dict[int, list[Booking]] = {}
+            agentic_jobs_by_user: dict[int, AgenticBrowserJobContext] = {}
             for user in active_users:
                 if self._stop_event.is_set():
                     return
@@ -1251,25 +1430,49 @@ class CheckCoordinator:
                         )
                         continue
                 try:
-                    with self._browser_factory() as browser:
-                        report = self._synchronize_user(
-                            store,
-                            browser,
-                            user.user_id,
-                            SynchronizationTrigger.SCHEDULED,
+                    with self._adaptive_job_scope(
+                        store,
+                        user.user_id,
+                        BrowserJobKind.SCHEDULED_SLOT,
+                    ):
+                        report, evidence, used_agentic_inventory = (
+                            self._synchronize_user_job(
+                                store,
+                                user.user_id,
+                                SynchronizationTrigger.SCHEDULED,
+                            )
                         )
-                    self._record_post_browser_incidents(
-                        user_id=user.user_id,
-                        adaptive_job=self._current_adaptive_job(),
-                        inventory_report=report,
-                    )
+                        current_agentic_job = self._current_agentic_job()
+                        if current_agentic_job is not None:
+                            agentic_jobs_by_user[user.user_id] = current_agentic_job
+                    if not used_agentic_inventory:
+                        self._record_post_browser_incidents(
+                            user_id=user.user_id,
+                            adaptive_job=self._current_adaptive_job(),
+                            inventory_report=report,
+                            evidence=evidence,
+                        )
                 except Exception:
                     logger.exception(
                         "Scheduled inventory synchronization failed for user %s",
                         user.user_id,
                     )
                     continue
-                if report.completeness is InventoryCompleteness.COMPLETE:
+                if used_agentic_inventory:
+                    current_ids = set(
+                        SqliteAccountReservationRepository(
+                            store
+                        ).positively_observed_booking_ids_for_run(
+                            user_id=user.user_id,
+                            run_id=report.run_id,
+                        )
+                    )
+                    bookings_by_user[user.user_id] = [
+                        booking
+                        for booking in bookings.list_active_for_user(user.user_id)
+                        if booking.booking_id in current_ids
+                    ]
+                elif report.completeness is InventoryCompleteness.COMPLETE:
                     bookings_by_user[user.user_id] = bookings.list_active_for_user(user.user_id)
             plan = build_check_plan(
                 users=active_users,
@@ -1307,8 +1510,9 @@ class CheckCoordinator:
                     continue
                 # A context is deliberately single-booking: cookies for one
                 # Telegram user can never survive into another user's check.
-                with self._browser_factory() as browser:
-                    result = self._run_booking(store, browser, user_id, booking)
+                with self._resume_agentic_job(agentic_jobs_by_user.get(user_id)):
+                    with self._browser_factory() as browser:
+                        result = self._run_booking(store, browser, user_id, booking)
                 self._record_post_browser_incidents(
                     user_id=user_id,
                     adaptive_job=self._current_adaptive_job(),
@@ -1355,34 +1559,47 @@ class CheckCoordinator:
                 return
 
         try:
-            with self._browser_factory() as browser:
-                report = self._synchronize_user(
+            report, inventory_evidence, used_agentic_inventory = (
+                self._synchronize_user_job(
                     store,
-                    browser,
                     user_id,
                     SynchronizationTrigger.SCHEDULED,
                 )
-                inventory_evidence = self._capture_incident_evidence(
-                    browser=browser,
+            )
+            if not used_agentic_inventory:
+                self._record_post_browser_incidents(
+                    user_id=user_id,
                     adaptive_job=self._current_adaptive_job(),
                     inventory_report=report,
+                    evidence=inventory_evidence,
                 )
-            self._record_post_browser_incidents(
-                user_id=user_id,
-                adaptive_job=self._current_adaptive_job(),
-                inventory_report=report,
-                evidence=inventory_evidence,
-            )
         except Exception:
             logger.exception(
                 "Scheduled inventory synchronization failed for user %s",
                 user_id,
             )
             return
-        if report.completeness is not InventoryCompleteness.COMPLETE:
+        if (
+            not used_agentic_inventory
+            and report.completeness is not InventoryCompleteness.COMPLETE
+        ):
             return
 
         active_bookings = bookings.list_active_for_user(user_id)
+        if used_agentic_inventory:
+            current_run_booking_ids = set(
+                SqliteAccountReservationRepository(
+                    store
+                ).positively_observed_booking_ids_for_run(
+                    user_id=user_id,
+                    run_id=report.run_id,
+                )
+            )
+            active_bookings = [
+                booking
+                for booking in active_bookings
+                if booking.booking_id in current_run_booking_ids
+            ]
         plan = build_check_plan(
             users=[user],
             bookings_by_user={user_id: active_bookings},
@@ -1665,6 +1882,214 @@ class CheckCoordinator:
                 )
         return report
 
+    def _uses_agentic_inventory(self, store: SqliteStore, user_id: int) -> bool:
+        if (
+            self._inventory_synchronizer is not None
+            or self._config.agentic_browser_settings.inventory_routing
+            is not InventoryExecutionRoutingMode.AGENTIC
+        ):
+            return False
+        user = SqliteUserRepository(store).get_by_id(user_id)
+        if user is None or not user.is_active:
+            return False
+        if user.is_owner:
+            return True
+        consent = SqliteAgenticDisclosureConsentRepository(store).get(user_id)
+        return (
+            consent is not None
+            and consent.disclosure_version
+            == self._config.agentic_browser_settings.disclosure_version
+        )
+
+    def _synchronize_user_job(
+        self,
+        store: SqliteStore,
+        user_id: int,
+        trigger: SynchronizationTrigger,
+    ) -> tuple[SynchronizationReport, _SanitizedIncidentEvidence, bool]:
+        """Run exactly one inventory capability without opening an unused legacy browser."""
+        if self._uses_agentic_inventory(store, user_id):
+            return (
+                self._synchronize_agentic_inventory(store, user_id, trigger),
+                _SanitizedIncidentEvidence(),
+                True,
+            )
+        with self._browser_factory() as browser:
+            report = self._synchronize_user(store, browser, user_id, trigger)
+            evidence = self._capture_incident_evidence(
+                browser=browser,
+                adaptive_job=self._current_adaptive_job(),
+                inventory_report=report,
+            )
+        agentic_job = self._current_agentic_job()
+        adaptive_job = self._current_adaptive_job()
+        if agentic_job is not None:
+            audit = report.recovery_audit
+            agentic_job.consume_legacy(
+                total_actions=audit.action_count if audit is not None else 0,
+                total_cost=self._job_cost(
+                    adaptive_job.budget if adaptive_job is not None else None
+                ),
+            )
+        return report, evidence, False
+
+    def _synchronize_agentic_inventory(
+        self,
+        store: SqliteStore,
+        user_id: int,
+        trigger: SynchronizationTrigger,
+    ) -> SynchronizationReport:
+        users = SqliteUserRepository(store)
+        provider = AuthenticatedSessionProvider(users, self._session_repository)
+        resolution = provider.resolve(user_id)
+        repository = SqliteAccountReservationRepository(store)
+        if not resolution.is_ready or resolution.snapshot is None:
+            reason = (
+                resolution.unavailable_reason.value
+                if resolution.unavailable_reason is not None
+                else "unavailable"
+            )
+            report = repository.reconcile(
+                user_id=user_id,
+                run_id=str(uuid.uuid4()),
+                trigger=trigger,
+                session_revision=f"unavailable:{reason}",
+                result=InventoryDiscoveryResult.failed(
+                    SynchronizationFailureCode.AUTH_REQUIRED,
+                    f"Booking.com session is {reason}.",
+                ),
+                observed_at=datetime.now(UTC),
+            )
+            self._notify_auth_required(user_id)
+            return report
+
+        snapshot = resolution.snapshot
+        if self._agentic_inventory_executor_factory is None:
+            return repository.reconcile(
+                user_id=user_id,
+                run_id=str(uuid.uuid4()),
+                trigger=trigger,
+                session_revision=snapshot.metadata.revision_id,
+                result=InventoryDiscoveryResult.failed(
+                    SynchronizationFailureCode.NAVIGATION_FAILED,
+                    "Agentic inventory is configured but its local Anthropic executor is "
+                    "unavailable.",
+                ),
+                observed_at=datetime.now(UTC),
+            )
+        current_agentic_job = self._current_agentic_job()
+        context, cost_budget = self._agentic_job_budget(
+            store,
+            user_id,
+            current_agentic_job.job_kind
+            if current_agentic_job is not None
+            else BrowserJobKind.BOOKINGS_SYNC,
+        )
+        limits = context.remaining_limits()
+        if limits is None:
+            return repository.reconcile(
+                user_id=user_id,
+                run_id=str(uuid.uuid4()),
+                trigger=trigger,
+                session_revision=snapshot.metadata.revision_id,
+                result=InventoryDiscoveryResult.failed(
+                    SynchronizationFailureCode.NAVIGATION_FAILED,
+                    "The shared agentic browser job allowance was exhausted.",
+                ),
+                observed_at=datetime.now(UTC),
+            )
+
+        lease_broker = InMemorySessionLeaseBroker()
+        executor = self._agentic_inventory_executor_factory(cost_budget, lease_broker)
+        outcome = OwnerBoundAgenticInventoryExecution(
+            InventoryExecutionService(executor, lease_broker),
+            lease_broker,
+        ).execute(
+            owner_user_id=user_id,
+            session_material=snapshot.cookies,
+            limits=limits,
+        )
+        context.consume(outcome.result.usage)
+        observed_at = datetime.now(UTC)
+        report = repository.reconcile(
+            user_id=user_id,
+            run_id=str(uuid.uuid4()),
+            trigger=trigger,
+            session_revision=snapshot.metadata.revision_id,
+            result=outcome.discovery_result,
+            observed_at=observed_at,
+        )
+        provenance = outcome.result.provenance
+        metrics = InventoryExecutionMetrics(
+            run_id=report.run_id,
+            user_id=user_id,
+            source=(
+                provenance.source.value if provenance is not None else "agentic_inventory"
+            ),
+            terminal_status=outcome.result.status.value,
+            accepted_count=outcome.validation.accepted_positive_count,
+            rejected_count=outcome.validation.rejected_reservation_count,
+            scope_count=outcome.validation.scope_count,
+            page_count=outcome.validation.page_count,
+            detail_count=outcome.validation.detail_count,
+            semantic_action_count=(
+                outcome.result.usage.total_actions
+                - outcome.result.usage.computer_use_actions
+            ),
+            computer_action_count=outcome.result.usage.computer_use_actions,
+            input_tokens=outcome.result.usage.tokens.input_tokens,
+            output_tokens=outcome.result.usage.tokens.output_tokens,
+            model_cost_micro_usd=outcome.result.usage.cost.micro_usd,
+            latency_ms=outcome.result.latency_ms,
+            fallback_used=outcome.result.fallback_used,
+            safety_codes=tuple(
+                sorted(violation.value for violation in outcome.result.safety_violations)
+            ),
+        )
+        try:
+            SqliteInventoryExecutionMetricsRepository(store).record(metrics)
+        except Exception:
+            logger.warning(
+                "Could not record redacted agentic inventory metrics run=%s",
+                report.run_id,
+                exc_info=True,
+            )
+
+        if report.failure_code is SynchronizationFailureCode.AUTH_REQUIRED:
+            provider.mark_reauth_required(user_id, snapshot.metadata.revision_id)
+            self._notify_auth_required(user_id)
+        elif outcome.refreshed_session is not None:
+            try:
+                provider.refresh(
+                    user_id,
+                    snapshot.metadata.revision_id,
+                    outcome.refreshed_session,
+                    observed_at,
+                )
+            except Exception:
+                logger.warning(
+                    "Could not persist verified agentic inventory session refresh for user %s",
+                    user_id,
+                    exc_info=True,
+                )
+        logger.info(
+            "Agentic inventory synchronization user=%s trigger=%s run=%s status=%s "
+            "accepted=%s rejected=%s actions=%s computer_actions=%s cost_micro_usd=%s "
+            "duration_ms=%s fallback=%s",
+            user_id,
+            trigger.value,
+            report.run_id,
+            outcome.result.status.value,
+            outcome.validation.accepted_positive_count,
+            outcome.validation.rejected_reservation_count,
+            outcome.result.usage.total_actions,
+            outcome.result.usage.computer_use_actions,
+            outcome.result.usage.cost.micro_usd,
+            outcome.result.latency_ms,
+            outcome.result.fallback_used,
+        )
+        return report
+
     def _notify_auth_required(self, user_id: int) -> None:
         if self._auth_required_notifier is None:
             return
@@ -1722,33 +2147,68 @@ class CheckCoordinator:
         settings = self._config.agent_settings
         if remaining_llm:
             settings = replace(settings, max_llm_calls=min(settings.max_llm_calls, remaining_llm))
+        agentic_job = self._current_agentic_job()
+        shared_limits = agentic_job.remaining_limits() if agentic_job is not None else None
+        if agentic_job is not None and not route.use_agentic:
+            if shared_limits is None or shared_limits.timeout_seconds < 30:
+                result = CheckResult.failure(
+                    booking.booking_id,
+                    datetime.now(UTC),
+                    FailureReason(
+                        FailureCode.BUDGET_EXCEEDED,
+                        "The shared inventory-and-price browser allowance was exhausted.",
+                    ),
+                )
+                history.add(result)
+                SqliteCheckTraceRepository(store).add(
+                    TraceRecorder(booking.booking_id).finish(result)
+                )
+                return result
+            settings = replace(
+                settings,
+                max_steps=min(settings.max_steps, shared_limits.max_actions),
+                check_timeout_seconds=min(
+                    settings.check_timeout_seconds,
+                    shared_limits.timeout_seconds,
+                ),
+                recovery_timeout_seconds=min(
+                    settings.recovery_timeout_seconds,
+                    shared_limits.timeout_seconds,
+                ),
+            )
+            if agentic_job.adaptive is None:
+                agentic_job.adaptive = self._build_adaptive_job_context(
+                    store,
+                    user_id,
+                    agentic_job.job_kind,
+                    shared_job_id=agentic_job.job_id,
+                )
+                self._job_local.adaptive = agentic_job.adaptive
         adaptive_job = self._current_adaptive_job()
         agentic_price_check: OwnerBoundAgenticPriceCheck | None = None
+        agentic_limits: ExecutionLimits | None = None
         if route.use_agentic and self._agentic_executor_factory is not None:
             lease_broker = InMemorySessionLeaseBroker()
-            agentic_budget = self._build_agentic_cost_budget(
+            current_agentic_job = self._current_agentic_job()
+            agentic_job, agentic_budget = self._agentic_job_budget(
                 store,
                 user_id,
                 (
-                    adaptive_job.budget.job_kind
-                    if adaptive_job is not None
+                    current_agentic_job.job_kind
+                    if current_agentic_job is not None
                     else BrowserJobKind.CHECK_NOW
                 ),
-                shared_job_id=(adaptive_job.budget.job_id if adaptive_job is not None else None),
-                initial_attempt_ordinal=(
-                    len(adaptive_job.budget.ordered_attempts()) + 1
-                    if adaptive_job is not None
-                    else 1
-                ),
             )
-            executor = self._agentic_executor_factory(
-                agentic_budget,
-                lease_broker,
-            )
-            agentic_price_check = OwnerBoundAgenticPriceCheck(
-                AgenticPriceExecutionService(executor, lease_broker),
-                lease_broker,
-            )
+            agentic_limits = agentic_job.remaining_limits()
+            if agentic_limits is not None:
+                executor = self._agentic_executor_factory(
+                    agentic_budget,
+                    lease_broker,
+                )
+                agentic_price_check = OwnerBoundAgenticPriceCheck(
+                    AgenticPriceExecutionService(executor, lease_broker),
+                    lease_broker,
+                )
         monitor = BookingComSearchMonitor(
             browser=browser,
             # Kept only for the legacy run_all_active API; owner-bound daemon
@@ -1758,7 +2218,9 @@ class CheckCoordinator:
             booking_repo=SqliteBookingRepository(store),
             failure_tracker=FailureTracker(history),
             llm_factory=(
-                None if adaptive_job is not None else self._llm_factory_builder(self._config, store)
+                None
+                if adaptive_job is not None or agentic_job is not None
+                else self._llm_factory_builder(self._config, store)
             ),
             adaptive_runtime_factory=(
                 (lambda _booking: adaptive_job.runtime) if adaptive_job is not None else None
@@ -1770,9 +2232,19 @@ class CheckCoordinator:
             agentic_price_check=agentic_price_check,
             agentic_owner_user_id=user_id,
             agentic_route=route,
+            agentic_execution_limits=agentic_limits,
         )
         monitor.set_llm_enabled(remaining_llm > 0)
         result = monitor.run_authenticated(booking, snapshot)
+        last_agentic_outcome = getattr(monitor, "last_agentic_outcome", None)
+        if agentic_job is not None and last_agentic_outcome is not None:
+            agentic_job.consume(last_agentic_outcome.result.usage)
+        elif agentic_job is not None and not route.use_agentic:
+            budget = adaptive_job.budget if adaptive_job is not None else agentic_job.budget
+            agentic_job.consume_legacy(
+                total_actions=getattr(monitor, "last_agent_steps_used", 0),
+                total_cost=self._job_cost(budget),
+            )
         used = min(monitor.last_llm_calls_used, remaining_llm)
         if used and adaptive_job is None and not route.use_agentic:
             self._llm_calls_today.increment(user_id, by=used)

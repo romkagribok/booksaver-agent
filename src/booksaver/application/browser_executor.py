@@ -53,9 +53,10 @@ class InMemorySessionLeaseBroker:
         self,
         *,
         owner_user_id: int,
-        booking_id: str,
         execution_id: str,
         session_material: bytes,
+        subject_id: str | None = None,
+        booking_id: str | None = None,
         ttl: timedelta = timedelta(minutes=4),
     ) -> SessionLeaseReference:
         if not session_material:
@@ -65,6 +66,7 @@ class InMemorySessionLeaseBroker:
         reference = SessionLeaseReference(
             lease_id=str(uuid.uuid4()),
             owner_user_id=owner_user_id,
+            subject_id=subject_id,
             booking_id=booking_id,
             execution_id=execution_id,
             expires_at=self._clock() + ttl,
@@ -273,13 +275,14 @@ class OwnerBoundAgenticPriceCheck:
         owner_user_id: int,
         booking: Booking,
         session_material: bytes,
+        limits: ExecutionLimits | None = None,
     ) -> PriceExecutionOutcome:
         if booking.occupancy is None:
             raise ValueError("agentic price checks require registered occupancy")
         execution_id = f"agentic-{uuid.uuid4().hex}"
         lease = self._leases.issue(
             owner_user_id=owner_user_id,
-            booking_id=booking.booking_id,
+            subject_id=booking.booking_id,
             execution_id=execution_id,
             session_material=session_material,
         )
@@ -296,8 +299,6 @@ class OwnerBoundAgenticPriceCheck:
                 currency=booking.baseline_price.currency,
             ),
             session_lease=lease,
-            limits=ExecutionLimits(
-                deadline=now + timedelta(seconds=180),
-            ),
+            limits=limits or ExecutionLimits(deadline=now + timedelta(seconds=180)),
         )
         return self._service.execute(request)

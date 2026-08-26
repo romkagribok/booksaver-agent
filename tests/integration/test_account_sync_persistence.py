@@ -352,6 +352,56 @@ def test_user_purge_removes_inventory_runs_and_projection(tmp_path: Path) -> Non
         ).fetchone()[0] == 0
 
 
+def test_exact_run_positive_booking_ids_do_not_reuse_stale_or_absent_rows(
+    tmp_path: Path,
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+
+        _reconcile(
+            repo,
+            user.user_id,
+            "positive-run",
+            InventoryDiscoveryResult((_eligible(),), InventoryCompleteness.INCOMPLETE),
+        )
+        positive_ids = repo.positively_observed_booking_ids_for_run(
+            user_id=user.user_id,
+            run_id="positive-run",
+        )
+        assert len(positive_ids) == 1
+
+        _reconcile(
+            repo,
+            user.user_id,
+            "empty-incomplete-run",
+            InventoryDiscoveryResult((), InventoryCompleteness.INCOMPLETE),
+        )
+        assert repo.positively_observed_booking_ids_for_run(
+            user_id=user.user_id,
+            run_id="empty-incomplete-run",
+        ) == ()
+
+        _reconcile(
+            repo,
+            user.user_id,
+            "empty-complete-run",
+            InventoryDiscoveryResult((), InventoryCompleteness.COMPLETE),
+        )
+        assert repo.positively_observed_booking_ids_for_run(
+            user_id=user.user_id,
+            run_id="empty-complete-run",
+        ) == ()
+        assert repo.positively_observed_booking_ids_for_run(
+            user_id=user.user_id,
+            run_id="positive-run",
+        ) == ()
+        assert repo.positively_observed_booking_ids_for_run(
+            user_id=user.user_id + 1,
+            run_id="positive-run",
+        ) == ()
+
+
 def test_reconciliation_rechecks_active_access_inside_transaction(
     tmp_path: Path,
 ) -> None:
@@ -561,7 +611,7 @@ def test_schema_v13_migration_preserves_v12_sync_runs(tmp_path: Path) -> None:
         repo = SqliteAccountReservationRepository(store)
         legacy = repo.latest_run_for_user(1)
 
-        assert version == SCHEMA_VERSION == 16
+        assert version == SCHEMA_VERSION == 17
         assert {
             "recovery_outcome",
             "recovery_step",

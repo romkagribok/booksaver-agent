@@ -51,7 +51,7 @@ chmod 600 .env
 
 ```dotenv
 BOOKSAVER_TELEGRAM_BOT_TOKEN=123456:AAcalculatedFromBotFather
-BOOKSAVER_LLM_API_KEY=sk-ant-...          # optional; scripted/DOM-only if empty
+BOOKSAVER_LLM_API_KEY=sk-ant-...          # required by default agentic inventory; use legacy inventory if empty
 BOOKSAVER_SECRET_KEY=<output of the command below>
 BOOKSAVER_AUTH_DOMAIN=connect.example.com # DNS A/AAAA record must point to this VPS
 # BOOKSAVER_SMTP_PASSWORD=...             # optional, only if email alerts are also configured

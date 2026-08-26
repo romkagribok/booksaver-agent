@@ -25,6 +25,7 @@ from booksaver.application.ports import (
 )
 from booksaver.domain.agent import AgentBudget, AgentSettings, BudgetExceeded
 from booksaver.domain.browser_executor import (
+    ExecutionLimits,
     PriceExecutionStatus,
     RoutingDecision,
     ValidationRejection,
@@ -141,6 +142,7 @@ class BookingComSearchMonitor:
         agentic_price_check: OwnerBoundAgenticPriceCheck | None = None,
         agentic_owner_user_id: int | None = None,
         agentic_route: RoutingDecision | None = None,
+        agentic_execution_limits: ExecutionLimits | None = None,
         room_equivalence_policy: (Callable[[str, Booking], tuple[bool, float]] | None) = None,
     ) -> None:
         self._browser = browser
@@ -174,6 +176,7 @@ class BookingComSearchMonitor:
         self._agentic_price_check = agentic_price_check
         self._agentic_owner_user_id = agentic_owner_user_id
         self._agentic_route = agentic_route
+        self._agentic_execution_limits = agentic_execution_limits
         self._room_equivalence_policy = room_equivalence_policy or self._exact_room_equivalence
         self._last_agentic_outcome: PriceExecutionOutcome | None = None
 
@@ -186,6 +189,11 @@ class BookingComSearchMonitor:
     def last_agentic_outcome(self) -> PriceExecutionOutcome | None:
         """Ephemeral outcome for the coordinator's content-free canary projection."""
         return self._last_agentic_outcome
+
+    @property
+    def last_agent_steps_used(self) -> int:
+        """Code-metered legacy-agent actions used by the most recent price check."""
+        return self._active_budget.steps_used if self._active_budget is not None else 0
 
     def set_llm_enabled(self, enabled: bool) -> None:
         """Disable both extractor and agent resolution for a DOM-only check."""
@@ -329,6 +337,7 @@ class BookingComSearchMonitor:
                 owner_user_id=self._agentic_owner_user_id,
                 booking=booking,
                 session_material=snapshot.cookies,
+                limits=self._agentic_execution_limits,
             )
             self._last_agentic_outcome = outcome
             self._last_llm_calls_used = outcome.result.usage.model_calls

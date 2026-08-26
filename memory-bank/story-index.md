@@ -484,7 +484,8 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `001-agentic-executor-control-plane` | 4 stories | Complete (bolt 050) |
 | `002-local-agentic-price-executor` | 5 stories | Complete (bolts 051 and 054) |
 | `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
-| `004-post-promotion-browser-migration` | 2 stories | Blocked (bolt 053; post-promotion) |
+| `004-agentic-inventory-executor` | 1 story | Complete (bolt 053) |
+| `005-legacy-price-selector-retirement` | 1 story | Blocked (bolt 055; post-promotion) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
 
@@ -512,12 +513,17 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-151` | Prove DOM resilience and privacy boundaries | Agentic Browser | Complete | `003-agentic-browser-qualification/stories/001-prove-dom-resilience-and-privacy-boundaries.md` |
 | `US-152` | Govern canary promotion and regression rollback | Agentic Browser | In progress | `003-agentic-browser-qualification/stories/002-govern-canary-promotion-and-regression-rollback.md` |
 
-### 004-post-promotion-browser-migration: Post-Promotion Browser Migration
+### 004-agentic-inventory-executor: Agentic Inventory Executor
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-153` | Migrate inventory perception after promotion | Agentic Browser | Blocked | `004-post-promotion-browser-migration/stories/001-migrate-inventory-perception-after-promotion.md` |
-| `US-154` | Retire legacy price selectors after rollback window | Agentic Browser | Blocked | `004-post-promotion-browser-migration/stories/002-retire-legacy-price-selectors-after-rollback.md` |
+| `US-153` | Execute positive-only agentic inventory | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/001-execute-positive-only-agentic-inventory.md` |
+
+### 005-legacy-price-selector-retirement: Legacy Price Selector Retirement
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-154` | Retire legacy price selectors after rollback window | Agentic Browser | Blocked | `005-legacy-price-selector-retirement/stories/001-retire-legacy-price-selectors-after-rollback.md` |
 
 ## Summary
 
@@ -545,7 +551,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 4 | 13 | In construction (bolts 050–052 and 054 complete/offline); live canary active and bolt 053 blocked |
+| `023-replaceable-agentic-browser-executor` | 5 | 13 | In construction (bolts 050–054 complete/offline except the live-gated bolt 052); price canary active, bolt 055 blocked |
 
-All 155 stories (150 complete in-scope, 2 post-MVP extensibility, and 3 live-gated/blocked stories) are
+All 155 stories (151 complete in-scope, 2 post-MVP extensibility, and 2 live-gated/blocked stories) are
 assigned exactly once.

@@ -363,6 +363,33 @@ CREATE TABLE IF NOT EXISTS agentic_disclosure_consents (
     acknowledged_at TEXT NOT NULL
 );
 
+-- v17: content-free agentic inventory execution metrics. This table stores
+-- bounded machine metadata only; page content, screenshots, prompts, cookies,
+-- selectors, booking identity, and model reasoning are prohibited.
+CREATE TABLE IF NOT EXISTS agentic_inventory_executions (
+    run_id TEXT NOT NULL REFERENCES booking_sync_runs(run_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    terminal_status TEXT NOT NULL,
+    accepted_count INTEGER NOT NULL CHECK(accepted_count >= 0),
+    rejected_count INTEGER NOT NULL CHECK(rejected_count >= 0),
+    scope_count INTEGER NOT NULL CHECK(scope_count >= 0),
+    page_count INTEGER NOT NULL CHECK(page_count >= 0),
+    detail_count INTEGER NOT NULL CHECK(detail_count >= 0),
+    semantic_action_count INTEGER NOT NULL CHECK(semantic_action_count >= 0),
+    computer_action_count INTEGER NOT NULL CHECK(computer_action_count >= 0),
+    input_tokens INTEGER NOT NULL CHECK(input_tokens >= 0),
+    output_tokens INTEGER NOT NULL CHECK(output_tokens >= 0),
+    model_cost_micro_usd INTEGER NOT NULL CHECK(model_cost_micro_usd >= 0),
+    latency_ms INTEGER NOT NULL CHECK(latency_ms >= 0),
+    fallback_used INTEGER NOT NULL CHECK(fallback_used IN (0, 1)),
+    safety_codes_json TEXT NOT NULL,
+    PRIMARY KEY (run_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agentic_inventory_executions_user
+    ON agentic_inventory_executions(user_id, run_id);
+
 -- v2: finalised by Unit 2 (booking-com-price-monitor)
 -- v5: extraction_method also allows 'agent' (bolt 007 agent-assisted checks)
 CREATE TABLE IF NOT EXISTS check_history (

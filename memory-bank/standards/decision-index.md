@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-16T19:18:41Z
-total_decisions: 38
+last_updated: 2026-08-26T03:47:00Z
+total_decisions: 39
 ---
 
 # Decision Index
@@ -17,6 +17,18 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-039: Capability-specific positive-only agentic inventory
+- **Status**: accepted
+- **Date**: 2026-08-26
+- **Bolt**: 053-agentic-inventory-executor (agentic-inventory-executor)
+- **Path**: `bolts/053-agentic-inventory-executor/adr-039-capability-specific-positive-only-agentic-inventory.md`
+- **Summary**: Legacy inventory blocks price-canary evidence. Route a separate Stagehand inventory
+  capability to every disclosed authorized user, reconcile only current-run positive observations,
+  preserve unseen rows, and require a fresh receipt before price checking.
+- **Read when**: Changing inventory browser execution, account synchronization completeness,
+  current-run check admission, `/checknow` refresh orchestration, capability routing, or legacy
+  inventory rollback.
 
 ### ADR-038: Owner-only canary, consented promotion, and rollback window
 - **Status**: accepted

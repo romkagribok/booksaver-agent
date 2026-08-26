@@ -10,9 +10,7 @@ from booksaver.daemon.check_coordinator import (
     ImmediateAdmission,
     ImmediateCompletion,
     ImmediateCompletionKind,
-    InventoryCompletion,
 )
-from booksaver.domain.account_sync import InventoryCompleteness, SynchronizationTrigger
 from booksaver.domain.check_result import CheckOutcome
 from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.models import Booking
@@ -141,35 +139,6 @@ def register_check_now_command(
         }
         send(chat_id, "Choose a booking to check now:", keyboard)
 
-    def _refresh_failure(completion: InventoryCompletion) -> str | None:
-        report = completion.report
-        if report is None:
-            return (
-                "Booking.com refresh was unavailable. No fresh inventory conclusion "
-                "was made; try /checknow again shortly. Send /bookings to see the "
-                "last safe reservation state."
-            )
-        if report.completeness is InventoryCompleteness.COMPLETE:
-            return None
-        guidance = (
-            "Send /connect to restore authentication."
-            if report.failure_code is not None
-            and report.failure_code.value == "auth_required"
-            else "Try /checknow again shortly."
-        )
-        detail = " ".join((report.failure_detail or "").split())[:180]
-        status = (
-            "was incomplete"
-            if report.completeness is InventoryCompleteness.INCOMPLETE
-            else "failed"
-        )
-        explanation = f": {detail}" if detail else "."
-        return (
-            f"Booking.com refresh {status}{explanation}\n"
-            "No check was started from saved reservation data. "
-            f"{guidance} Send /bookings to see the last safe reservation state."
-        )
-
     def _command(cmd: IncomingCommand) -> None:
         selector = cmd.args.strip()
         if selector:
@@ -178,31 +147,7 @@ def register_check_now_command(
                 cmd.user_id, cmd.chat_id, booking
             ))
             return
-        if coordinator is None:
-            reply(
-                cmd.chat_id,
-                "Immediate checks are unavailable until the daemon is restarted.",
-            )
-            return
-
-        def _synchronized(completion: InventoryCompletion) -> None:
-            failure = _refresh_failure(completion)
-            if failure is not None:
-                reply(cmd.chat_id, failure)
-                return
-            _send_picker(cmd.user_id, cmd.chat_id)
-
-        admission = coordinator.request_inventory(
-            cmd.user_id,
-            _synchronized,
-            trigger=SynchronizationTrigger.CHECK_NOW,
-        )
-        if admission is ImmediateAdmission.ACCEPTED:
-            reply(cmd.chat_id, "Refreshing Booking.com reservations before checking…")
-        elif admission is ImmediateAdmission.BUSY:
-            reply(cmd.chat_id, "A live browser task is already running. Try again shortly.")
-        else:
-            reply(cmd.chat_id, "BookSaver is shutting down; no new check was started.")
+        _send_picker(cmd.user_id, cmd.chat_id)
 
     def _callback(callback: IncomingCallback) -> None:
         selector = callback.data.removeprefix("checknow:")

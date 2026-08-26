@@ -29,7 +29,7 @@ duration and by requiring a real owner-only canary before invited-user routing.
 
 - Simulating or fabricating 14 days of live evidence.
 - Automatically promoting invited users.
-- Post-promotion inventory migration (unit 004).
+- Inventory execution and inventory-specific operational evidence (unit 004).
 
 ## Assigned Requirements
 

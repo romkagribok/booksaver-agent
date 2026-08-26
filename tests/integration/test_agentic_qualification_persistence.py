@@ -122,7 +122,7 @@ def test_redacted_canary_consent_promotion_and_regression_round_trip(
             & columns
         )
         version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
-        assert version == SCHEMA_VERSION == 16
+        assert version == SCHEMA_VERSION == 17
 
 
 def test_invitee_cannot_record_owner_canary_or_promote(tmp_path: Path) -> None:

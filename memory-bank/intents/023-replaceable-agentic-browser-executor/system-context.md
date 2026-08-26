@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-16T19:18:41Z
+updated: 2026-08-25T13:00:00Z
 ---
 
 # System Context: Replaceable Agentic Browser Executor
@@ -20,6 +20,8 @@ updated: 2026-08-16T19:18:41Z
   selects equivalent refundable all-in offers, persists results, and permits notifications.
 - **Local browser executor** (System): Performs bounded perception and read-only navigation in a
   transient browser without domain authority.
+- **Inventory reconciliation policy** (System): Accepts only validated positive reservation
+  observations, derives eligibility, and prevents agentic evidence from marking unseen rows absent.
 
 ## External Systems
 
@@ -46,6 +48,7 @@ updated: 2026-08-16T19:18:41Z
 
 - Trusted booking property reference, dates, occupancy, expected currency, owner/session binding,
   deadline, action limit, and cost reservation.
+- Trusted inventory scopes, authorized account binding, and current-run execution identity.
 - Stagehand semantic action proposals and typed extraction.
 - Anthropic computer-use action requests, typed observation submissions, terminal outcomes, and
   usage data.
@@ -56,6 +59,7 @@ updated: 2026-08-16T19:18:41Z
 - Guarded read-only browser actions to Booking.com.
 - Bounded semantic evidence and escalation screenshots to Anthropic.
 - Typed, redacted price observations to BookSaver validation.
+- Typed positive reservation observations and traversal coverage to BookSaver inventory validation.
 - Redacted metrics/failure codes to local persistence and owner-only operations.
 - Existing savings notifications after independent validation.
 
@@ -65,6 +69,8 @@ updated: 2026-08-16T19:18:41Z
   results/logs/persistence.
 - Model-selected arbitrary URLs or unguarded browser actions.
 - Executor decisions about equivalence, savings, transaction authority, or user identity.
+- Executor decisions that inventory is authoritatively complete or that an unseen reservation is
+  absent.
 
 ## System Context Diagram
 
@@ -79,7 +85,10 @@ flowchart LR
     executor --> anthropic["Anthropic Sonnet 5"]
     executor --> evidence["Typed redacted observations"]
     evidence --> validation["BookSaver validation and evaluation"]
+    executor --> inventory["Typed positive inventory evidence"]
+    inventory --> reconcile["BookSaver positive-only reconciliation"]
     validation --> persistence["Local persistence and notifications"]
+    reconcile --> persistence
     control -. "legacy rollback" .-> legacy["Existing Playwright price path"]
     legacy --> booking
 ```
@@ -94,3 +103,16 @@ flowchart LR
 5. Executor returns typed evidence without domain conclusions or secret material.
 6. BookSaver validates facts, evaluates equivalence/savings, reconciles cost, optionally persists
    verified refreshed cookies, records redacted metrics, and destroys the browser profile.
+
+## Inventory Lifecycle
+
+1. A disclosed authorized user triggers `/bookings`, post-connect synchronization, `/checknow`, or a
+   scheduled slot under the single coordinator gate.
+2. BookSaver issues an account-bound session lease and fixed upcoming, past, and cancelled work
+   scopes to the inventory executor.
+3. Stagehand extracts typed page state and proposes only read-only scope, pagination, or detail
+   actions; BookSaver guards and replays each action.
+4. The executor returns positive reservation evidence and redacted traversal metadata. It cannot
+   establish authoritative absence or completeness.
+5. BookSaver validates stable identities and domain facts, persists accepted current-run positives,
+   preserves unseen rows, and permits a price check only for a reservation re-observed in that run.

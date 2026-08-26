@@ -31,7 +31,7 @@ requires_bolts:
   - 051-local-agentic-price-executor
   - 054-local-agentic-price-executor
 enables_bolts:
-  - 053-post-promotion-browser-migration
+  - 055-legacy-price-selector-retirement
 requires_units:
   - 001-agentic-executor-control-plane
   - 002-local-agentic-price-executor
