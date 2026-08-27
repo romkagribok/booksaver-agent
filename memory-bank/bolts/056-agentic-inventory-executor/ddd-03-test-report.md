@@ -15,8 +15,9 @@ status: complete
   still requires a code-owned inventory task and inspected DOM role, label, and destination.
 - Authentication, MFA, captcha, bot-wall, mutation, external, HTTP, user-info, nonstandard-port,
   popup, and post-action escape cases fail closed.
-- Detail actions tolerate changed read-only Booking.com routes when inspected evidence matches the
-  code-owned detail task.
+- Detail actions tolerate changed read-only Booking.com routes only when inspected evidence matches
+  the code-owned detail task and the href carries confirmation-route or exact reservation-subject
+  proof. Missing and unrelated hrefs fail closed.
 - Diagnostics contain only closed destination/host classes, a sanitized route template, query-key
   names, fragment presence, phase, terminal status, and rejection reason. Tests prove raw hostnames,
   email-like identifiers, and query/path values do not enter logs.
@@ -25,8 +26,8 @@ status: complete
 
 - `python3 -m ruff check src tests`: passed.
 - `python3 -m mypy src`: passed for 127 source files.
-- `python3 -m pytest`: 1779 passed, 55 pre-existing deprecation warnings.
-- Focused agentic inventory suite: 44 passed.
+- `python3 -m pytest`: 1786 passed, 55 pre-existing deprecation warnings.
+- Focused agentic inventory suite: 51 passed after resolving all four initial Bugbot findings.
 - AI-DLC artifact validator: 0 issues.
 - AI-DLC status-integrity validator: 0 inconsistencies before completion cascade.
 - Stagehand runtime smoke: pinned `stagehand==4.0.1` imported successfully.

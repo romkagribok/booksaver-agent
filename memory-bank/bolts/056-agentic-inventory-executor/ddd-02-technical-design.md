@@ -63,17 +63,20 @@ No provider-authored description enters these operations.
 
 1. Parse with the standard-library URL parser and reject malformed destinations.
 2. Require HTTPS, no user information, the default HTTPS port, and Booking.com or a subdomain.
-3. Examine normalized path, query keys, query values, and fragment only in memory. Known
+3. Examine normalized path, non-date query keys, control-query values, and fragment only in memory.
+   Ordinary stay-date fields such as `checkin` and `checkout` are data, not action signals. Known
    authentication/MFA/captcha/bot-wall families map to existing typed terminal outcomes. Known
    account mutation, cancellation, reservation, checkout, payment, purchase, or download families
    are denied.
-4. Treat known inventory/confirmation families as read-only candidates without requiring a closed
-   set of benign query keys.
+4. Treat only strong account-inventory and confirmation route families as interactive candidates
+   without requiring a closed set of benign query keys. Generic `/booking`-style pages remain
+   observation-only.
 5. Treat other non-mutating Booking.com destinations as `observe_only`, allowing semantic state
    extraction but no generic action.
 6. Permit one action only when inspected role/label/href and the code-owned inventory traversal task
    prove it is a scope, pagination, or detail operation and both current and target destinations are
-   non-denied. Unknown routes therefore gain no blanket interaction capability.
+   non-denied. Detail clicks additionally require a real href plus confirmation-route or exact
+   reservation-subject evidence. Unknown routes therefore gain no blanket interaction capability.
 7. Reassess the resulting destination after every action. Unsafe transitions and new popups remain
    terminal.
 

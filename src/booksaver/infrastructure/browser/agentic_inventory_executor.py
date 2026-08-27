@@ -132,9 +132,7 @@ _PAGINATION_TEXT = re.compile(
     re.IGNORECASE,
 )
 _DETAIL_TEXT = re.compile(
-    r"\b(view|open|show)\s+(?:reservation|booking|trip|confirmation)?\s*details?\b|"
-    r"\b(?:reservation|booking|trip|confirmation)\s+details?\b",
-    re.IGNORECASE,
+    r"\b(details?|confirmation)\b", re.IGNORECASE
 )
 _SCOPE_ALIASES: dict[InventoryScope, frozenset[str]] = {
     InventoryScope.UPCOMING: frozenset({"upcoming", "active", "confirmed"}),
@@ -157,7 +155,7 @@ _MUTATION_DESTINATION_TEXT = re.compile(
 )
 _MUTATION_PATH_TEXT = re.compile(r"\b(book|reserve)\b", re.IGNORECASE)
 _INVENTORY_DESTINATION_TEXT = re.compile(
-    r"\b(my\s*reservations?|my\s*trips?|reservations?|bookings?|trips?|stays?)\b",
+    r"\b(my\s*reservations?|my\s*trips?|account\s+(?:reservations?|bookings?|trips?|stays?))\b",
     re.IGNORECASE,
 )
 _CONFIRMATION_DESTINATION_TEXT = re.compile(
@@ -165,6 +163,20 @@ _CONFIRMATION_DESTINATION_TEXT = re.compile(
     re.IGNORECASE,
 )
 _SAFE_LOG_QUERY_KEY = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
+_BENIGN_DATA_QUERY_KEYS = frozenset(
+    {
+        "arrival",
+        "check_in",
+        "check_out",
+        "checkin",
+        "checkout",
+        "departure",
+    }
+)
+_CONTROL_QUERY_KEY_TEXT = re.compile(
+    r"\b(action|command|destination|intent|next|operation|path|redirect|route|target|url)\b",
+    re.IGNORECASE,
+)
 _SAFE_LOG_PATH_COMPONENTS = frozenset(
     {
         "account",
@@ -482,11 +494,17 @@ def _task_click_rejection(
     if task.kind is InventoryTaskKind.DETAIL:
         if not _DETAIL_TEXT.search(label):
             return GuardRejection.UNSAFE_LABEL
-        if destination is not None and (
-            _assess_destination(destination).disposition is DestinationDisposition.DENY
-        ):
+        if destination is None:
             return GuardRejection.UNSAFE_PATH
-        return None
+        assessment = _assess_destination(destination)
+        if assessment.disposition is DestinationDisposition.DENY:
+            return GuardRejection.UNSAFE_PATH
+        return (
+            None
+            if assessment.category is DestinationCategory.CONFIRMATION
+            or _destination_references_subject(destination, task.remote_id)
+            else GuardRejection.UNSAFE_PATH
+        )
     if _is_confirmation_destination(destination):
         return GuardRejection.UNSAFE_PATH
     if task.kind is InventoryTaskKind.SCOPE:
@@ -534,11 +552,20 @@ def _assess_destination(url: str | None) -> DestinationAssessment:
 
     decoded_path = unquote(parsed.path)
     decoded_fragment = unquote(parsed.fragment)
-    decoded_query = " ".join(
-        f"{unquote(key)} {unquote(value)}" for key, value in pairs
-    )
     path_fragment_text = _normalize_destination_text(f"{decoded_path} {decoded_fragment}")
-    risk_text = _normalize_destination_text(f"{path_fragment_text} {decoded_query}")
+    query_key_text = " ".join(
+        _normalize_destination_text(unquote(key))
+        for key, _value in pairs
+        if unquote(key).casefold() not in _BENIGN_DATA_QUERY_KEYS
+    )
+    control_query_value_text = " ".join(
+        _normalize_destination_text(unquote(value))
+        for key, value in pairs
+        if _CONTROL_QUERY_KEY_TEXT.search(_normalize_destination_text(unquote(key)))
+    )
+    risk_text = " ".join(
+        part for part in (path_fragment_text, query_key_text, control_query_value_text) if part
+    )
     terminal_status = None
     if _CHALLENGE_DESTINATION_TEXT.search(risk_text):
         category = DestinationCategory.CHALLENGE
@@ -558,9 +585,9 @@ def _assess_destination(url: str | None) -> DestinationAssessment:
         path_fragment_text
     ):
         category = DestinationCategory.MUTATION
-    elif _CONFIRMATION_DESTINATION_TEXT.search(risk_text):
+    elif _CONFIRMATION_DESTINATION_TEXT.search(path_fragment_text):
         category = DestinationCategory.CONFIRMATION
-    elif _INVENTORY_DESTINATION_TEXT.search(risk_text):
+    elif _INVENTORY_DESTINATION_TEXT.search(path_fragment_text):
         category = DestinationCategory.INVENTORY
     else:
         category = DestinationCategory.UNKNOWN_BOOKING
@@ -604,6 +631,24 @@ def _destination_assessment(
         keys,
         bool(parsed is not None and parsed.fragment),
         terminal_status,
+    )
+
+
+def _destination_references_subject(url: str, subject: str | None) -> bool:
+    if subject is None:
+        return False
+    parsed = urlsplit(url)
+    candidates = [unquote(parsed.path), unquote(parsed.fragment)]
+    candidates.extend(unquote(value) for _key, value in parse_qsl(parsed.query))
+    subject_key = subject.strip().casefold()
+    return any(
+        subject_key
+        in {
+            token.casefold()
+            for token in re.split(r"[^a-zA-Z0-9_-]+", candidate)
+            if token
+        }
+        for candidate in candidates
     )
 
 

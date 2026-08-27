@@ -543,7 +543,9 @@ def test_inventory_detail_task_allows_changed_read_only_booking_route() -> None:
         current=DestinationSnapshot(INVENTORY_ENTRY_URL),
         label="View reservation details",
         role="link",
-        destination="https://secure.booking.com/travel-plan?item=opaque&layout=compact",
+        destination=(
+            "https://secure.booking.com/travel-plan?item=6992391225&layout=compact"
+        ),
     )
 
     assert guard.evaluate(
@@ -554,6 +556,57 @@ def test_inventory_detail_task_allows_changed_read_only_booking_route() -> None:
             "6992391225",
         ),
     ).allowed
+
+
+@pytest.mark.parametrize("label", ["Details", "See details", "View more details"])
+def test_inventory_detail_task_accepts_common_labels_with_subject_proof(
+    label: str,
+) -> None:
+    guard = InventoryActionGuard()
+    proposal = BrowserActionProposal(
+        action=BrowserActionType.CLICK,
+        current=DestinationSnapshot(INVENTORY_ENTRY_URL),
+        label=label,
+        role="link",
+        destination="https://secure.booking.com/travel-plan/6992391225",
+    )
+
+    assert guard.evaluate(
+        proposal,
+        task=InventoryTraversalTask(
+            InventoryTaskKind.DETAIL,
+            InventoryScope.UPCOMING,
+            "6992391225",
+        ),
+    ).allowed
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [None, "https://secure.booking.com/travel-plan?item=opaque"],
+)
+def test_inventory_detail_task_requires_destination_subject_proof(
+    destination: str | None,
+) -> None:
+    guard = InventoryActionGuard()
+    proposal = BrowserActionProposal(
+        action=BrowserActionType.CLICK,
+        current=DestinationSnapshot(INVENTORY_ENTRY_URL),
+        label="Details",
+        role="button",
+        destination=destination,
+    )
+
+    decision = guard.evaluate(
+        proposal,
+        task=InventoryTraversalTask(
+            InventoryTaskKind.DETAIL,
+            InventoryScope.UPCOMING,
+            "6992391225",
+        ),
+    )
+
+    assert decision.rejection is GuardRejection.UNSAFE_PATH
 
 
 @pytest.mark.parametrize(
@@ -612,6 +665,31 @@ def test_unknown_booking_page_is_observable_but_has_no_generic_action_authority(
 
     assert guard.validate_destination(DestinationSnapshot("about:blank"), unknown).allowed
     assert guard.evaluate(proposal).rejection is GuardRejection.INVALID_DESTINATION
+
+
+def test_generic_booking_funnel_is_observation_only() -> None:
+    guard = InventoryActionGuard()
+    funnel = DestinationSnapshot("https://secure.booking.com/booking.html")
+    proposal = BrowserActionProposal(
+        action=BrowserActionType.SCROLL,
+        current=funnel,
+        delta_y=500,
+    )
+
+    assert guard.validate_destination(DestinationSnapshot("about:blank"), funnel).allowed
+    assert guard.evaluate(proposal).rejection is GuardRejection.INVALID_DESTINATION
+
+
+def test_checkout_stay_date_query_is_not_a_mutation_signal() -> None:
+    guard = InventoryActionGuard()
+    destination = DestinationSnapshot(
+        f"{INVENTORY_ENTRY_URL}?checkin=2026-11-24&checkout=2026-11-25&layout=compact"
+    )
+
+    assert guard.validate_destination(
+        DestinationSnapshot("about:blank"),
+        destination,
+    ).allowed
 
 
 @pytest.mark.parametrize(
