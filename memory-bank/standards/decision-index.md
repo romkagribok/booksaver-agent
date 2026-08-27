@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-26T03:47:00Z
-total_decisions: 39
+last_updated: 2026-08-27T23:17:21Z
+total_decisions: 40
 ---
 
 # Decision Index
@@ -17,6 +17,18 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-040: Separate destination observation from interaction authority
+- **Status**: accepted
+- **Date**: 2026-08-27
+- **Bolt**: 056-agentic-inventory-executor (agentic-inventory-executor)
+- **Path**: `bolts/056-agentic-inventory-executor/adr-040-separate-observation-from-interaction-authority.md`
+- **Summary**: Exact inventory route/query admission blocked the first live Stagehand run before
+  semantic extraction. Allow unfamiliar non-mutating HTTPS Booking.com destinations to be observed,
+  but require task-specific inspected evidence for every interaction and log only sanitized route
+  shape on rejection.
+- **Read when**: Changing agentic inventory destinations, route classification, semantic or visual
+  action guards, Booking.com redirect handling, unsafe destination terminals, or browser diagnostics.
 
 ### ADR-039: Capability-specific positive-only agentic inventory
 - **Status**: accepted

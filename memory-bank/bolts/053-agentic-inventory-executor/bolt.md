@@ -30,7 +30,8 @@ requires_bolts:
   - 050-agentic-executor-control-plane
   - 051-local-agentic-price-executor
   - 054-local-agentic-price-executor
-enables_bolts: []
+enables_bolts:
+  - 056-agentic-inventory-executor
 requires_units:
   - 001-agentic-executor-control-plane
   - 002-local-agentic-price-executor
