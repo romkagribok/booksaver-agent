@@ -536,15 +536,88 @@ def test_inventory_guard_allows_read_only_detail_but_rejects_mutation_and_typing
     assert guard.evaluate(typing).rejection is GuardRejection.UNSAFE_INPUT
 
 
+def test_inventory_detail_task_allows_changed_read_only_booking_route() -> None:
+    guard = InventoryActionGuard()
+    proposal = BrowserActionProposal(
+        action=BrowserActionType.CLICK,
+        current=DestinationSnapshot(INVENTORY_ENTRY_URL),
+        label="View reservation details",
+        role="link",
+        destination=(
+            "https://secure.booking.com/travel-plan?item=6992391225&layout=compact"
+        ),
+    )
+
+    assert guard.evaluate(
+        proposal,
+        task=InventoryTraversalTask(
+            InventoryTaskKind.DETAIL,
+            InventoryScope.UPCOMING,
+            "6992391225",
+        ),
+    ).allowed
+
+
+@pytest.mark.parametrize("label", ["Details", "See details", "View more details"])
+def test_inventory_detail_task_accepts_common_labels_with_subject_proof(
+    label: str,
+) -> None:
+    guard = InventoryActionGuard()
+    proposal = BrowserActionProposal(
+        action=BrowserActionType.CLICK,
+        current=DestinationSnapshot(INVENTORY_ENTRY_URL),
+        label=label,
+        role="link",
+        destination="https://secure.booking.com/travel-plan/6992391225",
+    )
+
+    assert guard.evaluate(
+        proposal,
+        task=InventoryTraversalTask(
+            InventoryTaskKind.DETAIL,
+            InventoryScope.UPCOMING,
+            "6992391225",
+        ),
+    ).allowed
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [None, "https://secure.booking.com/travel-plan?item=opaque"],
+)
+def test_inventory_detail_task_requires_destination_subject_proof(
+    destination: str | None,
+) -> None:
+    guard = InventoryActionGuard()
+    proposal = BrowserActionProposal(
+        action=BrowserActionType.CLICK,
+        current=DestinationSnapshot(INVENTORY_ENTRY_URL),
+        label="Details",
+        role="button",
+        destination=destination,
+    )
+
+    decision = guard.evaluate(
+        proposal,
+        task=InventoryTraversalTask(
+            InventoryTaskKind.DETAIL,
+            InventoryScope.UPCOMING,
+            "6992391225",
+        ),
+    )
+
+    assert decision.rejection is GuardRejection.UNSAFE_PATH
+
+
 @pytest.mark.parametrize(
     "destination",
     [
         f"{INVENTORY_ENTRY_URL}?page=2&action=cancel",
+        f"{INVENTORY_ENTRY_URL}?action=cancelReservation",
         "https://secure.booking.com/confirmation.html?trip_id=6992391225&action=cancel",
         "https://secure.booking.com/not-myreservations/manage?page=2",
         "https://secure.booking.com/confirmation-delete.html?trip_id=6992391225",
         f"{INVENTORY_ENTRY_URL}#cancel",
-        f"{INVENTORY_ENTRY_URL}#upcoming",
         "https://secure.booking.com/confirmation.html?trip_id=6992391225#payment",
     ],
 )
@@ -561,6 +634,159 @@ def test_inventory_guard_rejects_mutating_or_lookalike_destinations(
     )
 
     assert guard.evaluate(proposal).rejection is GuardRejection.INVALID_DESTINATION
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "https://secure.booking.com/travel-plan?view=upcoming&layout=compact#upcoming",
+        f"{INVENTORY_ENTRY_URL}?page=2&layout=compact#upcoming",
+    ],
+)
+def test_inventory_guard_observes_benign_booking_destination_churn(
+    destination: str,
+) -> None:
+    guard = InventoryActionGuard()
+
+    assert guard.validate_destination(
+        DestinationSnapshot("about:blank"),
+        DestinationSnapshot(destination),
+    ).allowed
+
+
+def test_unknown_booking_page_is_observable_but_has_no_generic_action_authority() -> None:
+    guard = InventoryActionGuard()
+    unknown = DestinationSnapshot("https://secure.booking.com/travel-plan?layout=compact")
+    proposal = BrowserActionProposal(
+        action=BrowserActionType.SCROLL,
+        current=unknown,
+        delta_y=500,
+    )
+
+    assert guard.validate_destination(DestinationSnapshot("about:blank"), unknown).allowed
+    assert guard.evaluate(proposal).rejection is GuardRejection.INVALID_DESTINATION
+
+
+def test_generic_booking_funnel_is_observation_only() -> None:
+    guard = InventoryActionGuard()
+    funnel = DestinationSnapshot("https://secure.booking.com/booking.html")
+    proposal = BrowserActionProposal(
+        action=BrowserActionType.SCROLL,
+        current=funnel,
+        delta_y=500,
+    )
+
+    assert guard.validate_destination(DestinationSnapshot("about:blank"), funnel).allowed
+    assert guard.evaluate(proposal).rejection is GuardRejection.INVALID_DESTINATION
+
+
+def test_checkout_stay_date_query_is_not_a_mutation_signal() -> None:
+    guard = InventoryActionGuard()
+    destination = DestinationSnapshot(
+        f"{INVENTORY_ENTRY_URL}?checkin=2026-11-24&checkout=2026-11-25&layout=compact"
+    )
+
+    assert guard.validate_destination(
+        DestinationSnapshot("about:blank"),
+        destination,
+    ).allowed
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "http://secure.booking.com/myreservations.html",
+        "https://user:password@secure.booking.com/myreservations.html",
+        "https://secure.booking.com:444/myreservations.html",
+        "https://evil.example/myreservations.html",
+        "https://secure.booking.com/sign-in",
+        "https://secure.booking.com/two-factor",
+        "https://secure.booking.com/captcha",
+        "https://secure.booking.com/challenge",
+        f"{INVENTORY_ENTRY_URL}?redirect=%2Fcheckout",
+    ],
+)
+def test_inventory_guard_denies_sensitive_destination_families(
+    destination: str,
+) -> None:
+    guard = InventoryActionGuard()
+
+    assert not guard.validate_destination(
+        DestinationSnapshot("about:blank"),
+        DestinationSnapshot(destination),
+    ).allowed
+
+
+def test_inventory_guard_rejects_new_popup_on_otherwise_safe_destination() -> None:
+    guard = InventoryActionGuard()
+
+    decision = guard.validate_destination(
+        DestinationSnapshot(INVENTORY_ENTRY_URL),
+        DestinationSnapshot(INVENTORY_ENTRY_URL, popup_count=1),
+    )
+
+    assert decision.rejection is GuardRejection.UNEXPECTED_POPUP
+
+
+def test_code_owned_navigation_tolerates_benign_booking_redirect() -> None:
+    runtime = _Runtime(
+        redirect_url=(
+            "https://secure.booking.com/travel-plan"
+            "?view=upcoming&layout=compact#upcoming"
+        )
+    )
+
+    outcome, _ledger = _execute(runtime)
+
+    assert outcome.result.status is InventoryExecutionStatus.OBSERVED
+    assert outcome.validation.accepted_positive_count == 1
+
+
+@pytest.mark.parametrize(
+    ("destination", "expected"),
+    [
+        ("https://account.booking.com/sign-in", InventoryExecutionStatus.SIGNED_OUT),
+        (
+            f"{INVENTORY_ENTRY_URL}?redirect=%2Ftwo-factor",
+            InventoryExecutionStatus.MFA_REQUIRED,
+        ),
+        ("https://secure.booking.com/captcha", InventoryExecutionStatus.CAPTCHA),
+        ("https://secure.booking.com/challenge", InventoryExecutionStatus.BOT_WALL),
+    ],
+)
+def test_code_owned_navigation_preserves_typed_sensitive_terminals(
+    destination: str,
+    expected: InventoryExecutionStatus,
+) -> None:
+    outcome, ledger = _execute(_Runtime(redirect_url=destination))
+
+    assert outcome.result.status is expected
+    assert ledger.reservations == []
+
+
+def test_destination_diagnostic_is_useful_and_redacts_values(caplog) -> None:
+    secret = "super-secret-cookie-value-0123456789"
+    email = "dad@example.com"
+    runtime = _Runtime(
+        redirect_url=(
+            f"https://evil.example/capture/{email}/{secret}"
+            f"?session={secret}&email={email}#payment"
+        )
+    )
+
+    with caplog.at_level("WARNING"):
+        outcome, _ledger = _execute(runtime)
+
+    message = caplog.text
+    assert outcome.result.status is InventoryExecutionStatus.UNSAFE_ACTION
+    assert "phase=entry_redirect" in message
+    assert "category=external" in message
+    assert "host_class=external" in message
+    assert "query_keys=email,session" in message
+    assert "fragment_present=True" in message
+    assert secret not in message
+    assert email not in message
+    assert "evil.example" not in message
 
 
 def test_inventory_computer_key_is_normalized_before_runtime_execution() -> None:

@@ -1,7 +1,7 @@
 ---
 intent: 023-replaceable-agentic-browser-executor
 created: 2026-08-14T02:46:26Z
-completed: 2026-08-25T13:00:00Z
+completed: 2026-08-27T23:13:41Z
 status: complete
 ---
 
@@ -20,6 +20,10 @@ checkpoints. On 2026-08-25 the owner approved an amendment that advances Stageha
 every authorized user, accepts positive-only reconciliation, removes duplicate `/checknow`
 inventory execution, and authorizes the amended AI-DLC flow through final merge. Deployment and
 production data access remain separate operations.
+On 2026-08-27 the first live agentic inventory run proved local Stagehand launch/navigation but
+failed before semantic extraction because exact destination admission rejected the resulting
+Booking.com route. The owner approved replacing exact path/query admission with layered
+observation-versus-interaction policy and adding privacy-safe destination diagnostics.
 
 ## Artifacts Created
 
@@ -29,8 +33,8 @@ production data access remain separate operations.
 | System Context | Complete | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
 | Units | Complete | `units.md` and four unit briefs |
-| Stories | Complete | 13 story files (US-143 through US-155, including corrective US-155) |
-| Bolt Plan | Complete | Bolts 050 through 053 and 055; corrective bolt 054 complete |
+| Stories | Amended | 14 story files (US-143 through US-156, including corrective US-155 and US-156) |
+| Bolt Plan | Amended | Bolts 050 through 053 and 055; corrective bolt 054 complete and 056 in progress |
 
 ## Summary
 
@@ -39,8 +43,8 @@ production data access remain separate operations.
 | Functional Requirements | 11 |
 | Non-Functional Requirements | 7 |
 | Units | 5 |
-| Stories | 13 |
-| Bolts Planned | 5 plus corrective bolt 054 |
+| Stories | 14 |
+| Bolts Planned | 5 plus corrective bolts 054 and 056 |
 
 ## Decision Log
 
@@ -55,6 +59,8 @@ production data access remain separate operations.
 | 2026-08-25 | Advance agentic inventory for every authorized user | Legacy inventory blocks price-canary evidence and no invitees currently use the deployment | Yes |
 | 2026-08-25 | Preserve positive-only reconciliation | Current-run evidence can unblock a known reservation without trusting model-declared absence | Yes |
 | 2026-08-25 | Remove duplicate `/checknow` inventory execution | One selected operation must share one inventory verification, budget, and deadline | Yes |
+| 2026-08-27 | Separate destination observation from interaction authority | Benign Booking.com route churn must not block Stagehand perception or silently expand action authority | Yes |
+| 2026-08-27 | Log only sanitized destination shape and rejection codes | Live failures need local diagnosis without raw URLs, query values, page content, or session data | Yes |
 
 ## Ready for Construction
 
@@ -68,7 +74,7 @@ production data access remain separate operations.
 
 ## Next Steps
 
-1. Execute bolt 053 using completed bolts 050, 051, and 054.
-2. Roll out capability-specific agentic inventory to every disclosed authorized user while keeping
+1. Execute corrective bolt 056 using completed bolt 053 and the accepted safety/privacy ADRs.
+2. Re-verify capability-specific agentic inventory for every disclosed authorized user while keeping
    price routing in its current owner-canary state.
 3. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.

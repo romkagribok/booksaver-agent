@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-08-25T13:00:00Z
+updated: 2026-08-27T23:13:41Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -123,6 +123,9 @@ legacy inventory remains a capability-specific rollback path.
     owner-configured Anthropic account may process visible Booking.com page content and escalation
     screenshots.
   - An egress test proves authenticated jobs contact only Booking.com, Anthropic, and loopback.
+  - Destination rejection logs contain only a closed destination class, sanitized bounded path
+    template, sorted query-key names, and code-owned phase/reason; raw URLs, query values,
+    fragments, page content, reservation identity, and session material are prohibited.
 - **Priority**: Must
 
 ### FR-9: Price qualification and automatic regression response
@@ -165,6 +168,10 @@ legacy inventory remains a capability-specific rollback path.
   - Inventory-specific guards permit only read-only scope, pagination, and detail navigation;
     typing, login, credentials, MFA/captcha, modification, cancellation, reservation, payment, and
     purchase actions are prohibited.
+  - Initial inventory redirects use layered `deny`, `observe_only`, and `interact` admission:
+    unfamiliar non-mutating HTTPS Booking.com routes may be perceived without requiring an exact
+    path/query allowlist, while interaction still requires inspected metadata and task-specific
+    code-owned read-only proof.
   - The legacy inventory parser remains unchanged and available only as a capability-specific
     rollback path.
 - **Priority**: Must

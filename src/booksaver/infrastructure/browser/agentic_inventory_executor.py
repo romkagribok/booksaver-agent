@@ -18,7 +18,7 @@ from datetime import UTC, date, datetime
 from decimal import InvalidOperation
 from enum import Enum
 from typing import Any, Protocol, cast
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import SplitResult, parse_qs, parse_qsl, unquote, urlsplit
 
 from booksaver.application.async_runner import AsyncLoopRunner
 from booksaver.application.browser_executor import ExecutionMeter, InMemorySessionLeaseBroker
@@ -84,18 +84,6 @@ _VIEWPORT_HEIGHT = 800
 _MODEL_ENVELOPE = TokenEnvelope(30_000, 4_096)
 _MAX_SCOPE_PAGES = 20
 _MAX_DETAIL_TASKS = 20
-_INVENTORY_LIST_PATHS = frozenset(
-    {
-        "/myreservations",
-        "/myreservations.html",
-        "/mytrips",
-        "/mytrips.html",
-    }
-)
-_CONFIRMATION_PATHS = frozenset({"/confirmation", "/confirmation.html"})
-_INVENTORY_QUERY_KEYS = frozenset(
-    {"page", "cursor", "offset", "scope", "status", "tab", "filter"}
-)
 _CONFIRMATION_QUERY_KEYS = frozenset({"trip_id", "reservation_id"})
 
 _SAFE_KEYS = frozenset(
@@ -143,11 +131,110 @@ _PAGINATION_TEXT = re.compile(
     r"(?:older|newer)\s+(?:reservations?|bookings?|trips?|stays?))\b",
     re.IGNORECASE,
 )
+_DETAIL_TEXT = re.compile(
+    r"\b(details?|confirmation)\b", re.IGNORECASE
+)
 _SCOPE_ALIASES: dict[InventoryScope, frozenset[str]] = {
     InventoryScope.UPCOMING: frozenset({"upcoming", "active", "confirmed"}),
     InventoryScope.PAST: frozenset({"past", "previous", "completed"}),
     InventoryScope.CANCELLED: frozenset({"cancelled", "canceled"}),
 }
+
+_AUTH_DESTINATION_TEXT = re.compile(
+    r"\b(sign\s*in|signin|log\s*in|login|auth|password|passcode|two[- ]factor|mfa)\b",
+    re.IGNORECASE,
+)
+_CHALLENGE_DESTINATION_TEXT = re.compile(
+    r"\b(captcha|verify\s*human|challenge|bot\s*wall)\b", re.IGNORECASE
+)
+_MUTATION_DESTINATION_TEXT = re.compile(
+    r"\b(book\s+now|reserve\s+now|pay|payment|purchase|buy|checkout|cancel|delete|"
+    r"remove|change|modify|edit|manage|upgrade|extras?|upload|download|account\s+settings|"
+    r"profile)\b",
+    re.IGNORECASE,
+)
+_MUTATION_PATH_TEXT = re.compile(r"\b(book|reserve)\b", re.IGNORECASE)
+_INVENTORY_DESTINATION_TEXT = re.compile(
+    r"\b(my\s*reservations?|my\s*trips?|account\s+(?:reservations?|bookings?|trips?|stays?))\b",
+    re.IGNORECASE,
+)
+_CONFIRMATION_DESTINATION_TEXT = re.compile(
+    r"\b(confirmation|reservation\s*details?|booking\s*details?|trip\s*details?)\b",
+    re.IGNORECASE,
+)
+_SAFE_LOG_QUERY_KEY = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
+_BENIGN_DATA_QUERY_KEYS = frozenset(
+    {
+        "arrival",
+        "check_in",
+        "check_out",
+        "checkin",
+        "checkout",
+        "departure",
+    }
+)
+_CONTROL_QUERY_KEY_TEXT = re.compile(
+    r"\b(action|command|destination|intent|next|operation|path|redirect|route|target|url)\b",
+    re.IGNORECASE,
+)
+_SAFE_LOG_PATH_COMPONENTS = frozenset(
+    {
+        "account",
+        "auth",
+        "booking",
+        "bookings",
+        "captcha",
+        "challenge",
+        "confirmation",
+        "confirmation.html",
+        "detail",
+        "details",
+        "login",
+        "my-reservations",
+        "my-trips",
+        "myreservations",
+        "myreservations.html",
+        "mytrips",
+        "mytrips.html",
+        "reservation",
+        "reservations",
+        "sign-in",
+        "signin",
+        "stay",
+        "stays",
+        "trip",
+        "trips",
+        "verify-human",
+    }
+)
+
+
+class DestinationDisposition(Enum):
+    DENY = "deny"
+    OBSERVE_ONLY = "observe_only"
+    INTERACT = "interact"
+
+
+class DestinationCategory(Enum):
+    INVENTORY = "inventory"
+    CONFIRMATION = "confirmation"
+    AUTHENTICATION = "authentication"
+    CHALLENGE = "challenge"
+    MUTATION = "mutation"
+    UNKNOWN_BOOKING = "unknown_booking"
+    EXTERNAL = "external"
+    INVALID = "invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class DestinationAssessment:
+    disposition: DestinationDisposition
+    category: DestinationCategory
+    host_class: str
+    path_template: str
+    query_keys: tuple[str, ...]
+    fragment_present: bool
+    terminal_status: InventoryExecutionStatus | None = None
 
 
 class InventoryTaskKind(Enum):
@@ -285,7 +372,7 @@ class InventoryComputerUseModelPort(Protocol):
 
 
 class InventoryActionGuard:
-    """Read-only guard restricted to account inventory and confirmation-detail routes."""
+    """Separate safe page observation from task-specific interaction authority."""
 
     def evaluate(
         self,
@@ -303,7 +390,7 @@ class InventoryActionGuard:
     ) -> GuardDecision:
         if after.popup_count > before.popup_count:
             return GuardDecision(False, GuardRejection.UNEXPECTED_POPUP)
-        if not _is_inventory_destination(after.url):
+        if _assess_destination(after.url).disposition is DestinationDisposition.DENY:
             return GuardDecision(False, GuardRejection.INVALID_DESTINATION)
         return GuardDecision(True)
 
@@ -315,12 +402,15 @@ class InventoryActionGuard:
     ) -> GuardRejection | None:
         if proposal.current.popup_count:
             return GuardRejection.UNEXPECTED_POPUP
-        if not _is_inventory_destination(proposal.current.url):
+        current = _assess_destination(proposal.current.url)
+        if current.disposition is DestinationDisposition.DENY:
             return GuardRejection.INVALID_DESTINATION
-        if proposal.destination is not None and not _is_inventory_destination(
-            proposal.destination
-        ):
+        if task is None and current.disposition is DestinationDisposition.OBSERVE_ONLY:
             return GuardRejection.INVALID_DESTINATION
+        if proposal.destination is not None:
+            destination = _assess_destination(proposal.destination)
+            if destination.disposition is DestinationDisposition.DENY:
+                return GuardRejection.INVALID_DESTINATION
         combined = f"{proposal.role} {proposal.label}"
         if _UNSAFE_INVENTORY_TEXT.search(combined):
             return GuardRejection.UNSAFE_LABEL
@@ -402,7 +492,19 @@ def _task_click_rejection(
     destination: str | None,
 ) -> GuardRejection | None:
     if task.kind is InventoryTaskKind.DETAIL:
-        return None if _is_confirmation_destination(destination) else GuardRejection.UNSAFE_PATH
+        if not _DETAIL_TEXT.search(label):
+            return GuardRejection.UNSAFE_LABEL
+        if destination is None:
+            return GuardRejection.UNSAFE_PATH
+        assessment = _assess_destination(destination)
+        if assessment.disposition is DestinationDisposition.DENY:
+            return GuardRejection.UNSAFE_PATH
+        return (
+            None
+            if assessment.category is DestinationCategory.CONFIRMATION
+            or _destination_references_subject(destination, task.remote_id)
+            else GuardRejection.UNSAFE_PATH
+        )
     if _is_confirmation_destination(destination):
         return GuardRejection.UNSAFE_PATH
     if task.kind is InventoryTaskKind.SCOPE:
@@ -419,51 +521,193 @@ def _task_click_rejection(
     return GuardRejection.UNSAFE_LABEL
 
 
-def _is_inventory_destination(url: str | None) -> bool:
-    if url is None or not is_booking_destination(url):
-        return False
-    parsed = urlsplit(url)
-    if parsed.fragment:
-        return False
-    path = parsed.path.casefold().rstrip("/") or "/"
-    if path in _INVENTORY_LIST_PATHS:
-        return _query_is_read_only(parsed.query, _INVENTORY_QUERY_KEYS)
-    if path in _CONFIRMATION_PATHS:
-        return _query_is_read_only(parsed.query, _CONFIRMATION_QUERY_KEYS)
-    return False
-
-
 def _is_confirmation_destination(url: str | None) -> bool:
-    if url is None or not _is_inventory_destination(url):
+    if url is None:
+        return False
+    assessment = _assess_destination(url)
+    if assessment.category is not DestinationCategory.CONFIRMATION:
         return False
     parsed = urlsplit(url)
-    path = parsed.path.casefold().rstrip("/") or "/"
     query = parse_qs(parsed.query, keep_blank_values=True)
-    return path in _CONFIRMATION_PATHS and any(
+    return any(
         query.get(key) and all(value.strip() for value in query[key])
         for key in _CONFIRMATION_QUERY_KEYS
     )
 
 
-def _query_is_read_only(query: str, allowed_keys: frozenset[str]) -> bool:
-    parsed = parse_qs(query, keep_blank_values=True)
-    if not set(parsed).issubset(allowed_keys):
+def _assess_destination(url: str | None) -> DestinationAssessment:
+    if url is None or len(url) > 2_000:
+        return _destination_assessment(DestinationCategory.INVALID)
+    try:
+        parsed = urlsplit(url)
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    except (TypeError, ValueError):
+        return _destination_assessment(DestinationCategory.INVALID)
+    if not is_booking_destination(url):
+        return _destination_assessment(
+            DestinationCategory.EXTERNAL,
+            parsed=parsed,
+            pairs=pairs,
+        )
+
+    decoded_path = unquote(parsed.path)
+    decoded_fragment = unquote(parsed.fragment)
+    path_fragment_text = _normalize_destination_text(f"{decoded_path} {decoded_fragment}")
+    query_key_text = " ".join(
+        _normalize_destination_text(unquote(key))
+        for key, _value in pairs
+        if unquote(key).casefold() not in _BENIGN_DATA_QUERY_KEYS
+    )
+    control_query_value_text = " ".join(
+        _normalize_destination_text(unquote(value))
+        for key, value in pairs
+        if _CONTROL_QUERY_KEY_TEXT.search(_normalize_destination_text(unquote(key)))
+    )
+    risk_text = " ".join(
+        part for part in (path_fragment_text, query_key_text, control_query_value_text) if part
+    )
+    terminal_status = None
+    if _CHALLENGE_DESTINATION_TEXT.search(risk_text):
+        category = DestinationCategory.CHALLENGE
+        terminal_status = (
+            InventoryExecutionStatus.CAPTCHA
+            if "captcha" in risk_text or "verify human" in risk_text
+            else InventoryExecutionStatus.BOT_WALL
+        )
+    elif _AUTH_DESTINATION_TEXT.search(risk_text):
+        category = DestinationCategory.AUTHENTICATION
+        terminal_status = (
+            InventoryExecutionStatus.MFA_REQUIRED
+            if "two factor" in risk_text or "mfa" in risk_text
+            else InventoryExecutionStatus.SIGNED_OUT
+        )
+    elif _MUTATION_DESTINATION_TEXT.search(risk_text) or _MUTATION_PATH_TEXT.search(
+        path_fragment_text
+    ):
+        category = DestinationCategory.MUTATION
+    elif _CONFIRMATION_DESTINATION_TEXT.search(path_fragment_text):
+        category = DestinationCategory.CONFIRMATION
+    elif _INVENTORY_DESTINATION_TEXT.search(path_fragment_text):
+        category = DestinationCategory.INVENTORY
+    else:
+        category = DestinationCategory.UNKNOWN_BOOKING
+    return _destination_assessment(
+        category,
+        parsed=parsed,
+        pairs=pairs,
+        terminal_status=terminal_status,
+    )
+
+
+def _destination_assessment(
+    category: DestinationCategory,
+    *,
+    parsed: SplitResult | None = None,
+    pairs: Sequence[tuple[str, str]] = (),
+    terminal_status: InventoryExecutionStatus | None = None,
+) -> DestinationAssessment:
+    disposition = (
+        DestinationDisposition.INTERACT
+        if category in {DestinationCategory.INVENTORY, DestinationCategory.CONFIRMATION}
+        else DestinationDisposition.OBSERVE_ONLY
+        if category is DestinationCategory.UNKNOWN_BOOKING
+        else DestinationDisposition.DENY
+    )
+    path = _sanitized_path_template(parsed.path if parsed is not None else "")
+    keys = tuple(
+        sorted(
+            {
+                key.casefold() if _SAFE_LOG_QUERY_KEY.fullmatch(key.casefold()) else "{key}"
+                for key, _value in pairs
+            }
+        )[:16]
+    )
+    host_class = _host_class(parsed, category)
+    return DestinationAssessment(
+        disposition,
+        category,
+        host_class,
+        path,
+        keys,
+        bool(parsed is not None and parsed.fragment),
+        terminal_status,
+    )
+
+
+def _destination_references_subject(url: str, subject: str | None) -> bool:
+    if subject is None:
         return False
-    return not any(
-        _UNSAFE_INVENTORY_TEXT.search(f"{key} {' '.join(values)}")
-        for key, values in parsed.items()
+    parsed = urlsplit(url)
+    candidates = [unquote(parsed.path), unquote(parsed.fragment)]
+    candidates.extend(unquote(value) for _key, value in parse_qsl(parsed.query))
+    subject_key = subject.strip().casefold()
+    return any(
+        subject_key
+        in {
+            token.casefold()
+            for token in re.split(r"[^a-zA-Z0-9_-]+", candidate)
+            if token
+        }
+        for candidate in candidates
+    )
+
+
+def _normalize_destination_text(value: str) -> str:
+    camel_split = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", value)
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", camel_split.casefold()).split())
+
+
+def _host_class(parsed: SplitResult | None, category: DestinationCategory) -> str:
+    if parsed is None or not is_booking_destination(parsed.geturl()):
+        return category.value
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    return {
+        "secure.booking.com": "secure_booking",
+        "account.booking.com": "account_booking",
+        "www.booking.com": "www_booking",
+    }.get(host, "other_booking")
+
+
+def _sanitized_path_template(path: str) -> str:
+    components = []
+    for raw in unquote(path).casefold().split("/"):
+        if not raw:
+            continue
+        components.append(raw if raw in _SAFE_LOG_PATH_COMPONENTS else "{segment}")
+        if len(components) == 8:
+            break
+    return "/" + "/".join(components) if components else "/"
+
+
+def _log_destination_rejection(
+    *, execution_id: str, phase: str, url: str | None, reason: GuardRejection
+) -> None:
+    assessment = _assess_destination(url)
+    logger.warning(
+        "Agentic inventory destination rejected execution_id=%s phase=%s category=%s "
+        "host_class=%s path_template=%s query_keys=%s fragment_present=%s "
+        "terminal_status=%s reason=%s",
+        execution_id,
+        phase,
+        assessment.category.value,
+        assessment.host_class,
+        assessment.path_template,
+        ",".join(assessment.query_keys) or "none",
+        assessment.fragment_present,
+        assessment.terminal_status.value if assessment.terminal_status is not None else "none",
+        reason.value,
     )
 
 
 def _has_navigation_query(url: str | None) -> bool:
-    if url is None or not _is_inventory_destination(url):
+    if url is None or _assess_destination(url).disposition is DestinationDisposition.DENY:
         return False
     query = parse_qs(urlsplit(url).query)
     return any(key in query for key in ("page", "cursor", "offset"))
 
 
 def _destination_selects_scope(url: str | None, scope: InventoryScope) -> bool:
-    if url is None or not _is_inventory_destination(url):
+    if url is None or _assess_destination(url).disposition is DestinationDisposition.DENY:
         return False
     query = parse_qs(urlsplit(url).query)
     selected = {
@@ -475,18 +719,7 @@ def _destination_selects_scope(url: str | None, scope: InventoryScope) -> bool:
 
 
 def _navigation_terminal(url: str) -> InventoryExecutionStatus | None:
-    if not is_booking_destination(url):
-        return None
-    path = urlsplit(url).path.casefold()
-    if any(token in path for token in ("captcha", "verify-human")):
-        return InventoryExecutionStatus.CAPTCHA
-    if "challenge" in path:
-        return InventoryExecutionStatus.BOT_WALL
-    if any(token in path for token in ("two-factor", "two_factor", "mfa")):
-        return InventoryExecutionStatus.MFA_REQUIRED
-    if any(token in path for token in ("/login", "/signin", "/auth")):
-        return InventoryExecutionStatus.SIGNED_OUT
-    return None
+    return _assess_destination(url).terminal_status
 
 
 class LocalInventoryStagehandRuntime(LocalStagehandRuntime):
@@ -1249,8 +1482,21 @@ class StagehandInventoryBrowserExecutor:
             after_entry = await runtime.destination()
             navigation_terminal = _navigation_terminal(after_entry.url)
             if navigation_terminal is not None:
+                _log_destination_rejection(
+                    execution_id=request.execution_id,
+                    phase="entry_redirect",
+                    url=after_entry.url,
+                    reason=GuardRejection.INVALID_DESTINATION,
+                )
                 return self._terminal(navigation_terminal, meter, started)
-            if not self._guard.validate_destination(before, after_entry).allowed:
+            entry_decision = self._guard.validate_destination(before, after_entry)
+            if not entry_decision.allowed:
+                _log_destination_rejection(
+                    execution_id=request.execution_id,
+                    phase="entry_redirect",
+                    url=after_entry.url,
+                    reason=entry_decision.rejection or GuardRejection.INVALID_DESTINATION,
+                )
                 return self._unsafe_destination(meter, started)
 
             semantic = await self._semantic_episode(runtime, request, meter, started)
@@ -1588,28 +1834,52 @@ class StagehandInventoryBrowserExecutor:
             role=inspected.role,
             destination=inspected.href,
         )
-        if not self._guard.evaluate(proposal, task=task).allowed:
+        guard_decision = self._guard.evaluate(proposal, task=task)
+        if not guard_decision.allowed:
+            _log_destination_rejection(
+                execution_id=request.execution_id,
+                phase="semantic_pre_action",
+                url=(
+                    inspected.href
+                    if inspected.href is not None
+                    and _assess_destination(inspected.href).disposition
+                    is DestinationDisposition.DENY
+                    else before.url
+                ),
+                reason=guard_decision.rejection or GuardRejection.UNSUPPORTED_ACTION,
+            )
             return InventorySemanticFailure.PROPOSAL_REJECTED
         meter.record_action()
         try:
             await runtime.replay(action)
         except Exception:
             try:
-                post_failure = self._guard.validate_destination(
-                    before,
-                    await runtime.destination(),
-                )
+                after_failure = await runtime.destination()
+                post_failure = self._guard.validate_destination(before, after_failure)
             except Exception:
                 return InventorySemanticFailure.ACTION_FAILED
             if not post_failure.allowed:
+                _log_destination_rejection(
+                    execution_id=request.execution_id,
+                    phase="semantic_post_action_error",
+                    url=after_failure.url,
+                    reason=post_failure.rejection or GuardRejection.INVALID_DESTINATION,
+                )
                 return (
                     InventorySemanticFailure.NON_ALLOWLISTED_DESTINATION
                     if post_failure.rejection is GuardRejection.INVALID_DESTINATION
                     else InventorySemanticFailure.DESTINATION_CHANGED
                 )
             return InventorySemanticFailure.ACTION_FAILED
-        decision = self._guard.validate_destination(before, await runtime.destination())
+        after = await runtime.destination()
+        decision = self._guard.validate_destination(before, after)
         if not decision.allowed:
+            _log_destination_rejection(
+                execution_id=request.execution_id,
+                phase="semantic_post_action",
+                url=after.url,
+                reason=decision.rejection or GuardRejection.INVALID_DESTINATION,
+            )
             return (
                 InventorySemanticFailure.NON_ALLOWLISTED_DESTINATION
                 if decision.rejection is GuardRejection.INVALID_DESTINATION
@@ -1766,6 +2036,18 @@ class StagehandInventoryBrowserExecutor:
                     request.execution_id,
                     (decision.rejection or GuardRejection.UNSUPPORTED_ACTION).value,
                 )
+                _log_destination_rejection(
+                    execution_id=request.execution_id,
+                    phase="computer_pre_action",
+                    url=(
+                        destination
+                        if destination is not None
+                        and _assess_destination(destination).disposition
+                        is DestinationDisposition.DENY
+                        else before.url
+                    ),
+                    reason=decision.rejection or GuardRejection.UNSUPPORTED_ACTION,
+                )
                 return self._terminal(
                     InventoryExecutionStatus.UNSAFE_ACTION,
                     meter,
@@ -1794,6 +2076,12 @@ class StagehandInventoryBrowserExecutor:
                         fallback_used=True,
                     )
                 if not post_failure.allowed:
+                    _log_destination_rejection(
+                        execution_id=request.execution_id,
+                        phase="computer_post_action_error",
+                        url=after_failure.url,
+                        reason=post_failure.rejection or GuardRejection.INVALID_DESTINATION,
+                    )
                     violations = {ExecutorSafetyViolation.PROHIBITED_ACTION_EXECUTED}
                     if post_failure.rejection is GuardRejection.INVALID_DESTINATION:
                         violations.add(ExecutorSafetyViolation.NON_ALLOWLISTED_DESTINATION)
@@ -1810,8 +2098,15 @@ class StagehandInventoryBrowserExecutor:
                     started,
                     fallback_used=True,
                 )
-            post = self._guard.validate_destination(before, await runtime.destination())
+            after = await runtime.destination()
+            post = self._guard.validate_destination(before, after)
             if not post.allowed:
+                _log_destination_rejection(
+                    execution_id=request.execution_id,
+                    phase="computer_post_action",
+                    url=after.url,
+                    reason=post.rejection or GuardRejection.INVALID_DESTINATION,
+                )
                 violations = {ExecutorSafetyViolation.PROHIBITED_ACTION_EXECUTED}
                 if post.rejection is GuardRejection.INVALID_DESTINATION:
                     violations.add(ExecutorSafetyViolation.NON_ALLOWLISTED_DESTINATION)

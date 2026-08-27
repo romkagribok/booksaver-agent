@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-26T03:37:34.000Z
+updated: 2026-08-27T23:13:41.000Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -29,6 +29,9 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - `/bookings`, post-connect, `/checknow`, and scheduled routing.
 - One inventory execution for a selected `/checknow` operation.
 - Capability-specific config, rollback, redacted metrics, and tests.
+- Layered destination admission that tolerates benign Booking.com route/query churn for perception
+  without granting interaction authority.
+- Sanitized destination rejection logs that retain no raw URLs, values, or page/session content.
 
 ### Out of Scope
 
@@ -47,14 +50,15 @@ validation, positive-only reconciliation, scheduling, and check authority.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 1 |
-| Must Have | 1 |
+| Total Stories | 2 |
+| Must Have | 2 |
 | Should Have | 0 |
 | Could Have | 0 |
 
 | Story ID | Title | Priority | Status |
 |----------|-------|----------|--------|
 | US-153 | Execute positive-only agentic inventory | Must | Complete |
+| US-156 | Tolerate read-only destinations and diagnose rejections | Must | Complete |
 
 ## Dependencies
 
@@ -69,6 +73,9 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - Unseen rows are always preserved by this capability.
 - Inventory and price in one operation share cost admission and deadline.
 - Inventory computer use cannot type.
+- Observation admission is weaker than interaction admission; exact provider paths and benign query
+  keys are not long-lived safety boundaries.
+- Raw URLs, query values, fragments, and page/session content never enter destination diagnostics.
 
 ## Success Criteria
 
@@ -81,3 +88,5 @@ validation, positive-only reconciliation, scheduling, and check authority.
 ## Bolt Suggestions
 
 - `053-agentic-inventory-executor`: US-153.
+- `056-agentic-inventory-executor`: US-156 production destination-policy correction after live
+  `non_allowlisted_destination` evidence.
