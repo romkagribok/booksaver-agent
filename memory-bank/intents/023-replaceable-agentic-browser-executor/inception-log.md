@@ -24,6 +24,9 @@ On 2026-08-27 the first live agentic inventory run proved local Stagehand launch
 failed before semantic extraction because exact destination admission rejected the resulting
 Booking.com route. The owner approved replacing exact path/query admission with layered
 observation-versus-interaction policy and adding privacy-safe destination diagnostics.
+On 2026-08-28 the next live run passed destination admission but exposed a coordinator-created
+SQLite spend-ledger connection being reused by the dedicated async browser thread. The owner
+approved a narrow thread-affinity correction through final merge and production redeployment.
 
 ## Artifacts Created
 
@@ -33,8 +36,8 @@ observation-versus-interaction policy and adding privacy-safe destination diagno
 | System Context | Complete | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
 | Units | Complete | `units.md` and four unit briefs |
-| Stories | Amended | 14 story files (US-143 through US-156, including corrective US-155 and US-156) |
-| Bolt Plan | Amended | Bolts 050 through 053 and 055; corrective bolt 054 complete and 056 in progress |
+| Stories | Amended | 15 story files (US-143 through US-157, including corrective US-155 through US-157) |
+| Bolt Plan | Amended | Bolts 050 through 053 and 055; corrective bolts 054, 056, and 057 complete |
 
 ## Summary
 
@@ -43,8 +46,8 @@ observation-versus-interaction policy and adding privacy-safe destination diagno
 | Functional Requirements | 11 |
 | Non-Functional Requirements | 7 |
 | Units | 5 |
-| Stories | 14 |
-| Bolts Planned | 5 plus corrective bolts 054 and 056 |
+| Stories | 15 |
+| Bolts Planned | 5 plus corrective bolts 054, 056, and 057 |
 
 ## Decision Log
 
@@ -61,6 +64,7 @@ observation-versus-interaction policy and adding privacy-safe destination diagno
 | 2026-08-25 | Remove duplicate `/checknow` inventory execution | One selected operation must share one inventory verification, budget, and deadline | Yes |
 | 2026-08-27 | Separate destination observation from interaction authority | Benign Booking.com route churn must not block Stagehand perception or silently expand action authority | Yes |
 | 2026-08-27 | Log only sanitized destination shape and rejection codes | Live failures need local diagnosis without raw URLs, query values, page content, or session data | Yes |
+| 2026-08-28 | Keep persistent cost accounting thread-affine | Stagehand's async runner must not reuse the coordinator thread's SQLite connection | Yes |
 
 ## Ready for Construction
 
@@ -74,7 +78,7 @@ observation-versus-interaction policy and adding privacy-safe destination diagno
 
 ## Next Steps
 
-1. Execute corrective bolt 056 using completed bolt 053 and the accepted safety/privacy ADRs.
+1. Execute corrective bolt 057 using completed bolts 053 and 056 and the accepted cost/safety ADRs.
 2. Re-verify capability-specific agentic inventory for every disclosed authorized user while keeping
    price routing in its current owner-canary state.
 3. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.

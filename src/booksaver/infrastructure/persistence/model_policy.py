@@ -6,6 +6,7 @@ import sqlite3
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 
 from booksaver.domain.agent import LLMUsage
 from booksaver.domain.model_policy import (
@@ -375,6 +376,33 @@ class SqliteSpendLedger:
             usage=usage,
             latency_ms=row["latency_ms"],
         )
+
+
+class ThreadScopedSqliteSpendLedger:
+    """Run each ledger operation on a connection owned by the calling thread.
+
+    Agentic browser work crosses from the synchronous coordinator into its dedicated async runner.
+    Keeping only the database path here prevents a coordinator-created ``sqlite3.Connection`` from
+    crossing that boundary while preserving ``SqliteSpendLedger`` as the single implementation of
+    transactional cost rules.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+
+    def reserve_call(self, request: ReservationRequest) -> AdmissionDecision:
+        with SqliteStore(self._db_path) as store:
+            return SqliteSpendLedger(store).reserve_call(request)
+
+    def reconcile_call(
+        self, request: ReconciliationRequest
+    ) -> CostReconciliation:
+        with SqliteStore(self._db_path) as store:
+            return SqliteSpendLedger(store).reconcile_call(request)
+
+    def list_attempts(self, job_id: str) -> tuple[ModelAttemptAudit, ...]:
+        with SqliteStore(self._db_path) as store:
+            return SqliteSpendLedger(store).list_attempts(job_id)
 
 
 class SqliteQualificationRepository:

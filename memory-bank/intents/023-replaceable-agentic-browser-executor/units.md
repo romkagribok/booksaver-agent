@@ -78,5 +78,7 @@ flowchart LR
    completed, but live qualification remains a real 14-day owner checkpoint.
 4. Bolt 053: agentic inventory contracts, adapter, routing, positive-only reconciliation, and
    single-refresh `/checknow`; construction is authorized before price promotion.
-5. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
+5. Bolt 056: layered read-only destination policy and privacy-safe rejection diagnostics.
+6. Bolt 057: thread-owned persistent cost accounting across the async Stagehand boundary.
+7. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
    window pass.

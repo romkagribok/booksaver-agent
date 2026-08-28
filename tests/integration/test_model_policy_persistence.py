@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, date, datetime
+from pathlib import Path
 
+from booksaver.application.async_runner import AsyncLoopRunner
+from booksaver.application.model_policy import BrowserJobCostBudget
 from booksaver.domain.agent import LLMUsage
 from booksaver.domain.model_policy import (
     AdaptiveModelPortfolio,
     BrowserJobKind,
+    CallerKeyRef,
     EscalationTrigger,
     ModelAttemptOutcome,
+    ModelAttemptPlan,
+    ModelCostEstimator,
     ModelRole,
     ModelStopReason,
     QualificationEvaluator,
@@ -16,11 +22,13 @@ from booksaver.domain.model_policy import (
     ReconciliationRequest,
     ReservationRequest,
     ReservationStatus,
+    TokenEnvelope,
     UsdAmount,
 )
 from booksaver.infrastructure.persistence.model_policy import (
     SqliteQualificationRepository,
     SqliteSpendLedger,
+    ThreadScopedSqliteSpendLedger,
 )
 from booksaver.infrastructure.persistence.sqlite_store import SqliteStore, SqliteUserRepository
 
@@ -98,6 +106,59 @@ def test_reservation_and_exact_once_reconciliation_survive_reopen(tmp_path) -> N
         day = store.conn.execute("SELECT * FROM llm_spend_days").fetchone()
         assert day["reserved_micro_usd"] == 0
         assert day["charged_micro_usd"] == 25_000
+
+
+def test_thread_scoped_ledger_supports_agentic_budget_on_async_runner(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    with SqliteStore(db_path) as store:
+        owner = SqliteUserRepository(store).get_owner()
+
+    budget = BrowserJobCostBudget(
+        job_id="agentic-thread-boundary",
+        job_kind=BrowserJobKind.BOOKINGS_SYNC,
+        caller_key_ref=CallerKeyRef(owner.user_id, "shared", "owner_env"),
+        ledger=ThreadScopedSqliteSpendLedger(db_path),
+        estimator=ModelCostEstimator(),
+        preserve_opus_diagnostic=False,
+        clock=lambda: NOW,
+    )
+    plan = ModelAttemptPlan(
+        1,
+        AdaptiveModelPortfolio().primary(
+            ModelRole.EXTRACTION,
+            "stagehand-inventory-extract-v1",
+        ),
+        EscalationTrigger.INITIAL_AMBIGUOUS,
+    )
+
+    async def exercise_budget():
+        admitted = budget.admit(plan, TokenEnvelope(1_000, 100)).attempt
+        assert admitted is not None
+        reconciliation = budget.reconcile(
+            admitted,
+            usage=LLMUsage(400, 20),
+            latency_ms=50,
+            outcome=ModelAttemptOutcome.COMPLETED,
+        )
+        return reconciliation, budget.ordered_attempts()
+
+    with AsyncLoopRunner(thread_name="agentic-ledger-regression") as runner:
+        reconciliation, attempts = runner.run(exercise_budget(), timeout=5)
+
+    assert reconciliation.status is ReservationStatus.CHARGED
+    assert len(attempts) == 1
+    assert attempts[0].job_id == "agentic-thread-boundary"
+    assert attempts[0].status is ReservationStatus.CHARGED
+
+    with SqliteStore(db_path) as store:
+        row = store.conn.execute(
+            "SELECT status, outcome FROM llm_cost_reservations WHERE job_id = ?",
+            ("agentic-thread-boundary",),
+        ).fetchone()
+        assert row is not None
+        assert tuple(row) == ("charged", "completed")
 
 
 def test_duplicate_reservation_never_authorizes_a_second_call(tmp_path) -> None:
