@@ -69,6 +69,7 @@ from booksaver.infrastructure.browser.agentic_inventory_executor import (
     StagehandInventoryBrowserExecutor,
     _computer_tools,
     _map_computer_observation,
+    _map_scope_page,
 )
 
 
@@ -552,6 +553,73 @@ def test_computer_observation_restores_tri_state_and_code_owned_bounds() -> None
     excessive_page = dict(raw["scopes"][0], pages_observed=21)
     with pytest.raises(ValueError, match="pages_observed"):
         _map_computer_observation({**raw, "scopes": [excessive_page]})
+
+
+def test_computer_observation_accepts_json_boolean_scope_flags() -> None:
+    raw = {
+        "authenticated": True,
+        "scopes": [
+            {
+                "scope": "upcoming",
+                "requested_scope_visible": True,
+                "explicit_empty": False,
+                "pagination_exhausted": True,
+                "pages_observed": 1,
+                "visible_reservation_count": 0,
+                "detail_count": 0,
+                "completeness": "incomplete",
+            }
+        ],
+        "reservations": [],
+    }
+
+    observation = _map_computer_observation(raw)
+
+    assert observation.scopes[0].requested_scope_visible is True
+    assert observation.scopes[0].explicit_empty is False
+    assert observation.scopes[0].pagination_exhausted is True
+
+
+def test_scope_page_keeps_reservation_when_occupancy_text_is_unparseable() -> None:
+    page = _map_scope_page(
+        InventoryScope.UPCOMING,
+        {
+            "state": "inventory",
+            "authenticated": "true",
+            "requested_scope_visible": "true",
+            "explicit_empty": "false",
+            "pagination_exhausted": "true",
+            "completeness": "complete",
+            "reservations": [
+                {
+                    "remote_id": "6992391225",
+                    "identity_evidence": "complete",
+                    "lifecycle": "upcoming",
+                    "confirmation_id": "6992391225",
+                    "property_name": "Hotel Example",
+                    "property_reference": "hotel-example-ref",
+                    "check_in": "2026-10-01",
+                    "check_out": "2026-10-04",
+                    "room_type": "Deluxe King Room",
+                    "booked_total": "300.00",
+                    "currency": "EUR",
+                    "all_in": "explicit",
+                    "refundability": "explicit_refundable",
+                    "refundability_text": "Free cancellation",
+                    "refund_deadline": "2026-09-30",
+                    "adults": "2.0",
+                    "children": "2 adults",
+                    "rooms": "unknown",
+                    "completeness": "complete",
+                    "needs_detail": False,
+                }
+            ],
+        },
+    )
+
+    assert len(page.reservations) == 1
+    assert page.reservations[0].remote_id == "6992391225"
+    assert page.reservations[0].occupancy is None
 
 
 def test_provider_schema_failures_log_only_closed_categories(caplog) -> None:

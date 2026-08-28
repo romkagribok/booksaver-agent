@@ -964,8 +964,10 @@ def _completeness_value(raw: object) -> EvidenceCompleteness:
 
 
 def _tri_state_value(raw: object) -> bool | None:
+    if isinstance(raw, bool):
+        return raw
     if not isinstance(raw, str):
-        raise ValueError("tri-state evidence must be a string")
+        return None
     normalized = raw.strip().casefold()
     if normalized == "true":
         return True
@@ -995,12 +997,17 @@ def _optional_extracted_int(
     minimum: int,
     maximum: int,
 ) -> int | None:
+    """Keep unreadable occupancy unknown instead of dropping identity-valid evidence."""
+
     value = _optional_extracted_text(raw)
     if value is None:
         return None
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
     if parsed < minimum or parsed > maximum:
-        raise ValueError("extracted integer is outside the code-owned bound")
+        return None
     return parsed
 
 

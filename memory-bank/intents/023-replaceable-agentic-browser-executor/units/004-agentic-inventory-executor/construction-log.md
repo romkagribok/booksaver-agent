@@ -56,3 +56,6 @@ updated: 2026-08-26T04:24:18Z
 - **2026-08-28T01:45:39Z**: 058-agentic-inventory-executor complete - 1793-test repository gate,
   Ruff, mypy, AI-DLC integrity, content-free diagnostics, and exact candidate-image provider smokes
   passed; Bugbot and exact merged-image deployment remain release gates
+- **2026-08-28T02:06:16Z**: review-fix - Addressed both Bugbot findings: non-strict JSON boolean
+  tri-state values decode without gaining positive authority, and malformed occupancy stays unknown
+  instead of discarding identity-valid evidence; 1795 tests and all static/AI-DLC gates pass

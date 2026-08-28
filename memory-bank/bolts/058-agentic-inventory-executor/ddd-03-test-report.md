@@ -8,9 +8,9 @@ created: 2026-08-28T01:44:57Z
 
 ## Summary
 
-- **Focused regression**: 57 agentic inventory adapter tests passed; 163 focused executor,
+- **Focused regression**: 59 agentic inventory adapter tests passed; 163 focused executor,
   coordinator, persistence, and model-policy tests passed during construction.
-- **Full repository**: 1793 passed with 55 existing deprecation warnings.
+- **Full repository**: 1795 passed with 55 existing deprecation warnings.
 - **Static checks**: Ruff clean; mypy clean across 127 source files.
 - **AI-DLC checks**: artifact validation and status integrity both report zero issues across 58
   bolts and 23 intents.
@@ -42,6 +42,9 @@ created: 2026-08-28T01:44:57Z
   retaining typed decoding and code-owned bounds; the small terminal tool remains strict.
 - After the provider schema compiled, the signed-out smoke returned `unknown` completeness. That
   value now normalizes only to fail-closed `incomplete` evidence rather than aborting the episode.
+- Bugbot found that a non-strict computer-use response may emit JSON booleans for tri-state fields
+  and that malformed occupancy text could discard an identity-valid card. Booleans are now decoded
+  directly, while malformed occupancy remains unknown so downstream eligibility still fails closed.
 
 ## Remaining Release Gates
 
