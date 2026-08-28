@@ -119,7 +119,10 @@ from booksaver.infrastructure.notifications.telegram_notifier import TelegramNot
 from booksaver.infrastructure.persistence.encrypted_session_store import (
     EncryptedUserSessionRepository,
 )
-from booksaver.infrastructure.persistence.model_policy import SqliteSpendLedger
+from booksaver.infrastructure.persistence.model_policy import (
+    SqliteSpendLedger,
+    ThreadScopedSqliteSpendLedger,
+)
 from booksaver.infrastructure.persistence.scheduled_check_slots import (
     SqliteScheduledCheckSlotRepository,
 )
@@ -686,7 +689,7 @@ class CheckCoordinator:
         """
         daily_limit = self._config.limits_settings.max_llm_calls_per_user_per_day
         ledger = _DailyCappedSpendLedger(
-            SqliteSpendLedger(store),
+            ThreadScopedSqliteSpendLedger(self._db_path),
             self._llm_calls_today,
             user_id,
             daily_limit,

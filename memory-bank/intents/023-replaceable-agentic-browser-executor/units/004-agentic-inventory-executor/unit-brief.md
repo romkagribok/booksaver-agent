@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-27T23:13:41.000Z
+updated: 2026-08-28T00:28:18Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -32,6 +32,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - Layered destination admission that tolerates benign Booking.com route/query churn for perception
   without granting interaction authority.
 - Sanitized destination rejection logs that retain no raw URLs, values, or page/session content.
+- Thread-owned persistent cost admission and reconciliation across the async Stagehand boundary.
 
 ### Out of Scope
 
@@ -50,8 +51,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 2 |
-| Must Have | 2 |
+| Total Stories | 3 |
+| Must Have | 3 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -59,6 +60,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 |----------|-------|----------|--------|
 | US-153 | Execute positive-only agentic inventory | Must | Complete |
 | US-156 | Tolerate read-only destinations and diagnose rejections | Must | Complete |
+| US-157 | Keep agentic cost accounting thread-affine | Must | Complete |
 
 ## Dependencies
 
@@ -76,6 +78,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - Observation admission is weaker than interaction admission; exact provider paths and benign query
   keys are not long-lived safety boundaries.
 - Raw URLs, query values, fragments, and page/session content never enter destination diagnostics.
+- SQLite's default thread-affinity protection remains enabled; connections are never shared across
+  the coordinator and async browser threads.
 
 ## Success Criteria
 
@@ -90,3 +94,5 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - `053-agentic-inventory-executor`: US-153.
 - `056-agentic-inventory-executor`: US-156 production destination-policy correction after live
   `non_allowlisted_destination` evidence.
+- `057-agentic-inventory-executor`: US-157 production cost-ledger thread-affinity correction after
+  live `sqlite3.ProgrammingError` evidence.

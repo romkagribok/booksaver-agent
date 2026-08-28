@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -97,6 +98,12 @@ class _Ledger:
 
     def list_attempts(self, _job_id):
         return ()
+
+
+class _ProgrammingErrorLedger(_Ledger):
+    def reserve_call(self, request):
+        del request
+        raise sqlite3.ProgrammingError("sensitive provider context must not be logged")
 
 
 def _budget(ledger: _Ledger) -> BrowserJobCostBudget:
@@ -317,8 +324,9 @@ def _request(broker: InMemorySessionLeaseBroker) -> InventoryExecutionRequest:
 def _execute(
     runtime: _Runtime,
     computer_model: _ComputerModel | None = None,
+    ledger: _Ledger | None = None,
 ):
-    ledger = _Ledger()
+    ledger = ledger or _Ledger()
     broker = InMemorySessionLeaseBroker()
     request = _request(broker)
     with AsyncLoopRunner() as runner:
@@ -334,6 +342,20 @@ def _execute(
         )
         outcome = InventoryExecutionService(executor, broker).execute(request)
     return outcome, ledger
+
+
+def test_cost_admission_failure_logs_bounded_phase_without_exception_message(
+    caplog,
+) -> None:
+    with caplog.at_level("WARNING"):
+        outcome, _ledger = _execute(_Runtime(), ledger=_ProgrammingErrorLedger())
+
+    assert outcome.result.status is InventoryExecutionStatus.PROVIDER_FAILURE
+    assert "operation=admit" in caplog.text
+    assert "model_role=extraction" in caplog.text
+    assert "prompt_version=stagehand-inventory-extract-v1" in caplog.text
+    assert "failure_type=ProgrammingError" in caplog.text
+    assert "sensitive provider context" not in caplog.text
 
 
 def test_semantic_inventory_traverses_scopes_and_returns_positive_only_evidence() -> None:

@@ -2179,10 +2179,20 @@ class StagehandInventoryBrowserExecutor:
 
     def _admit(self, role: ModelRole, prompt_version: str) -> AdmittedModelAttempt | None:
         profile = AdaptiveModelPortfolio().primary(role, prompt_version)
-        return self._budget.admit(
-            ModelAttemptPlan(1, profile, EscalationTrigger.INITIAL_AMBIGUOUS),
-            _MODEL_ENVELOPE,
-        ).attempt
+        try:
+            return self._budget.admit(
+                ModelAttemptPlan(1, profile, EscalationTrigger.INITIAL_AMBIGUOUS),
+                _MODEL_ENVELOPE,
+            ).attempt
+        except Exception as exc:
+            logger.warning(
+                "Agentic inventory cost operation failed operation=admit "
+                "model_role=%s prompt_version=%s failure_type=%s",
+                role.value,
+                prompt_version,
+                type(exc).__name__,
+            )
+            raise
 
     def _reconcile_success(
         self,
@@ -2190,12 +2200,22 @@ class StagehandInventoryBrowserExecutor:
         usage: ProviderUsage,
         meter: ExecutionMeter,
     ) -> None:
-        reconciliation = self._budget.reconcile(
-            admitted,
-            usage=usage.tokens,
-            latency_ms=usage.latency_ms,
-            outcome=ModelAttemptOutcome.COMPLETED,
-        )
+        try:
+            reconciliation = self._budget.reconcile(
+                admitted,
+                usage=usage.tokens,
+                latency_ms=usage.latency_ms,
+                outcome=ModelAttemptOutcome.COMPLETED,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Agentic inventory cost operation failed operation=reconcile_success "
+                "model_role=%s prompt_version=%s failure_type=%s",
+                admitted.plan.profile.role.value,
+                admitted.plan.profile.prompt_version,
+                type(exc).__name__,
+            )
+            raise
         meter.record_model_call(usage.tokens, reconciliation.charged_cost)
 
     def _reconcile_failure(
@@ -2203,12 +2223,22 @@ class StagehandInventoryBrowserExecutor:
         admitted: AdmittedModelAttempt,
         meter: ExecutionMeter,
     ) -> None:
-        reconciliation = self._budget.reconcile(
-            admitted,
-            usage=None,
-            latency_ms=0,
-            outcome=ModelAttemptOutcome.PROVIDER_FAILED,
-        )
+        try:
+            reconciliation = self._budget.reconcile(
+                admitted,
+                usage=None,
+                latency_ms=0,
+                outcome=ModelAttemptOutcome.PROVIDER_FAILED,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Agentic inventory cost operation failed operation=reconcile_failure "
+                "model_role=%s prompt_version=%s failure_type=%s",
+                admitted.plan.profile.role.value,
+                admitted.plan.profile.prompt_version,
+                type(exc).__name__,
+            )
+            raise
         meter.record_model_call(LLMUsage(), reconciliation.charged_cost)
 
     @staticmethod
