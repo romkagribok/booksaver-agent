@@ -27,6 +27,10 @@ observation-versus-interaction policy and adding privacy-safe destination diagno
 On 2026-08-28 the next live run passed destination admission but exposed a coordinator-created
 SQLite spend-ledger connection being reused by the dedicated async browser thread. The owner
 approved a narrow thread-affinity correction through final merge and production redeployment.
+On 2026-08-28 the first run with a valid Anthropic key exposed two pre-inference schema
+incompatibilities: Stagehand rejected 18 union parameters against its limit of 16, and Anthropic
+computer use rejected `maxItems`. The owner approved the bounded provider-schema correction through
+final merge and production redeployment.
 
 ## Artifacts Created
 
@@ -36,8 +40,8 @@ approved a narrow thread-affinity correction through final merge and production 
 | System Context | Complete | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
 | Units | Complete | `units.md` and four unit briefs |
-| Stories | Amended | 15 story files (US-143 through US-157, including corrective US-155 through US-157) |
-| Bolt Plan | Amended | Bolts 050 through 053 and 055; corrective bolts 054, 056, and 057 complete |
+| Stories | Amended | 16 story files (US-143 through US-158, including corrective US-155 through US-158) |
+| Bolt Plan | Amended | Bolts 050 through 053 and 055; corrective bolts 054 and 056 through 058 |
 
 ## Summary
 
@@ -46,8 +50,8 @@ approved a narrow thread-affinity correction through final merge and production 
 | Functional Requirements | 11 |
 | Non-Functional Requirements | 7 |
 | Units | 5 |
-| Stories | 15 |
-| Bolts Planned | 5 plus corrective bolts 054, 056, and 057 |
+| Stories | 16 |
+| Bolts Planned | 5 plus corrective bolts 054 and 056 through 058 |
 
 ## Decision Log
 
@@ -65,6 +69,7 @@ approved a narrow thread-affinity correction through final merge and production 
 | 2026-08-27 | Separate destination observation from interaction authority | Benign Booking.com route churn must not block Stagehand perception or silently expand action authority | Yes |
 | 2026-08-27 | Log only sanitized destination shape and rejection codes | Live failures need local diagnosis without raw URLs, query values, page content, or session data | Yes |
 | 2026-08-28 | Keep persistent cost accounting thread-affine | Stagehand's async runner must not reuse the coordinator thread's SQLite connection | Yes |
+| 2026-08-28 | Keep provider schemas within active runtime subsets | Stagehand and Anthropic must accept typed schemas before inference while code retains all bounds | Yes |
 
 ## Ready for Construction
 
@@ -78,7 +83,6 @@ approved a narrow thread-affinity correction through final merge and production 
 
 ## Next Steps
 
-1. Execute corrective bolt 057 using completed bolts 053 and 056 and the accepted cost/safety ADRs.
-2. Re-verify capability-specific agentic inventory for every disclosed authorized user while keeping
+1. Re-verify capability-specific agentic inventory for every disclosed authorized user while keeping
    price routing in its current owner-canary state.
-3. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.
+2. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.

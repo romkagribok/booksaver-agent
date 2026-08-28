@@ -484,7 +484,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `001-agentic-executor-control-plane` | 4 stories | Complete (bolt 050) |
 | `002-local-agentic-price-executor` | 5 stories | Complete (bolts 051 and 054) |
 | `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
-| `004-agentic-inventory-executor` | 3 stories | Complete (bolts 053, 056, and 057) |
+| `004-agentic-inventory-executor` | 4 stories | Complete (bolts 053, 056, 057, and 058) |
 | `005-legacy-price-selector-retirement` | 1 story | Blocked (bolt 055; post-promotion) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
@@ -520,6 +520,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-153` | Execute positive-only agentic inventory | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/001-execute-positive-only-agentic-inventory.md` |
 | `US-156` | Tolerate read-only destinations and diagnose rejections | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/002-tolerate-read-only-destinations-and-diagnose-rejections.md` |
 | `US-157` | Keep agentic cost accounting thread-affine | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/003-keep-agentic-cost-ledger-thread-affine.md` |
+| `US-158` | Use provider-compatible agentic schemas | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/004-use-provider-compatible-agentic-schemas.md` |
 
 ### 005-legacy-price-selector-retirement: Legacy Price Selector Retirement
 
@@ -553,7 +554,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 5 | 15 | In construction (bolts 050–054 and corrective bolts 056–057 complete/offline except live-gated bolt 052); price canary active, bolt 055 blocked |
+| `023-replaceable-agentic-browser-executor` | 5 | 16 | In construction (bolts 050–054 and corrective bolts 056–058 complete/offline; price canary bolt 052 active, bolt 055 blocked) |
 
-All 157 stories (153 complete in-scope, 2 post-MVP extensibility, and 2 live-gated/blocked stories) are
+All 158 stories (154 complete in-scope, 2 post-MVP extensibility, and 2 live-gated/blocked stories) are
 assigned exactly once.

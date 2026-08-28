@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import InvalidOperation
 from enum import Enum
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.parse import SplitResult, parse_qs, parse_qsl, unquote, urlsplit
 
 from booksaver.application.async_runner import AsyncLoopRunner
@@ -84,7 +84,13 @@ _VIEWPORT_HEIGHT = 800
 _MODEL_ENVELOPE = TokenEnvelope(30_000, 4_096)
 _MAX_SCOPE_PAGES = 20
 _MAX_DETAIL_TASKS = 20
+_MAX_COMPUTER_SCOPES = len(InventoryScope)
+_MAX_COMPUTER_RESERVATIONS = 500
 _CONFIRMATION_QUERY_KEYS = frozenset({"trip_id", "reservation_id"})
+_TRI_STATE_VALUES = ("true", "false", "unknown")
+_UNSUPPORTED_ANTHROPIC_STRICT_SCHEMA_KEYS = frozenset(
+    {"minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"}
+)
 
 _SAFE_KEYS = frozenset(
     {
@@ -699,6 +705,31 @@ def _log_destination_rejection(
     )
 
 
+def _provider_failure_category(exc: Exception) -> str:
+    """Classify provider failures without retaining their content-bearing messages."""
+    message = str(exc).casefold()
+    if "union types" in message and ("limit: 16" in message or "too many" in message):
+        return "stagehand_schema_union_limit"
+    if "maxitems" in message and "not supported" in message:
+        return "anthropic_tool_schema_keyword"
+    if "schema is too complex" in message:
+        return "provider_schema_complexity"
+    if "schema" in message and ("not supported" in message or "unsupported" in message):
+        return "provider_schema_unsupported"
+    return "provider_failure"
+
+
+def _log_provider_failure(*, execution_id: str, phase: str, exc: Exception) -> None:
+    logger.warning(
+        "Agentic inventory provider call failed execution_id=%s phase=%s category=%s "
+        "failure_type=%s",
+        execution_id,
+        phase,
+        _provider_failure_category(exc),
+        type(exc).__name__,
+    )
+
+
 def _has_navigation_query(url: str | None) -> bool:
     if url is None or _assess_destination(url).disposition is DestinationDisposition.DENY:
         return False
@@ -756,42 +787,40 @@ class LocalInventoryStagehandRuntime(LocalStagehandRuntime):
     async def extract_inventory_scope(
         self, scope: InventoryScope
     ) -> tuple[InventoryScopePage, ProviderUsage]:
-        from pydantic import BaseModel, ConfigDict, Field
+        from pydantic import BaseModel, ConfigDict
 
         class ExtractedReservation(BaseModel):
             model_config = ConfigDict(extra="forbid")
-            remote_id: str = Field(min_length=1, max_length=128)
+            remote_id: str
             identity_evidence: str
-            lifecycle: str | None = None
-            confirmation_id: str | None = Field(default=None, max_length=128)
-            property_name: str | None = Field(default=None, max_length=500)
-            property_reference: str | None = Field(default=None, max_length=500)
-            check_in: str | None = None
-            check_out: str | None = None
-            room_type: str | None = Field(default=None, max_length=500)
-            booked_total: str | None = Field(
-                default=None, pattern=r"^[0-9]+(?:\.[0-9]{1,2})?$"
-            )
-            currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+            lifecycle: str
+            confirmation_id: str
+            property_name: str
+            property_reference: str
+            check_in: str
+            check_out: str
+            room_type: str
+            booked_total: str
+            currency: str
             all_in: str
             refundability: str
-            refundability_text: str | None = Field(default=None, max_length=1_000)
-            refund_deadline: str | None = None
-            adults: int | None = Field(default=None, ge=1, le=100)
-            children: int | None = Field(default=None, ge=0, le=100)
-            rooms: int | None = Field(default=None, ge=1, le=100)
+            refundability_text: str
+            refund_deadline: str
+            adults: str
+            children: str
+            rooms: str
             completeness: str
             needs_detail: bool
 
         class ExtractedScope(BaseModel):
             model_config = ConfigDict(extra="forbid")
             state: str
-            authenticated: bool | None
-            requested_scope_visible: bool | None
-            explicit_empty: bool | None
-            pagination_exhausted: bool | None
+            authenticated: Literal["true", "false", "unknown"]
+            requested_scope_visible: Literal["true", "false", "unknown"]
+            explicit_empty: Literal["true", "false", "unknown"]
+            pagination_exhausted: Literal["true", "false", "unknown"]
             completeness: str
-            reservations: list[ExtractedReservation] = Field(max_length=500)
+            reservations: list[ExtractedReservation]
 
         stagehand = self._stagehand  # noqa: SLF001 - infrastructure specialization
         if stagehand is None:
@@ -813,32 +842,30 @@ class LocalInventoryStagehandRuntime(LocalStagehandRuntime):
     ) -> tuple[InventoryDetailObservation, ProviderUsage]:
         if task.kind is not InventoryTaskKind.DETAIL or task.remote_id is None:
             raise ValueError("detail extraction requires a detail task")
-        from pydantic import BaseModel, ConfigDict, Field
+        from pydantic import BaseModel, ConfigDict
 
         class ExtractedDetail(BaseModel):
             model_config = ConfigDict(extra="forbid")
             state: str
-            authenticated: bool | None
-            remote_id: str | None = Field(default=None, max_length=128)
+            authenticated: Literal["true", "false", "unknown"]
+            remote_id: str
             identity_evidence: str
-            lifecycle: str | None = None
-            confirmation_id: str | None = Field(default=None, max_length=128)
-            property_name: str | None = Field(default=None, max_length=500)
-            property_reference: str | None = Field(default=None, max_length=500)
-            check_in: str | None = None
-            check_out: str | None = None
-            room_type: str | None = Field(default=None, max_length=500)
-            booked_total: str | None = Field(
-                default=None, pattern=r"^[0-9]+(?:\.[0-9]{1,2})?$"
-            )
-            currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
+            lifecycle: str
+            confirmation_id: str
+            property_name: str
+            property_reference: str
+            check_in: str
+            check_out: str
+            room_type: str
+            booked_total: str
+            currency: str
             all_in: str
             refundability: str
-            refundability_text: str | None = Field(default=None, max_length=1_000)
-            refund_deadline: str | None = None
-            adults: int | None = Field(default=None, ge=1, le=100)
-            children: int | None = Field(default=None, ge=0, le=100)
-            rooms: int | None = Field(default=None, ge=1, le=100)
+            refundability_text: str
+            refund_deadline: str
+            adults: str
+            children: str
+            rooms: str
             completeness: str
 
         stagehand = self._stagehand  # noqa: SLF001 - infrastructure specialization
@@ -857,17 +884,13 @@ class LocalInventoryStagehandRuntime(LocalStagehandRuntime):
         raw = result.data.model_dump()
         status = _page_state_status(raw.get("state"))
         reservation = None
-        if status is None and raw.get("remote_id") is not None:
+        if status is None and _optional_extracted_text(raw.get("remote_id")) is not None:
             reservation = _map_reservation(task.scope, raw)
             if reservation.remote_id != task.remote_id:
                 raise ValueError("detail identity conflicts with requested reservation")
         return (
             InventoryDetailObservation(
-                authenticated=(
-                    raw.get("authenticated")
-                    if isinstance(raw.get("authenticated"), bool)
-                    else None
-                ),
+                authenticated=_tri_state_value(raw.get("authenticated")),
                 reservation=reservation,
                 terminal_status=status,
             ),
@@ -899,11 +922,14 @@ def _scope_extraction_instruction(scope: InventoryScope) -> str:
     return (
         f"Extract only visibly explicit evidence from the current {scope.value} reservations "
         "view. state must be inventory, signed_out, mfa_required, captcha, bot_wall, or "
-        "unavailable. Omit cards without a stable remote identity. Use null or unknown evidence "
-        "rather than inference. booked_total must be the explicit all-in stay total as a plain "
+        "unavailable. Omit cards without a stable remote identity. Every reservation field is a "
+        "string; use the literal string unknown for facts that are not visibly explicit rather "
+        "than inference. booked_total must be the explicit all-in stay total as a plain "
         "decimal and currency must be ISO-4217. Set needs_detail only when a visible read-only "
-        "details link is required to obtain missing reservation facts. pagination_exhausted may "
-        "be true only when the page visibly proves there is no next page."
+        "details link is required to obtain missing reservation facts. authenticated, "
+        "requested_scope_visible, explicit_empty, and pagination_exhausted must each be the "
+        "string true, false, or unknown; pagination_exhausted may be true only when the page "
+        "visibly proves there is no next page."
     )
 
 
@@ -912,8 +938,10 @@ def _detail_extraction_instruction(task: InventoryTraversalTask) -> str:
     return (
         "Extract only visibly explicit facts from this read-only Booking.com confirmation page "
         f"for stable identity {task.remote_id!r}. state must be inventory, signed_out, "
-        "mfa_required, captcha, bot_wall, or unavailable. Do not infer missing facts, and return "
-        "the visible identity so code can reject a mismatch."
+        "mfa_required, captcha, bot_wall, or unavailable. authenticated must be the string true, "
+        "false, or unknown. Every other result field is a string; use the literal string unknown "
+        "for facts that are not visibly explicit. Do not infer missing facts, and return the "
+        "visible identity so code can reject a mismatch."
     )
 
 
@@ -923,6 +951,64 @@ def _enum_value(enum_type: type[Enum], raw: object) -> Any:
         if str(member.value).casefold() == normalized:
             return member
     raise ValueError(f"unsupported {enum_type.__name__} value")
+
+
+def _completeness_value(raw: object) -> EvidenceCompleteness:
+    """Treat absent/unknown provider evidence as incomplete, never as positive proof."""
+
+    if _optional_extracted_text(raw) is None:
+        return EvidenceCompleteness.INCOMPLETE
+    if str(raw).strip().casefold() == "unknown":
+        return EvidenceCompleteness.INCOMPLETE
+    return cast(EvidenceCompleteness, _enum_value(EvidenceCompleteness, raw))
+
+
+def _tri_state_value(raw: object) -> bool | None:
+    if isinstance(raw, bool):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    normalized = raw.strip().casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    if normalized == "unknown":
+        return None
+    raise ValueError("unsupported tri-state evidence")
+
+
+def _optional_extracted_text(raw: object, *, maximum: int | None = None) -> str | None:
+    """Decode the provider's schema-simple sentinel without trusting it as evidence."""
+
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    if value.casefold() in {"", "unknown", "null", "none", "not_visible"}:
+        return None
+    if maximum is not None and len(value) > maximum:
+        raise ValueError("extracted text exceeds the code-owned bound")
+    return value
+
+
+def _optional_extracted_int(
+    raw: object,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int | None:
+    """Keep unreadable occupancy unknown instead of dropping identity-valid evidence."""
+
+    value = _optional_extracted_text(raw)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    if parsed < minimum or parsed > maximum:
+        return None
+    return parsed
 
 
 def _page_state_status(raw: object) -> InventoryExecutionStatus | None:
@@ -963,27 +1049,11 @@ def _map_scope_page(scope: InventoryScope, raw: Mapping[str, Any]) -> InventoryS
             details.append(observation.remote_id)
     return InventoryScopePage(
         scope=scope,
-        authenticated=(
-            raw.get("authenticated")
-            if isinstance(raw.get("authenticated"), bool)
-            else None
-        ),
-        requested_scope_visible=(
-            raw.get("requested_scope_visible")
-            if isinstance(raw.get("requested_scope_visible"), bool)
-            else None
-        ),
-        explicit_empty=(
-            raw.get("explicit_empty")
-            if isinstance(raw.get("explicit_empty"), bool)
-            else None
-        ),
-        pagination_exhausted=(
-            raw.get("pagination_exhausted")
-            if isinstance(raw.get("pagination_exhausted"), bool)
-            else None
-        ),
-        completeness=_enum_value(EvidenceCompleteness, raw.get("completeness")),
+        authenticated=_tri_state_value(raw.get("authenticated")),
+        requested_scope_visible=_tri_state_value(raw.get("requested_scope_visible")),
+        explicit_empty=_tri_state_value(raw.get("explicit_empty")),
+        pagination_exhausted=_tri_state_value(raw.get("pagination_exhausted")),
+        completeness=_completeness_value(raw.get("completeness")),
         reservations=tuple(reservations),
         visible_reservation_count=len(raw_reservations),
         detail_required_ids=tuple(dict.fromkeys(details))[:_MAX_DETAIL_TASKS],
@@ -995,13 +1065,24 @@ def _map_reservation(
     scope: InventoryScope,
     raw: Mapping[str, Any],
 ) -> ObservedReservation:
-    check_in = date.fromisoformat(str(raw["check_in"])) if raw.get("check_in") else None
-    check_out = date.fromisoformat(str(raw["check_out"])) if raw.get("check_out") else None
+    remote_id = _optional_extracted_text(raw.get("remote_id"), maximum=128)
+    if remote_id is None:
+        raise ValueError("reservation identity is required")
+    check_in_value = _optional_extracted_text(raw.get("check_in"))
+    check_out_value = _optional_extracted_text(raw.get("check_out"))
+    check_in = date.fromisoformat(check_in_value) if check_in_value is not None else None
+    check_out = date.fromisoformat(check_out_value) if check_out_value is not None else None
     total = None
-    if raw.get("booked_total") is not None and raw.get("currency") is not None:
-        total = Money.of(str(raw["booked_total"]), str(raw["currency"]))
+    booked_total = _optional_extracted_text(raw.get("booked_total"))
+    currency = _optional_extracted_text(raw.get("currency"), maximum=3)
+    if booked_total is not None and currency is not None:
+        total = Money.of(booked_total, currency)
     occupancy = None
-    occupancy_values = (raw.get("adults"), raw.get("children"), raw.get("rooms"))
+    occupancy_values = (
+        _optional_extracted_int(raw.get("adults"), minimum=1, maximum=100),
+        _optional_extracted_int(raw.get("children"), minimum=0, maximum=100),
+        _optional_extracted_int(raw.get("rooms"), minimum=1, maximum=100),
+    )
     if all(value is not None for value in occupancy_values):
         occupancy = Occupancy(
             adults=int(cast(int, occupancy_values[0])),
@@ -1009,44 +1090,36 @@ def _map_reservation(
             rooms=int(cast(int, occupancy_values[2])),
         )
     refundability = _enum_value(RefundabilityEvidence, raw.get("refundability"))
+    lifecycle = _optional_extracted_text(raw.get("lifecycle"))
+    refund_deadline_value = _optional_extracted_text(raw.get("refund_deadline"))
     return ObservedReservation(
-        remote_id=str(raw["remote_id"]),
-        identity_evidence=_enum_value(EvidenceCompleteness, raw.get("identity_evidence")),
+        remote_id=remote_id,
+        identity_evidence=_completeness_value(raw.get("identity_evidence")),
         scope=scope,
         lifecycle=(
-            _enum_value(ReservationLifecycle, raw.get("lifecycle"))
-            if raw.get("lifecycle") is not None
-            else None
+            _enum_value(ReservationLifecycle, lifecycle) if lifecycle is not None else None
         ),
-        confirmation_id=(
-            str(raw["confirmation_id"]) if raw.get("confirmation_id") is not None else None
-        ),
-        property_name=(
-            str(raw["property_name"]) if raw.get("property_name") is not None else None
-        ),
-        property_reference=(
-            str(raw["property_reference"])
-            if raw.get("property_reference") is not None
-            else None
+        confirmation_id=_optional_extracted_text(raw.get("confirmation_id"), maximum=128),
+        property_name=_optional_extracted_text(raw.get("property_name"), maximum=500),
+        property_reference=_optional_extracted_text(
+            raw.get("property_reference"), maximum=500
         ),
         check_in=check_in,
         check_out=check_out,
-        room_type=str(raw["room_type"]) if raw.get("room_type") is not None else None,
+        room_type=_optional_extracted_text(raw.get("room_type"), maximum=500),
         booked_total=total,
         all_in=_enum_value(AllInEvidence, raw.get("all_in")),
         refundability=refundability,
-        refundability_text=(
-            str(raw["refundability_text"])
-            if raw.get("refundability_text") is not None
-            else None
+        refundability_text=_optional_extracted_text(
+            raw.get("refundability_text"), maximum=1_000
         ),
         refund_deadline=(
-            date.fromisoformat(str(raw["refund_deadline"]))
-            if raw.get("refund_deadline") is not None
+            date.fromisoformat(refund_deadline_value)
+            if refund_deadline_value is not None
             else None
         ),
         occupancy=occupancy,
-        completeness=_enum_value(EvidenceCompleteness, raw.get("completeness")),
+        completeness=_completeness_value(raw.get("completeness")),
     )
 
 
@@ -1219,14 +1292,16 @@ def _reservation_schema(*, needs_detail: bool) -> dict[str, Any]:
         "identity_evidence": {"enum": [item.value for item in EvidenceCompleteness]},
         "scope": {"enum": [item.value for item in InventoryScope]},
         "lifecycle": {
-            "type": ["string", "null"],
-            "enum": [
-                None,
-                *[
-                    item.value
-                    for item in ReservationLifecycle
-                    if item is not ReservationLifecycle.ABSENT
-                ],
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": [
+                        item.value
+                        for item in ReservationLifecycle
+                        if item is not ReservationLifecycle.ABSENT
+                    ],
+                },
+                {"type": "null"},
             ],
         },
         "confirmation_id": {"type": ["string", "null"], "maxLength": 128},
@@ -1275,9 +1350,9 @@ def _inventory_observation_schema() -> dict[str, Any]:
         ],
         "properties": {
             "scope": {"enum": [item.value for item in InventoryScope]},
-            "requested_scope_visible": {"type": ["boolean", "null"]},
-            "explicit_empty": {"type": ["boolean", "null"]},
-            "pagination_exhausted": {"type": ["boolean", "null"]},
+            "requested_scope_visible": {"type": "string", "enum": _TRI_STATE_VALUES},
+            "explicit_empty": {"type": "string", "enum": _TRI_STATE_VALUES},
+            "pagination_exhausted": {"type": "string", "enum": _TRI_STATE_VALUES},
             "pages_observed": {"type": "integer", "minimum": 1, "maximum": 20},
             "visible_reservation_count": {
                 "type": "integer",
@@ -1294,14 +1369,35 @@ def _inventory_observation_schema() -> dict[str, Any]:
         "required": ["authenticated", "scopes", "reservations"],
         "properties": {
             "authenticated": {"type": "boolean"},
-            "scopes": {"type": "array", "minItems": 1, "maxItems": 3, "items": scope},
+            "scopes": {"type": "array", "items": scope},
             "reservations": {
                 "type": "array",
-                "maxItems": 500,
                 "items": _reservation_schema(needs_detail=False),
             },
         },
     }
+
+
+def _anthropic_strict_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a JSON Schema into Anthropic's strict-tool supported subset.
+
+    BookSaver restores all removed length, item-count, and numeric bounds while decoding.
+    """
+
+    def project(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {
+                str(key): project(item)
+                for key, item in value.items()
+                if key not in _UNSUPPORTED_ANTHROPIC_STRICT_SCHEMA_KEYS
+            }
+        if isinstance(value, list):
+            return [project(item) for item in value]
+        if isinstance(value, tuple):
+            return [project(item) for item in value]
+        return value
+
+    return cast(dict[str, Any], project(schema))
 
 
 def _computer_tools() -> list[dict[str, Any]]:
@@ -1317,8 +1413,10 @@ def _computer_tools() -> list[dict[str, Any]]:
         {
             "name": "submit_inventory_observation",
             "description": "Submit visible positive reservation and traversal evidence.",
-            "input_schema": _inventory_observation_schema(),
-            "strict": True,
+            "input_schema": _anthropic_strict_schema(_inventory_observation_schema()),
+            # This schema exceeds Anthropic's strict grammar-size ceiling even after unsupported
+            # constraints and excess unions are removed. Provider output is untrusted regardless;
+            # _map_computer_observation restores every bound and fails closed before admission.
         },
         {
             "name": "submit_terminal_outcome",
@@ -1358,31 +1456,40 @@ def _map_computer_observation(raw: Mapping[str, Any]) -> InventoryComputerObserv
         raw_reservations, (str, bytes)
     ):
         raise ValueError("computer inventory reservations must be a list")
+    if not 1 <= len(raw_scopes) <= _MAX_COMPUTER_SCOPES:
+        raise ValueError("computer inventory scope count is outside the trusted bound")
+    if len(raw_reservations) > _MAX_COMPUTER_RESERVATIONS:
+        raise ValueError("computer inventory reservation count is outside the trusted bound")
     scopes: list[ObservedInventoryScope] = []
     for item in raw_scopes:
         if not isinstance(item, Mapping):
             raise ValueError("computer inventory scope must be an object")
+        pages_observed = _bounded_computer_int(
+            item.get("pages_observed"), "pages_observed", minimum=1, maximum=_MAX_SCOPE_PAGES
+        )
+        visible_reservation_count = _bounded_computer_int(
+            item.get("visible_reservation_count"),
+            "visible_reservation_count",
+            minimum=0,
+            maximum=_MAX_COMPUTER_RESERVATIONS,
+        )
+        detail_count = _bounded_computer_int(
+            item.get("detail_count"),
+            "detail_count",
+            minimum=0,
+            maximum=_MAX_COMPUTER_RESERVATIONS,
+        )
         scopes.append(
             ObservedInventoryScope(
                 scope=_enum_value(InventoryScope, item.get("scope")),
-                requested_scope_visible=(
+                requested_scope_visible=_tri_state_value(
                     item.get("requested_scope_visible")
-                    if isinstance(item.get("requested_scope_visible"), bool)
-                    else None
                 ),
-                explicit_empty=(
-                    item.get("explicit_empty")
-                    if isinstance(item.get("explicit_empty"), bool)
-                    else None
-                ),
-                pagination_exhausted=(
-                    item.get("pagination_exhausted")
-                    if isinstance(item.get("pagination_exhausted"), bool)
-                    else None
-                ),
-                pages_observed=int(item["pages_observed"]),
-                visible_reservation_count=int(item["visible_reservation_count"]),
-                detail_count=int(item["detail_count"]),
+                explicit_empty=_tri_state_value(item.get("explicit_empty")),
+                pagination_exhausted=_tri_state_value(item.get("pagination_exhausted")),
+                pages_observed=pages_observed,
+                visible_reservation_count=visible_reservation_count,
+                detail_count=detail_count,
                 completeness=_enum_value(EvidenceCompleteness, item.get("completeness")),
             )
         )
@@ -1404,6 +1511,14 @@ def _map_computer_observation(raw: Mapping[str, Any]) -> InventoryComputerObserv
         reservations=tuple(reservations),
         evidence_item_count=len(scopes) * 8 + len(reservations) * 18,
     )
+
+
+def _bounded_computer_int(
+    raw: object, field_name: str, *, minimum: int, maximum: int
+) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or not minimum <= raw <= maximum:
+        raise ValueError(f"{field_name} is outside the trusted bound")
+    return raw
 
 
 def _terminal_status(raw: object) -> InventoryExecutionStatus:
@@ -1611,7 +1726,12 @@ class StagehandInventoryBrowserExecutor:
             pages: list[InventoryScopePage] = []
             pages_by_scope[scope] = pages
             for page_number in range(1, _MAX_SCOPE_PAGES + 1):
-                page = await self._extract_scope(runtime, scope, meter)
+                page = await self._extract_scope(
+                    runtime,
+                    scope,
+                    meter,
+                    execution_id=request.execution_id,
+                )
                 if isinstance(page, InventorySemanticFailure):
                     return self._partial_or_failure(
                         pages_by_scope,
@@ -1728,6 +1848,7 @@ class StagehandInventoryBrowserExecutor:
                         runtime,
                         InventoryTraversalTask(InventoryTaskKind.DETAIL, scope, remote_id),
                         meter,
+                        execution_id=request.execution_id,
                     )
                     if isinstance(detail, InventoryDetailObservation):
                         if detail.terminal_status is not None:
@@ -1813,8 +1934,13 @@ class StagehandInventoryBrowserExecutor:
         except asyncio.CancelledError:
             self._reconcile_failure(admitted, meter)
             raise
-        except Exception:
+        except Exception as exc:
             self._reconcile_failure(admitted, meter)
+            _log_provider_failure(
+                execution_id=request.execution_id,
+                phase="semantic_observe",
+                exc=exc,
+            )
             return InventorySemanticFailure.ACTION_FAILED
         self._reconcile_success(admitted, usage, meter)
         if action is None:
@@ -1892,6 +2018,8 @@ class StagehandInventoryBrowserExecutor:
         runtime: InventoryStagehandRuntimePort,
         scope: InventoryScope,
         meter: ExecutionMeter,
+        *,
+        execution_id: str,
     ) -> InventoryScopePage | InventorySemanticFailure:
         admitted = self._admit(ModelRole.EXTRACTION, "stagehand-inventory-extract-v1")
         if admitted is None:
@@ -1901,8 +2029,13 @@ class StagehandInventoryBrowserExecutor:
         except asyncio.CancelledError:
             self._reconcile_failure(admitted, meter)
             raise
-        except Exception:
+        except Exception as exc:
             self._reconcile_failure(admitted, meter)
+            _log_provider_failure(
+                execution_id=execution_id,
+                phase="semantic_extract_scope",
+                exc=exc,
+            )
             return InventorySemanticFailure.EXTRACTION_INVALID
         self._reconcile_success(admitted, usage, meter)
         return page
@@ -1912,6 +2045,8 @@ class StagehandInventoryBrowserExecutor:
         runtime: InventoryStagehandRuntimePort,
         task: InventoryTraversalTask,
         meter: ExecutionMeter,
+        *,
+        execution_id: str,
     ) -> InventoryDetailObservation | InventorySemanticFailure:
         admitted = self._admit(ModelRole.EXTRACTION, "stagehand-inventory-detail-v1")
         if admitted is None:
@@ -1921,8 +2056,13 @@ class StagehandInventoryBrowserExecutor:
         except asyncio.CancelledError:
             self._reconcile_failure(admitted, meter)
             raise
-        except Exception:
+        except Exception as exc:
             self._reconcile_failure(admitted, meter)
+            _log_provider_failure(
+                execution_id=execution_id,
+                phase="semantic_extract_detail",
+                exc=exc,
+            )
             return InventorySemanticFailure.EXTRACTION_INVALID
         self._reconcile_success(admitted, usage, meter)
         return observation
@@ -1956,8 +2096,13 @@ class StagehandInventoryBrowserExecutor:
             except asyncio.CancelledError:
                 self._reconcile_failure(admitted, meter)
                 raise
-            except Exception:
+            except Exception as exc:
                 self._reconcile_failure(admitted, meter)
+                _log_provider_failure(
+                    execution_id=request.execution_id,
+                    phase="computer_use",
+                    exc=exc,
+                )
                 return self._terminal(
                     InventoryExecutionStatus.PROVIDER_FAILURE,
                     meter,

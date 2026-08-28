@@ -38,3 +38,24 @@ updated: 2026-08-26T04:24:18Z
 - **2026-08-28T00:32:53Z**: 057-agentic-inventory-executor complete - thread-owned SQLite spend
   operations, bounded cost-phase diagnostics, 1788-test repository gate, and AI-DLC integrity
   checks passed
+- **2026-08-28T01:23:00Z**: append - Added corrective bolt 058 for US-158 after a valid Anthropic
+  key exposed Stagehand's 16-union schema limit and Anthropic computer use rejecting `maxItems`.
+- **2026-08-28T01:23:00Z**: 058-agentic-inventory-executor started - Stage 1: domain-model
+- **2026-08-28T01:24:00Z**: 058-agentic-inventory-executor stage-complete - domain-model → technical-design
+- **2026-08-28T01:25:00Z**: 058-agentic-inventory-executor stage-complete - technical-design → adr-analysis
+- **2026-08-28T01:26:00Z**: 058-agentic-inventory-executor stage-complete - adr-analysis → implement;
+  no new ADR required because ADR-036, ADR-037, ADR-039, and ADR-040 already govern the replaceable
+  provider adapter, guarded fallback, inventory rollout, and interaction authority
+- **2026-08-28T01:31:00Z**: 058-agentic-inventory-executor stage-complete - implement → test
+- **2026-08-28T01:44:57Z**: 058-agentic-inventory-executor test - eliminated provider-compiled
+  Stagehand unions, stripped unsupported Anthropic strict-schema constraints, retained code-owned
+  bounds, and normalized only unknown evidence to fail-closed incomplete evidence
+- **2026-08-28T01:44:57Z**: 058-agentic-inventory-executor candidate smoke - exact Docker image
+  reached Stagehand and Anthropic and returned a typed unavailable terminal with measured usage;
+  computer-use schema admission also completed successfully
+- **2026-08-28T01:45:39Z**: 058-agentic-inventory-executor complete - 1793-test repository gate,
+  Ruff, mypy, AI-DLC integrity, content-free diagnostics, and exact candidate-image provider smokes
+  passed; Bugbot and exact merged-image deployment remain release gates
+- **2026-08-28T02:06:16Z**: review-fix - Addressed both Bugbot findings: non-strict JSON boolean
+  tri-state values decode without gaining positive authority, and malformed occupancy stays unknown
+  instead of discarding identity-valid evidence; 1795 tests and all static/AI-DLC gates pass

@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-28T00:28:18Z
+updated: 2026-08-28T01:45:39.000Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -33,6 +33,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
   without granting interaction authority.
 - Sanitized destination rejection logs that retain no raw URLs, values, or page/session content.
 - Thread-owned persistent cost admission and reconciliation across the async Stagehand boundary.
+- Provider-compatible typed extraction and computer-use tool schemas with code-owned bounds.
 
 ### Out of Scope
 
@@ -51,8 +52,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 3 |
-| Must Have | 3 |
+| Total Stories | 4 |
+| Must Have | 4 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -61,6 +62,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 | US-153 | Execute positive-only agentic inventory | Must | Complete |
 | US-156 | Tolerate read-only destinations and diagnose rejections | Must | Complete |
 | US-157 | Keep agentic cost accounting thread-affine | Must | Complete |
+| US-158 | Use provider-compatible agentic schemas | Must | Complete |
 
 ## Dependencies
 
@@ -80,6 +82,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - Raw URLs, query values, fragments, and page/session content never enter destination diagnostics.
 - SQLite's default thread-affinity protection remains enabled; connections are never shared across
   the coordinator and async browser threads.
+- Provider SDK schema subsets never weaken BookSaver's post-decode validation or positive-only
+  reconciliation authority.
 
 ## Success Criteria
 
@@ -96,3 +100,5 @@ validation, positive-only reconciliation, scheduling, and check authority.
   `non_allowlisted_destination` evidence.
 - `057-agentic-inventory-executor`: US-157 production cost-ledger thread-affinity correction after
   live `sqlite3.ProgrammingError` evidence.
+- `058-agentic-inventory-executor`: US-158 Stagehand and Anthropic schema-compatibility correction
+  after live pre-inference provider rejections.

@@ -172,6 +172,9 @@ legacy inventory remains a capability-specific rollback path.
     unfamiliar non-mutating HTTPS Booking.com routes may be perceived without requiring an exact
     path/query allowlist, while interaction still requires inspected metadata and task-specific
     code-owned read-only proof.
+  - Stagehand extraction and Anthropic computer-use schemas remain within the active providers'
+    supported JSON Schema subsets while BookSaver enforces all collection and value bounds after
+    decoding; schema incompatibilities fail closed with content-free diagnostics.
   - The legacy inventory parser remains unchanged and available only as a capability-specific
     rollback path.
 - **Priority**: Must

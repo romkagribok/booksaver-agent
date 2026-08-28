@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-25T13:00:00Z
+updated: 2026-08-28T01:23:00Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
@@ -80,5 +80,6 @@ flowchart LR
    single-refresh `/checknow`; construction is authorized before price promotion.
 5. Bolt 056: layered read-only destination policy and privacy-safe rejection diagnostics.
 6. Bolt 057: thread-owned persistent cost accounting across the async Stagehand boundary.
-7. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
+7. Bolt 058: provider-compatible Stagehand extraction and Anthropic computer-use schemas.
+8. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
    window pass.

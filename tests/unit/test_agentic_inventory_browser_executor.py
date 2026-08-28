@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -64,7 +65,11 @@ from booksaver.infrastructure.browser.agentic_inventory_executor import (
     InventoryScopePage,
     InventoryTaskKind,
     InventoryTraversalTask,
+    LocalInventoryStagehandRuntime,
     StagehandInventoryBrowserExecutor,
+    _computer_tools,
+    _map_computer_observation,
+    _map_scope_page,
 )
 
 
@@ -189,6 +194,7 @@ class _Runtime:
     provider_selector: str = "provider-generated-selector"
     inspected_scope_label: str | None = None
     scope_href_missing: bool = False
+    extract_error: Exception | None = None
 
     def restore_session(self, data: bytes) -> None:
         self.restored = bytes(data)
@@ -262,6 +268,8 @@ class _Runtime:
             raise RuntimeError("provider action failed")
 
     async def extract_inventory_scope(self, scope: InventoryScope):
+        if self.extract_error is not None:
+            raise self.extract_error
         return _scope_page(scope), ProviderUsage(LLMUsage(200, 40), 20)
 
     async def extract_inventory_detail(self, _task: InventoryTraversalTask):
@@ -305,6 +313,90 @@ class _ComputerModel:
         return self.turns.pop(0)
 
 
+class _FailingComputerModel:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def next_turn(self, *, screenshot, request, prior_tool_use_id):
+        del screenshot, request, prior_tool_use_id
+        raise self.error
+
+
+class _SchemaCaptureStagehand:
+    def __init__(self) -> None:
+        self.schema: dict[str, object] | None = None
+
+    async def extract(self, _instruction, schema, **_kwargs):
+        self.schema = schema.model_json_schema()
+        data = schema.model_validate(
+            {
+                "state": "inventory",
+                "authenticated": "true",
+                "requested_scope_visible": "true",
+                "explicit_empty": "unknown",
+                "pagination_exhausted": "false",
+                "completeness": "unknown",
+                "reservations": [],
+            }
+        )
+        usage = type("Usage", (), {"input_tokens": 10, "output_tokens": 2})()
+        metadata = type("Metadata", (), {"usage": usage})()
+        return type("Result", (), {"data": data, "metadata": metadata})()
+
+
+class _DetailSchemaCaptureStagehand:
+    def __init__(self) -> None:
+        self.schema: dict[str, object] | None = None
+
+    async def extract(self, _instruction, schema, **_kwargs):
+        self.schema = schema.model_json_schema()
+        data = schema.model_validate(
+            {
+                "state": "inventory",
+                "authenticated": "true",
+                "remote_id": "6992391225",
+                "identity_evidence": "complete",
+                "lifecycle": "upcoming",
+                "confirmation_id": "6992391225",
+                "property_name": "Hotel Example",
+                "property_reference": "hotel-example-ref",
+                "check_in": "2026-10-01",
+                "check_out": "2026-10-04",
+                "room_type": "Deluxe King Room",
+                "booked_total": "300.00",
+                "currency": "EUR",
+                "all_in": "explicit",
+                "refundability": "explicit_refundable",
+                "refundability_text": "Free cancellation",
+                "refund_deadline": "2026-09-30",
+                "adults": "2",
+                "children": "1",
+                "rooms": "1",
+                "completeness": "complete",
+            }
+        )
+        usage = type("Usage", (), {"input_tokens": 10, "output_tokens": 2})()
+        metadata = type("Metadata", (), {"usage": usage})()
+        return type("Result", (), {"data": data, "metadata": metadata})()
+
+
+def _union_parameter_count(value: object) -> int:
+    if isinstance(value, dict):
+        current = int(isinstance(value.get("type"), list) or "anyOf" in value)
+        return current + sum(_union_parameter_count(item) for item in value.values())
+    if isinstance(value, list):
+        return sum(_union_parameter_count(item) for item in value)
+    return 0
+
+
+def _schema_keys(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set(value).union(*(_schema_keys(item) for item in value.values()), set())
+    if isinstance(value, list):
+        return set().union(*(_schema_keys(item) for item in value), set())
+    return set()
+
+
 def _request(broker: InMemorySessionLeaseBroker) -> InventoryExecutionRequest:
     execution_id = "inventory-execution-1"
     lease = broker.issue(
@@ -323,7 +415,7 @@ def _request(broker: InMemorySessionLeaseBroker) -> InventoryExecutionRequest:
 
 def _execute(
     runtime: _Runtime,
-    computer_model: _ComputerModel | None = None,
+    computer_model: _ComputerModel | _FailingComputerModel | None = None,
     ledger: _Ledger | None = None,
 ):
     ledger = ledger or _Ledger()
@@ -356,6 +448,201 @@ def test_cost_admission_failure_logs_bounded_phase_without_exception_message(
     assert "prompt_version=stagehand-inventory-extract-v1" in caplog.text
     assert "failure_type=ProgrammingError" in caplog.text
     assert "sensitive provider context" not in caplog.text
+
+
+def test_stagehand_scope_schema_stays_below_union_limit_and_decodes_tri_state() -> None:
+    runtime = LocalInventoryStagehandRuntime()
+    stagehand = _SchemaCaptureStagehand()
+    runtime._stagehand = stagehand  # noqa: SLF001 - isolated adapter contract test
+    runtime._page = object()  # noqa: SLF001 - isolated adapter contract test
+
+    page, usage = asyncio.run(runtime.extract_inventory_scope(InventoryScope.UPCOMING))
+
+    assert stagehand.schema is not None
+    assert _union_parameter_count(stagehand.schema) == 0
+    properties = stagehand.schema["properties"]
+    assert isinstance(properties, dict)
+    for field_name in (
+        "authenticated",
+        "requested_scope_visible",
+        "explicit_empty",
+        "pagination_exhausted",
+    ):
+        field_schema = properties[field_name]
+        assert isinstance(field_schema, dict)
+        assert field_schema["type"] == "string"
+        assert set(field_schema["enum"]) == {"true", "false", "unknown"}
+    assert page.authenticated is True
+    assert page.requested_scope_visible is True
+    assert page.explicit_empty is None
+    assert page.pagination_exhausted is False
+    assert page.completeness is EvidenceCompleteness.INCOMPLETE
+    assert usage.tokens == LLMUsage(10, 2)
+
+
+def test_stagehand_detail_schema_has_no_provider_compiled_unions() -> None:
+    runtime = LocalInventoryStagehandRuntime()
+    stagehand = _DetailSchemaCaptureStagehand()
+    runtime._stagehand = stagehand  # noqa: SLF001 - isolated adapter contract test
+    runtime._page = object()  # noqa: SLF001 - isolated adapter contract test
+    task = InventoryTraversalTask(
+        InventoryTaskKind.DETAIL,
+        InventoryScope.UPCOMING,
+        "6992391225",
+    )
+
+    detail, usage = asyncio.run(runtime.extract_inventory_detail(task))
+
+    assert stagehand.schema is not None
+    assert _union_parameter_count(stagehand.schema) == 0
+    assert detail.reservation is not None
+    assert detail.reservation.remote_id == "6992391225"
+    assert usage.tokens == LLMUsage(10, 2)
+
+
+def test_computer_tool_schema_uses_supported_subset_and_union_budget() -> None:
+    tools = _computer_tools()
+    strict_schemas = [
+        tool["input_schema"]
+        for tool in tools
+        if tool.get("strict") is True and "input_schema" in tool
+    ]
+    observation_tool = next(
+        tool for tool in tools if tool.get("name") == "submit_inventory_observation"
+    )
+    observation = observation_tool["input_schema"]
+
+    forbidden = {"minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"}
+    assert not (_schema_keys(observation) & forbidden)
+    assert sum(_union_parameter_count(schema) for schema in strict_schemas) <= 16
+    assert "strict" not in observation_tool
+    reservation = observation["properties"]["reservations"]["items"]
+    lifecycle = reservation["properties"]["lifecycle"]
+    assert lifecycle["anyOf"][-1] == {"type": "null"}
+    assert None not in lifecycle["anyOf"][0]["enum"]
+
+
+def test_computer_observation_restores_tri_state_and_code_owned_bounds() -> None:
+    raw = {
+        "authenticated": True,
+        "scopes": [
+            {
+                "scope": "upcoming",
+                "requested_scope_visible": "true",
+                "explicit_empty": "unknown",
+                "pagination_exhausted": "false",
+                "pages_observed": 1,
+                "visible_reservation_count": 0,
+                "detail_count": 0,
+                "completeness": "incomplete",
+            }
+        ],
+        "reservations": [],
+    }
+
+    observation = _map_computer_observation(raw)
+
+    assert observation.scopes[0].requested_scope_visible is True
+    assert observation.scopes[0].explicit_empty is None
+    assert observation.scopes[0].pagination_exhausted is False
+
+    with pytest.raises(ValueError, match="reservation count"):
+        _map_computer_observation({**raw, "reservations": [{}] * 501})
+    with pytest.raises(ValueError, match="scope count"):
+        _map_computer_observation({**raw, "scopes": raw["scopes"] * 4})
+    excessive_page = dict(raw["scopes"][0], pages_observed=21)
+    with pytest.raises(ValueError, match="pages_observed"):
+        _map_computer_observation({**raw, "scopes": [excessive_page]})
+
+
+def test_computer_observation_accepts_json_boolean_scope_flags() -> None:
+    raw = {
+        "authenticated": True,
+        "scopes": [
+            {
+                "scope": "upcoming",
+                "requested_scope_visible": True,
+                "explicit_empty": False,
+                "pagination_exhausted": True,
+                "pages_observed": 1,
+                "visible_reservation_count": 0,
+                "detail_count": 0,
+                "completeness": "incomplete",
+            }
+        ],
+        "reservations": [],
+    }
+
+    observation = _map_computer_observation(raw)
+
+    assert observation.scopes[0].requested_scope_visible is True
+    assert observation.scopes[0].explicit_empty is False
+    assert observation.scopes[0].pagination_exhausted is True
+
+
+def test_scope_page_keeps_reservation_when_occupancy_text_is_unparseable() -> None:
+    page = _map_scope_page(
+        InventoryScope.UPCOMING,
+        {
+            "state": "inventory",
+            "authenticated": "true",
+            "requested_scope_visible": "true",
+            "explicit_empty": "false",
+            "pagination_exhausted": "true",
+            "completeness": "complete",
+            "reservations": [
+                {
+                    "remote_id": "6992391225",
+                    "identity_evidence": "complete",
+                    "lifecycle": "upcoming",
+                    "confirmation_id": "6992391225",
+                    "property_name": "Hotel Example",
+                    "property_reference": "hotel-example-ref",
+                    "check_in": "2026-10-01",
+                    "check_out": "2026-10-04",
+                    "room_type": "Deluxe King Room",
+                    "booked_total": "300.00",
+                    "currency": "EUR",
+                    "all_in": "explicit",
+                    "refundability": "explicit_refundable",
+                    "refundability_text": "Free cancellation",
+                    "refund_deadline": "2026-09-30",
+                    "adults": "2.0",
+                    "children": "2 adults",
+                    "rooms": "unknown",
+                    "completeness": "complete",
+                    "needs_detail": False,
+                }
+            ],
+        },
+    )
+
+    assert len(page.reservations) == 1
+    assert page.reservations[0].remote_id == "6992391225"
+    assert page.reservations[0].occupancy is None
+
+
+def test_provider_schema_failures_log_only_closed_categories(caplog) -> None:
+    semantic_error = RuntimeError(
+        "Schemas contains too many parameters with union types (18; limit: 16) PRIVATE-CONTENT"
+    )
+    computer_error = RuntimeError(
+        "tools.1.custom: property maxItems is not supported PRIVATE-CONTENT"
+    )
+
+    with caplog.at_level("WARNING"):
+        outcome, _ledger = _execute(
+            _Runtime(extract_error=semantic_error),
+            _FailingComputerModel(computer_error),
+        )
+
+    assert outcome.result.status is InventoryExecutionStatus.PROVIDER_FAILURE
+    assert "execution_id=inventory-execution-1" in caplog.text
+    assert "phase=semantic_extract_scope" in caplog.text
+    assert "category=stagehand_schema_union_limit" in caplog.text
+    assert "phase=computer_use" in caplog.text
+    assert "category=anthropic_tool_schema_keyword" in caplog.text
+    assert "PRIVATE-CONTENT" not in caplog.text
 
 
 def test_semantic_inventory_traverses_scopes_and_returns_positive_only_evidence() -> None:
