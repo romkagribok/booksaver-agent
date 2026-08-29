@@ -195,6 +195,7 @@ class StagehandRuntimePort(SessionRestoreTarget, Protocol):
     async def attach(self, api_key: str) -> None: ...
     async def navigate(self, url: str) -> None: ...
     async def destination(self) -> DestinationSnapshot: ...
+    async def viewport_size(self) -> tuple[int, int]: ...
     async def observe_property(
         self, property_name: str
     ) -> tuple[SemanticAction | None, ProviderUsage]: ...
@@ -407,6 +408,8 @@ class LocalStagehandRuntime:
         self._cdp_url: str | None = None
         self._telemetry: LoopbackTelemetrySink | None = None
         self._next_screenshot_region: tuple[int, int, int, int] | None = None
+        self._viewport_width = _VIEWPORT_WIDTH
+        self._viewport_height = _VIEWPORT_HEIGHT
 
     def restore_session(self, data: bytes) -> None:
         self._bootstrap.restore_session(data)
@@ -427,6 +430,8 @@ class LocalStagehandRuntime:
         finally:
             await playwright.stop()
         viewport = cast(dict[str, int], mobile_options["viewport"])
+        self._viewport_width = int(viewport["width"])
+        self._viewport_height = int(viewport["height"])
         user_agent = str(mobile_options["user_agent"])
         port = _available_port()
         self._cdp_url = f"http://127.0.0.1:{port}"
@@ -436,8 +441,8 @@ class LocalStagehandRuntime:
             port=port,
             headless=True,
             locale=self._mobile_settings.locale,
-            viewport_width=int(viewport["width"]),
-            viewport_height=int(viewport["height"]),
+            viewport_width=self._viewport_width,
+            viewport_height=self._viewport_height,
             device_scale_factor=float(mobile_options["device_scale_factor"]),
             has_touch=mobile_options["has_touch"] is True,
             chromium_sandbox=False,
@@ -516,6 +521,9 @@ class LocalStagehandRuntime:
             raise RuntimeError("Stagehand is not attached")
         pages = await stagehand.browser.context.pages()
         return DestinationSnapshot(url=await page.url(), popup_count=max(0, len(pages) - 1))
+
+    async def viewport_size(self) -> tuple[int, int]:
+        return (self._viewport_width, self._viewport_height)
 
     async def observe_property(
         self, property_name: str
@@ -658,6 +666,7 @@ class LocalStagehandRuntime:
             "caret": "hide",
             "full_page": False,
             "type": "png",
+            "scale": "css",
         }
         if region is not None:
             x0, y0, x1, y1 = region
@@ -754,8 +763,8 @@ class LocalStagehandRuntime:
             await page.click(action.x, action.y, button="left")
         elif action.action is BrowserActionType.SCROLL:
             await page.scroll(
-                _VIEWPORT_WIDTH / 2,
-                _VIEWPORT_HEIGHT / 2,
+                self._viewport_width / 2,
+                self._viewport_height / 2,
                 0,
                 action.delta_y,
             )
@@ -905,7 +914,13 @@ def _map_extracted_observation(raw: Mapping[str, Any]) -> TypedObservation:
 class AnthropicComputerUseModel:
     """Stateful Sonnet 5 computer-use conversation with only three tools."""
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        viewport_width: int = _VIEWPORT_WIDTH,
+        viewport_height: int = _VIEWPORT_HEIGHT,
+    ) -> None:
         from anthropic import Anthropic
 
         self._client = Anthropic(
@@ -915,6 +930,8 @@ class AnthropicComputerUseModel:
             max_retries=0,
         )
         self._messages: list[dict[str, Any]] = []
+        self._viewport_width = viewport_width
+        self._viewport_height = viewport_height
 
     def next_turn(
         self,
@@ -962,7 +979,7 @@ class AnthropicComputerUseModel:
                 "computer result already includes a fresh screenshot, so do not request the "
                 "screenshot action."
             ),
-            tools=_computer_tools(),
+            tools=_computer_tools(self._viewport_width, self._viewport_height),
             messages=self._messages,
         )
         elapsed = max(0, round((time.monotonic() - started) * 1_000))
@@ -1085,13 +1102,16 @@ def _observation_schema() -> dict[str, Any]:
     }
 
 
-def _computer_tools() -> list[dict[str, Any]]:
+def _computer_tools(
+    viewport_width: int = _VIEWPORT_WIDTH,
+    viewport_height: int = _VIEWPORT_HEIGHT,
+) -> list[dict[str, Any]]:
     return [
         {
             "type": "computer_20251124",
             "name": "computer",
-            "display_width_px": _VIEWPORT_WIDTH,
-            "display_height_px": _VIEWPORT_HEIGHT,
+            "display_width_px": viewport_width,
+            "display_height_px": viewport_height,
             "enable_zoom": True,
             "strict": True,
         },
@@ -1255,9 +1275,7 @@ class StagehandPriceBrowserExecutor:
         self._budget = budget
         self._runner = runner
         self._runtime_factory = runtime_factory
-        self._computer_model_factory = computer_model_factory or (
-            lambda: AnthropicComputerUseModel(api_key)
-        )
+        self._computer_model_factory = computer_model_factory
         self._guard = guard or BrowserActionGuard()
 
     def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult:
@@ -1492,7 +1510,16 @@ class StagehandPriceBrowserExecutor:
         meter: ExecutionMeter,
         started: float,
     ) -> PriceExecutionResult:
-        model = self._computer_model_factory()
+        viewport_width, viewport_height = await runtime.viewport_size()
+        model = (
+            self._computer_model_factory()
+            if self._computer_model_factory is not None
+            else AnthropicComputerUseModel(
+                self._api_key,
+                viewport_width=viewport_width,
+                viewport_height=viewport_height,
+            )
+        )
         prior_tool_use_id: str | None = None
         while True:
             admitted = self._admit(ModelRole.RECOVERY, "anthropic-computer-use-price-v1")
@@ -1619,6 +1646,7 @@ class StagehandPriceBrowserExecutor:
                     destination=destination,
                     value=None,
                 )
+        viewport_width, viewport_height = await runtime.viewport_size()
         return BrowserActionProposal(
             action=action.action,
             current=current,
@@ -1631,8 +1659,8 @@ class StagehandPriceBrowserExecutor:
             delta_y=action.delta_y,
             wait_ms=action.wait_ms,
             zoom_region=action.zoom_region,
-            viewport_width=_VIEWPORT_WIDTH,
-            viewport_height=_VIEWPORT_HEIGHT,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
             hit_test=hit,
         )
 

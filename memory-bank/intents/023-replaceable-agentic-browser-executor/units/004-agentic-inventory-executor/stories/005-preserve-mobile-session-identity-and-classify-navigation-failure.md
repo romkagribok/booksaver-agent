@@ -25,6 +25,8 @@ calls on an internal browser error page
   configured version-matched mobile-web profile rather than a separate desktop identity.
 - [x] Both price and inventory one-shot executors receive that configuration through explicit
   dependency injection; cookies and browser identity remain local and never enter model prompts.
+- [x] Computer-use screenshots, tool geometry, guarded coordinate proposals, and scroll targeting
+  use the launched mobile viewport rather than a separate desktop-sized constant.
 - [x] A production-shaped regression proves that the desktop identity loops through Booking OAuth
   while the configured mobile identity reaches a permitted protected inventory route.
 - [x] A failed top-level navigation records only a closed transport-failure category and sanitized

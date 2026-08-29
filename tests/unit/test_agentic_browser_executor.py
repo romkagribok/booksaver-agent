@@ -63,6 +63,9 @@ from booksaver.infrastructure.browser.agentic_executor import (
     _parse_computer_action,
     build_trusted_search_url,
 )
+from booksaver.infrastructure.browser.agentic_executor import (
+    _computer_tools as _price_computer_tools,
+)
 
 
 class _Ledger:
@@ -209,6 +212,9 @@ class _Runtime:
 
     async def destination(self) -> DestinationSnapshot:
         return DestinationSnapshot(self.url)
+
+    async def viewport_size(self) -> tuple[int, int]:
+        return (412, 839)
 
     async def observe_property(self, _property_name: str):
         return self.observe_action, ProviderUsage(LLMUsage(100, 20), 10)
@@ -535,6 +541,7 @@ def test_local_stagehand_launch_explicitly_uses_container_compatible_sandbox(
         assert launch_arguments["device_scale_factor"] == 2.625
         assert launch_arguments["has_touch"] is True
         assert launch_arguments["locale"] == "en-US"
+        assert await runtime.viewport_size() == (412, 839)
         assert fake_playwright.stopped
         await runtime.close()
         assert fake_browser.closed
@@ -558,6 +565,15 @@ def test_navigation_failure_classifier_retains_only_closed_categories(
     expected: BrowserNavigationFailureKind,
 ) -> None:
     assert _classify_navigation_failure(detail) is expected
+
+
+def test_price_computer_tool_uses_launched_mobile_viewport() -> None:
+    computer = next(
+        tool for tool in _price_computer_tools(412, 839) if tool.get("name") == "computer"
+    )
+
+    assert computer["display_width_px"] == 412
+    assert computer["display_height_px"] == 839
 
 
 def test_price_navigation_failure_stops_before_model_cost() -> None:

@@ -352,6 +352,7 @@ class InventoryStagehandRuntimePort(SessionRestoreTarget, Protocol):
     async def attach(self, api_key: str) -> None: ...
     async def navigate(self, url: str) -> None: ...
     async def destination(self) -> DestinationSnapshot: ...
+    async def viewport_size(self) -> tuple[int, int]: ...
     async def observe_inventory_action(
         self, task: InventoryTraversalTask
     ) -> tuple[SemanticAction | None, ProviderUsage]: ...
@@ -1173,7 +1174,13 @@ def _aggregate_scope(
 class AnthropicInventoryComputerUseModel:
     """Stateful Sonnet inventory observer with computer, submission, and terminal tools."""
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        viewport_width: int = _VIEWPORT_WIDTH,
+        viewport_height: int = _VIEWPORT_HEIGHT,
+    ) -> None:
         from anthropic import Anthropic
 
         self._client = Anthropic(
@@ -1183,6 +1190,8 @@ class AnthropicInventoryComputerUseModel:
             max_retries=0,
         )
         self._messages: list[dict[str, Any]] = []
+        self._viewport_width = viewport_width
+        self._viewport_height = viewport_height
 
     def next_turn(
         self,
@@ -1226,7 +1235,7 @@ class AnthropicInventoryComputerUseModel:
                 "tool for visible positive evidence only. Never infer that unseen reservations "
                 "are absent or that an account is complete."
             ),
-            tools=_computer_tools(),
+            tools=_computer_tools(self._viewport_width, self._viewport_height),
             messages=self._messages,
         )
         usage = ProviderUsage(
@@ -1403,13 +1412,16 @@ def _anthropic_strict_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], project(schema))
 
 
-def _computer_tools() -> list[dict[str, Any]]:
+def _computer_tools(
+    viewport_width: int = _VIEWPORT_WIDTH,
+    viewport_height: int = _VIEWPORT_HEIGHT,
+) -> list[dict[str, Any]]:
     return [
         {
             "type": "computer_20251124",
             "name": "computer",
-            "display_width_px": _VIEWPORT_WIDTH,
-            "display_height_px": _VIEWPORT_HEIGHT,
+            "display_width_px": viewport_width,
+            "display_height_px": viewport_height,
             "enable_zoom": True,
             "strict": True,
         },
@@ -1556,9 +1568,7 @@ class StagehandInventoryBrowserExecutor:
         self._budget = budget
         self._runner = runner
         self._runtime_factory = runtime_factory
-        self._computer_model_factory = computer_model_factory or (
-            lambda: AnthropicInventoryComputerUseModel(api_key)
-        )
+        self._computer_model_factory = computer_model_factory
         self._guard = guard or InventoryActionGuard()
 
     def execute(self, request: InventoryExecutionRequest) -> InventoryExecutionResult:
@@ -2109,7 +2119,16 @@ class StagehandInventoryBrowserExecutor:
         meter: ExecutionMeter,
         started: float,
     ) -> InventoryExecutionResult:
-        model = self._computer_model_factory()
+        viewport_width, viewport_height = await runtime.viewport_size()
+        model = (
+            self._computer_model_factory()
+            if self._computer_model_factory is not None
+            else AnthropicInventoryComputerUseModel(
+                self._api_key,
+                viewport_width=viewport_width,
+                viewport_height=viewport_height,
+            )
+        )
         prior_tool_use_id: str | None = None
         while True:
             admitted = self._admit(ModelRole.RECOVERY, "anthropic-computer-use-inventory-v1")
@@ -2193,6 +2212,7 @@ class StagehandInventoryBrowserExecutor:
                 hit = await runtime.hit_test(turn.action.x, turn.action.y)
                 if hit is not None:
                     label, role, destination = hit.label, hit.role, hit.href
+            viewport_width, viewport_height = await runtime.viewport_size()
             proposal = BrowserActionProposal(
                 action=turn.action.action,
                 current=before,
@@ -2205,8 +2225,8 @@ class StagehandInventoryBrowserExecutor:
                 delta_y=turn.action.delta_y,
                 wait_ms=turn.action.wait_ms,
                 zoom_region=turn.action.zoom_region,
-                viewport_width=_VIEWPORT_WIDTH,
-                viewport_height=_VIEWPORT_HEIGHT,
+                viewport_width=viewport_width,
+                viewport_height=viewport_height,
                 hit_test=hit,
             )
             decision = self._guard.evaluate(proposal)

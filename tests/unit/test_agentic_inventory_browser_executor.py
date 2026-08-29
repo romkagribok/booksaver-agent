@@ -220,6 +220,9 @@ class _Runtime:
     async def destination(self) -> DestinationSnapshot:
         return DestinationSnapshot(self.url)
 
+    async def viewport_size(self) -> tuple[int, int]:
+        return (412, 839)
+
     async def observe_inventory_action(self, task: InventoryTraversalTask):
         self.current_task = task
         if self.no_action or (
@@ -506,7 +509,7 @@ def test_stagehand_detail_schema_has_no_provider_compiled_unions() -> None:
 
 
 def test_computer_tool_schema_uses_supported_subset_and_union_budget() -> None:
-    tools = _computer_tools()
+    tools = _computer_tools(412, 839)
     strict_schemas = [
         tool["input_schema"]
         for tool in tools
@@ -525,6 +528,9 @@ def test_computer_tool_schema_uses_supported_subset_and_union_budget() -> None:
     lifecycle = reservation["properties"]["lifecycle"]
     assert lifecycle["anyOf"][-1] == {"type": "null"}
     assert None not in lifecycle["anyOf"][0]["enum"]
+    computer = next(tool for tool in tools if tool.get("name") == "computer")
+    assert computer["display_width_px"] == 412
+    assert computer["display_height_px"] == 839
 
 
 def test_computer_observation_restores_tri_state_and_code_owned_bounds() -> None:

@@ -25,7 +25,8 @@ monitoring determine the Stagehand Chromium launch identity before cookie restor
 - **Infrastructure browser runtime**: Resolve the configured Playwright device descriptor, launch
   Stagehand Chromium with its mobile user agent/viewport/scale/touch/locale, observe top-level
   request failures through a temporary loopback CDP client, and raise a closed local navigation
-  failure.
+  failure. Keep the resolved viewport as runtime state; CSS-scaled screenshots, scroll targeting,
+  computer-use tool geometry, and guarded proposals all consume that single value.
 - **Inventory adapter**: Map redirect-loop failure at the fixed authenticated inventory entry to
   `SIGNED_OUT`; map all other transport failures to `PROVIDER_FAILURE` before destination guarding,
   extraction, fallback, or cost-bearing model calls.
@@ -40,6 +41,8 @@ monitoring determine the Stagehand Chromium launch identity before cookie restor
 - `LocalAgenticInventoryExecutor(..., mobile_settings)`: forwards the same configuration.
 - `BrowserNavigationFailure(category)`: infrastructure-local exception containing only a closed
   category; its text contains no URL, redirect value, page content, or session material.
+- `StagehandRuntimePort.viewport_size()`: returns the actual launched CSS viewport used by both
+  price and inventory computer-use fallback without exposing browser or page content.
 
 ## Data Model
 
@@ -71,7 +74,7 @@ usage, cost, latency, fallback flag, and safety codes.
 ## Test Design
 
 - Launch-option tests prove the configured profile supplies user agent, viewport, scale, touch, and
-  locale while secrets remain absent.
+  locale while secrets remain absent; computer-use tools and guards use the same viewport.
 - Runtime tests reproduce redirect-loop classification from a failed main-document request and
   generic transport classification without retaining raw request data.
 - Inventory adapter tests prove redirect loop → signed-out, other transport → provider failure,

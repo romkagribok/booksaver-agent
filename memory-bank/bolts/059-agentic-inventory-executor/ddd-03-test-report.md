@@ -10,7 +10,7 @@ created: 2026-08-29T21:07:20Z
 
 - **Focused tests**: 198 passed across agentic price/inventory, CLI, remote-auth, coordinator, and
   persistence coverage.
-- **Repository tests**: 1,804 passed with 55 existing deprecation warnings.
+- **Repository tests**: 1,805 passed with 55 existing deprecation warnings.
 - **Static analysis**: Ruff passed; strict mypy passed across 127 source files.
 - **AI-DLC integrity**: Artifact validator and status-integrity checks passed with zero issues.
 - **Exact candidate image**: `booksaver-agent:bolt059-56bbb7e`, manifest
@@ -40,6 +40,10 @@ created: 2026-08-29T21:07:20Z
 
 ## Issues Found
 
+- Cursor Bugbot found that the initial mobile-identity change left computer-use tool and guard
+  geometry at the previous desktop viewport. The final implementation now uses the launched CSS
+  viewport for screenshots, tool declarations, scrolling, hit-testing, and guarded proposals;
+  focused regression coverage passes for both price and inventory executors.
 - Local Docker Desktop stopped responding during candidate build and macOS refused to reopen it.
   The candidate was therefore built and smoke-tested in an isolated VPS staging checkout. This did
   not affect source/static/full-test gates or the running production service.
