@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-08-27T23:13:41Z
+updated: 2026-08-29T20:51:44Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -60,6 +60,9 @@ legacy inventory remains a capability-specific rollback path.
   - Refreshed cookies are eligible for persistence only after code-owned authentication
     verification and owner/session binding checks.
   - Cleanup runs on success, failure, timeout, cancellation, and provider error.
+  - Every executor browser uses the same configured, version-matched mobile-web identity family as
+    `/connect` and the authenticated monitoring path; cookies are never replayed into an unrelated
+    desktop identity.
 - **Priority**: Must
 
 ### FR-4: Local Stagehand semantic execution
@@ -175,6 +178,12 @@ legacy inventory remains a capability-specific rollback path.
   - Stagehand extraction and Anthropic computer-use schemas remain within the active providers'
     supported JSON Schema subsets while BookSaver enforces all collection and value bounds after
     decoding; schema incompatibilities fail closed with content-free diagnostics.
+  - Browser navigation failures are classified from sanitized transport evidence. An
+    authentication redirect loop cannot be mislabeled as an unsafe external destination, and no
+    model call begins until a real Booking.com document is available.
+  - Session usability is established by successfully reaching the requested protected capability
+    in the matching browser identity, rather than by adding page selectors or treating a different
+    account endpoint as sufficient proof.
   - The legacy inventory parser remains unchanged and available only as a capability-specific
     rollback path.
 - **Priority**: Must

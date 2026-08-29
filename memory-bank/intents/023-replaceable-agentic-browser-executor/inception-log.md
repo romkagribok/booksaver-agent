@@ -31,6 +31,11 @@ On 2026-08-28 the first run with a valid Anthropic key exposed two pre-inference
 incompatibilities: Stagehand rejected 18 union parameters against its limit of 16, and Anthropic
 computer use rejected `maxItems`. The owner approved the bounded provider-schema correction through
 final merge and production redeployment.
+On 2026-08-29 a production inventory run exposed a Booking.com OAuth redirect loop only in the
+desktop-identity Stagehand browser. The same encrypted session reached the protected inventory in
+the accepted Pixel 7 identity. The owner approved a corrective design that treats mobile browser
+identity as a session compatibility invariant, classifies transport failures before model work,
+and proceeds through final merge and production redeployment without adding DOM verification.
 
 ## Artifacts Created
 
@@ -40,8 +45,8 @@ final merge and production redeployment.
 | System Context | Complete | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
 | Units | Complete | `units.md` and four unit briefs |
-| Stories | Amended | 16 story files (US-143 through US-158, including corrective US-155 through US-158) |
-| Bolt Plan | Amended | Bolts 050 through 053 and 055; corrective bolts 054 and 056 through 058 |
+| Stories | Amended | 17 story files (US-143 through US-159, including corrective US-155 through US-159) |
+| Bolt Plan | Amended | Bolts 050 through 053 and 055; corrective bolts 054 and 056 through 059 |
 
 ## Summary
 
@@ -50,8 +55,8 @@ final merge and production redeployment.
 | Functional Requirements | 11 |
 | Non-Functional Requirements | 7 |
 | Units | 5 |
-| Stories | 16 |
-| Bolts Planned | 5 plus corrective bolts 054 and 056 through 058 |
+| Stories | 17 |
+| Bolts Planned | 5 plus corrective bolts 054 and 056 through 059 |
 
 ## Decision Log
 
@@ -70,6 +75,8 @@ final merge and production redeployment.
 | 2026-08-27 | Log only sanitized destination shape and rejection codes | Live failures need local diagnosis without raw URLs, query values, page content, or session data | Yes |
 | 2026-08-28 | Keep persistent cost accounting thread-affine | Stagehand's async runner must not reuse the coordinator thread's SQLite connection | Yes |
 | 2026-08-28 | Keep provider schemas within active runtime subsets | Stagehand and Anthropic must accept typed schemas before inference while code retains all bounds | Yes |
+| 2026-08-29 | Bind restored sessions to the accepted mobile browser identity | Capability access proved browser-identity-sensitive; matching the producer identity is more robust than endpoint-specific DOM verification | Yes |
+| 2026-08-29 | Classify browser transport failures before perception | Internal Chrome errors and OAuth loops must not become unsafe destinations or trigger model spend | Yes |
 
 ## Ready for Construction
 

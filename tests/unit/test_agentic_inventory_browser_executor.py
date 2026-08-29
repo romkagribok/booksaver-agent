@@ -50,6 +50,8 @@ from booksaver.domain.model_policy import (
 )
 from booksaver.domain.value_objects import Money, Occupancy
 from booksaver.infrastructure.browser.agentic_executor import (
+    BrowserNavigationFailure,
+    BrowserNavigationFailureKind,
     ComputerActionRequest,
     InspectedElement,
     ProviderUsage,
@@ -195,6 +197,7 @@ class _Runtime:
     inspected_scope_label: str | None = None
     scope_href_missing: bool = False
     extract_error: Exception | None = None
+    navigation_failure: BrowserNavigationFailureKind | None = None
 
     def restore_session(self, data: bytes) -> None:
         self.restored = bytes(data)
@@ -210,10 +213,15 @@ class _Runtime:
 
     async def navigate(self, url: str) -> None:
         assert url == INVENTORY_ENTRY_URL
+        if self.navigation_failure is not None:
+            raise BrowserNavigationFailure(self.navigation_failure)
         self.url = self.redirect_url or url
 
     async def destination(self) -> DestinationSnapshot:
         return DestinationSnapshot(self.url)
+
+    async def viewport_size(self) -> tuple[int, int]:
+        return (412, 839)
 
     async def observe_inventory_action(self, task: InventoryTraversalTask):
         self.current_task = task
@@ -501,7 +509,7 @@ def test_stagehand_detail_schema_has_no_provider_compiled_unions() -> None:
 
 
 def test_computer_tool_schema_uses_supported_subset_and_union_budget() -> None:
-    tools = _computer_tools()
+    tools = _computer_tools(412, 839)
     strict_schemas = [
         tool["input_schema"]
         for tool in tools
@@ -520,6 +528,9 @@ def test_computer_tool_schema_uses_supported_subset_and_union_budget() -> None:
     lifecycle = reservation["properties"]["lifecycle"]
     assert lifecycle["anyOf"][-1] == {"type": "null"}
     assert None not in lifecycle["anyOf"][0]["enum"]
+    computer = next(tool for tool in tools if tool.get("name") == "computer")
+    assert computer["display_width_px"] == 412
+    assert computer["display_height_px"] == 839
 
 
 def test_computer_observation_restores_tri_state_and_code_owned_bounds() -> None:
@@ -798,6 +809,28 @@ def test_code_owned_inventory_navigation_classifies_login_redirect() -> None:
 
     assert outcome.result.status is InventoryExecutionStatus.SIGNED_OUT
     assert outcome.result.usage.total_actions == 1
+    assert ledger.reservations == []
+
+
+def test_inventory_redirect_loop_is_signed_out_before_model_cost() -> None:
+    outcome, ledger = _execute(
+        _Runtime(navigation_failure=BrowserNavigationFailureKind.REDIRECT_LOOP)
+    )
+
+    assert outcome.result.status is InventoryExecutionStatus.SIGNED_OUT
+    assert outcome.result.usage.total_actions == 1
+    assert outcome.result.usage.model_calls == 0
+    assert ledger.reservations == []
+
+
+def test_inventory_transport_failure_is_provider_failure_before_model_cost() -> None:
+    outcome, ledger = _execute(
+        _Runtime(navigation_failure=BrowserNavigationFailureKind.CONNECTION)
+    )
+
+    assert outcome.result.status is InventoryExecutionStatus.PROVIDER_FAILURE
+    assert outcome.result.usage.total_actions == 1
+    assert outcome.result.usage.model_calls == 0
     assert ledger.reservations == []
 
 

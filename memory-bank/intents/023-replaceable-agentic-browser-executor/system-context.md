@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-25T13:00:00Z
+updated: 2026-08-29T20:51:44Z
 ---
 
 # System Context: Replaceable Agentic Browser Executor
@@ -36,7 +36,9 @@ updated: 2026-08-25T13:00:00Z
 
 1. BookSaver domain inputs, authorization, session ownership, and budgets are trusted code-owned
    inputs.
-2. Decrypted cookies exist only inside a transient local browser boundary.
+2. Decrypted cookies exist only inside a transient local browser boundary. The transient executor
+   reuses the configured version-matched mobile identity that produced and verified the session;
+   browser identity is part of session compatibility, not model input.
 3. Stagehand actions, extraction, and Anthropic outputs are untrusted proposals/evidence.
 4. The code guard owns every browser mutation and rejects unsafe requests before and after action.
 5. Only BookSaver validation/evaluation can create a valid candidate, savings opportunity, or
@@ -97,11 +99,14 @@ flowchart LR
 
 1. Coordinator authorizes the user and booking, reserves budget, and selects routing mode.
 2. Session service decrypts verified cookies into a fresh local browser owned by a scoped lease.
-3. Stagehand observes, proposes, and extracts; code replays only guarded actions.
-4. One guarded Anthropic computer-use episode may continue on the same browser after semantic
+3. The executor first reaches the requested protected Booking.com capability with the matching
+   mobile identity. Sanitized transport failures terminate with a typed authentication, provider,
+   or timeout outcome before Stagehand perception.
+4. Stagehand observes, proposes, and extracts; code replays only guarded actions.
+5. One guarded Anthropic computer-use episode may continue on the same browser after semantic
    failure.
-5. Executor returns typed evidence without domain conclusions or secret material.
-6. BookSaver validates facts, evaluates equivalence/savings, reconciles cost, optionally persists
+6. Executor returns typed evidence without domain conclusions or secret material.
+7. BookSaver validates facts, evaluates equivalence/savings, reconciles cost, optionally persists
    verified refreshed cookies, records redacted metrics, and destroys the browser profile.
 
 ## Inventory Lifecycle
@@ -110,9 +115,12 @@ flowchart LR
    scheduled slot under the single coordinator gate.
 2. BookSaver issues an account-bound session lease and fixed upcoming, past, and cancelled work
    scopes to the inventory executor.
-3. Stagehand extracts typed page state and proposes only read-only scope, pagination, or detail
+3. The executor restores the session into BookSaver's configured mobile identity and reaches the
+   protected inventory resource. Redirect loops and internal browser error pages are classified
+   from content-free transport evidence instead of being treated as Booking.com destinations.
+4. Stagehand extracts typed page state and proposes only read-only scope, pagination, or detail
    actions; BookSaver guards and replays each action.
-4. The executor returns positive reservation evidence and redacted traversal metadata. It cannot
+5. The executor returns positive reservation evidence and redacted traversal metadata. It cannot
    establish authoritative absence or completeness.
-5. BookSaver validates stable identities and domain facts, persists accepted current-run positives,
+6. BookSaver validates stable identities and domain facts, persists accepted current-run positives,
    preserves unseen rows, and permits a price check only for a reservation re-observed in that run.

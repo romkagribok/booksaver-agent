@@ -59,3 +59,22 @@ updated: 2026-08-26T04:24:18Z
 - **2026-08-28T02:06:16Z**: review-fix - Addressed both Bugbot findings: non-strict JSON boolean
   tri-state values decode without gaining positive authority, and malformed occupancy stays unknown
   instead of discarding identity-valid evidence; 1795 tests and all static/AI-DLC gates pass
+- **2026-08-29T20:51:44Z**: append - Added corrective bolt 059 for US-159 after production
+  reproduced a desktop-only Booking OAuth redirect loop while the same encrypted session reached
+  inventory under BookSaver's configured Pixel 7 identity.
+- **2026-08-29T20:51:44Z**: 059-agentic-inventory-executor started - Stage 1: domain-model
+- **2026-08-29T20:58:00Z**: 059-agentic-inventory-executor stage-complete - domain-model → technical-design
+- **2026-08-29T21:01:00Z**: 059-agentic-inventory-executor stage-complete - technical-design → adr-analysis
+- **2026-08-29T21:02:00Z**: 059-agentic-inventory-executor stage-complete - adr-analysis → implement;
+  no new ADR required because ADR-025 already makes the allowlisted Android-like Chromium profile
+  authoritative for authenticated monitoring and ADR-036 through ADR-040 preserve executor safety.
+- **2026-08-29T21:04:00Z**: 059-agentic-inventory-executor stage-complete - implement → test;
+  configured mobile identity now reaches Stagehand through both executor factories, and closed
+  navigation failures terminate before destination admission or model cost.
+- **2026-08-29T21:07:20Z**: 059-agentic-inventory-executor test - 198 focused and 1,804 repository
+  tests, Ruff, strict mypy, AI-DLC integrity, and diff checks passed.
+- **2026-08-29T21:07:30Z**: 059-agentic-inventory-executor candidate smoke - exact isolated VPS
+  image restored the current encrypted session with the production mobile profile and reached
+  `/mytrips.html` without the prior OAuth redirect loop or popup.
+- **2026-08-29T21:07:34Z**: 059-agentic-inventory-executor complete - all five stages and the
+  deterministic bolt completion/status cascade passed.

@@ -21,7 +21,7 @@ from decimal import InvalidOperation
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol, TypeVar, cast
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from booksaver.application.async_runner import AsyncLoopRunner
 from booksaver.application.browser_executor import ExecutionMeter, InMemorySessionLeaseBroker
@@ -51,6 +51,7 @@ from booksaver.domain.browser_guard import (
     GuardRejection,
     classify_executor_egress,
 )
+from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.model_policy import (
     AdaptiveModelPortfolio,
     EscalationTrigger,
@@ -99,6 +100,23 @@ class SemanticFailure(Enum):
     EXTRACTION_INVALID = "extraction_invalid"
     DESTINATION_CHANGED = "destination_changed"
     NON_ALLOWLISTED_DESTINATION = "non_allowlisted_destination"
+
+
+class BrowserNavigationFailureKind(Enum):
+    REDIRECT_LOOP = "redirect_loop"
+    TIMEOUT = "timeout"
+    CONNECTION = "connection"
+    CERTIFICATE = "certificate"
+    TRANSPORT = "transport"
+    UNKNOWN = "unknown"
+
+
+class BrowserNavigationFailure(RuntimeError):
+    """Closed, content-free failure raised before provider perception."""
+
+    def __init__(self, kind: BrowserNavigationFailureKind) -> None:
+        self.kind = kind
+        super().__init__(kind.value)
 
 
 class ComputerTurnKind(Enum):
@@ -177,6 +195,7 @@ class StagehandRuntimePort(SessionRestoreTarget, Protocol):
     async def attach(self, api_key: str) -> None: ...
     async def navigate(self, url: str) -> None: ...
     async def destination(self) -> DestinationSnapshot: ...
+    async def viewport_size(self) -> tuple[int, int]: ...
     async def observe_property(
         self, property_name: str
     ) -> tuple[SemanticAction | None, ProviderUsage]: ...
@@ -301,10 +320,87 @@ def _available_port() -> int:
         return int(listener.getsockname()[1])
 
 
+def _classify_navigation_failure(detail: str) -> BrowserNavigationFailureKind:
+    normalized = detail.upper()
+    if "ERR_TOO_MANY_REDIRECTS" in normalized:
+        return BrowserNavigationFailureKind.REDIRECT_LOOP
+    if "ERR_TIMED_OUT" in normalized or "TIMEOUT" in normalized:
+        return BrowserNavigationFailureKind.TIMEOUT
+    if "ERR_CERT" in normalized or "CERTIFICATE" in normalized:
+        return BrowserNavigationFailureKind.CERTIFICATE
+    if any(
+        marker in normalized
+        for marker in (
+            "ERR_CONNECTION",
+            "ERR_NAME_NOT_RESOLVED",
+            "ERR_INTERNET_DISCONNECTED",
+            "ERR_ADDRESS_UNREACHABLE",
+        )
+    ):
+        return BrowserNavigationFailureKind.CONNECTION
+    if "NET::ERR_" in normalized:
+        return BrowserNavigationFailureKind.TRANSPORT
+    return BrowserNavigationFailureKind.UNKNOWN
+
+
+class _NavigationFailureObserver:
+    """Observe only a closed main-document transport category over loopback CDP."""
+
+    def __init__(self, playwright: Any | None = None) -> None:
+        self._playwright = playwright
+        self._listeners: list[tuple[Any, Callable[[Any], None]]] = []
+        self.failure: BrowserNavigationFailureKind | None = None
+
+    @classmethod
+    async def open(cls, cdp_url: str | None) -> _NavigationFailureObserver:
+        if cdp_url is None:
+            return cls()
+        from playwright.async_api import async_playwright
+
+        playwright: Any | None = None
+        try:
+            playwright = await async_playwright().start()
+            browser = await playwright.chromium.connect_over_cdp(cdp_url)
+            observer = cls(playwright)
+            for context in browser.contexts:
+                for page in context.pages:
+                    def on_failed(
+                        request: Any,
+                        *,
+                        target: _NavigationFailureObserver = observer,
+                    ) -> None:
+                        try:
+                            if not request.is_navigation_request():
+                                return
+                            target.failure = _classify_navigation_failure(str(request.failure))
+                        except Exception:
+                            target.failure = BrowserNavigationFailureKind.UNKNOWN
+
+                    page.on("requestfailed", on_failed)
+                    observer._listeners.append((page, on_failed))
+            return observer
+        except Exception:
+            if playwright is not None:
+                await playwright.stop()
+            return cls()
+
+    async def close(self) -> None:
+        for page, listener in self._listeners:
+            try:
+                page.remove_listener("requestfailed", listener)
+            except Exception:
+                pass
+        self._listeners.clear()
+        if self._playwright is not None:
+            await self._playwright.stop()
+            self._playwright = None
+
+
 class LocalStagehandRuntime:
     """Stagehand 4 local runtime on one transient Chromium profile."""
 
-    def __init__(self) -> None:
+    def __init__(self, mobile_settings: MobileWebSettings | None = None) -> None:
+        self._mobile_settings = mobile_settings or MobileWebSettings()
         self._bootstrap = CodeOwnedSessionBootstrap()
         self._browser: Any | None = None
         self._stagehand: Any | None = None
@@ -312,6 +408,8 @@ class LocalStagehandRuntime:
         self._cdp_url: str | None = None
         self._telemetry: LoopbackTelemetrySink | None = None
         self._next_screenshot_region: tuple[int, int, int, int] | None = None
+        self._viewport_width = _VIEWPORT_WIDTH
+        self._viewport_height = _VIEWPORT_HEIGHT
 
     def restore_session(self, data: bytes) -> None:
         self._bootstrap.restore_session(data)
@@ -325,19 +423,28 @@ class LocalStagehandRuntime:
         playwright = await async_playwright().start()
         try:
             executable_path = playwright.chromium.executable_path
+            descriptor = dict(
+                playwright.devices[self._mobile_settings.profile.playwright_device_name]
+            )
+            mobile_options = self._mobile_settings.context_options(descriptor)
         finally:
             await playwright.stop()
+        viewport = cast(dict[str, int], mobile_options["viewport"])
+        self._viewport_width = int(viewport["width"])
+        self._viewport_height = int(viewport["height"])
+        user_agent = str(mobile_options["user_agent"])
         port = _available_port()
         self._cdp_url = f"http://127.0.0.1:{port}"
         self._browser = await local_browser.launch(
+            args=[f"--user-agent={user_agent}"],
             executable_path=executable_path,
             port=port,
             headless=True,
-            locale="en-US",
-            viewport_width=_VIEWPORT_WIDTH,
-            viewport_height=_VIEWPORT_HEIGHT,
-            device_scale_factor=1,
-            has_touch=True,
+            locale=self._mobile_settings.locale,
+            viewport_width=self._viewport_width,
+            viewport_height=self._viewport_height,
+            device_scale_factor=float(mobile_options["device_scale_factor"]),
+            has_touch=mobile_options["has_touch"] is True,
             chromium_sandbox=False,
             accept_downloads=False,
             keep_alive=False,
@@ -387,7 +494,25 @@ class LocalStagehandRuntime:
         return self._page
 
     async def navigate(self, url: str) -> None:
-        await self._active_page().goto(url, wait_until="domcontentloaded", timeout=45_000)
+        observer = await _NavigationFailureObserver.open(self._cdp_url)
+        try:
+            try:
+                await self._active_page().goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=45_000,
+                )
+            except Exception as exc:
+                raise BrowserNavigationFailure(
+                    observer.failure or _classify_navigation_failure(str(exc))
+                ) from None
+            destination = await self._active_page().url()
+            if urlsplit(destination).scheme.casefold() == "chrome-error":
+                raise BrowserNavigationFailure(
+                    observer.failure or BrowserNavigationFailureKind.UNKNOWN
+                )
+        finally:
+            await observer.close()
 
     async def destination(self) -> DestinationSnapshot:
         page = self._active_page()
@@ -396,6 +521,9 @@ class LocalStagehandRuntime:
             raise RuntimeError("Stagehand is not attached")
         pages = await stagehand.browser.context.pages()
         return DestinationSnapshot(url=await page.url(), popup_count=max(0, len(pages) - 1))
+
+    async def viewport_size(self) -> tuple[int, int]:
+        return (self._viewport_width, self._viewport_height)
 
     async def observe_property(
         self, property_name: str
@@ -538,6 +666,7 @@ class LocalStagehandRuntime:
             "caret": "hide",
             "full_page": False,
             "type": "png",
+            "scale": "css",
         }
         if region is not None:
             x0, y0, x1, y1 = region
@@ -634,8 +763,8 @@ class LocalStagehandRuntime:
             await page.click(action.x, action.y, button="left")
         elif action.action is BrowserActionType.SCROLL:
             await page.scroll(
-                _VIEWPORT_WIDTH / 2,
-                _VIEWPORT_HEIGHT / 2,
+                self._viewport_width / 2,
+                self._viewport_height / 2,
                 0,
                 action.delta_y,
             )
@@ -785,7 +914,13 @@ def _map_extracted_observation(raw: Mapping[str, Any]) -> TypedObservation:
 class AnthropicComputerUseModel:
     """Stateful Sonnet 5 computer-use conversation with only three tools."""
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        viewport_width: int = _VIEWPORT_WIDTH,
+        viewport_height: int = _VIEWPORT_HEIGHT,
+    ) -> None:
         from anthropic import Anthropic
 
         self._client = Anthropic(
@@ -795,6 +930,8 @@ class AnthropicComputerUseModel:
             max_retries=0,
         )
         self._messages: list[dict[str, Any]] = []
+        self._viewport_width = viewport_width
+        self._viewport_height = viewport_height
 
     def next_turn(
         self,
@@ -842,7 +979,7 @@ class AnthropicComputerUseModel:
                 "computer result already includes a fresh screenshot, so do not request the "
                 "screenshot action."
             ),
-            tools=_computer_tools(),
+            tools=_computer_tools(self._viewport_width, self._viewport_height),
             messages=self._messages,
         )
         elapsed = max(0, round((time.monotonic() - started) * 1_000))
@@ -965,13 +1102,16 @@ def _observation_schema() -> dict[str, Any]:
     }
 
 
-def _computer_tools() -> list[dict[str, Any]]:
+def _computer_tools(
+    viewport_width: int = _VIEWPORT_WIDTH,
+    viewport_height: int = _VIEWPORT_HEIGHT,
+) -> list[dict[str, Any]]:
     return [
         {
             "type": "computer_20251124",
             "name": "computer",
-            "display_width_px": _VIEWPORT_WIDTH,
-            "display_height_px": _VIEWPORT_HEIGHT,
+            "display_width_px": viewport_width,
+            "display_height_px": viewport_height,
             "enable_zoom": True,
             "strict": True,
         },
@@ -1135,9 +1275,7 @@ class StagehandPriceBrowserExecutor:
         self._budget = budget
         self._runner = runner
         self._runtime_factory = runtime_factory
-        self._computer_model_factory = computer_model_factory or (
-            lambda: AnthropicComputerUseModel(api_key)
-        )
+        self._computer_model_factory = computer_model_factory
         self._guard = guard or BrowserActionGuard()
 
     def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult:
@@ -1187,7 +1325,20 @@ class StagehandPriceBrowserExecutor:
 
             before = await runtime.destination()
             meter.record_action()
-            await runtime.navigate(build_trusted_search_url(request))
+            try:
+                await runtime.navigate(build_trusted_search_url(request))
+            except BrowserNavigationFailure as exc:
+                logger.warning(
+                    "Agentic price navigation failed execution_id=%s phase=entry "
+                    "failure_category=%s",
+                    request.execution_id,
+                    exc.kind.value,
+                )
+                return self._terminal(
+                    PriceExecutionStatus.PROVIDER_FAILURE,
+                    meter,
+                    started,
+                )
             navigation = self._guard.validate_destination(
                 before,
                 await runtime.destination(),
@@ -1359,7 +1510,16 @@ class StagehandPriceBrowserExecutor:
         meter: ExecutionMeter,
         started: float,
     ) -> PriceExecutionResult:
-        model = self._computer_model_factory()
+        viewport_width, viewport_height = await runtime.viewport_size()
+        model = (
+            self._computer_model_factory()
+            if self._computer_model_factory is not None
+            else AnthropicComputerUseModel(
+                self._api_key,
+                viewport_width=viewport_width,
+                viewport_height=viewport_height,
+            )
+        )
         prior_tool_use_id: str | None = None
         while True:
             admitted = self._admit(ModelRole.RECOVERY, "anthropic-computer-use-price-v1")
@@ -1486,6 +1646,7 @@ class StagehandPriceBrowserExecutor:
                     destination=destination,
                     value=None,
                 )
+        viewport_width, viewport_height = await runtime.viewport_size()
         return BrowserActionProposal(
             action=action.action,
             current=current,
@@ -1498,8 +1659,8 @@ class StagehandPriceBrowserExecutor:
             delta_y=action.delta_y,
             wait_ms=action.wait_ms,
             zoom_region=action.zoom_region,
-            viewport_width=_VIEWPORT_WIDTH,
-            viewport_height=_VIEWPORT_HEIGHT,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
             hit_test=hit,
         )
 
@@ -1591,10 +1752,12 @@ class LocalAgenticPriceExecutor:
         api_key: str,
         lease_broker: InMemorySessionLeaseBroker,
         budget: BrowserJobCostBudget,
+        mobile_settings: MobileWebSettings | None = None,
     ) -> None:
         self._api_key = api_key
         self._leases = lease_broker
         self._budget = budget
+        self._mobile_settings = mobile_settings or MobileWebSettings()
 
     def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult:
         with AsyncLoopRunner() as runner:
@@ -1603,4 +1766,5 @@ class LocalAgenticPriceExecutor:
                 lease_broker=self._leases,
                 budget=self._budget,
                 runner=runner,
+                runtime_factory=lambda: LocalStagehandRuntime(self._mobile_settings),
             ).execute(request)
