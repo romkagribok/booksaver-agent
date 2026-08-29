@@ -54,6 +54,7 @@ from booksaver.domain.inventory_executor import (
     ObservedInventoryScope,
     ObservedReservation,
 )
+from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.model_policy import (
     AdaptiveModelPortfolio,
     EscalationTrigger,
@@ -64,6 +65,8 @@ from booksaver.domain.model_policy import (
 )
 from booksaver.domain.value_objects import Money, Occupancy
 from booksaver.infrastructure.browser.agentic_executor import (
+    BrowserNavigationFailure,
+    BrowserNavigationFailureKind,
     ComputerActionRequest,
     InspectedElement,
     LocalStagehandRuntime,
@@ -1593,7 +1596,21 @@ class StagehandInventoryBrowserExecutor:
             await runtime.attach(self._api_key)
             before = await runtime.destination()
             meter.record_action()
-            await runtime.navigate(INVENTORY_ENTRY_URL)
+            try:
+                await runtime.navigate(INVENTORY_ENTRY_URL)
+            except BrowserNavigationFailure as exc:
+                logger.warning(
+                    "Agentic inventory navigation failed execution_id=%s phase=entry "
+                    "failure_category=%s",
+                    request.execution_id,
+                    exc.kind.value,
+                )
+                status = (
+                    InventoryExecutionStatus.SIGNED_OUT
+                    if exc.kind is BrowserNavigationFailureKind.REDIRECT_LOOP
+                    else InventoryExecutionStatus.PROVIDER_FAILURE
+                )
+                return self._terminal(status, meter, started)
             after_entry = await runtime.destination()
             navigation_terminal = _navigation_terminal(after_entry.url)
             if navigation_terminal is not None:
@@ -1664,6 +1681,24 @@ class StagehandInventoryBrowserExecutor:
                 )
                 return await self._with_verified_refresh(runtime, request, partial, started)
             return visual
+        except BrowserNavigationFailure as exc:
+            logger.warning(
+                "Agentic inventory navigation failed execution_id=%s phase=traversal "
+                "failure_category=%s",
+                request.execution_id,
+                exc.kind.value,
+            )
+            status = (
+                InventoryExecutionStatus.SIGNED_OUT
+                if exc.kind is BrowserNavigationFailureKind.REDIRECT_LOOP
+                else InventoryExecutionStatus.PROVIDER_FAILURE
+            )
+            return self._terminal(
+                status,
+                meter,
+                started,
+                fallback_used=fallback_used,
+            )
         except RuntimeError as exc:
             detail = str(exc)
             status = (
@@ -2464,10 +2499,12 @@ class LocalAgenticInventoryExecutor:
         api_key: str,
         lease_broker: InMemorySessionLeaseBroker,
         budget: BrowserJobCostBudget,
+        mobile_settings: MobileWebSettings | None = None,
     ) -> None:
         self._api_key = api_key
         self._leases = lease_broker
         self._budget = budget
+        self._mobile_settings = mobile_settings or MobileWebSettings()
 
     def execute(self, request: InventoryExecutionRequest) -> InventoryExecutionResult:
         with AsyncLoopRunner() as runner:
@@ -2476,4 +2513,7 @@ class LocalAgenticInventoryExecutor:
                 lease_broker=self._leases,
                 budget=self._budget,
                 runner=runner,
+                runtime_factory=lambda: LocalInventoryStagehandRuntime(
+                    self._mobile_settings
+                ),
             ).execute(request)

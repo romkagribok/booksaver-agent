@@ -50,6 +50,8 @@ from booksaver.domain.model_policy import (
 )
 from booksaver.domain.value_objects import Money, Occupancy
 from booksaver.infrastructure.browser.agentic_executor import (
+    BrowserNavigationFailure,
+    BrowserNavigationFailureKind,
     ComputerActionRequest,
     InspectedElement,
     ProviderUsage,
@@ -195,6 +197,7 @@ class _Runtime:
     inspected_scope_label: str | None = None
     scope_href_missing: bool = False
     extract_error: Exception | None = None
+    navigation_failure: BrowserNavigationFailureKind | None = None
 
     def restore_session(self, data: bytes) -> None:
         self.restored = bytes(data)
@@ -210,6 +213,8 @@ class _Runtime:
 
     async def navigate(self, url: str) -> None:
         assert url == INVENTORY_ENTRY_URL
+        if self.navigation_failure is not None:
+            raise BrowserNavigationFailure(self.navigation_failure)
         self.url = self.redirect_url or url
 
     async def destination(self) -> DestinationSnapshot:
@@ -798,6 +803,28 @@ def test_code_owned_inventory_navigation_classifies_login_redirect() -> None:
 
     assert outcome.result.status is InventoryExecutionStatus.SIGNED_OUT
     assert outcome.result.usage.total_actions == 1
+    assert ledger.reservations == []
+
+
+def test_inventory_redirect_loop_is_signed_out_before_model_cost() -> None:
+    outcome, ledger = _execute(
+        _Runtime(navigation_failure=BrowserNavigationFailureKind.REDIRECT_LOOP)
+    )
+
+    assert outcome.result.status is InventoryExecutionStatus.SIGNED_OUT
+    assert outcome.result.usage.total_actions == 1
+    assert outcome.result.usage.model_calls == 0
+    assert ledger.reservations == []
+
+
+def test_inventory_transport_failure_is_provider_failure_before_model_cost() -> None:
+    outcome, ledger = _execute(
+        _Runtime(navigation_failure=BrowserNavigationFailureKind.CONNECTION)
+    )
+
+    assert outcome.result.status is InventoryExecutionStatus.PROVIDER_FAILURE
+    assert outcome.result.usage.total_actions == 1
+    assert outcome.result.usage.model_calls == 0
     assert ledger.reservations == []
 
 

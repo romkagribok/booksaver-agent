@@ -2,9 +2,9 @@
 unit: 004-agentic-inventory-executor
 intent: 023-replaceable-agentic-browser-executor
 phase: inception
-status: complete
+status: in-progress
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-28T01:45:39.000Z
+updated: 2026-08-29T20:51:44Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -34,6 +34,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - Sanitized destination rejection logs that retain no raw URLs, values, or page/session content.
 - Thread-owned persistent cost admission and reconciliation across the async Stagehand boundary.
 - Provider-compatible typed extraction and computer-use tool schemas with code-owned bounds.
+- Version-matched mobile browser identity across `/connect`, session verification, and Stagehand.
+- Typed, content-free browser navigation failures before semantic or computer-use execution.
 
 ### Out of Scope
 
@@ -52,8 +54,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 4 |
-| Must Have | 4 |
+| Total Stories | 5 |
+| Must Have | 5 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -63,6 +65,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 | US-156 | Tolerate read-only destinations and diagnose rejections | Must | Complete |
 | US-157 | Keep agentic cost accounting thread-affine | Must | Complete |
 | US-158 | Use provider-compatible agentic schemas | Must | Complete |
+| US-159 | Preserve mobile session identity and classify navigation failure | Must | Draft |
 
 ## Dependencies
 
@@ -102,3 +105,5 @@ validation, positive-only reconciliation, scheduling, and check authority.
   live `sqlite3.ProgrammingError` evidence.
 - `058-agentic-inventory-executor`: US-158 Stagehand and Anthropic schema-compatibility correction
   after live pre-inference provider rejections.
+- `059-agentic-inventory-executor`: US-159 mobile session identity and navigation-failure
+  correction after the live Booking.com OAuth loop.

@@ -587,6 +587,7 @@ def _make_check_coordinator(
             api_key=api_key,
             lease_broker=lease_broker,
             budget=budget,
+            mobile_settings=cfg.mobile_web_settings,
         )
 
     def _agentic_inventory_executor(budget: Any, lease_broker: Any) -> Any:
@@ -599,6 +600,7 @@ def _make_check_coordinator(
             api_key=api_key,
             lease_broker=lease_broker,
             budget=budget,
+            mobile_settings=cfg.mobile_web_settings,
         )
 
     @contextmanager

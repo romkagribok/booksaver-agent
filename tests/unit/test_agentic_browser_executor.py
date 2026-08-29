@@ -46,6 +46,8 @@ from booksaver.domain.model_policy import (
 )
 from booksaver.domain.value_objects import Money, Occupancy, StayDates
 from booksaver.infrastructure.browser.agentic_executor import (
+    BrowserNavigationFailure,
+    BrowserNavigationFailureKind,
     CodeOwnedSessionBootstrap,
     ComputerActionRequest,
     ComputerTurn,
@@ -57,6 +59,7 @@ from booksaver.infrastructure.browser.agentic_executor import (
     SemanticObservationResult,
     StagehandPriceBrowserExecutor,
     TypedObservation,
+    _classify_navigation_failure,
     _parse_computer_action,
     build_trusted_search_url,
 )
@@ -184,6 +187,7 @@ class _Runtime:
     refreshed: bytes | None = (
         b'[{"name":"session","value":"refreshed","domain":".booking.com","path":"/"}]'
     )
+    navigation_failure: BrowserNavigationFailureKind | None = None
 
     def restore_session(self, data: bytes) -> None:
         self.restored = bytes(data)
@@ -199,6 +203,8 @@ class _Runtime:
 
     async def navigate(self, url: str) -> None:
         assert url.startswith("https://www.booking.com/searchresults.html?")
+        if self.navigation_failure is not None:
+            raise BrowserNavigationFailure(self.navigation_failure)
         self.url = url
 
     async def destination(self) -> DestinationSnapshot:
@@ -477,6 +483,15 @@ def test_local_stagehand_launch_explicitly_uses_container_compatible_sandbox(
             executable_path = "/opt/playwright-browsers/chromium/chrome"
 
         chromium = Chromium()
+        devices = {
+            "Pixel 7": {
+                "user_agent": "Mozilla/5.0 Android Mobile test-agent",
+                "viewport": {"width": 412, "height": 839},
+                "device_scale_factor": 2.625,
+                "is_mobile": True,
+                "has_touch": True,
+            }
+        }
         stopped = False
 
         async def stop(self) -> None:
@@ -512,11 +527,48 @@ def test_local_stagehand_launch_explicitly_uses_container_compatible_sandbox(
         assert launch_arguments["executable_path"] == fake_playwright.chromium.executable_path
         assert launch_arguments["headless"] is True
         assert launch_arguments["keep_alive"] is False
+        assert launch_arguments["args"] == [
+            "--user-agent=Mozilla/5.0 Android Mobile test-agent"
+        ]
+        assert launch_arguments["viewport_width"] == 412
+        assert launch_arguments["viewport_height"] == 839
+        assert launch_arguments["device_scale_factor"] == 2.625
+        assert launch_arguments["has_touch"] is True
+        assert launch_arguments["locale"] == "en-US"
         assert fake_playwright.stopped
         await runtime.close()
         assert fake_browser.closed
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        ("net::ERR_TOO_MANY_REDIRECTS", BrowserNavigationFailureKind.REDIRECT_LOOP),
+        ("net::ERR_TIMED_OUT", BrowserNavigationFailureKind.TIMEOUT),
+        ("net::ERR_CONNECTION_RESET", BrowserNavigationFailureKind.CONNECTION),
+        ("net::ERR_CERT_AUTHORITY_INVALID", BrowserNavigationFailureKind.CERTIFICATE),
+        ("net::ERR_FAILED", BrowserNavigationFailureKind.TRANSPORT),
+        ("provider wrapper stopped", BrowserNavigationFailureKind.UNKNOWN),
+    ],
+)
+def test_navigation_failure_classifier_retains_only_closed_categories(
+    detail: str,
+    expected: BrowserNavigationFailureKind,
+) -> None:
+    assert _classify_navigation_failure(detail) is expected
+
+
+def test_price_navigation_failure_stops_before_model_cost() -> None:
+    outcome, ledger = _execute(
+        _Runtime(navigation_failure=BrowserNavigationFailureKind.CONNECTION)
+    )
+
+    assert outcome.result.status is PriceExecutionStatus.PROVIDER_FAILURE
+    assert outcome.result.usage.total_actions == 1
+    assert outcome.result.usage.model_calls == 0
+    assert ledger.reservations == []
 
 
 def test_computer_type_requires_exact_trusted_query_value_and_focused_input() -> None:

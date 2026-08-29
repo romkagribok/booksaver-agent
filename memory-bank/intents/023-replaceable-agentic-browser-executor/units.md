@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-28T01:23:00Z
+updated: 2026-08-29T20:51:44Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
@@ -81,5 +81,6 @@ flowchart LR
 5. Bolt 056: layered read-only destination policy and privacy-safe rejection diagnostics.
 6. Bolt 057: thread-owned persistent cost accounting across the async Stagehand boundary.
 7. Bolt 058: provider-compatible Stagehand extraction and Anthropic computer-use schemas.
-8. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
+8. Bolt 059: version-matched mobile session identity and typed navigation-failure classification.
+9. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
    window pass.
