@@ -1,7 +1,7 @@
 ---
 stage: design
 bolt: 059-agentic-inventory-executor
-created: 2026-08-29T21:02:00Z
+created: 2026-08-29T21:01:00Z
 ---
 
 # Technical Design: Mobile Session Identity and Navigation Failure

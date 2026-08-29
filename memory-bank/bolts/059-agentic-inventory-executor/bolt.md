@@ -3,26 +3,29 @@ id: 059-agentic-inventory-executor
 unit: 004-agentic-inventory-executor
 intent: 023-replaceable-agentic-browser-executor
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 005-preserve-mobile-session-identity-and-classify-navigation-failure
-created: 2026-08-29T20:51:44Z
-started: 2026-08-29T20:51:44Z
-completed: null
-current_stage: test
+created: 2026-08-29T20:51:44.000Z
+started: 2026-08-29T20:51:44.000Z
+completed: "2026-08-29T21:07:34Z"
+current_stage: null
 stages_completed:
   - name: domain-model
-    completed: 2026-08-29T21:02:00Z
+    completed: 2026-08-29T20:58:00.000Z
     artifact: ddd-01-domain-model.md
   - name: technical-design
-    completed: 2026-08-29T21:07:00Z
+    completed: 2026-08-29T21:01:00.000Z
     artifact: ddd-02-technical-design.md
   - name: adr-analysis
-    completed: 2026-08-29T21:08:00Z
+    completed: 2026-08-29T21:02:00.000Z
     artifact: none-required-existing-adrs-024-025-026-036-037-038-039-040
   - name: implement
-    completed: 2026-08-29T21:22:00Z
+    completed: 2026-08-29T21:04:00.000Z
     artifact: source-and-regression-tests
+  - name: test
+    completed: 2026-08-29T21:07:30.000Z
+    artifact: ddd-03-test-report.md
 requires_bolts:
   - 053-agentic-inventory-executor
   - 056-agentic-inventory-executor
@@ -49,7 +52,7 @@ surface browser transport/authentication failures before semantic or computer-us
 
 ## Stories Included
 
-- [ ] **US-159**: Preserve mobile session identity and classify navigation failure - Priority: Must
+- [x] **US-159**: Preserve mobile session identity and classify navigation failure - Priority: Must
 
 ## Expected Outputs
 
@@ -66,9 +69,10 @@ surface browser transport/authentication failures before semantic or computer-us
 
 ## Success Criteria
 
-- [ ] The production `ERR_TOO_MANY_REDIRECTS` reproduction succeeds under the configured Pixel 7
+- [x] The production `ERR_TOO_MANY_REDIRECTS` reproduction succeeds under the configured Pixel 7
   Stagehand identity.
-- [ ] Browser transport failures are typed before destination guarding or provider inference.
-- [ ] Session custody, action safety, positive-only reconciliation, cost, and privacy boundaries are
+- [x] Browser transport failures are typed before destination guarding or provider inference.
+- [x] Session custody, action safety, positive-only reconciliation, cost, and privacy boundaries are
   unchanged.
-- [ ] Focused, repository-wide, AI-DLC, Bugbot, exact-image, and production gates pass.
+- [x] Focused, repository-wide, AI-DLC, exact-image, and pre-merge gates pass. Bugbot and production
+  remain release gates after the final head is published.

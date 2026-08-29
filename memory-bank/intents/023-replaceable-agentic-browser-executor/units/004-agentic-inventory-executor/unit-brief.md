@@ -2,9 +2,9 @@
 unit: 004-agentic-inventory-executor
 intent: 023-replaceable-agentic-browser-executor
 phase: inception
-status: in-progress
+status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-29T20:51:44Z
+updated: 2026-08-29T20:51:44.000Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -65,7 +65,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 | US-156 | Tolerate read-only destinations and diagnose rejections | Must | Complete |
 | US-157 | Keep agentic cost accounting thread-affine | Must | Complete |
 | US-158 | Use provider-compatible agentic schemas | Must | Complete |
-| US-159 | Preserve mobile session identity and classify navigation failure | Must | Draft |
+| US-159 | Preserve mobile session identity and classify navigation failure | Must | Complete |
 
 ## Dependencies
 

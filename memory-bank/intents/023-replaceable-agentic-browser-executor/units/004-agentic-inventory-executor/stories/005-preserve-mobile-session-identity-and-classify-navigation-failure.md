@@ -2,11 +2,11 @@
 id: 005-preserve-mobile-session-identity-and-classify-navigation-failure
 unit: 004-agentic-inventory-executor
 intent: 023-replaceable-agentic-browser-executor
-status: draft
+status: complete
 priority: must
-created: 2026-08-29T20:51:44Z
+created: 2026-08-29T20:51:44.000Z
 assigned_bolt: 059-agentic-inventory-executor
-implemented: false
+implemented: true
 ---
 
 # Story: Preserve Mobile Session Identity and Classify Navigation Failure
@@ -21,21 +21,21 @@ calls on an internal browser error page
 
 ## Acceptance Criteria
 
-- [ ] Local Stagehand derives its user agent, viewport, scale, touch, and locale from BookSaver's
+- [x] Local Stagehand derives its user agent, viewport, scale, touch, and locale from BookSaver's
   configured version-matched mobile-web profile rather than a separate desktop identity.
-- [ ] Both price and inventory one-shot executors receive that configuration through explicit
+- [x] Both price and inventory one-shot executors receive that configuration through explicit
   dependency injection; cookies and browser identity remain local and never enter model prompts.
-- [ ] A production-shaped regression proves that the desktop identity loops through Booking OAuth
+- [x] A production-shaped regression proves that the desktop identity loops through Booking OAuth
   while the configured mobile identity reaches a permitted protected inventory route.
-- [ ] A failed top-level navigation records only a closed transport-failure category and sanitized
+- [x] A failed top-level navigation records only a closed transport-failure category and sanitized
   destination metadata; raw URLs, redirect values, page content, cookies, and account data remain
   absent.
-- [ ] `ERR_TOO_MANY_REDIRECTS` at the fixed authenticated inventory entry becomes a typed signed-out
+- [x] `ERR_TOO_MANY_REDIRECTS` at the fixed authenticated inventory entry becomes a typed signed-out
   outcome, not `unsafe_action` or `non_allowlisted_destination`; other browser transport failures
   remain fail-closed provider failures.
-- [ ] Stagehand extraction and Anthropic computer use are not called when the protected Booking.com
+- [x] Stagehand extraction and Anthropic computer use are not called when the protected Booking.com
   document was not reached, and the execution reports zero model usage and cost.
-- [ ] No DOM selector, page-text authentication rule, endpoint-specific action allowance, new
+- [x] No DOM selector, page-text authentication rule, endpoint-specific action allowance, new
   provider, or increased budget is introduced.
 
 ## Dependencies
