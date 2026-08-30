@@ -91,10 +91,17 @@ inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"
 ```
 
-`inventory_routing = "agentic"` uses Stagehand for read-only account discovery for authorized users
-covered by the current disclosure. BookSaver accepts only positively observed reservations from
-that run and never lets model output mark an unseen saved reservation absent. Set it to `legacy`
-only as a capability-specific rollback; this setting does not promote the price executor.
+`inventory_routing = "agentic"` uses the pinned Browser Use classic agent for the user-initiated
+`/bookings` refresh and Stagehand for the other read-only inventory triggers. Both run locally in a
+fresh browser, receive only a closed set of code-guarded read-only actions, and use the deployment's
+Anthropic key. BookSaver accepts only positively observed reservations from that run and never lets
+model output mark an unseen saved reservation absent. Set it to `legacy` only as a
+capability-specific rollback; this setting does not promote the price executor.
+
+The Docker build installs the exact resolved runtime graph from `requirements.lock`; this is
+intentional because Browser Use 0.11.13 has broad transitive dependency ranges. Telemetry, cloud
+sync, external version checks, downloads, persistent screenshots, and stock Browser Use actions are
+disabled by the BookSaver adapter.
 
 For price execution, `owner_canary` is the only pre-qualification agentic mode and routes only the
 deployment owner. The executor runs Stagehand 4.0.1 in-process against the installed Playwright
@@ -154,7 +161,7 @@ seven days and are never sent through Telegram.
 
 - a Linux host with Docker Compose v2, 2 GB RAM minimum, and a DNS name if `/connect` is enabled;
 - a private Telegram bot token from BotFather and your numeric Telegram chat ID;
-- an Anthropic API key for the default agentic inventory route and LLM price extraction/recovery
+- an Anthropic API key for the default Browser Use/Stagehand inventory routes and LLM price extraction/recovery
   (without one, set `agentic_browser.inventory_routing = "legacy"` to use scripted inventory);
 - acceptance of the trust boundary: the VPS runs the temporary login browser and must be under
   your control.

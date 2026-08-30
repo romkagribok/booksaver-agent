@@ -2,7 +2,7 @@
 intent: 023-replaceable-agentic-browser-executor
 status: accepted
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-25T13:00:00Z
+updated: 2026-08-30T18:00:44Z
 ---
 
 # Architecture Decisions: Replaceable Agentic Browser Executor
@@ -60,9 +60,20 @@ current-run positive observations, never lets agentic evidence mark unseen reser
 requires a selected reservation to be re-observed before its price check. Price and inventory routes
 remain independently reversible, and bare `/checknow` no longer performs a duplicate inventory run.
 
+## Decision 9: Browser Use replaces Stagehand only for `/bookings`
+
+Reliability is evaluated through a trigger-specific adapter rather than a wholesale executor swap.
+Telegram `/bookings` uses a pinned local Browser Use OSS agent behind the existing
+`InventoryBrowserExecutor` port. Post-connect, `/checknow`, scheduled inventory, and all price work
+retain their existing executors. Browser Use receives only guarded read-only tools, one action per
+step, the existing Anthropic key and hard limits, and no cloud or persistence features. Failure is
+terminal for that operation so qualification cannot be masked by a second browser harness.
+
 ## Formal ADRs
 
 - ADR-036: Trusted control plane and provider-neutral browser-executor port.
 - ADR-037: In-process Stagehand v4 with guarded Anthropic computer-use fallback.
 - ADR-038: Owner-only qualification, consented promotion, and rollback window.
 - ADR-039: Capability-specific agentic inventory with positive-only reconciliation.
+- ADR-040: Separate destination observation from interaction authority.
+- ADR-041: Trigger-specific local Browser Use execution for `/bookings`.

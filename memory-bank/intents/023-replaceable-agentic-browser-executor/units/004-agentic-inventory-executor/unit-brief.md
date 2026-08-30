@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-29T20:51:44.000Z
+updated: 2026-08-30T18:00:44.000Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -36,6 +36,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - Provider-compatible typed extraction and computer-use tool schemas with code-owned bounds.
 - Version-matched mobile browser identity across `/connect`, session verification, and Stagehand.
 - Typed, content-free browser navigation failures before semantic or computer-use execution.
+- Trigger-specific local Browser Use OSS execution for Telegram `/bookings`.
 
 ### Out of Scope
 
@@ -49,13 +50,14 @@ validation, positive-only reconciliation, scheduling, and check authority.
 | FR | Requirement | Priority |
 |----|-------------|----------|
 | FR-10 | Provider-neutral agentic inventory execution | Must |
+| FR-12 | Browser Use execution for `/bookings` | Must |
 
 ## Story Summary
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 5 |
-| Must Have | 5 |
+| Total Stories | 6 |
+| Must Have | 6 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -66,6 +68,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 | US-157 | Keep agentic cost accounting thread-affine | Must | Complete |
 | US-158 | Use provider-compatible agentic schemas | Must | Complete |
 | US-159 | Preserve mobile session identity and classify navigation failure | Must | Complete |
+| US-160 | Execute `/bookings` inventory with Browser Use | Must | Complete |
 
 ## Dependencies
 
@@ -87,6 +90,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
   the coordinator and async browser threads.
 - Provider SDK schema subsets never weaken BookSaver's post-decode validation or positive-only
   reconciliation authority.
+- Browser Use is selected only for `/bookings`, cannot silently fall back within the same job, and
+  receives no cloud, persistent-history, or unsafe default tools.
 
 ## Success Criteria
 
@@ -107,3 +112,5 @@ validation, positive-only reconciliation, scheduling, and check authority.
   after live pre-inference provider rejections.
 - `059-agentic-inventory-executor`: US-159 mobile session identity and navigation-failure
   correction after the live Booking.com OAuth loop.
+- `060-agentic-inventory-executor`: US-160 trigger-specific local Browser Use execution for
+  `/bookings` without changing the inventory port or other routes.

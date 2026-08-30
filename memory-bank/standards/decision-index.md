@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-27T23:17:21Z
-total_decisions: 40
+last_updated: 2026-08-30T18:15:00Z
+total_decisions: 41
 ---
 
 # Decision Index
@@ -17,6 +17,18 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-041: Trigger-specific local Browser Use execution for `/bookings`
+- **Status**: accepted
+- **Date**: 2026-08-30
+- **Bolt**: 060-agentic-inventory-executor (agentic-inventory-executor)
+- **Path**: `bolts/060-agentic-inventory-executor/adr-041-trigger-specific-browser-use-for-bookings.md`
+- **Summary**: Route only Telegram `/bookings` through exactly pinned local Browser Use OSS behind
+  the existing inventory port, with a closed BookSaver-owned tool registry, code-owned dialog
+  rejection, existing limits, and no same-job fallback. Other inventory triggers and price paths
+  remain unchanged.
+- **Read when**: Changing Browser Use versions, `/bookings` executor selection, inventory trigger
+  routing, Browser Use tools/dialogs/telemetry, provider SDK compatibility, or Stagehand coexistence.
 
 ### ADR-040: Separate destination observation from interaction authority
 - **Status**: accepted
