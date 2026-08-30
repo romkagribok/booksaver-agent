@@ -850,6 +850,36 @@ def test_executor_uses_existing_contract_provenance_and_always_closes_runtime() 
     assert broker.take_verified_refresh(request.session_lease) is not None
 
 
+def test_executor_logs_content_free_runtime_stage_on_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FailingRuntime(_Runtime):
+        _failure_stage = "environment_prepare"
+
+        async def execute(self, *_args: Any, **_kwargs: Any) -> BrowserUseRuntimeResult:
+            raise PermissionError("content-bearing-path")
+
+    broker = InMemorySessionLeaseBroker()
+    request = _request(broker)
+    runtime = _FailingRuntime(
+        BrowserUseRuntimeResult(InventoryExecutionStatus.PROVIDER_FAILURE)
+    )
+    with AsyncLoopRunner() as runner:
+        result = BrowserUseInventoryBrowserExecutor(
+            api_key="test-key",
+            lease_broker=broker,
+            budget=_budget(),
+            runner=runner,
+            runtime_factory=lambda: runtime,
+        ).execute(request)
+
+    assert result.status is InventoryExecutionStatus.PROVIDER_FAILURE
+    assert runtime.closed is True
+    assert "failure_stage=environment_prepare" in caplog.text
+    assert "failure_type=PermissionError" in caplog.text
+    assert "content-bearing-path" not in caplog.text
+
+
 def test_executor_preserves_safety_terminal_and_closes_runtime() -> None:
     broker = InMemorySessionLeaseBroker()
     request = _request(broker)

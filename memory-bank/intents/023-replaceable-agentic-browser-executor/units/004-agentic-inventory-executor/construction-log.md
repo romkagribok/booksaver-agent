@@ -104,3 +104,7 @@ updated: 2026-08-26T04:24:18Z
   wrappers and ordinary bound handlers, moved current authentication proof before agent execution
   so optional post-run refresh failures preserve verified observations, and retained content-free
   process cache/config directories across later browser jobs
+- **2026-08-30T21:55:00Z**: operations-fix - The first merged Browser Use `/bookings` run exposed
+  root-owned build-time config/cache directories. Recreated them empty as UID 1000 mode 0700,
+  added a non-root runtime-preparation image smoke and static ordering regression, and added
+  content-free execution-stage diagnostics before bounded VPS operator replay.

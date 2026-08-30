@@ -53,6 +53,13 @@ RUN pip install --no-cache-dir --requirement requirements.lock \
     && pip check \
     && python -c "from importlib.metadata import version; expected = {'anthropic': '0.125.0', 'browser-use': '0.11.13', 'browser-use-sdk': '3.10.0', 'bubus': '1.5.6', 'cdp-use': '1.4.5', 'playwright': '1.62.0', 'pydantic': '2.13.5', 'pydantic-settings': '2.15.0'}; assert all(version(name) == wanted for name, wanted in expected.items()); from browser_use import ActionResult, Agent, BrowserProfile, BrowserSession, ChatAnthropic, Tools"
 
+# The qualified import above initializes Browser Use's process-wide config/cache paths while the
+# image still builds as root. Remove any build-time state and recreate both empty directories for
+# the unprivileged daemon; otherwise its first /bookings execution cannot tighten their modes.
+RUN rm -rf "$BROWSER_USE_CONFIG_DIR" "$XDG_CACHE_HOME" \
+    && install -d -o booksaver -g booksaver -m 0700 \
+        "$BROWSER_USE_CONFIG_DIR" "$XDG_CACHE_HOME"
+
 # Install Chromium + its OS-level dependencies as root (apt access), then hand
 # the browser cache to the runtime user.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
