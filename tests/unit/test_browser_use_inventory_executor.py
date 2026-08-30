@@ -48,7 +48,9 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     BrowserUseInventoryBrowserExecutor,
     BrowserUseObservationPayload,
     BrowserUseReservationPayload,
+    BrowserUseReservationSubmission,
     BrowserUseRuntimeResult,
+    BrowserUseTerminalPayload,
     LocalBrowserUseRuntime,
     _agent_history_diagnostic,
     _browser_request_allowed,
@@ -451,6 +453,24 @@ def test_provider_reservation_payload_normalizes_scalars_and_discards_extras() -
     assert "model_commentary" not in payload.model_dump()
     assert missing.remote_id == "unknown"
     assert missing.scope == "unknown"
+
+
+def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -> None:
+    submission_schema = BrowserUseReservationSubmission.model_json_schema()
+    terminal_schema = BrowserUseTerminalPayload.model_json_schema()
+
+    assert submission_schema["required"] == [
+        "remote_id",
+        "scope",
+        "identity_evidence",
+    ]
+    assert set(submission_schema["properties"]) == {
+        "remote_id",
+        "scope",
+        "identity_evidence",
+    }
+    assert terminal_schema["required"] == ["success", "text"]
+    assert set(terminal_schema["properties"]) == {"success", "text"}
 
 
 def test_browser_use_mapping_downgrades_malformed_optional_facts_to_unknown() -> None:

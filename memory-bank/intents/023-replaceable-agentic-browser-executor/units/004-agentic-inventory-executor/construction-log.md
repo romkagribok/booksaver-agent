@@ -182,6 +182,12 @@ updated: 2026-08-26T04:24:18Z
   to `validation`. Added a closed-vocabulary diagnostic that can reveal only registered action,
   schema-field, and validation-type identifiers while excluding values, page content, and raw
   exceptions; this preserves the content-free evidence policy for the next bounded replay.
+- **2026-08-30T23:53:48Z**: implementation-diagnostic - Closed-vocabulary evidence exposed missing
+  fields in both reservation submissions and `done`. The exact Browser Use release's schema
+  optimizer marks every property required even when Pydantic declares a default, making the prior
+  twenty-field evidence action intrinsically unreliable. Replaced it with three required positive
+  identity fields and matched the native `done(success, text)` shape; BookSaver now constructs all
+  optional unknowns and code-derived incomplete scope evidence behind the trusted boundary.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling

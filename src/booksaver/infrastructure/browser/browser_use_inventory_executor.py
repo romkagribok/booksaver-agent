@@ -540,15 +540,32 @@ class BrowserUseObservationPayload(BaseModel):
     reservations: list[BrowserUseReservationPayload]
 
 
-class BrowserUseTerminalPayload(BaseModel):
+class BrowserUseReservationSubmission(BaseModel):
+    """Minimal all-required shape compatible with Browser Use's strict schema optimizer."""
+
     model_config = ConfigDict(extra="forbid")
-    status: str = InventoryExecutionStatus.PROVIDER_FAILURE.value
-    authenticated: str = "unknown"
-    scopes: list[BrowserUseScopePayload] = Field(default_factory=list)
-    # Browser Use's built-in final-step nudge names these fields. They are accepted only so that
-    # its forced `done` remains schema-valid, then discarded without logging or persistence.
-    success: bool | None = None
-    text: str | None = Field(default=None, max_length=1_000)
+    remote_id: str
+    scope: str
+    identity_evidence: str
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def normalize_provider_scalar(cls, value: object) -> object:
+        if value is None:
+            return "unknown"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return value if isinstance(value, str) else "unknown"
+
+
+class BrowserUseTerminalPayload(BaseModel):
+    """Match Browser Use's own forced-final-step contract exactly."""
+
+    model_config = ConfigDict(extra="forbid")
+    success: bool
+    text: str = Field(max_length=1_000)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1391,12 +1408,12 @@ class LocalBrowserUseRuntime:
             return ActionResult(extracted_content="Guarded wait completed")
 
         @tools.action(  # type: ignore[untyped-decorator]
-            "Submit one visibly supported positive reservation. Repeat once per reservation.",
-            param_model=BrowserUseReservationPayload,
+            "Submit one visible reservation using only stable ID, scope, and identity evidence.",
+            param_model=BrowserUseReservationSubmission,
             allowed_domains=_ALLOWED_DOMAINS,
         )
         async def submit_inventory_observation(  # type: ignore[no-untyped-def]
-            params: BrowserUseReservationPayload,
+            params: BrowserUseReservationSubmission,
             browser_session,
         ) -> Any:
             if not await before_action(browser_session):
@@ -1406,11 +1423,13 @@ class LocalBrowserUseRuntime:
                 or len(params.remote_id.strip()) > 128
                 or params.scope.strip().casefold()
                 not in {scope.value for scope in InventoryScope}
+                or params.identity_evidence.strip().casefold()
+                != EvidenceCompleteness.COMPLETE.value
             ):
                 return _continued_action_result(
                     ActionResult,
-                    "Submission lacked a stable visible identity or recognized scope; inspect "
-                    "the reservation and submit it again with explicit evidence",
+                    "Submission requires one visibly explicit stable identity, recognized scope, "
+                    "and identity_evidence=complete; inspect and submit those three fields again",
                 )
             if len(self._state.reservations) >= 25:
                 self._state.terminal = InventoryExecutionStatus.VALIDATION_FAILURE
@@ -1419,14 +1438,20 @@ class LocalBrowserUseRuntime:
                     success=False,
                     error="Positive reservation submission limit reached",
                 )
-            self._state.reservations.append(params)
+            self._state.reservations.append(
+                BrowserUseReservationPayload(
+                    remote_id=params.remote_id,
+                    scope=params.scope,
+                    identity_evidence=params.identity_evidence,
+                )
+            )
             return _continued_action_result(
                 ActionResult,
                 "One typed positive reservation was submitted",
             )
 
         @tools.action(  # type: ignore[untyped-decorator]
-            "Finish with observed scope evidence or one closed non-success inventory status.",
+            "Finish after positive submission, or report that no safe positive could be submitted.",
             param_model=BrowserUseTerminalPayload,
             terminates_sequence=True,
         )
@@ -1435,11 +1460,13 @@ class LocalBrowserUseRuntime:
         ) -> Any:
             if not await before_action(browser_session):
                 return await stop_unsafe(non_allowlisted=True)
-            if params.status.strip().casefold() == InventoryExecutionStatus.OBSERVED.value:
+            if params.success:
                 try:
                     observation = BrowserUseObservationPayload(
-                        authenticated=params.authenticated,
-                        scopes=params.scopes,
+                        # Authentication was already proved by BookSaver's protected-resource
+                        # probe; Browser Use does not get authority to restate it.
+                        authenticated="true",
+                        scopes=[],
                         reservations=list(self._state.reservations),
                     )
                     _map_browser_use_observation(observation)
@@ -1450,8 +1477,8 @@ class LocalBrowserUseRuntime:
                     )
                     return _continued_action_result(
                         ActionResult,
-                        "Typed observation lacked a stable identity or recognized scope; correct "
-                        "the evidence and call done again",
+                        "No valid positive reservation is ready; submit stable identity evidence "
+                        "before calling done with success=true",
                     )
                 self._state.observation = observation
                 return ActionResult(
@@ -1459,10 +1486,7 @@ class LocalBrowserUseRuntime:
                     success=True,
                     extracted_content="Typed inventory evidence submitted",
                 )
-            try:
-                self._state.terminal = _terminal_status(params.status)
-            except ValueError:
-                self._state.terminal = InventoryExecutionStatus.VALIDATION_FAILURE
+            self._state.terminal = InventoryExecutionStatus.PROVIDER_FAILURE
             return ActionResult(
                 is_done=True,
                 success=False,
@@ -1490,13 +1514,14 @@ class LocalBrowserUseRuntime:
             "control. Do not click unless the visible context directly identifies a reservation, "
             "one required scope, pagination, or read-only trip details. If no directly relevant "
             "control is visible, scroll instead of clicking an unrelated control. Call "
-            "submit_inventory_observation once for each currently visible upcoming reservation. "
-            "After submitting those current positives, use the next step to finish with done "
-            "status observed and scope evidence for only what you actually inspected; incomplete "
-            "or unknown coverage is honest and BookSaver preserves unseen reservations. Do not "
+            "submit_inventory_observation once for each currently visible upcoming reservation "
+            "using exactly remote_id, scope, and identity_evidence=complete. After submitting "
+            "those current positives, use the next step to call done with success=true and short "
+            "generic text. BookSaver derives honest incomplete scope evidence and preserves unseen "
+            "reservations. Do not "
             "spend the remaining job traversing past or cancelled scopes after upcoming positives "
             "are submitted. If no positive can be submitted, continue the other scopes within the "
-            "caps or use done with a closed terminal status."
+            "caps or call done with success=false and short generic text."
         )
         agent_run_id = f"booksaver-{uuid.uuid4().hex}"
         self._agent_run_id = agent_run_id
