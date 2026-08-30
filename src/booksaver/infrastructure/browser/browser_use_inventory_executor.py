@@ -465,7 +465,12 @@ class BrowserUseReservationPayload(BaseModel):
             return "true" if value else "false"
         if isinstance(value, (int, float)):
             return str(value)
-        return value
+        if isinstance(value, str):
+            return value
+        # Structured provider guesses (for example ``{"amount": 301}``) carry no more
+        # authority than an omitted optional fact.  Downgrade them here instead of letting
+        # Browser Use reject the complete action before BookSaver can apply its trusted bounds.
+        return "unknown"
 
 
 class BrowserUseObservationPayload(BaseModel):

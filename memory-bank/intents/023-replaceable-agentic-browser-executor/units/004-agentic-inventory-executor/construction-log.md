@@ -172,6 +172,11 @@ updated: 2026-08-26T04:24:18Z
   completeness authority with code-derived incomplete scope/count evidence from accepted positive
   reservations. This permits positive reconciliation while preserving every unseen row and never
   accepting a model absence claim.
+- **2026-08-30T23:43:23Z**: implementation-diagnostic - The next isolated production replay
+  reached the typed reservation tool nine times, but Browser Use rejected every call before the
+  BookSaver handler because structured JSON values remained invalid for provider-facing string
+  fields. Extended the provider adapter to downgrade every non-scalar optional value to `unknown`;
+  stable visible identity and recognized scope still require explicit code-owned validation.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling

@@ -434,6 +434,8 @@ def test_provider_reservation_payload_normalizes_scalars_and_discards_extras() -
             "booked_total": 301.0,
             "adults": 2,
             "children": None,
+            "refundability": {"status": "refundable"},
+            "rooms": [1],
             "model_commentary": "discarded",
         }
     )
@@ -443,6 +445,8 @@ def test_provider_reservation_payload_normalizes_scalars_and_discards_extras() -
     assert payload.booked_total == "301.0"
     assert payload.adults == "2"
     assert payload.children == "unknown"
+    assert payload.refundability == "unknown"
+    assert payload.rooms == "unknown"
     assert "model_commentary" not in payload.model_dump()
     assert missing.remote_id == "unknown"
     assert missing.scope == "unknown"
