@@ -108,3 +108,73 @@ updated: 2026-08-26T04:24:18Z
   root-owned build-time config/cache directories. Recreated them empty as UID 1000 mode 0700,
   added a non-root runtime-preparation image smoke and static ordering regression, and added
   content-free execution-stage diagnostics before bounded VPS operator replay.
+- **2026-08-30T22:28:13Z**: append - Added bolt 061 after the reauthenticated production replay
+  proved Browser Use startup and session proof healthy but the legacy inventory entry redirected
+  through `http://secure.booking.com/mytrips.html`, which the HTTPS-only egress guard correctly
+  blocked as `ERR_BLOCKED_BY_CLIENT` before agent execution.
+- **2026-08-30T22:28:13Z**: 061-agentic-inventory-executor started - Stage 1: domain-model
+- **2026-08-30T22:29:00Z**: 061-agentic-inventory-executor stage-complete - domain-model →
+  technical-design
+- **2026-08-30T22:30:00Z**: 061-agentic-inventory-executor stage-complete - technical-design →
+  adr-analysis
+- **2026-08-30T22:30:30Z**: 061-agentic-inventory-executor stage-complete - adr-analysis →
+  implement; no new ADR required because ADR-041 already requires code-owned HTTPS entry and
+  fail-closed egress
+- **2026-08-30T22:38:00Z**: implementation-diagnostic - The corrected entry reached Browser Use and
+  completed one metered Sonnet turn. The proposed read-only reservation-detail link used
+  `target=_blank`; BookSaver rejected it before execution. Bolt 061 was refined to normalize only
+  an already-guarded safe Booking.com href into the same tab, preserving the no-popup invariant.
+- **2026-08-30T22:39:48Z**: 061-agentic-inventory-executor stage-complete - implement → test;
+  canonical HTTPS entry, exact Browser Use injected-session signatures, and guarded same-tab link
+  normalization implemented
+- **2026-08-30T22:39:48Z**: 061-agentic-inventory-executor focused test - 55 Browser Use tests and
+  165 Browser Use/coordinator/Stagehand/CLI tests passed; focused Ruff and strict mypy passed, and
+  AI-DLC artifact/status validation reported zero issues
+- **2026-08-30T23:00:00Z**: implementation-diagnostic - Exact VPS replay proved two subsequent
+  reliability faults without a DOM selector failure: aggregate meaningful text from a structural
+  footer exceeded the guard bound, then Sonnet selected an app-install footer route whose external
+  redirect Browser Use correctly blocked. Revised the click policy to inspect labels only on the
+  selected node and interactive ancestors, retain attribute/destination checks on every ancestor,
+  count rejected proposals, return a bounded content-free correction, and explicitly steer away
+  from unrelated controls. No unsafe action, new tab, external destination, or domain mutation was
+  executed.
+- **2026-08-30T23:01:00Z**: 061-agentic-inventory-executor focused test - 59 Browser Use tests
+  passed with focused Ruff, strict mypy, and diff validation clean; production qualification
+  remains in progress.
+- **2026-08-30T23:05:00Z**: implementation-diagnostic - The exact unmodified candidate blocked an
+  unsafe new-tab/app destination before replay, but returning that enforcement as an action error
+  consumed Browser Use's consecutive-failure recovery. Reclassified the no-op enforcement as a
+  successful content-free guard outcome while still metering the proposal, and directed the agent
+  to scroll when no relevant inventory control is visible.
+- **2026-08-30T23:18:00Z**: implementation-diagnostic - Step-level content-free history proved the
+  remaining failures were exact Browser Use result-contract violations: version 0.11.13 permits
+  `success=True` only with terminal `is_done=True`, while the guard correction and incremental
+  reservation submission set it on continued actions. Centralized continued-result construction,
+  omitted the terminal-only flag, and added a qualified-release regression.
+- **2026-08-30T23:24:00Z**: implementation-diagnostic - The corrected result contract removed
+  immediate Pydantic failures, but two structured model turns still consumed 42,513 input tokens,
+  3,953 output tokens, and 119 seconds without a terminal submission. Disabled the explicit
+  Browser Use thinking response field for this single-action typed loop and added permanent bounded
+  history summaries containing only step count, closed-registry action names, and error categories.
+- **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
+  and reached five incremental reservation submissions, but four provider payloads failed strict
+  string-shape validation and the agent spent its remaining deadline traversing instead of calling
+  `done`. Added provider-boundary scalar/null normalization and unknown-key discard while preserving
+  trusted mapping, plus an explicit positive-first instruction to submit current upcoming facts and
+  finish immediately with honest incomplete scope evidence.
+- **2026-08-30T23:34:00Z**: implementation-diagnostic - The next replay completed the intended
+  guarded traversal, submitted one positive reservation, and called `done` with zero harness errors
+  in 58 seconds. Trusted mapping rejected malformed optional evidence before application validation.
+  Added identity-preserving optional-fact downgrade and recoverable typed-terminal correction;
+  stable identity/scope, trusted acceptance, conflict checks, and eligibility remain unchanged.
+- **2026-08-30T23:37:00Z**: implementation-diagnostic - A repeated replay showed the positive
+  submission itself passed, while two `done` calls carried malformed scope shape. Replaced model
+  completeness authority with code-derived incomplete scope/count evidence from accepted positive
+  reservations. This permits positive reconciliation while preserving every unseen row and never
+  accepting a model absence claim.
+- **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
+  and reached five incremental reservation submissions, but four provider payloads failed strict
+  string-shape validation and the agent spent its remaining deadline traversing instead of calling
+  `done`. Added provider-boundary scalar/null normalization and unknown-key discard while preserving
+  trusted mapping, plus an explicit positive-first instruction to submit current upcoming facts and
+  finish immediately with honest incomplete scope evidence.

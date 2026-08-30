@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -41,19 +42,26 @@ from booksaver.domain.model_policy import (
     UsdAmount,
 )
 from booksaver.infrastructure.browser.browser_use_inventory_executor import (
+    _BROWSER_USE_INVENTORY_ENTRY_URL,
     BrowserUseActionGuard,
     BrowserUseCostStop,
     BrowserUseInventoryBrowserExecutor,
     BrowserUseObservationPayload,
+    BrowserUseReservationPayload,
     BrowserUseRuntimeResult,
     LocalBrowserUseRuntime,
+    _agent_history_diagnostic,
     _browser_request_allowed,
+    _continued_action_result,
     _hardened_session_type,
     _is_unsafe_watchdog_handler,
+    _map_browser_use_observation,
     _map_observation,
     _model_type,
     _node_chain_allows_click,
+    _node_chain_click_decision,
     _prepare_environment,
+    _same_tab_click_destination,
     _terminal_status,
 )
 
@@ -140,6 +148,7 @@ def _scopes() -> tuple[ObservedInventoryScope, ...]:
         "https://booking.com@attacker.example/myreservations.html",
         "https://secure.booking.com/cancel.html",
         "https://secure.booking.com/myreservations.html?action=payment",
+        "https://secure.booking.com/apps.html?app_install=1",
         "https://secure.booking.com/myreservations.html#modify",
         "javascript:alert(1)",
     ],
@@ -156,6 +165,15 @@ def test_action_guard_allows_read_only_inventory_navigation_without_exact_labels
         label="Trip information",
         role="link",
         attributes={"href": "/confirmation.html?reservation_id=123"},
+    )
+    assert guard.allows_click(
+        current_url="https://secure.booking.com/mytrips.html",
+        label="Trip information",
+        role="link",
+        attributes={
+            "href": "/confirmation.html?reservation_id=123",
+            "target": "_blank",
+        },
     )
 
 
@@ -240,6 +258,99 @@ def test_click_chain_rejects_nested_mutation_and_cross_target_frames() -> None:
     )
 
 
+def test_click_chain_ignores_aggregate_text_on_structural_ancestors() -> None:
+    structural_footer = _Node(
+        "unrelated account footer content " * 60,
+        {"class": "account-footer", "data-et-view": "footer"},
+        node_name="footer",
+    )
+    safe_link = _Node(
+        "Trip information",
+        {"href": "/confirmation.html?reservation_id=123"},
+        node_name="a",
+        parent_node=structural_footer,
+    )
+    nested_child = _Node("More", {}, parent_node=safe_link)
+
+    decision = _node_chain_click_decision(
+        BrowserUseActionGuard(),
+        node=nested_child,
+        current_url="https://secure.booking.com/mytrips.html",
+        active_target_id="active-target",
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "allowed"
+
+
+def test_click_chain_requires_interactive_ancestor_and_still_checks_structural_attributes() -> None:
+    plain_container = _Node("Trip information", {}, node_name="footer")
+    unsafe_container = _Node(
+        "Trip information",
+        {"onclick": "cancelReservation()"},
+        node_name="footer",
+    )
+
+    no_interactive = _node_chain_click_decision(
+        BrowserUseActionGuard(),
+        node=plain_container,
+        current_url="https://secure.booking.com/mytrips.html",
+        active_target_id="active-target",
+    )
+    unsafe_attribute = _node_chain_click_decision(
+        BrowserUseActionGuard(),
+        node=unsafe_container,
+        current_url="https://secure.booking.com/mytrips.html",
+        active_target_id="active-target",
+    )
+
+    assert no_interactive.allowed is False
+    assert no_interactive.reason == "no_interactive_ancestor"
+    assert unsafe_attribute.allowed is False
+    assert unsafe_attribute.reason == "guard_event_handler"
+
+
+def test_click_chain_classifies_app_install_link_before_execution() -> None:
+    app_link = _Node(
+        "Get the mobile app",
+        {"href": "/apps.html?app_install=1"},
+        node_name="a",
+    )
+
+    decision = _node_chain_click_decision(
+        BrowserUseActionGuard(),
+        node=app_link,
+        current_url="https://secure.booking.com/mytrips.html",
+        active_target_id="active-target",
+    )
+
+    assert decision.allowed is False
+    assert decision.reason == "guard_unsafe_destination"
+
+
+def test_safe_popup_link_is_normalized_to_guarded_same_tab_destination() -> None:
+    safe_parent = _Node(
+        "Trip information",
+        {"href": "/confirmation.html?reservation_id=123", "target": "_blank"},
+        node_name="a",
+    )
+    nested_child = _Node("More", {}, parent_node=safe_parent)
+    guard = BrowserUseActionGuard()
+    current_url = "https://secure.booking.com/mytrips.html"
+
+    assert _node_chain_allows_click(
+        guard,
+        node=nested_child,
+        current_url=current_url,
+        active_target_id="active-target",
+    )
+    assert _same_tab_click_destination(
+        guard,
+        node=nested_child,
+        current_url=current_url,
+    ) == "https://secure.booking.com/confirmation.html?reservation_id=123"
+
+
 @pytest.mark.parametrize(
     ("url", "allowed"),
     [
@@ -254,6 +365,12 @@ def test_click_chain_rejects_nested_mutation_and_cross_target_frames() -> None:
 )
 def test_browser_network_egress_is_allowlisted(url: str, allowed: bool) -> None:
     assert _browser_request_allowed(url) is allowed
+
+
+def test_browser_use_enters_canonical_https_inventory_without_allowing_legacy_redirect() -> None:
+    assert _BROWSER_USE_INVENTORY_ENTRY_URL == "https://secure.booking.com/mytrips.html"
+    assert _browser_request_allowed(_BROWSER_USE_INVENTORY_ENTRY_URL)
+    assert not _browser_request_allowed("http://secure.booking.com/mytrips.html")
 
 
 def test_typed_observation_maps_only_bounded_positive_evidence() -> None:
@@ -309,6 +426,72 @@ def test_typed_observation_maps_only_bounded_positive_evidence() -> None:
         _map_observation(payload.model_copy(update={"reservations": payload.reservations * 101}))
 
 
+def test_provider_reservation_payload_normalizes_scalars_and_discards_extras() -> None:
+    payload = BrowserUseReservationPayload.model_validate(
+        {
+            "remote_id": 6992391225,
+            "scope": "upcoming",
+            "booked_total": 301.0,
+            "adults": 2,
+            "children": None,
+            "model_commentary": "discarded",
+        }
+    )
+    missing = BrowserUseReservationPayload.model_validate({})
+
+    assert payload.remote_id == "6992391225"
+    assert payload.booked_total == "301.0"
+    assert payload.adults == "2"
+    assert payload.children == "unknown"
+    assert "model_commentary" not in payload.model_dump()
+    assert missing.remote_id == "unknown"
+    assert missing.scope == "unknown"
+
+
+def test_browser_use_mapping_downgrades_malformed_optional_facts_to_unknown() -> None:
+    payload = BrowserUseObservationPayload.model_validate(
+        {
+            "authenticated": "yes",
+            "scopes": [
+                {
+                    "scope": "upcoming",
+                    "requested_scope_visible": "yes",
+                    "explicit_empty": "no",
+                    "pagination_exhausted": "unknown",
+                    "pages_observed": 1,
+                    "visible_reservation_count": 1,
+                    "detail_count": 0,
+                    "completeness": "partial",
+                }
+            ],
+            "reservations": [
+                {
+                    "remote_id": "6992391225",
+                    "identity_evidence": "complete",
+                    "scope": "upcoming",
+                    "confirmation_id": "6992391225",
+                    "property_name": "Hotel Example",
+                    "check_in": "November 24, 2026",
+                    "booked_total": "$301",
+                    "currency": "US dollars",
+                    "refundability": "free cancellation",
+                }
+            ],
+        }
+    )
+
+    scopes, reservations = _map_browser_use_observation(payload)
+
+    assert scopes[0].requested_scope_visible is None
+    assert scopes[0].visible_reservation_count == 1
+    assert scopes[0].completeness is EvidenceCompleteness.INCOMPLETE
+    assert reservations[0].remote_id == "6992391225"
+    assert reservations[0].identity_evidence is EvidenceCompleteness.COMPLETE
+    assert reservations[0].property_name == "Hotel Example"
+    assert reservations[0].check_in is None
+    assert reservations[0].booked_total is None
+
+
 @pytest.mark.parametrize(
     "status",
     ["observed", "unsafe_action", "action_limit", "cost_limit", "timeout"],
@@ -316,6 +499,48 @@ def test_typed_observation_maps_only_bounded_positive_evidence() -> None:
 def test_provider_cannot_claim_code_owned_terminal_status(status: str) -> None:
     with pytest.raises(ValueError, match="code-owned"):
         _terminal_status(status)
+
+
+def test_continued_action_result_matches_qualified_browser_use_contract() -> None:
+    from browser_use import ActionResult
+
+    result = _continued_action_result(ActionResult, "Content-free correction")
+
+    assert result.is_done is False
+    assert result.success is None
+    assert result.error is None
+    assert result.extracted_content == "Content-free correction"
+    with pytest.raises(ValueError, match="success=True can only be set when is_done=True"):
+        ActionResult(is_done=False, success=True, extracted_content="invalid")
+
+
+def test_agent_history_diagnostic_logs_only_bounded_categories() -> None:
+    class _Action:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def model_dump(self, **_kwargs: Any) -> dict[str, dict[str, str]]:
+            return {self.name: {"secret": "must-not-appear"}}
+
+    history = SimpleNamespace(
+        history=[
+            SimpleNamespace(
+                model_output=SimpleNamespace(action=[_Action("guarded_click")]),
+                result=[SimpleNamespace(error="content validation secret")],
+            ),
+            SimpleNamespace(
+                model_output=SimpleNamespace(action=[_Action("unregistered_secret_action")]),
+                result=[SimpleNamespace(error="page-content-secret")],
+            ),
+        ]
+    )
+
+    diagnostic = _agent_history_diagnostic(history)
+
+    assert diagnostic.steps == 2
+    assert diagnostic.actions == ("guarded_click", "unknown")
+    assert diagnostic.errors == ("validation", "unknown")
+    assert "secret" not in repr(diagnostic)
 
 
 def test_hardened_session_removes_unsafe_watchdogs() -> None:

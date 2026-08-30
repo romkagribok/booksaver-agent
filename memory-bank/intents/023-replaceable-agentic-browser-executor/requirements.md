@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-08-30T18:00:44Z
+updated: 2026-08-30T22:28:13Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -209,6 +209,12 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
 - **Acceptance Criteria**:
   - `SynchronizationTrigger.BOOKINGS` selects Browser Use, while post-connect, `/checknow`, and
     scheduled inventory continue to select Stagehand and every price route remains unchanged.
+  - Browser Use enters inventory through a code-owned canonical HTTPS `mytrips` route. It never
+    permits HTTP egress merely to follow Booking.com's legacy `myreservations` redirect, and a
+    provider redirect cannot grant navigation authority.
+  - A visibly inspected safe Booking.com link that declares `target=_blank` is replayed as guarded
+    same-tab navigation. The adapter never permits the popup, and unsafe or missing destinations
+    still fail closed.
   - Browser Use receives the existing owner/account-bound session lease and residual action, cost,
     and absolute-deadline limits; each physical model call is admitted and reconciled through the
     BookSaver cost ledger.

@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-30T18:00:44Z
+updated: 2026-08-30T22:28:13Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
@@ -85,5 +85,7 @@ flowchart LR
 8. Bolt 059: version-matched mobile session identity and typed navigation-failure classification.
 9. Bolt 060: trigger-specific local Browser Use executor for `/bookings`; every other trigger keeps
    its current executor.
-10. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
+10. Bolt 061: use the canonical HTTPS inventory entry after production showed Booking.com's legacy
+    entry redirecting through blocked HTTP before Browser Use could perceive the page.
+11. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
    window pass.
