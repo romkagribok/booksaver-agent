@@ -63,6 +63,7 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     _prepare_environment,
     _same_tab_click_destination,
     _terminal_status,
+    _validation_diagnostic,
 )
 
 
@@ -543,7 +544,24 @@ def test_agent_history_diagnostic_logs_only_bounded_categories() -> None:
 
     assert diagnostic.steps == 2
     assert diagnostic.actions == ("guarded_click", "unknown")
-    assert diagnostic.errors == ("validation", "unknown")
+    assert diagnostic.errors == (
+        "validation:unknown:unknown:unknown",
+        "unknown",
+    )
+
+
+def test_validation_diagnostic_exposes_only_closed_schema_categories() -> None:
+    raw = (
+        "Invalid parameters {'booked_total': {'amount': 'SECRET'}} for action "
+        "submit_inventory_observation: [type=string_type, input_value=SECRET]"
+    )
+
+    diagnostic = _validation_diagnostic(raw)
+
+    assert diagnostic == (
+        "validation:submit_inventory_observation:booked_total:string_type"
+    )
+    assert "SECRET" not in diagnostic
     assert "secret" not in repr(diagnostic)
 
 

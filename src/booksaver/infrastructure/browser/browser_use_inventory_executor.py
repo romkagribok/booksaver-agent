@@ -247,6 +247,65 @@ class _AgentHistoryDiagnostic:
     errors: tuple[str, ...]
 
 
+_DIAGNOSTIC_FIELDS = (
+    "remote_id",
+    "identity_evidence",
+    "scope",
+    "lifecycle",
+    "confirmation_id",
+    "property_name",
+    "property_reference",
+    "check_in",
+    "check_out",
+    "room_type",
+    "booked_total",
+    "currency",
+    "all_in",
+    "refundability",
+    "refundability_text",
+    "refund_deadline",
+    "adults",
+    "children",
+    "rooms",
+    "completeness",
+    "status",
+    "authenticated",
+    "scopes",
+    "reservations",
+)
+_DIAGNOSTIC_VALIDATION_TYPES = (
+    "string_type",
+    "list_type",
+    "model_type",
+    "missing",
+    "extra_forbidden",
+    "literal_error",
+    "int_parsing",
+    "int_type",
+    "bool_type",
+    "value_error",
+)
+
+
+def _validation_diagnostic(raw_error: object) -> str:
+    """Reduce one content-bearing dependency error to fixed schema/type identifiers."""
+
+    folded = str(raw_error).casefold()
+    action = next((name for name in sorted(_EXPECTED_ACTIONS) if name in folded), "unknown")
+    field_name = next(
+        (
+            name
+            for name in _DIAGNOSTIC_FIELDS
+            if re.search(rf"(?<![a-z0-9_]){re.escape(name)}(?![a-z0-9_])", folded)
+        ),
+        "unknown",
+    )
+    error_type = next(
+        (name for name in _DIAGNOSTIC_VALIDATION_TYPES if name in folded), "unknown"
+    )
+    return f"validation:{action}:{field_name}:{error_type}"
+
+
 def _agent_history_diagnostic(history: object) -> _AgentHistoryDiagnostic:
     action_names: list[str] = []
     error_codes: list[str] = []
@@ -273,13 +332,14 @@ def _agent_history_diagnostic(history: object) -> _AgentHistoryDiagnostic:
             for candidate, marker in (
                 ("max_failures", "consecutive failure"),
                 ("timeout", "timeout"),
-                ("validation", "validation"),
                 ("action", "action"),
                 ("element", "element"),
             ):
                 if marker in folded:
                     code = candidate
                     break
+            if "validation" in folded:
+                code = _validation_diagnostic(raw_error)
             error_codes.append(code)
     return _AgentHistoryDiagnostic(len(items), tuple(action_names), tuple(error_codes))
 
