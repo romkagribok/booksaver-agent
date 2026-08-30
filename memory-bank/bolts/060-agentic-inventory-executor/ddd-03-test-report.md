@@ -78,3 +78,17 @@ WAF SDK hosts. Booking's own `booking.com` and `bstatic.com` application deliver
 merged x86_64 VPS image and authenticated Telegram `/bookings` run remain the release acceptance
 test; any ordinary eligible flow that requires a currently blocked third-party host must be
 diagnosed from content-free counters before the egress policy changes.
+
+## Post-deployment container correction
+
+The first merged x86_64 `/bookings` execution stopped in one millisecond with zero model calls and
+zero actions. Content-free production evidence and the exact image showed that the build-time
+Browser Use import had created its process config/cache directories as root. The UID 1000 daemon
+therefore could not apply the required mode before runtime startup.
+
+The corrected Docker layer removes build-time Browser Use state and recreates the two empty
+process directories as `booksaver:booksaver` mode `0700` after the root import and before
+`USER booksaver`. The image qualification now invokes BookSaver's `_prepare_environment()` as the
+unprivileged image user, rather than proving only a dependency import and generic Chromium launch.
+Runtime failures also emit only a bounded execution stage and exception class, without path,
+provider, page, or session content.

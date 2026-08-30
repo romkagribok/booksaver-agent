@@ -17,6 +17,18 @@ def test_image_contains_transient_remote_browser_dependencies() -> None:
         )
 
 
+def test_image_reowns_browser_use_process_directories_after_root_import() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    root_import = dockerfile.index("from browser_use import ActionResult")
+    remove_build_state = dockerfile.index(
+        'rm -rf "$BROWSER_USE_CONFIG_DIR" "$XDG_CACHE_HOME"'
+    )
+    unprivileged_runtime = dockerfile.index("USER booksaver")
+
+    assert root_import < remove_build_state < unprivileged_runtime
+    assert "install -d -o booksaver -g booksaver -m 0700" in dockerfile
+
+
 def test_compose_publishes_only_caddy_for_opt_in_remote_auth_profile() -> None:
     compose = (ROOT / "docker-compose.yml").read_text()
     booksaver_block, caddy_block = compose.split("\n  caddy:", maxsplit=1)

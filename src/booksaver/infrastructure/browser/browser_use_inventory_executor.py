@@ -362,6 +362,15 @@ class BrowserUseCostStop(RuntimeError):
         super().__init__(reason.value)
 
 
+class BrowserUseRuntimeFailure(RuntimeError):
+    """Content-free execution failure with a bounded startup/runtime stage."""
+
+    def __init__(self, *, stage: str, cause_type: str) -> None:
+        self.stage = stage
+        self.cause_type = cause_type
+        super().__init__("browser_use_runtime_failure")
+
+
 class BrowserUseActionGuard:
     """Deny-oriented action policy without exact benign labels or routes."""
 
@@ -687,6 +696,7 @@ class LocalBrowserUseRuntime:
         self._network_tasks: set[asyncio.Task[None]] = set()
         self._blocked_network_requests = 0
         self._state = _EpisodeState()
+        self._failure_stage = "environment_prepare"
 
     def restore_session(self, data: bytes) -> None:
         self._bootstrap.restore_session(data)
@@ -699,7 +709,9 @@ class LocalBrowserUseRuntime:
         budget: BrowserJobCostBudget,
         meter: ExecutionMeter,
     ) -> BrowserUseRuntimeResult:
+        self._failure_stage = "environment_prepare"
         _prepare_environment()
+        self._failure_stage = "dependency_check"
         try:
             installed_version = version("browser-use")
         except PackageNotFoundError as exc:
@@ -725,6 +737,7 @@ class LocalBrowserUseRuntime:
         except ImportError as exc:
             raise RuntimeError("Browser Use 0.11.13 runtime is not installed") from exc
 
+        self._failure_stage = "transient_filesystem"
         self._root = Path(tempfile.mkdtemp(prefix="booksaver-browser-use-"))
         # Browser Use clones ordinary Chrome profile paths into an untracked system temp path.
         # Its own prefix suppresses that copy, keeping every profile byte under our owned root.
@@ -736,6 +749,7 @@ class LocalBrowserUseRuntime:
 
         from playwright.async_api import async_playwright
 
+        self._failure_stage = "playwright_probe"
         playwright = await async_playwright().start()
         try:
             executable_path = playwright.chromium.executable_path
@@ -778,6 +792,7 @@ class LocalBrowserUseRuntime:
             dom_highlight_elements=False,
             cross_origin_iframes=True,
         )
+        self._failure_stage = "browser_session_start"
         session_type = _hardened_session_type(BrowserSession)
         session = session_type(browser_profile=profile)
         self._session = session
@@ -790,8 +805,10 @@ class LocalBrowserUseRuntime:
         await self._deny_downloads(session)
         await self._install_network_guard(session)
         await self._install_dialog_guard(session)
+        self._failure_stage = "session_bootstrap"
         await self._bootstrap.apply(session.cdp_url)
 
+        self._failure_stage = "authentication_probe"
         authentication_terminal = await self._initial_authentication_terminal(
             request,
             session.cdp_url,
@@ -799,6 +816,7 @@ class LocalBrowserUseRuntime:
         if authentication_terminal is not None:
             return BrowserUseRuntimeResult(authentication_terminal)
 
+        self._failure_stage = "inventory_navigation"
         meter.record_action()
         await session.navigate_to(INVENTORY_ENTRY_URL, new_tab=False)
         await asyncio.sleep(0.5)
@@ -1023,6 +1041,7 @@ class LocalBrowserUseRuntime:
         )
         agent_run_id = f"booksaver-{uuid.uuid4().hex}"
         self._agent_run_id = agent_run_id
+        self._failure_stage = "agent_construction"
         agent: Any = Agent(
             task=task,
             task_id=agent_run_id,
@@ -1072,6 +1091,7 @@ class LocalBrowserUseRuntime:
         if actions != _EXPECTED_ACTIONS:
             raise RuntimeError("Browser Use action registry differs from the qualified allowlist")
 
+        self._failure_stage = "agent_execution"
         remaining_steps = max(1, request.limits.max_actions - meter.snapshot().total_actions)
         try:
             history = await agent.run(max_steps=remaining_steps)
@@ -1098,6 +1118,7 @@ class LocalBrowserUseRuntime:
                 else InventoryExecutionStatus.PROVIDER_FAILURE
             )
             return BrowserUseRuntimeResult(status)
+        self._failure_stage = "result_mapping"
         try:
             scopes, reservations = _map_observation(self._state.observation)
         except PermissionError:
@@ -1402,16 +1423,20 @@ class BrowserUseInventoryBrowserExecutor:
                 else InventoryExecutionStatus.PROVIDER_FAILURE
             )
             logger.warning(
-                "Browser Use inventory failed execution_id=%s failure_type=%s",
+                "Browser Use inventory failed execution_id=%s failure_stage=%s "
+                "failure_type=%s",
                 request.execution_id,
-                type(exc).__name__,
+                getattr(exc, "stage", "executor"),
+                getattr(exc, "cause_type", type(exc).__name__),
             )
             return self._terminal(status, meter, started)
         except Exception as exc:
             logger.warning(
-                "Browser Use inventory failed execution_id=%s failure_type=%s",
+                "Browser Use inventory failed execution_id=%s failure_stage=%s "
+                "failure_type=%s",
                 request.execution_id,
-                type(exc).__name__,
+                getattr(exc, "stage", "executor"),
+                getattr(exc, "cause_type", type(exc).__name__),
             )
             return self._terminal(
                 InventoryExecutionStatus.PROVIDER_FAILURE,
@@ -1428,12 +1453,18 @@ class BrowserUseInventoryBrowserExecutor:
         runtime = self._runtime_factory()
         try:
             self._leases.restore_into(request.session_lease, runtime)
-            result = await runtime.execute(
-                request,
-                api_key=self._api_key,
-                budget=self._budget,
-                meter=meter,
-            )
+            try:
+                result = await runtime.execute(
+                    request,
+                    api_key=self._api_key,
+                    budget=self._budget,
+                    meter=meter,
+                )
+            except Exception as exc:
+                raise BrowserUseRuntimeFailure(
+                    stage=str(getattr(runtime, "_failure_stage", "runtime_execute")),
+                    cause_type=type(exc).__name__,
+                ) from None
             if result.status is not InventoryExecutionStatus.OBSERVED:
                 return self._terminal(
                     result.status,
