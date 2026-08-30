@@ -188,6 +188,12 @@ updated: 2026-08-26T04:24:18Z
   twenty-field evidence action intrinsically unreliable. Replaced it with three required positive
   identity fields and matched the native `done(success, text)` shape; BookSaver now constructs all
   optional unknowns and code-derived incomplete scope evidence behind the trusted boundary.
+- **2026-08-30T23:55:52Z**: implementation-diagnostic - The minimal tool completed the first
+  successful authenticated replay in 26.9 seconds and two Sonnet turns: one accepted positive,
+  zero rejections or safety codes, and $0.047577 model cost. The positive used a different generic
+  visible identifier than the confirmation-keyed saved row, so it remained ineligible. Narrowed
+  the tool to the visibly explicit Booking.com confirmation number and map that value to both
+  stable remote identity and confirmation ID; property, DOM, and card identifiers are forbidden.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling

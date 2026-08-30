@@ -460,12 +460,12 @@ def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -
     terminal_schema = BrowserUseTerminalPayload.model_json_schema()
 
     assert submission_schema["required"] == [
-        "remote_id",
+        "confirmation_id",
         "scope",
         "identity_evidence",
     ]
     assert set(submission_schema["properties"]) == {
-        "remote_id",
+        "confirmation_id",
         "scope",
         "identity_evidence",
     }

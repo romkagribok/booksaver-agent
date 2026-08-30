@@ -544,7 +544,7 @@ class BrowserUseReservationSubmission(BaseModel):
     """Minimal all-required shape compatible with Browser Use's strict schema optimizer."""
 
     model_config = ConfigDict(extra="forbid")
-    remote_id: str
+    confirmation_id: str
     scope: str
     identity_evidence: str
 
@@ -1408,7 +1408,8 @@ class LocalBrowserUseRuntime:
             return ActionResult(extracted_content="Guarded wait completed")
 
         @tools.action(  # type: ignore[untyped-decorator]
-            "Submit one visible reservation using only stable ID, scope, and identity evidence.",
+            "Submit one visible reservation using its confirmation ID, scope, and identity "
+            "evidence.",
             param_model=BrowserUseReservationSubmission,
             allowed_domains=_ALLOWED_DOMAINS,
         )
@@ -1419,8 +1420,8 @@ class LocalBrowserUseRuntime:
             if not await before_action(browser_session):
                 return await stop_unsafe(non_allowlisted=True)
             if (
-                params.remote_id.strip().casefold() in {"", "unknown"}
-                or len(params.remote_id.strip()) > 128
+                params.confirmation_id.strip().casefold() in {"", "unknown"}
+                or len(params.confirmation_id.strip()) > 128
                 or params.scope.strip().casefold()
                 not in {scope.value for scope in InventoryScope}
                 or params.identity_evidence.strip().casefold()
@@ -1428,7 +1429,7 @@ class LocalBrowserUseRuntime:
             ):
                 return _continued_action_result(
                     ActionResult,
-                    "Submission requires one visibly explicit stable identity, recognized scope, "
+                    "Submission requires the visibly explicit confirmation ID, recognized scope, "
                     "and identity_evidence=complete; inspect and submit those three fields again",
                 )
             if len(self._state.reservations) >= 25:
@@ -1440,7 +1441,8 @@ class LocalBrowserUseRuntime:
                 )
             self._state.reservations.append(
                 BrowserUseReservationPayload(
-                    remote_id=params.remote_id,
+                    remote_id=params.confirmation_id,
+                    confirmation_id=params.confirmation_id,
                     scope=params.scope,
                     identity_evidence=params.identity_evidence,
                 )
@@ -1515,7 +1517,9 @@ class LocalBrowserUseRuntime:
             "one required scope, pagination, or read-only trip details. If no directly relevant "
             "control is visible, scroll instead of clicking an unrelated control. Call "
             "submit_inventory_observation once for each currently visible upcoming reservation "
-            "using exactly remote_id, scope, and identity_evidence=complete. After submitting "
+            "using exactly confirmation_id, scope, and identity_evidence=complete. The "
+            "confirmation_id must be the visible Booking.com reservation confirmation number, "
+            "never a property, accommodation, DOM, or card identifier. After submitting "
             "those current positives, use the next step to call done with success=true and short "
             "generic text. BookSaver derives honest incomplete scope evidence and preserves unseen "
             "reservations. Do not "
