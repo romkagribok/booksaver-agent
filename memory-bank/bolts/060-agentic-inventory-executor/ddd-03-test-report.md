@@ -36,8 +36,9 @@ scheduled inventory. Price execution is unchanged.
 - Downloads, persistent storage-state polling, popup auto-accept, external blank-page assets,
   permission grants, telemetry, cloud sync, version calls, and dependency log propagation are
   disabled. Screenshots remain in memory and all owned browser, profile, agent, config, and cache
-  paths are removed on teardown, including the namespace created before a late Agent constructor
-  failure.
+  job-owned browser/profile/agent paths are removed on teardown, including the namespace created
+  before a late Agent constructor failure. Process-wide content-free config/cache directories stay
+  available for later Stagehand and Playwright work and are not used for page/session content.
 - Browser page egress permits only HTTPS Booking application/static-delivery hosts and loopback;
   the live fixture blocks an external fetch. Anthropic traffic is emitted only by the metered local
   SDK, not by page tools.
@@ -54,17 +55,17 @@ scheduled inventory. Price execution is unchanged.
 
 ## Verification Commands
 
-- `python3 -m pytest tests/unit/test_browser_use_inventory_executor.py -q` — 46 passed.
-- Focused Browser Use/coordinator/guard slice — 119 passed.
+- `python3 -m pytest tests/unit/test_browser_use_inventory_executor.py -q` — 52 passed.
+- Focused Browser Use/coordinator/guard slice — 130 passed.
 - `python3 -m ruff check src tests` — passed.
 - `python3 -m mypy src` — passed across 128 source files.
-- `python3 -m pytest -q` — 1,853 passed, 55 pre-existing deprecation warnings.
+- `python3 -m pytest -q` — 1,859 passed, 55 pre-existing deprecation warnings.
 - `git diff --check` — passed.
 
 ## Exact-Image Qualification
 
 - `docker build --tag booksaver-agent:browser-use-candidate .` — passed; image
-  `sha256:f1cacb6150cf258d0f1831331fb47638f491b280e7865926272ecadce338227e`.
+  `sha256:0a30c0020280ced3ef5013d674dbcecd2310f753897af7d752059acd642b292c`.
 - The image installed `requirements.lock`, passed `pip check`, and asserted the qualified Browser
   Use, Browser Use SDK, Anthropic, Playwright, Pydantic, cdp-use, and bubus versions and imports.
 - Non-root container smoke launched and closed the bundled Playwright Chromium successfully and

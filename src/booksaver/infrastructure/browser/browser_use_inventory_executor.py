@@ -142,6 +142,28 @@ _SILENCED_LOGGERS = (
 )
 
 
+def _is_unsafe_watchdog_handler(handler: object) -> bool:
+    """Recognize qualified Browser Use wrappers and ordinary bound handlers."""
+
+    candidates = {
+        str(getattr(handler, "__name__", "")),
+        str(getattr(handler, "__qualname__", "")),
+    }
+    bound_owner = getattr(handler, "__self__", None)
+    if bound_owner is not None:
+        candidates.add(type(bound_owner).__name__)
+    for prefix in _UNSAFE_WATCHDOG_PREFIXES:
+        owner = prefix.removesuffix(".")
+        if any(
+            candidate == owner
+            or candidate.startswith(prefix)
+            or f".{prefix}" in candidate
+            for candidate in candidates
+        ):
+            return True
+    return False
+
+
 def _prepare_environment() -> None:
     """Set confinement flags before the first Browser Use import."""
 
@@ -157,6 +179,9 @@ def _prepare_environment() -> None:
     }
     for key, value in values.items():
         os.environ[key] = value
+    for directory in (_CONFIG_DIR, _CACHE_DIR):
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        directory.chmod(0o700)
     for name in _SILENCED_LOGGERS:
         dependency_logger = logging.getLogger(name)
         dependency_logger.handlers[:] = [logging.NullHandler()]
@@ -516,20 +541,14 @@ def _hardened_session_type(base: type[Any]) -> type[Any]:
                 handlers[:] = [
                     handler
                     for handler in handlers
-                    if not any(
-                        getattr(handler, "__name__", "").startswith(prefix)
-                        for prefix in _UNSAFE_WATCHDOG_PREFIXES
-                    )
+                    if not _is_unsafe_watchdog_handler(handler)
                 ]
-            remaining = {
-                getattr(handler, "__name__", "")
+            remaining = [
+                handler
                 for handlers in self.event_bus.handlers.values()
                 for handler in handlers
-                if any(
-                    getattr(handler, "__name__", "").startswith(prefix)
-                    for prefix in _UNSAFE_WATCHDOG_PREFIXES
-                )
-            }
+                if _is_unsafe_watchdog_handler(handler)
+            ]
             if remaining:
                 raise RuntimeError("unsafe Browser Use watchdog remained attached")
 
@@ -773,6 +792,13 @@ class LocalBrowserUseRuntime:
         await self._install_dialog_guard(session)
         await self._bootstrap.apply(session.cdp_url)
 
+        authentication_terminal = await self._initial_authentication_terminal(
+            request,
+            session.cdp_url,
+        )
+        if authentication_terminal is not None:
+            return BrowserUseRuntimeResult(authentication_terminal)
+
         meter.record_action()
         await session.navigate_to(INVENTORY_ENTRY_URL, new_tab=False)
         await asyncio.sleep(0.5)
@@ -980,25 +1006,8 @@ class LocalBrowserUseRuntime:
         model = model_cls(api_key=api_key, budget=budget, meter=meter)
 
         async def verify_refresh(_history: Any) -> None:
-            if self._state.observation is None:
-                return
-            remaining = (request.limits.deadline - datetime.now(UTC)).total_seconds()
-            if remaining <= 0 or session.cdp_url is None:
-                return
-            try:
-                refreshed_session = await asyncio.wait_for(
-                    self._verified_session_refresh(session.cdp_url),
-                    timeout=min(remaining, 35.0),
-                )
-            except Exception:
-                self._state.observation = None
-                self._state.terminal = InventoryExecutionStatus.PROVIDER_FAILURE
-                return
-            if refreshed_session is None:
-                self._state.observation = None
-                self._state.terminal = InventoryExecutionStatus.SIGNED_OUT
-                return
-            self._state.refreshed_session = refreshed_session
+            if session.cdp_url is not None:
+                await self._refresh_after_observation(request, session.cdp_url)
 
         task = (
             "Inspect the already-open authenticated Booking.com reservations area. Review "
@@ -1106,6 +1115,47 @@ class LocalBrowserUseRuntime:
         await session.cdp_client.send.Browser.setDownloadBehavior(
             params={"behavior": "deny"}
         )
+
+    async def _initial_authentication_terminal(
+        self,
+        request: InventoryExecutionRequest,
+        cdp_url: str,
+    ) -> InventoryExecutionStatus | None:
+        remaining = (request.limits.deadline - datetime.now(UTC)).total_seconds()
+        if remaining <= 0:
+            return InventoryExecutionStatus.TIMEOUT
+        try:
+            verified = await asyncio.wait_for(
+                self._verified_session_refresh(cdp_url),
+                timeout=min(remaining, 35.0),
+            )
+        except TimeoutError:
+            return InventoryExecutionStatus.TIMEOUT
+        except Exception:
+            return InventoryExecutionStatus.PROVIDER_FAILURE
+        return None if verified is not None else InventoryExecutionStatus.SIGNED_OUT
+
+    async def _refresh_after_observation(
+        self,
+        request: InventoryExecutionRequest,
+        cdp_url: str,
+    ) -> None:
+        """Refresh session material when possible without discarding verified observations."""
+
+        if self._state.observation is None:
+            return
+        remaining = (request.limits.deadline - datetime.now(UTC)).total_seconds()
+        if remaining <= 0:
+            return
+        try:
+            refreshed_session = await asyncio.wait_for(
+                self._verified_session_refresh(cdp_url),
+                timeout=min(remaining, 35.0),
+            )
+        except Exception:
+            return
+        if refreshed_session is not None:
+            self._state.refreshed_session = refreshed_session
 
     async def _install_dialog_guard(self, session: Any) -> None:
         root = session._cdp_client_root
@@ -1290,7 +1340,7 @@ class LocalBrowserUseRuntime:
             self._screenshots.clear()
             self._screenshots = None
         agent_run_id, self._agent_run_id = self._agent_run_id, None
-        paths = [self._agent_directory, self._root, _CONFIG_DIR, _CACHE_DIR]
+        paths = [self._agent_directory, self._root]
         if agent_run_id is not None:
             paths.extend(
                 Path(tempfile.gettempdir()).glob(

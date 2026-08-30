@@ -100,3 +100,7 @@ updated: 2026-08-26T04:24:18Z
 - **2026-08-30T18:43:57Z**: 060-agentic-inventory-executor complete - all DDD stages and the
   deterministic bolt/story/unit status cascade passed; PR, final-head Bugbot, merge, and production
   deployment remain operations gates
+- **2026-08-30T19:00:00Z**: review-fix - Hardened watchdog recognition for both exact-release
+  wrappers and ordinary bound handlers, moved current authentication proof before agent execution
+  so optional post-run refresh failures preserve verified observations, and retained content-free
+  process cache/config directories across later browser jobs

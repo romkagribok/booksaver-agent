@@ -49,6 +49,7 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     LocalBrowserUseRuntime,
     _browser_request_allowed,
     _hardened_session_type,
+    _is_unsafe_watchdog_handler,
     _map_observation,
     _model_type,
     _node_chain_allows_click,
@@ -326,9 +327,17 @@ def test_hardened_session_removes_unsafe_watchdogs() -> None:
 
     unsafe_handler.__name__ = "PopupsWatchdog.on_JavascriptDialogOpenedEvent"
 
+    class PopupsWatchdog:
+        def on_tab_created(self) -> None:
+            return None
+
+    bound_unsafe_handler = PopupsWatchdog().on_tab_created
+
     class _Bus:
         def __init__(self) -> None:
-            self.handlers = {"dialog": [safe_handler, unsafe_handler]}
+            self.handlers = {
+                "dialog": [safe_handler, unsafe_handler, bound_unsafe_handler]
+            }
 
     class _Base:
         def __init__(self) -> None:
@@ -341,6 +350,21 @@ def test_hardened_session_removes_unsafe_watchdogs() -> None:
     asyncio.run(session.attach_all_watchdogs())
 
     assert session.event_bus.handlers["dialog"] == [safe_handler]
+
+
+def test_unsafe_watchdog_recognition_covers_wrappers_and_bound_methods() -> None:
+    def wrapped_handler() -> None:
+        return None
+
+    wrapped_handler.__name__ = "DownloadsWatchdog.on_BrowserLaunchEvent"
+
+    class StorageStateWatchdog:
+        def on_save(self) -> None:
+            return None
+
+    assert _is_unsafe_watchdog_handler(wrapped_handler) is True
+    assert _is_unsafe_watchdog_handler(StorageStateWatchdog().on_save) is True
+    assert _is_unsafe_watchdog_handler(lambda: None) is False
 
 
 def test_qualified_browser_use_release_has_no_unsafe_watchdog_handlers(
@@ -666,6 +690,88 @@ def test_budgeted_model_stops_when_reconciled_cost_exceeds_execution_cap() -> No
     assert stopped.value.reason is ModelStopReason.JOB_COST_LIMIT
 
 
+def test_initial_authentication_is_code_verified_before_agent_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broker = InMemorySessionLeaseBroker()
+    request = _request(broker)
+    runtime = LocalBrowserUseRuntime()
+
+    async def verified(_cdp_url: str) -> bytes | None:
+        return b"verified-session"
+
+    monkeypatch.setattr(runtime, "_verified_session_refresh", verified)
+    terminal = asyncio.run(
+        runtime._initial_authentication_terminal(  # noqa: SLF001 - trust-boundary test
+            request,
+            "ws://127.0.0.1/devtools/browser/test",
+        )
+    )
+
+    assert terminal is None
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("signed_out", InventoryExecutionStatus.SIGNED_OUT),
+        ("provider", InventoryExecutionStatus.PROVIDER_FAILURE),
+    ],
+)
+def test_initial_authentication_failure_stops_before_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    expected: InventoryExecutionStatus,
+) -> None:
+    broker = InMemorySessionLeaseBroker()
+    request = _request(broker)
+    runtime = LocalBrowserUseRuntime()
+
+    async def fail(_cdp_url: str) -> bytes | None:
+        if failure == "provider":
+            raise RuntimeError("content-bearing-probe-failure")
+        return None
+
+    monkeypatch.setattr(runtime, "_verified_session_refresh", fail)
+    terminal = asyncio.run(
+        runtime._initial_authentication_terminal(  # noqa: SLF001 - trust-boundary test
+            request,
+            "ws://127.0.0.1/devtools/browser/test",
+        )
+    )
+
+    assert terminal is expected
+
+
+def test_post_agent_refresh_failure_preserves_verified_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broker = InMemorySessionLeaseBroker()
+    request = _request(broker)
+    runtime = LocalBrowserUseRuntime()
+    observation = BrowserUseObservationPayload(
+        authenticated="true",
+        scopes=[],
+        reservations=[],
+    )
+    runtime._state.observation = observation  # noqa: SLF001 - callback contract test
+
+    async def fail(_cdp_url: str) -> bytes | None:
+        raise TimeoutError("content-bearing-refresh-timeout")
+
+    monkeypatch.setattr(runtime, "_verified_session_refresh", fail)
+    asyncio.run(
+        runtime._refresh_after_observation(  # noqa: SLF001 - callback contract test
+            request,
+            "ws://127.0.0.1/devtools/browser/test",
+        )
+    )
+
+    assert runtime._state.observation is observation  # noqa: SLF001
+    assert runtime._state.terminal is None  # noqa: SLF001
+    assert runtime._state.refreshed_session is None  # noqa: SLF001
+
+
 def test_confinement_environment_disables_external_services(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -796,3 +902,26 @@ def test_local_runtime_cleanup_removes_constructor_failure_namespace_only() -> N
         assert neighbor.exists()
     finally:
         shutil.rmtree(neighbor, ignore_errors=True)
+
+
+def test_job_teardown_preserves_process_wide_content_free_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import booksaver.infrastructure.browser.browser_use_inventory_executor as adapter
+
+    config_dir = tmp_path / "process-config"
+    cache_dir = tmp_path / "process-cache"
+    owned_root = tmp_path / "job-root"
+    owned_root.mkdir()
+    monkeypatch.setattr(adapter, "_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(adapter, "_CACHE_DIR", cache_dir)
+    adapter._prepare_environment()  # noqa: SLF001 - process environment contract
+    runtime = LocalBrowserUseRuntime()
+    runtime._root = owned_root  # noqa: SLF001 - teardown contract test
+
+    asyncio.run(runtime.close())
+
+    assert not owned_root.exists()
+    assert config_dir.is_dir() and list(config_dir.iterdir()) == []
+    assert cache_dir.is_dir() and list(cache_dir.iterdir()) == []
