@@ -157,6 +157,14 @@ def classify_executor_egress(url: str) -> ExecutorEgressKind | None:
         return ExecutorEgressKind.BOOKING
     if (
         parsed.scheme.casefold() == "https"
+        and port in {None, 443}
+        and (host == "bstatic.com" or host.endswith(".bstatic.com"))
+    ):
+        # Booking.com serves the page's own scripts, styles, and images from bstatic.com.
+        # This is page-delivery egress only; it is never an approved top-level destination.
+        return ExecutorEgressKind.BOOKING
+    if (
+        parsed.scheme.casefold() == "https"
         and host == "api.anthropic.com"
         and port in {None, 443}
     ):

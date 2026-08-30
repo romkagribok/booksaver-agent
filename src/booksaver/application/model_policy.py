@@ -170,10 +170,22 @@ class BrowserJobCostBudget:
         usage: LLMUsage | None,
         latency_ms: int,
         outcome: ModelAttemptOutcome,
+        cache_read_input_tokens: int = 0,
+        cache_creation_input_tokens: int = 0,
     ) -> CostReconciliation:
+        if usage is None and (cache_read_input_tokens or cache_creation_input_tokens):
+            raise ValueError("prompt-cache usage requires completed token usage")
         charged = (
             attempt.reservation.reserved_cost
             if usage is None
+            else self._estimator.charge_anthropic_prompt_cache(
+                attempt.plan.profile,
+                usage,
+                cache_read_input_tokens=cache_read_input_tokens,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+                utc_date=attempt.reservation.utc_date,
+            )
+            if cache_read_input_tokens or cache_creation_input_tokens
             else self._estimator.charge(
                 attempt.plan.profile,
                 usage,

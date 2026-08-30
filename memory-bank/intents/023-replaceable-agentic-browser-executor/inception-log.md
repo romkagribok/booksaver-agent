@@ -2,7 +2,7 @@
 intent: 023-replaceable-agentic-browser-executor
 created: 2026-08-14T02:46:26Z
 completed: 2026-08-27T23:13:41Z
-status: complete
+status: amended
 ---
 
 # Inception Log: Replaceable Agentic Browser Executor
@@ -36,6 +36,10 @@ desktop-identity Stagehand browser. The same encrypted session reached the prote
 the accepted Pixel 7 identity. The owner approved a corrective design that treats mobile browser
 identity as a session compatibility invariant, classifies transport failures before model work,
 and proceeds through final merge and production redeployment without adding DOM verification.
+On 2026-08-30 the owner approved a reliability-first Browser Use OSS slice for Telegram
+`/bookings` only. Stagehand remains active for post-connect, `/checknow`, scheduled inventory, and
+price execution. The owner authorized the amended AI-DLC flow through implementation, Bugbot,
+merge, and production redeployment.
 
 ## Artifacts Created
 
@@ -45,18 +49,18 @@ and proceeds through final merge and production redeployment without adding DOM 
 | System Context | Complete | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
 | Units | Complete | `units.md` and four unit briefs |
-| Stories | Amended | 17 story files (US-143 through US-159, including corrective US-155 through US-159) |
-| Bolt Plan | Amended | Bolts 050 through 053 and 055; corrective bolts 054 and 056 through 059 |
+| Stories | Amended | 18 story files (US-143 through US-160) |
+| Bolt Plan | Amended | Bolts 050 through 060, with 052 live-gated and 055 blocked |
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
-| Functional Requirements | 11 |
+| Functional Requirements | 12 |
 | Non-Functional Requirements | 7 |
 | Units | 5 |
-| Stories | 17 |
-| Bolts Planned | 5 plus corrective bolts 054 and 056 through 059 |
+| Stories | 18 |
+| Bolts Planned | 5 plus corrective bolts 054 and 056 through 060 |
 
 ## Decision Log
 
@@ -77,6 +81,8 @@ and proceeds through final merge and production redeployment without adding DOM 
 | 2026-08-28 | Keep provider schemas within active runtime subsets | Stagehand and Anthropic must accept typed schemas before inference while code retains all bounds | Yes |
 | 2026-08-29 | Bind restored sessions to the accepted mobile browser identity | Capability access proved browser-identity-sensitive; matching the producer identity is more robust than endpoint-specific DOM verification | Yes |
 | 2026-08-29 | Classify browser transport failures before perception | Internal Chrome errors and OAuth loops must not become unsafe destinations or trigger model spend | Yes |
+| 2026-08-30 | Use local Browser Use OSS only for `/bookings` | Test a more established full agent without risking other inventory triggers or price execution | Yes |
+| 2026-08-30 | Keep Browser Use bounded and fail closed | Existing session, budget, action, validation, positive-only, privacy, and no-same-job-fallback boundaries remain authoritative | Yes |
 
 ## Ready for Construction
 
@@ -90,6 +96,6 @@ and proceeds through final merge and production redeployment without adding DOM 
 
 ## Next Steps
 
-1. Re-verify capability-specific agentic inventory for every disclosed authorized user while keeping
-   price routing in its current owner-canary state.
-2. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.
+1. Execute bolt 060 and qualify the Browser Use `/bookings` slice without changing other triggers.
+2. Keep price routing in its current owner-canary state.
+3. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.

@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-08-29T20:51:44Z
+updated: 2026-08-30T18:00:44Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -25,6 +25,10 @@ Legacy price checks remain the default and rollback path until qualification suc
 inventory is pulled forward because the legacy inventory prerequisite prevents the price canary
 from running. It rolls out to every authorized, disclosed user with positive-only reconciliation;
 legacy inventory remains a capability-specific rollback path.
+
+The `/bookings` command is the first reliability-focused Browser Use slice. It runs the local
+Browser Use OSS agent through the existing inventory executor port while Stagehand remains the
+executor for post-connect, `/checknow`, and scheduled inventory work. Price execution is unchanged.
 
 ## Functional Requirements
 
@@ -125,7 +129,8 @@ legacy inventory remains a capability-specific rollback path.
   - `/connect` remains human-driven/server-verified and displays a versioned disclosure that the
     owner-configured Anthropic account may process visible Booking.com page content and escalation
     screenshots.
-  - An egress test proves authenticated jobs contact only Booking.com, Anthropic, and loopback.
+  - An egress test proves authenticated jobs contact only Booking.com application/static-delivery
+    hosts (`booking.com` and `bstatic.com`), Anthropic, and loopback.
   - Destination rejection logs contain only a closed destination class, sanitized bounded path
     template, sorted query-key names, and code-owned phase/reason; raw URLs, query values,
     fragments, page content, reservation identity, and session material are prohibited.
@@ -196,6 +201,35 @@ legacy inventory remains a capability-specific rollback path.
   - Removal requires a separate release decision after 30 complete days without rollback.
   - Playwright remains available for `/connect` until a separately qualified replacement is accepted.
 - **Priority**: Should
+
+### FR-12: Browser Use execution for `/bookings`
+- **Description**: Route only Telegram `/bookings` inventory refreshes through an exactly pinned,
+  established Browser Use OSS agent running against a fresh local Chromium browser, without using
+  Browser Use Cloud or changing the provider-neutral inventory port.
+- **Acceptance Criteria**:
+  - `SynchronizationTrigger.BOOKINGS` selects Browser Use, while post-connect, `/checknow`, and
+    scheduled inventory continue to select Stagehand and every price route remains unchanged.
+  - Browser Use receives the existing owner/account-bound session lease and residual action, cost,
+    and absolute-deadline limits; each physical model call is admitted and reconciled through the
+    BookSaver cost ledger.
+  - The agent is limited to one browser action per step and may use only guarded read-only click,
+    scroll, safe-key, wait, typed observation submission, and typed terminal submission tools.
+    Typing, arbitrary navigation, tabs, popups, files, shell, clipboard, credentials, authentication,
+    cancellation, modification, reservation, checkout, purchase, and payment are prohibited.
+  - Interaction authorization is deny-oriented and provider-neutral: every action is inspected,
+    confined to an observable HTTPS Booking.com destination, and checked again afterward, without
+    requiring exact inventory labels, CSS selectors, or read-only route names.
+  - The adapter emits the existing typed positive inventory observations and terminal metadata;
+    BookSaver remains solely responsible for validation, eligibility, positive-only reconciliation,
+    session refresh proof, metrics, and last-safe-state preservation.
+  - A Browser Use failure is terminal for that `/bookings` operation and never cascades to Stagehand
+    or the legacy selector parser within the same job.
+  - Anonymous telemetry, cloud synchronization, version checks, conversation/history export, GIF,
+    video, HAR, trace, and screenshot persistence are disabled before Browser Use is imported.
+  - The exact container image proves dependency compatibility, transient-profile teardown, no
+    persisted content artifacts, and authenticated egress limited to Booking.com page/application
+    hosts, Booking.com's `bstatic.com` static-delivery hosts, Anthropic, and loopback.
+- **Priority**: Must
 
 ## Non-Functional Requirements
 

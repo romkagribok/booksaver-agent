@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-29T20:51:44Z
+updated: 2026-08-30T18:00:44Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
@@ -35,7 +35,7 @@ updated: 2026-08-29T20:51:44Z
 
 - **Purpose**: Replace selector-dependent inventory perception with a provider-neutral Stagehand
   executor for every disclosed authorized user while preserving positive-only reconciliation.
-- **Assigned Requirements**: FR-10
+- **Assigned Requirements**: FR-10, FR-12
 - **Dependencies**: Units 001 and 002; existing account synchronization and reconciliation policy.
 
 ### 005-legacy-price-selector-retirement
@@ -52,7 +52,7 @@ updated: 2026-08-29T20:51:44Z
 | FR-1, FR-2, FR-3, FR-6, FR-7 | `001-agentic-executor-control-plane` |
 | FR-4, FR-5, FR-8 | `002-local-agentic-price-executor` |
 | FR-9 | `003-agentic-browser-qualification` |
-| FR-10 | `004-agentic-inventory-executor` |
+| FR-10, FR-12 | `004-agentic-inventory-executor` |
 | FR-11 | `005-legacy-price-selector-retirement` |
 
 Each functional requirement is assigned exactly once. Cross-unit constraints remain traced through
@@ -67,6 +67,7 @@ flowchart LR
     u2 --> u3
     u1 --> u4["004 Agentic inventory executor"]
     u2 --> u4
+    u4 -->|"/bookings adapter"| u4b["Browser Use OSS"]
     u3 -->|"promotion plus rollback window"| u5["005 Legacy selector retirement"]
 ```
 
@@ -82,5 +83,7 @@ flowchart LR
 6. Bolt 057: thread-owned persistent cost accounting across the async Stagehand boundary.
 7. Bolt 058: provider-compatible Stagehand extraction and Anthropic computer-use schemas.
 8. Bolt 059: version-matched mobile session identity and typed navigation-failure classification.
-9. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
+9. Bolt 060: trigger-specific local Browser Use executor for `/bookings`; every other trigger keeps
+   its current executor.
+10. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
    window pass.

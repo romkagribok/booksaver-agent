@@ -36,10 +36,22 @@ RUN useradd --create-home --shell /usr/sbin/nologin booksaver
 
 WORKDIR /app
 
+ENV ANONYMIZED_TELEMETRY=false \
+    BROWSER_USE_CLOUD_SYNC=false \
+    BROWSER_USE_VERSION_CHECK=false \
+    BROWSER_USE_SETUP_LOGGING=false \
+    BROWSER_USE_CALCULATE_COST=false \
+    BROWSER_USE_DISABLE_EXTENSIONS=1 \
+    BROWSER_USE_CONFIG_DIR=/tmp/booksaver-browser-use-config \
+    XDG_CACHE_HOME=/tmp/booksaver-browser-use-cache
+
 # Install Python dependencies first for better layer caching.
-COPY pyproject.toml ./
+COPY pyproject.toml requirements.lock ./
 COPY src ./src
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --requirement requirements.lock \
+    && pip install --no-cache-dir --no-deps . \
+    && pip check \
+    && python -c "from importlib.metadata import version; expected = {'anthropic': '0.125.0', 'browser-use': '0.11.13', 'browser-use-sdk': '3.10.0', 'bubus': '1.5.6', 'cdp-use': '1.4.5', 'playwright': '1.62.0', 'pydantic': '2.13.5', 'pydantic-settings': '2.15.0'}; assert all(version(name) == wanted for name, wanted in expected.items()); from browser_use import ActionResult, Agent, BrowserProfile, BrowserSession, ChatAnthropic, Tools"
 
 # Install Chromium + its OS-level dependencies as root (apt access), then hand
 # the browser cache to the runtime user.

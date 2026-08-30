@@ -22,8 +22,11 @@ use; each choice is recorded in `standards/decision-index.md`.
 - **Browser automation**: Playwright + bundled Chromium remains the legacy and `/connect` runtime
   (ADR-007, ADR-008). The opt-in price executor adds exact-pinned Stagehand 4.0.1 in-process on the
   same installed Chromium, with semantic observe/guard/replay/extract followed by at most one
-  guarded Anthropic computer-use episode (ADRs 036 and 037). No Browserbase service, cross-run
-  cache, selector learning, generated repair, or self-heal persistence is enabled.
+  guarded Anthropic computer-use episode (ADRs 036 and 037). Agentic inventory uses exact-pinned
+  Browser Use 0.11.13 only for `/bookings` and Stagehand for the other triggers, behind the same
+  provider-neutral executor contract and BookSaver-owned positive-only validation boundary
+  (ADR-041). No Browserbase service, cross-run cache, selector learning, generated repair, or
+  self-heal persistence is enabled.
 - **Authenticated mobile web**: each check uses a fresh Android Chromium context with the exact
   booking owner's session and records authenticated/Genius provenance (ADR-025).
 - **Remote authentication (opt-in)**: stdlib `http.server` application behind a Caddy TLS sidecar;
@@ -39,7 +42,9 @@ use; each choice is recorded in `standards/decision-index.md`.
 
 ## Dependency Policy
 
-Python runtime dependencies remain deliberately small: `playwright`, `anthropic`, exact-pinned
-`stagehand`, and `cryptography`. The optional Docker remote-auth profile also uses distribution packages
-Xvfb/x11vnc/websockify/noVNC and a Caddy image. Add a dependency only when stdlib cannot satisfy the
-need and record the decision as an ADR (ADR-003).
+Python runtime dependencies remain deliberate: `playwright`, `anthropic`, exact-pinned `stagehand`,
+exact-pinned `browser-use` plus its explicit `pydantic-settings` compatibility dependency, and
+`cryptography`. Production images install the exact resolved graph in `requirements.lock`. The
+optional Docker remote-auth profile also uses distribution packages Xvfb/x11vnc/websockify/noVNC
+and a Caddy image. Add a dependency only when stdlib cannot satisfy the need and record the decision
+as an ADR (ADR-003).

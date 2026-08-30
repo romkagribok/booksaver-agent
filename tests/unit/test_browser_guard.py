@@ -156,6 +156,7 @@ def test_zoom_accepts_only_a_bounded_screen_region() -> None:
     ("url", "kind"),
     [
         ("https://www.booking.com/searchresults.html", ExecutorEgressKind.BOOKING),
+        ("https://cf.bstatic.com/static/app.js", ExecutorEgressKind.BOOKING),
         ("https://api.anthropic.com/v1/messages", ExecutorEgressKind.ANTHROPIC),
         ("http://127.0.0.1:4318/v1/traces", ExecutorEgressKind.LOOPBACK),
         ("ws://localhost:9222/devtools/browser/example", ExecutorEgressKind.LOOPBACK),

@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-29T20:51:44Z
+updated: 2026-08-30T18:00:44Z
 ---
 
 # System Context: Replaceable Agentic Browser Executor
@@ -19,7 +19,8 @@ updated: 2026-08-29T20:51:44Z
 - **BookSaver validation/evaluation** (System): Independently validates untrusted observations,
   selects equivalent refundable all-in offers, persists results, and permits notifications.
 - **Local browser executor** (System): Performs bounded perception and read-only navigation in a
-  transient browser without domain authority.
+  transient browser without domain authority. Browser Use handles only `/bookings`; Stagehand
+  remains active for other inventory triggers and price execution.
 - **Inventory reconciliation policy** (System): Accepts only validated positive reservation
   observations, derives eligibility, and prevents agentic evidence from marking unseen rows absent.
 
@@ -30,7 +31,8 @@ updated: 2026-08-29T20:51:44Z
 - **Anthropic API**: Sonnet 5 semantic and computer-use inference using the deployment owner's key;
   receives bounded visible page evidence but never session cookies or credentials.
 - **Telegram**: Existing invite-only user interaction, `/connect` disclosure, and notifications.
-- **Loopback services**: In-process Stagehand runner and any local telemetry sink; no content export.
+- **Loopback services**: In-process Stagehand and Browser Use runners and any local telemetry sink;
+  no content export.
 
 ## Trust Boundaries
 
@@ -39,7 +41,8 @@ updated: 2026-08-29T20:51:44Z
 2. Decrypted cookies exist only inside a transient local browser boundary. The transient executor
    reuses the configured version-matched mobile identity that produced and verified the session;
    browser identity is part of session compatibility, not model input.
-3. Stagehand actions, extraction, and Anthropic outputs are untrusted proposals/evidence.
+3. Stagehand actions, Browser Use actions, extraction, and Anthropic outputs are untrusted
+   proposals/evidence.
 4. The code guard owns every browser mutation and rejects unsafe requests before and after action.
 5. Only BookSaver validation/evaluation can create a valid candidate, savings opportunity, or
    notification.
@@ -52,6 +55,7 @@ updated: 2026-08-29T20:51:44Z
   deadline, action limit, and cost reservation.
 - Trusted inventory scopes, authorized account binding, and current-run execution identity.
 - Stagehand semantic action proposals and typed extraction.
+- Browser Use guarded read-only proposals and typed inventory submission for `/bookings` only.
 - Anthropic computer-use action requests, typed observation submissions, terminal outcomes, and
   usage data.
 - Booking.com rendered visible content and server-verified authentication state.
@@ -83,6 +87,8 @@ flowchart LR
     telegram --> control
     control --> lease["Owner-bound transient session lease"]
     lease --> executor["Replaceable local browser executor"]
+    executor --> browseruse["Browser Use OSS for /bookings"]
+    executor --> stagehand["Stagehand for other triggers"]
     executor --> booking["Booking.com"]
     executor --> anthropic["Anthropic Sonnet 5"]
     executor --> evidence["Typed redacted observations"]
@@ -112,15 +118,19 @@ flowchart LR
 ## Inventory Lifecycle
 
 1. A disclosed authorized user triggers `/bookings`, post-connect synchronization, `/checknow`, or a
-   scheduled slot under the single coordinator gate.
+   scheduled slot under the single coordinator gate. `/bookings` selects Browser Use; the other
+   inventory triggers select Stagehand.
 2. BookSaver issues an account-bound session lease and fixed upcoming, past, and cancelled work
    scopes to the inventory executor.
 3. The executor restores the session into BookSaver's configured mobile identity and reaches the
    protected inventory resource. Redirect loops and internal browser error pages are classified
    from content-free transport evidence instead of being treated as Booking.com destinations.
-4. Stagehand extracts typed page state and proposes only read-only scope, pagination, or detail
-   actions; BookSaver guards and replays each action.
+4. The selected local harness proposes bounded read-only perception actions. Browser Use uses a
+   deny-oriented generic guard for `/bookings`; Stagehand retains its existing task-specific guard
+   for other triggers. BookSaver checks every executed destination.
 5. The executor returns positive reservation evidence and redacted traversal metadata. It cannot
    establish authoritative absence or completeness.
 6. BookSaver validates stable identities and domain facts, persists accepted current-run positives,
    preserves unseen rows, and permits a price check only for a reservation re-observed in that run.
+7. A `/bookings` Browser Use failure closes that operation without a same-job Stagehand or legacy
+   retry; saved last-safe inventory remains visible.

@@ -313,6 +313,37 @@ class ModelCostEstimator:
             + usage.output_tokens * price.output_micro_usd_per_token
         )
 
+    def charge_anthropic_prompt_cache(
+        self,
+        profile: ModelProfile,
+        usage: LLMUsage,
+        *,
+        cache_read_input_tokens: int,
+        cache_creation_input_tokens: int,
+        utc_date: date | None = None,
+    ) -> UsdAmount:
+        """Charge Anthropic's 0.1x cache reads and 1.25x five-minute cache writes.
+
+        ``usage.input_tokens`` includes uncached, cache-read, and cache-creation input so persisted
+        token totals remain physical totals. The returned amount rounds upward to one microdollar.
+        """
+
+        for value in (cache_read_input_tokens, cache_creation_input_tokens):
+            if isinstance(value, bool) or value < 0:
+                raise ValueError("prompt-cache token counts cannot be negative")
+        cached_total = cache_read_input_tokens + cache_creation_input_tokens
+        if cached_total > usage.input_tokens:
+            raise ValueError("prompt-cache token counts exceed total input")
+        price = self._price(profile, utc_date)
+        uncached_input_tokens = usage.input_tokens - cached_total
+        twentieth_micro_usd = (
+            uncached_input_tokens * price.input_micro_usd_per_token * 20
+            + cache_read_input_tokens * price.input_micro_usd_per_token * 2
+            + cache_creation_input_tokens * price.input_micro_usd_per_token * 25
+            + usage.output_tokens * price.output_micro_usd_per_token * 20
+        )
+        return UsdAmount((twentieth_micro_usd + 19) // 20)
+
 
 @dataclass(frozen=True, slots=True)
 class ModelAttemptPlan:

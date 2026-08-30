@@ -82,6 +82,7 @@ class ObservationSource(Enum):
     COMPUTER_USE_SUBMISSION = "computer_use_submission"
     STAGEHAND_INVENTORY_EXTRACT = "stagehand_inventory_extract"
     COMPUTER_USE_INVENTORY_SUBMISSION = "computer_use_inventory_submission"
+    BROWSER_USE_INVENTORY_SUBMISSION = "browser_use_inventory_submission"
     FAKE = "fake"
 
 

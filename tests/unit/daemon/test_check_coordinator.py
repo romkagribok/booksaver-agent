@@ -1808,6 +1808,7 @@ def test_agentic_inventory_routes_owner_and_disclosed_invitee_without_legacy_bro
         browser_factory=legacy_browser_factory,
         session_repository=sessions,
         agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+        bookings_inventory_executor_factory=lambda _budget, _leases: executor,
     )
     completions: list[InventoryCompletion] = []
 
@@ -1832,6 +1833,52 @@ def test_agentic_inventory_routes_owner_and_disclosed_invitee_without_legacy_bro
         and completion.report.completeness is InventoryCompleteness.INCOMPLETE
         for completion in completions
     )
+
+
+def test_bookings_uses_browser_use_factory_while_other_inventory_keeps_stagehand(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        users = SqliteUserRepository(store)
+        owner = users.get_owner()
+        users.link_telegram_id(owner.user_id, 101)
+    _seed_session(sessions, owner.user_id)
+    browser_use = FakeInventoryBrowserExecutor([_agentic_inventory_result()])
+    stagehand = FakeInventoryBrowserExecutor([_agentic_inventory_result()])
+    legacy_browser_opens: list[None] = []
+
+    def legacy_browser_factory() -> BrowserContext:
+        legacy_browser_opens.append(None)
+        return BrowserContext()
+
+    coordinator = CheckCoordinator(
+        _config(tmp_path),
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=legacy_browser_factory,
+        session_repository=sessions,
+        agentic_inventory_executor_factory=lambda _budget, _leases: stagehand,
+        bookings_inventory_executor_factory=lambda _budget, _leases: browser_use,
+    )
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        coordinator._synchronize_user_job(  # noqa: SLF001 - trigger route contract
+            store,
+            owner.user_id,
+            SynchronizationTrigger.BOOKINGS,
+        )
+        coordinator._synchronize_user_job(  # noqa: SLF001 - trigger route contract
+            store,
+            owner.user_id,
+            SynchronizationTrigger.CHECK_NOW,
+        )
+
+    assert len(browser_use.requests) == 1
+    assert len(stagehand.requests) == 1
+    assert legacy_browser_opens == []
 
 
 def test_undisclosed_invitee_stays_on_legacy_inventory_route(tmp_path: Path) -> None:
@@ -1902,6 +1949,7 @@ def test_agentic_inventory_terminal_failure_never_falls_back_to_legacy_in_same_j
         browser_factory=legacy_browser_factory,
         session_repository=sessions,
         agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+        bookings_inventory_executor_factory=lambda _budget, _leases: executor,
     )
     completed = threading.Event()
     completions: list[InventoryCompletion] = []

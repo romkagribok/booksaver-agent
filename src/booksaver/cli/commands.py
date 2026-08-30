@@ -603,6 +603,19 @@ def _make_check_coordinator(
             mobile_settings=cfg.mobile_web_settings,
         )
 
+    def _bookings_inventory_executor(budget: Any, lease_broker: Any) -> Any:
+        from booksaver.infrastructure.browser.browser_use_inventory_executor import (
+            LocalBrowserUseInventoryExecutor,
+        )
+
+        assert api_key is not None
+        return LocalBrowserUseInventoryExecutor(
+            api_key=api_key,
+            lease_broker=lease_broker,
+            budget=budget,
+            mobile_settings=cfg.mobile_web_settings,
+        )
+
     @contextmanager
     def _incident_recorder() -> Iterator[DomIncidentRecorder]:
         # CheckCoordinator enters this only after the relevant browser context
@@ -625,6 +638,9 @@ def _make_check_coordinator(
         agentic_executor_factory=_agentic_executor if api_key else None,
         agentic_inventory_executor_factory=(
             _agentic_inventory_executor if api_key else None
+        ),
+        bookings_inventory_executor_factory=(
+            _bookings_inventory_executor if api_key else None
         ),
     )
 

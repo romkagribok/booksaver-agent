@@ -78,3 +78,29 @@ updated: 2026-08-26T04:24:18Z
   `/mytrips.html` without the prior OAuth redirect loop or popup.
 - **2026-08-29T21:07:34Z**: 059-agentic-inventory-executor complete - all five stages and the
   deterministic bolt completion/status cascade passed.
+- **2026-08-30T18:02:59Z**: append - Added bolt 060 after the owner approved a reliability-first,
+  trigger-specific local Browser Use OSS executor for Telegram `/bookings` while retaining
+  Stagehand for every other inventory trigger and price execution.
+- **2026-08-30T18:02:59Z**: 060-agentic-inventory-executor started - Stage 1: domain-model
+- **2026-08-30T18:07:00Z**: 060-agentic-inventory-executor stage-complete - domain-model →
+  technical-design
+- **2026-08-30T18:14:00Z**: 060-agentic-inventory-executor stage-complete - technical-design →
+  adr-analysis
+- **2026-08-30T18:15:00Z**: 060-agentic-inventory-executor stage-complete - adr-analysis →
+  implement; ADR-041 accepted
+- **2026-08-30T18:38:00Z**: 060-agentic-inventory-executor stage-complete - implement → test;
+  trigger-specific Browser Use adapter, closed tool registry, code-owned dialog/network/session
+  guards, exact physical-call accounting, and locked container graph implemented
+- **2026-08-30T18:43:23Z**: 060-agentic-inventory-executor test - 46 focused Browser Use tests,
+  119 adapter/coordinator/guard tests, 1,853 repository tests, Ruff, strict mypy, live Chromium
+  dialog/egress/teardown fixture, and diff checks passed
+- **2026-08-30T18:43:23Z**: 060-agentic-inventory-executor candidate smoke - exact locked Docker
+  image passed dependency/API assertions, `pip check`, non-root Chromium launch, and CLI smoke;
+  authenticated Telegram acceptance remains the post-merge operations gate
+- **2026-08-30T18:43:57Z**: 060-agentic-inventory-executor complete - all DDD stages and the
+  deterministic bolt/story/unit status cascade passed; PR, final-head Bugbot, merge, and production
+  deployment remain operations gates
+- **2026-08-30T19:00:00Z**: review-fix - Hardened watchdog recognition for both exact-release
+  wrappers and ordinary bound handlers, moved current authentication proof before agent execution
+  so optional post-run refresh failures preserve verified observations, and retained content-free
+  process cache/config directories across later browser jobs

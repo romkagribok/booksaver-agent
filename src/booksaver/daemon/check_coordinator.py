@@ -508,6 +508,7 @@ class CheckCoordinator:
         execution_gate: threading.Lock | None = None,
         agentic_executor_factory: AgenticExecutorFactory | None = None,
         agentic_inventory_executor_factory: AgenticInventoryExecutorFactory | None = None,
+        bookings_inventory_executor_factory: AgenticInventoryExecutorFactory | None = None,
     ) -> None:
         self._config = config
         self._db_path = config.data_directory.path / "booksaver.db"
@@ -528,6 +529,7 @@ class CheckCoordinator:
         self._execution_gate = execution_gate or threading.Lock()
         self._agentic_executor_factory = agentic_executor_factory
         self._agentic_inventory_executor_factory = agentic_inventory_executor_factory
+        self._bookings_inventory_executor_factory = bookings_inventory_executor_factory
         self._job_local = threading.local()
 
     @property
@@ -1973,7 +1975,12 @@ class CheckCoordinator:
             return report
 
         snapshot = resolution.snapshot
-        if self._agentic_inventory_executor_factory is None:
+        executor_factory = (
+            self._bookings_inventory_executor_factory
+            if trigger is SynchronizationTrigger.BOOKINGS
+            else self._agentic_inventory_executor_factory
+        )
+        if executor_factory is None:
             return repository.reconcile(
                 user_id=user_id,
                 run_id=str(uuid.uuid4()),
@@ -2009,7 +2016,7 @@ class CheckCoordinator:
             )
 
         lease_broker = InMemorySessionLeaseBroker()
-        executor = self._agentic_inventory_executor_factory(cost_budget, lease_broker)
+        executor = executor_factory(cost_budget, lease_broker)
         outcome = OwnerBoundAgenticInventoryExecution(
             InventoryExecutionService(executor, lease_broker),
             lease_broker,
