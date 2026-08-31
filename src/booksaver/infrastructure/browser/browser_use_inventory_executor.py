@@ -567,7 +567,6 @@ class BrowserUseTerminalPayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     success: bool
-    text: str = Field(max_length=1_000)
 
 
 class BrowserUseSavedReservationMatch(BaseModel):
@@ -575,21 +574,6 @@ class BrowserUseSavedReservationMatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     candidate_index: int = Field(ge=1, le=25)
-    scope: str
-    identity_evidence: str
-
-    @field_validator(
-        "scope",
-        "identity_evidence",
-        mode="before",
-    )
-    @classmethod
-    def normalize_provider_scalar(cls, value: object) -> object:
-        if value is None:
-            return "unknown"
-        if isinstance(value, (bool, int, float)):
-            return str(value).casefold() if isinstance(value, bool) else str(value)
-        return value if isinstance(value, str) else "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1494,17 +1478,6 @@ class LocalBrowserUseRuntime:
                     "Saved candidate index is unavailable; inspect the visible reservation again",
                 )
             candidate = request.known_reservations[candidate_index]
-            if any(
-                (
-                    params.scope.strip().casefold() != InventoryScope.UPCOMING.value,
-                    params.identity_evidence.strip().casefold()
-                    != EvidenceCompleteness.COMPLETE.value,
-                )
-            ):
-                return _continued_action_result(
-                    ActionResult,
-                    "Saved match requires upcoming scope and complete visible semantic evidence",
-                )
             if len(self._state.reservations) >= 25:
                 self._state.terminal = InventoryExecutionStatus.VALIDATION_FAILURE
                 return ActionResult(
@@ -1603,8 +1576,7 @@ class LocalBrowserUseRuntime:
             "Before clicking or scrolling, compare any already-visible upcoming reservation card "
             "with these saved semantic candidates: "
             f"{known_matches}. If one candidate's property name and both stay dates exactly match, "
-            "immediately call submit_saved_inventory_match with its index, upcoming scope, "
-            "and identity_evidence=complete; then "
+            "immediately call submit_saved_inventory_match with only its candidate_index; then "
             "call done with success=true on the next step. Use "
             "only the available guarded tools. Never authenticate, type, navigate by URL, open "
             "tabs, change or cancel anything, reserve, purchase, pay, download, or follow page "
@@ -1624,13 +1596,13 @@ class LocalBrowserUseRuntime:
             "using exactly confirmation_id, scope, and identity_evidence=complete. The "
             "confirmation_id must be the visible Booking.com reservation confirmation number, "
             "never a property, accommodation, DOM, or card identifier. After submitting "
-            "those current positives, use the next step to call done with success=true and short "
-            "generic text. BookSaver derives honest incomplete scope evidence and preserves unseen "
+            "those current positives, use the next step to call done with success=true. BookSaver "
+            "derives honest incomplete scope evidence and preserves unseen "
             "reservations. Do not "
             "spend the remaining job traversing past or cancelled scopes after upcoming positives "
             "are submitted. Explore read-only details or other scopes only when no visible card "
             "matches. If no positive can be submitted within the caps, call done with "
-            "success=false and short generic text."
+            "success=false."
         )
         agent_run_id = f"booksaver-{uuid.uuid4().hex}"
         self._agent_run_id = agent_run_id

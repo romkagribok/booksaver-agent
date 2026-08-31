@@ -222,6 +222,11 @@ updated: 2026-08-26T04:24:18Z
   fields. Reduced the claim to candidate index, upcoming scope, and complete identity evidence;
   the agent still compares visible property/dates to the prompt's caller-owned candidates, while
   BookSaver can resolve only within that bounded set and retains positive-only/no-absence policy.
+- **2026-08-31T00:18:41Z**: implementation-diagnostic - The three-field saved-match and two-field
+  terminal remained intermittently invalid under the exact harness optimizer. Reduced the mature
+  harness boundary to its minimum reliable claims: one caller-owned candidate index and one success
+  boolean. BookSaver supplies authentication, upcoming scope, identity completeness, confirmation,
+  property, and dates from local trusted state; the model cannot resolve outside the bounded set.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling

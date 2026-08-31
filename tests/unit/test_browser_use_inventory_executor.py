@@ -471,13 +471,9 @@ def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -
         "scope",
         "identity_evidence",
     }
-    assert terminal_schema["required"] == ["success", "text"]
-    assert set(terminal_schema["properties"]) == {"success", "text"}
-    assert saved_match_schema["required"] == [
-        "candidate_index",
-        "scope",
-        "identity_evidence",
-    ]
+    assert terminal_schema["required"] == ["success"]
+    assert set(terminal_schema["properties"]) == {"success"}
+    assert saved_match_schema["required"] == ["candidate_index"]
 
 
 def test_browser_use_mapping_downgrades_malformed_optional_facts_to_unknown() -> None:
