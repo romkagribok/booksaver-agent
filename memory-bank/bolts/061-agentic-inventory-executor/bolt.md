@@ -42,7 +42,9 @@ complexity:
 ## Objective
 
 Replace only Browser Use's obsolete inventory entry with Booking.com's canonical HTTPS `mytrips`
-route so `/bookings` reaches perception without permitting the observed HTTP redirect.
+route so `/bookings` reaches perception without permitting the observed HTTP redirect. Qualify the
+positive path against repeated authenticated VPS runs and remove avoidable agent-planner variance
+when Browser Use's semantic DOM already exposes one unique caller-owned saved stay.
 
 ## Stories Included
 
@@ -56,6 +58,8 @@ route so `/bookings` reaches perception without permitting the observed HTTP red
 - Bounded recovery from a rejected pre-action proposal with content-free reason diagnostics.
 - Regression coverage for direct entry and continued HTTP denial.
 - Bounded authenticated VPS replay proving inventory discovery.
+- Bounded, transient semantic episode evidence and a zero-model unique-stay fast path that never
+  authorizes absence and fails closed when saved stays share the visible dates.
 
 ## Dependencies
 
@@ -63,11 +67,12 @@ route so `/bookings` reaches perception without permitting the observed HTTP red
 
 ## Success Criteria
 
-- [ ] Direct HTTPS inventory navigation reaches a Booking.com page.
-- [ ] HTTP egress remains denied.
-- [ ] Safe read-only `target=_blank` links cannot create tabs and retain destination checks.
-- [ ] Structural aggregate text cannot reject a valid interactive link; app-install and mutation
+- [x] Direct HTTPS inventory navigation reaches a Booking.com page.
+- [x] HTTP egress remains denied.
+- [x] Safe read-only `target=_blank` links cannot create tabs and retain destination checks.
+- [x] Structural aggregate text cannot reject a valid interactive link; app-install and mutation
   controls remain blocked before replay.
-- [ ] A rejected proposal consumes the action allowance and permits a bounded retry.
-- [ ] Browser Use advances into agent perception and returns validated positive inventory.
-- [ ] Other inventory triggers, safety boundaries, and execution caps remain unchanged.
+- [x] A rejected proposal consumes the action allowance and permits a bounded retry.
+- [x] Browser Use returns validated positive inventory on three consecutive isolated authenticated
+  VPS replays without Telegram or a second coordinator.
+- [x] Other inventory triggers, safety boundaries, and execution caps remain unchanged.

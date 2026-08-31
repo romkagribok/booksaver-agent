@@ -8,17 +8,16 @@ created: 2026-08-31T00:24:00Z
 
 ## Summary
 
-- **Focused tests**: 128 inventory executor/coordinator tests and 73 Browser Use/persistence tests
-  passed during final construction.
-- **Repository tests**: 1,876 passed with 55 existing deprecation warnings.
+- **Focused tests**: 150 inventory executor/coordinator/account-sync tests and 70 Browser Use
+  adapter tests passed during final construction.
+- **Repository tests**: 1,880 passed with 55 existing deprecation warnings.
 - **Static analysis**: Ruff passed; mypy passed across 128 source files.
 - **AI-DLC integrity**: Artifact validator and status-integrity checks passed with zero issues
-  before the completion cascade.
-- **Authenticated VPS replay**: One isolated coordinator using the production encrypted session
-  returned `observed`, one accepted positive, one eligible persisted reservation, zero rejected
-  positives, three guarded actions, no computer fallback or safety codes, $0.263644 model cost,
-  and 52.2-second latency. The daemon was stopped for the replay and restored healthy with zero
-  restarts; Telegram was not required.
+  after the completion amendment.
+- **Authenticated VPS replay**: Three consecutive runs through one isolated coordinator using the
+  production encrypted session each returned `observed`, one accepted positive, one eligible
+  current-run booking, zero safety codes, one browser action, zero model cost, and 6.4-8.1-second
+  latency. The daemon was stopped for the loop and restored healthy; Telegram was not required.
 
 ## Acceptance Criteria Validation
 
@@ -33,6 +32,9 @@ created: 2026-08-31T00:24:00Z
   absence from the model response.
 - ✅ Caller-owned saved candidates are capped, unique, repr-redacted, session-bound, excluded from
   telemetry, and cannot resolve identity outside the caller's persisted set.
+- ✅ Browser Use semantic text is retained only in six bounded in-memory episode snapshots. The
+  common positive path resolves exact visible stay dates to exactly one caller-owned candidate;
+  same-date ambiguity fails closed, unseen reservations remain preserved, and the LLM is skipped.
 - ✅ Agentic positives reconcile a legacy internal reservation ID through unique caller-scoped
   confirmation identity, retain conflict checks, preserve established facts, and refresh the
   existing eligible projection instead of inserting a duplicate.
@@ -51,6 +53,13 @@ created: 2026-08-31T00:24:00Z
   semantic card can be matched through saved confirmation/property/date facts. Persistence now
   performs a caller-scoped confirmation lookup before agentic insert and retains established-fact
   conflict validation.
+- The first repeated qualification loop accidentally mounted source at `/app/src` without adding
+  that directory to Python's import path, so it re-exercised the prior immutable package. The
+  corrected harness asserts the imported adapter path before every source-mounted replay.
+- Browser Use vision could see and select the saved reservation while its serialized DOM omitted
+  the full canonical property label. The common path now accepts only exact visible stay dates that
+  resolve to one caller-owned saved reservation; the mature agent remains for navigation cases,
+  and neither path can infer account completeness or absence.
 - Iterative production qualification created one incomplete, unmonitored duplicate row before the
   confirmation merge existed. Operations must back up SQLite and remove only that exact test-created
   row before Telegram acceptance.
