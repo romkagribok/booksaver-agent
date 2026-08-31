@@ -144,6 +144,23 @@ _SILENCED_LOGGERS = (
     "cdp_use",
     "posthog",
 )
+_GENERIC_PROPERTY_TOKENS = frozenset(
+    {
+        "and",
+        "at",
+        "by",
+        "collection",
+        "hotel",
+        "hotels",
+        "inn",
+        "of",
+        "resort",
+        "resorts",
+        "suite",
+        "suites",
+        "the",
+    }
+)
 
 
 def _is_unsafe_watchdog_handler(handler: object) -> bool:
@@ -602,6 +619,23 @@ def _visible_date_in_normalized_text(value: date, padded_visible: str) -> bool:
     )
 
 
+def _visible_property_name(candidate_name: str, padded_visible: str) -> bool:
+    normalized = _normalized_visible_text(candidate_name)
+    if f" {normalized} " in padded_visible:
+        return True
+    distinctive = {
+        token
+        for token in normalized.split()
+        if len(token) >= 3 and token not in _GENERIC_PROPERTY_TOKENS
+    }
+    if len(distinctive) < 3:
+        return False
+    visible_tokens = set(padded_visible.split())
+    overlap = len(distinctive & visible_tokens)
+    required = max(3, (len(distinctive) * 3 + 4) // 5)
+    return overlap >= required
+
+
 def _visible_saved_reservation_match(
     visible_dom_text: str,
     candidates: tuple[KnownInventoryReservation, ...],
@@ -630,7 +664,7 @@ def _visible_saved_reservation_match(
     semantic_matches = tuple(
         candidate
         for candidate in candidates
-        if f" {_normalized_visible_text(candidate.property_name)} " in padded
+        if _visible_property_name(candidate.property_name, padded)
         and _visible_date_in_normalized_text(candidate.check_in, padded)
         and _visible_date_in_normalized_text(candidate.check_out, padded)
     )
@@ -652,9 +686,7 @@ def _visible_evidence_diagnostic(
             confirmation = (
                 f" {_normalized_visible_text(candidate.confirmation_id)} " in visible
             )
-            property_name = (
-                f" {_normalized_visible_text(candidate.property_name)} " in visible
-            )
+            property_name = _visible_property_name(candidate.property_name, visible)
             check_in = _visible_date_in_normalized_text(candidate.check_in, visible)
             check_out = _visible_date_in_normalized_text(candidate.check_out, visible)
             confirmation_hits += int(confirmation)

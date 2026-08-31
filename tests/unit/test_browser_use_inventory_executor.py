@@ -508,6 +508,29 @@ def test_visible_saved_reservation_match_uses_semantic_text_without_selectors() 
         is None
     )
 
+    canonical = KnownInventoryReservation(
+        confirmation_id="UNION123",
+        property_name=(
+            "The Union Club Hotel at Purdue University, Autograph Collection"
+        ),
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+    assert (
+        _visible_saved_reservation_match(
+            "The Union Club Hotel at Purdue University - Nov 24 to Nov 25, 2026",
+            (canonical,),
+        )
+        == canonical
+    )
+    assert (
+        _visible_saved_reservation_match(
+            "Purdue University hotel - Nov 24 to Nov 25, 2026",
+            (canonical,),
+        )
+        is None
+    )
+
 
 def test_visible_saved_reservation_match_fails_closed_on_ambiguity_and_large_text() -> None:
     first = KnownInventoryReservation(
