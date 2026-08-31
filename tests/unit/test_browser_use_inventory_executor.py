@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,6 +27,7 @@ from booksaver.domain.inventory_executor import (
     InventoryExecutionRequest,
     InventoryExecutionStatus,
     InventoryScope,
+    KnownInventoryReservation,
     ObservedInventoryScope,
     inventory_session_subject,
 )
@@ -51,7 +52,6 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     BrowserUseReservationPayload,
     BrowserUseReservationSubmission,
     BrowserUseRuntimeResult,
-    BrowserUseSavedReservationMatch,
     BrowserUseTerminalPayload,
     LocalBrowserUseRuntime,
     _agent_history_diagnostic,
@@ -69,6 +69,7 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     _same_tab_click_destination,
     _terminal_status,
     _validation_diagnostic,
+    _visible_saved_reservation_match,
 )
 
 
@@ -461,7 +462,6 @@ def test_provider_reservation_payload_normalizes_scalars_and_discards_extras() -
 def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -> None:
     submission_schema = BrowserUseReservationSubmission.model_json_schema()
     terminal_schema = BrowserUseTerminalPayload.model_json_schema()
-    saved_match_schema = BrowserUseSavedReservationMatch.model_json_schema()
 
     assert submission_schema["required"] == [
         "confirmation_id",
@@ -475,7 +475,56 @@ def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -
     }
     assert terminal_schema["required"] == ["success"]
     assert set(terminal_schema["properties"]) == {"success"}
-    assert saved_match_schema["required"] == ["candidate_index"]
+
+
+def test_visible_saved_reservation_match_uses_semantic_text_without_selectors() -> None:
+    candidate = KnownInventoryReservation(
+        confirmation_id="ABC123",
+        property_name="Example Hotel & Spa",
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+
+    assert (
+        _visible_saved_reservation_match(
+            "Upcoming trip Example Hotel & Spa Tue, Nov 24 - Wed, Nov 25, 2026",
+            (candidate,),
+        )
+        == candidate
+    )
+    assert (
+        _visible_saved_reservation_match(
+            "Confirmation ABC123",
+            (candidate,),
+        )
+        == candidate
+    )
+    assert (
+        _visible_saved_reservation_match(
+            "Example Hotel & Spa Tue, Nov 24 - Wed, Nov 25",
+            (candidate,),
+        )
+        is None
+    )
+
+
+def test_visible_saved_reservation_match_fails_closed_on_ambiguity_and_large_text() -> None:
+    first = KnownInventoryReservation(
+        confirmation_id="ABC123",
+        property_name="Example Hotel",
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+    second = KnownInventoryReservation(
+        confirmation_id="DEF456",
+        property_name="Example Hotel",
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+    visible = "Example Hotel Nov 24 2026 Nov 25 2026"
+
+    assert _visible_saved_reservation_match(visible, (first, second)) is None
+    assert _visible_saved_reservation_match("x" * 250_001, (first,)) is None
 
 
 def test_qualified_output_removes_disabled_planning_fields_before_strict_optimizer() -> None:

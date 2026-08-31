@@ -15,10 +15,11 @@ import re
 import shutil
 import tempfile
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
@@ -43,6 +44,7 @@ from booksaver.domain.inventory_executor import (
     InventoryExecutionResult,
     InventoryExecutionStatus,
     InventoryScope,
+    KnownInventoryReservation,
     ObservedInventoryScope,
     ObservedReservation,
 )
@@ -273,7 +275,6 @@ _DIAGNOSTIC_FIELDS = (
     "authenticated",
     "scopes",
     "reservations",
-    "candidate_index",
 )
 _DIAGNOSTIC_VALIDATION_TYPES = (
     "string_type",
@@ -569,11 +570,101 @@ class BrowserUseTerminalPayload(BaseModel):
     success: bool
 
 
-class BrowserUseSavedReservationMatch(BaseModel):
-    """Minimal semantic match claim resolved only against a caller-owned saved candidate."""
+def _normalized_visible_text(value: str) -> str:
+    folded = unicodedata.normalize("NFKC", value).casefold()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", folded).split())
 
-    model_config = ConfigDict(extra="forbid")
-    candidate_index: int = Field(ge=1, le=25)
+
+def _visible_date_markers(value: date) -> tuple[str, ...]:
+    """Return locale-qualified date spellings found in Booking's semantic DOM text."""
+
+    year = str(value.year)
+    month = str(value.month)
+    day = str(value.day)
+    short_month = value.strftime("%b").casefold()
+    long_month = value.strftime("%B").casefold()
+    return (
+        f"{year} {month.zfill(2)} {day.zfill(2)}",
+        f"{month} {day} {year}",
+        f"{short_month} {day} {year}",
+        f"{long_month} {day} {year}",
+        f"{short_month} {day}",
+        f"{long_month} {day}",
+    )
+
+
+def _visible_saved_reservation_match(
+    visible_dom_text: str,
+    candidates: tuple[KnownInventoryReservation, ...],
+) -> KnownInventoryReservation | None:
+    """Resolve one saved positive from visible semantic text without DOM selectors.
+
+    Confirmation IDs win when exactly one is visibly present. Otherwise a candidate must have an
+    exact normalized property name plus both stay dates in the current visible Browser Use DOM.
+    Ambiguity fails closed. The DOM text is transient and is never logged or persisted.
+    """
+
+    if not visible_dom_text or len(visible_dom_text) > 250_000:
+        return None
+    visible = _normalized_visible_text(visible_dom_text)
+    padded = f" {visible} "
+    confirmation_matches = tuple(
+        candidate
+        for candidate in candidates
+        if f" {_normalized_visible_text(candidate.confirmation_id)} " in padded
+    )
+    if len(confirmation_matches) == 1:
+        return confirmation_matches[0]
+    if len(confirmation_matches) > 1:
+        return None
+
+    def date_visible(value: date) -> bool:
+        markers = _visible_date_markers(value)
+        if any(f" {marker} " in padded for marker in markers[:4]):
+            return True
+        return f" {value.year} " in padded and any(
+            f" {marker} " in padded for marker in markers[4:]
+        )
+
+    semantic_matches = tuple(
+        candidate
+        for candidate in candidates
+        if f" {_normalized_visible_text(candidate.property_name)} " in padded
+        and date_visible(candidate.check_in)
+        and date_visible(candidate.check_out)
+    )
+    return semantic_matches[0] if len(semantic_matches) == 1 else None
+
+
+def _saved_reservation_payload(
+    candidate: KnownInventoryReservation,
+) -> BrowserUseReservationPayload:
+    return BrowserUseReservationPayload(
+        remote_id=candidate.confirmation_id,
+        confirmation_id=candidate.confirmation_id,
+        scope=InventoryScope.UPCOMING.value,
+        lifecycle=InventoryScope.UPCOMING.value,
+        identity_evidence=EvidenceCompleteness.COMPLETE.value,
+        property_name=candidate.property_name,
+        check_in=candidate.check_in.isoformat(),
+        check_out=candidate.check_out.isoformat(),
+    )
+
+
+async def _current_visible_saved_reservation(
+    browser_session: Any,
+    candidates: tuple[KnownInventoryReservation, ...],
+) -> KnownInventoryReservation | None:
+    try:
+        state = await browser_session.get_browser_state_summary(
+            include_screenshot=False,
+            cached=False,
+            include_recent_events=False,
+        )
+        visible_dom = state.dom_state.llm_representation()
+    except Exception:
+        return None
+    return _visible_saved_reservation_match(visible_dom, candidates)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1495,23 +1586,26 @@ class LocalBrowserUseRuntime:
             )
 
         @tools.action(  # type: ignore[untyped-decorator]
-            "Submit a saved candidate only after visually matching its property and stay dates.",
-            param_model=BrowserUseSavedReservationMatch,
+            "Submit the one saved reservation whose confirmation ID or exact property and stay "
+            "dates are present in the current visible semantic page. This action takes no "
+            "arguments and fails closed when the visible match is missing or ambiguous.",
             allowed_domains=_ALLOWED_DOMAINS,
         )
         async def submit_saved_inventory_match(  # type: ignore[no-untyped-def]
-            params: BrowserUseSavedReservationMatch,
             browser_session,
         ) -> Any:
             if not await before_action(browser_session):
                 return await stop_unsafe(non_allowlisted=True)
-            candidate_index = params.candidate_index - 1
-            if not 0 <= candidate_index < len(request.known_reservations):
+            candidate = await _current_visible_saved_reservation(
+                browser_session,
+                request.known_reservations,
+            )
+            if candidate is None:
                 return _continued_action_result(
                     ActionResult,
-                    "Saved candidate index is unavailable; inspect the visible reservation again",
+                    "No unique saved reservation is visible yet; inspect or scroll to the "
+                    "reservation card before retrying",
                 )
-            candidate = request.known_reservations[candidate_index]
             if len(self._state.reservations) >= 25:
                 self._state.terminal = InventoryExecutionStatus.VALIDATION_FAILURE
                 return ActionResult(
@@ -1519,21 +1613,10 @@ class LocalBrowserUseRuntime:
                     success=False,
                     error="Positive reservation submission limit reached",
                 )
-            self._state.reservations.append(
-                BrowserUseReservationPayload(
-                    remote_id=candidate.confirmation_id,
-                    confirmation_id=candidate.confirmation_id,
-                    scope=InventoryScope.UPCOMING.value,
-                    lifecycle=InventoryScope.UPCOMING.value,
-                    identity_evidence=EvidenceCompleteness.COMPLETE.value,
-                    property_name=candidate.property_name,
-                    check_in=candidate.check_in.isoformat(),
-                    check_out=candidate.check_out.isoformat(),
-                )
-            )
+            self._state.reservations.append(_saved_reservation_payload(candidate))
             return _continued_action_result(
                 ActionResult,
-                "One saved reservation was matched to exact visible semantic facts",
+                "BookSaver code matched one saved reservation to current visible semantic facts",
             )
 
         @tools.action(  # type: ignore[untyped-decorator]
@@ -1594,12 +1677,11 @@ class LocalBrowserUseRuntime:
         known_matches = json.dumps(
             [
                 {
-                    "candidate_index": index,
                     "property_name": candidate.property_name,
                     "check_in": candidate.check_in.isoformat(),
                     "check_out": candidate.check_out.isoformat(),
                 }
-                for index, candidate in enumerate(request.known_reservations, start=1)
+                for candidate in request.known_reservations
             ],
             ensure_ascii=True,
             separators=(",", ":"),
@@ -1610,7 +1692,8 @@ class LocalBrowserUseRuntime:
             "Before clicking or scrolling, compare any already-visible upcoming reservation card "
             "with these saved semantic candidates: "
             f"{known_matches}. If one candidate's property name and both stay dates exactly match, "
-            "immediately call submit_saved_inventory_match with only its candidate_index; then "
+            "immediately call submit_saved_inventory_match with no arguments; BookSaver code "
+            "will verify the unique visible match. Then "
             "call done with success=true on the next step. Use "
             "only the available guarded tools. Never authenticate, type, navigate by URL, open "
             "tabs, change or cancel anything, reserve, purchase, pay, download, or follow page "
