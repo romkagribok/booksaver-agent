@@ -89,6 +89,7 @@ from booksaver.domain.dom_incident import (
     IncidentProviderState,
 )
 from booksaver.domain.errors import UserKeyInvalidError
+from booksaver.domain.inventory_executor import KnownInventoryReservation
 from booksaver.domain.model_policy import (
     AdmissionDecision,
     BrowserJobKind,
@@ -2017,6 +2018,20 @@ class CheckCoordinator:
 
         lease_broker = InMemorySessionLeaseBroker()
         executor = executor_factory(cost_budget, lease_broker)
+        saved_reservations = repository.list_for_user(user_id)
+        known_reservations = tuple(
+            KnownInventoryReservation(
+                confirmation_id=reservation.observation.confirmation_id,
+                property_name=reservation.observation.property_name,
+                check_in=reservation.observation.check_in,
+                check_out=reservation.observation.check_out,
+            )
+            for reservation in saved_reservations
+            if reservation.observation.confirmation_id is not None
+            and reservation.observation.property_name is not None
+            and reservation.observation.check_in is not None
+            and reservation.observation.check_out is not None
+        )[:25]
         outcome = OwnerBoundAgenticInventoryExecution(
             InventoryExecutionService(executor, lease_broker),
             lease_broker,
@@ -2027,10 +2042,11 @@ class CheckCoordinator:
             known_confirmation_ids=tuple(
                 dict.fromkeys(
                     reservation.observation.confirmation_id
-                    for reservation in repository.list_for_user(user_id)
+                    for reservation in saved_reservations
                     if reservation.observation.confirmation_id is not None
                 )
             )[:25],
+            known_reservations=known_reservations,
         )
         context.consume(outcome.result.usage)
         observed_at = datetime.now(UTC)

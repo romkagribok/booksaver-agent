@@ -18,7 +18,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
@@ -84,6 +84,7 @@ _EXPECTED_ACTIONS = frozenset(
         "guarded_key",
         "guarded_wait",
         "submit_inventory_observation",
+        "submit_saved_inventory_match",
         "done",
     }
 )
@@ -272,6 +273,10 @@ _DIAGNOSTIC_FIELDS = (
     "authenticated",
     "scopes",
     "reservations",
+    "candidate_index",
+    "observed_property_name",
+    "observed_check_in",
+    "observed_check_out",
 )
 _DIAGNOSTIC_VALIDATION_TYPES = (
     "string_type",
@@ -566,6 +571,34 @@ class BrowserUseTerminalPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     success: bool
     text: str = Field(max_length=1_000)
+
+
+class BrowserUseSavedReservationMatch(BaseModel):
+    """Visible semantic facts BookSaver can compare with one caller-owned saved candidate."""
+
+    model_config = ConfigDict(extra="forbid")
+    candidate_index: int = Field(ge=1, le=25)
+    scope: str
+    identity_evidence: str
+    observed_property_name: str
+    observed_check_in: str
+    observed_check_out: str
+
+    @field_validator(
+        "scope",
+        "identity_evidence",
+        "observed_property_name",
+        "observed_check_in",
+        "observed_check_out",
+        mode="before",
+    )
+    @classmethod
+    def normalize_provider_scalar(cls, value: object) -> object:
+        if value is None:
+            return "unknown"
+        if isinstance(value, (bool, int, float)):
+            return str(value).casefold() if isinstance(value, bool) else str(value)
+        return value if isinstance(value, str) else "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1453,6 +1486,71 @@ class LocalBrowserUseRuntime:
             )
 
         @tools.action(  # type: ignore[untyped-decorator]
+            "Submit a saved candidate only after exact visible property and stay-date matching.",
+            param_model=BrowserUseSavedReservationMatch,
+            allowed_domains=_ALLOWED_DOMAINS,
+        )
+        async def submit_saved_inventory_match(  # type: ignore[no-untyped-def]
+            params: BrowserUseSavedReservationMatch,
+            browser_session,
+        ) -> Any:
+            if not await before_action(browser_session):
+                return await stop_unsafe(non_allowlisted=True)
+            candidate_index = params.candidate_index - 1
+            if not 0 <= candidate_index < len(request.known_reservations):
+                return _continued_action_result(
+                    ActionResult,
+                    "Saved candidate index is unavailable; inspect the visible reservation again",
+                )
+            candidate = request.known_reservations[candidate_index]
+            try:
+                observed_check_in = date.fromisoformat(params.observed_check_in.strip())
+                observed_check_out = date.fromisoformat(params.observed_check_out.strip())
+            except ValueError:
+                return _continued_action_result(
+                    ActionResult,
+                    "Observed stay dates must use exact ISO YYYY-MM-DD values",
+                )
+            normalized_property = " ".join(params.observed_property_name.split()).casefold()
+            if any(
+                (
+                    params.scope.strip().casefold() != InventoryScope.UPCOMING.value,
+                    params.identity_evidence.strip().casefold()
+                    != EvidenceCompleteness.COMPLETE.value,
+                    normalized_property != candidate.property_name.casefold(),
+                    observed_check_in != candidate.check_in,
+                    observed_check_out != candidate.check_out,
+                )
+            ):
+                return _continued_action_result(
+                    ActionResult,
+                    "Visible property and stay dates did not exactly match the saved candidate",
+                )
+            if len(self._state.reservations) >= 25:
+                self._state.terminal = InventoryExecutionStatus.VALIDATION_FAILURE
+                return ActionResult(
+                    is_done=True,
+                    success=False,
+                    error="Positive reservation submission limit reached",
+                )
+            self._state.reservations.append(
+                BrowserUseReservationPayload(
+                    remote_id=candidate.confirmation_id,
+                    confirmation_id=candidate.confirmation_id,
+                    scope=InventoryScope.UPCOMING.value,
+                    lifecycle=InventoryScope.UPCOMING.value,
+                    identity_evidence=EvidenceCompleteness.COMPLETE.value,
+                    property_name=candidate.property_name,
+                    check_in=candidate.check_in.isoformat(),
+                    check_out=candidate.check_out.isoformat(),
+                )
+            )
+            return _continued_action_result(
+                ActionResult,
+                "One saved reservation was matched to exact visible semantic facts",
+            )
+
+        @tools.action(  # type: ignore[untyped-decorator]
             "Finish after positive submission, or report that no safe positive could be submitted.",
             param_model=BrowserUseTerminalPayload,
             terminates_sequence=True,
@@ -1507,6 +1605,19 @@ class LocalBrowserUseRuntime:
             ensure_ascii=True,
             separators=(",", ":"),
         )
+        known_matches = json.dumps(
+            [
+                {
+                    "candidate_index": index,
+                    "property_name": candidate.property_name,
+                    "check_in": candidate.check_in.isoformat(),
+                    "check_out": candidate.check_out.isoformat(),
+                }
+                for index, candidate in enumerate(request.known_reservations, start=1)
+            ],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
         task = (
             "Inspect the already-open authenticated Booking.com reservations area. Review "
             "upcoming, "
@@ -1524,7 +1635,11 @@ class LocalBrowserUseRuntime:
             "BookSaver's locally saved confirmation IDs are "
             f"{known_confirmations}. Treat them only as search hints: submit one only when that "
             "exact confirmation number is visibly present on the current reservation or its "
-            "read-only details. "
+            "read-only details. Saved semantic candidates are "
+            f"{known_matches}. When a confirmation number is hidden but one candidate's property "
+            "name and both stay dates exactly match the visible reservation, call "
+            "submit_saved_inventory_match with its index, upcoming scope, "
+            "identity_evidence=complete, and the exact visible property and ISO stay dates. "
             "submit_inventory_observation once for each currently visible upcoming reservation "
             "using exactly confirmation_id, scope, and identity_evidence=complete. The "
             "confirmation_id must be the visible Booking.com reservation confirmation number, "

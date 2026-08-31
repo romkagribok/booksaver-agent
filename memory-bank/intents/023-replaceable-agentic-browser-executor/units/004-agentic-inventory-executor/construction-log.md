@@ -200,6 +200,12 @@ updated: 2026-08-26T04:24:18Z
   hints. The agent may submit a hint only after exact visible re-observation; hints cannot authorize
   absence, eligibility, navigation, or mutation and are never logged or persisted as execution
   telemetry.
+- **2026-08-31T00:05:24Z**: implementation-diagnostic - Production confirmed that the reservation
+  card does not expose its confirmation number and repeated guarded attempts to open unrelated or
+  non-interactive controls safely terminated. Added a semantic saved-match tool that returns the
+  candidate index plus visible property and ISO stay dates. BookSaver accepts the match only when
+  those facts exactly equal its caller-owned record, then supplies the hidden confirmation identity;
+  mismatch, unknown evidence, non-upcoming scope, and malformed dates remain bounded corrections.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling

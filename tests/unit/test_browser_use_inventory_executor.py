@@ -50,6 +50,7 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     BrowserUseReservationPayload,
     BrowserUseReservationSubmission,
     BrowserUseRuntimeResult,
+    BrowserUseSavedReservationMatch,
     BrowserUseTerminalPayload,
     LocalBrowserUseRuntime,
     _agent_history_diagnostic,
@@ -458,6 +459,7 @@ def test_provider_reservation_payload_normalizes_scalars_and_discards_extras() -
 def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -> None:
     submission_schema = BrowserUseReservationSubmission.model_json_schema()
     terminal_schema = BrowserUseTerminalPayload.model_json_schema()
+    saved_match_schema = BrowserUseSavedReservationMatch.model_json_schema()
 
     assert submission_schema["required"] == [
         "confirmation_id",
@@ -471,6 +473,14 @@ def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -
     }
     assert terminal_schema["required"] == ["success", "text"]
     assert set(terminal_schema["properties"]) == {"success", "text"}
+    assert saved_match_schema["required"] == [
+        "candidate_index",
+        "scope",
+        "identity_evidence",
+        "observed_property_name",
+        "observed_check_in",
+        "observed_check_out",
+    ]
 
 
 def test_browser_use_mapping_downgrades_malformed_optional_facts_to_unknown() -> None:

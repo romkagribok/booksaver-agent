@@ -56,12 +56,15 @@ bounded structured action needed for the next step. On a missing observation, lo
 closed-registry action names, and bounded error categories.
 Browser Use 0.11.13 makes every structured-output property required, including Pydantic defaults.
 Use a minimal three-field positive action (`confirmation_id`, `scope`, `identity_evidence`) and its
-native two-field `done(success, text)` contract. BookSaver maps the visible confirmation number to
-both stable identity fields, constructs optional facts as unknown, and derives only an incomplete
-scope/count record. The trusted validator and safe persistence merge remain authoritative for
-acceptance and eligibility; malformed identity, invalid scope, and model absence claims never gain
-authority. After current upcoming positives are submitted, request an immediate honest partial
-`done` instead of spending the remaining deadline trying to prove account completeness.
+native two-field `done(success, text)` contract. When the confirmation is hidden, a separate saved
+match action must return candidate index plus visible property and ISO stay dates; BookSaver accepts
+it only when those facts exactly equal a caller-owned saved candidate, then supplies the
+confirmation identity itself. BookSaver constructs optional facts as unknown and derives only an
+incomplete scope/count record. The trusted validator and safe persistence merge remain authoritative
+for acceptance and eligibility; malformed identity, mismatched semantics, invalid scope, and model
+absence claims never gain authority. After current upcoming positives are submitted, request an
+immediate honest partial `done` instead of spending the remaining deadline trying to prove account
+completeness.
 
 ## Test Design
 
@@ -76,7 +79,8 @@ authority. After current upcoming positives are submitted, request an immediate 
 - Assert provider scalar/null/extra formatting is normalized, malformed optional facts become
   unknown, and stable identity remains mandatory before trusted validation.
 - Assert the strict action schemas contain only their genuinely required fields and confirmation
-  hints are bounded, unique, repr-redacted, caller-scoped, and propagated to the executor request.
+  hints/candidates are bounded, unique, repr-redacted, caller-scoped, propagated to the executor
+  request, and require exact property/date comparison before identity mapping.
 - Assert a valid positive with malformed scope claims produces only code-owned incomplete coverage
   and cannot archive unseen reservations.
 - Run the focused Browser Use/coordinator suite, repository quality gates, exact candidate image,
