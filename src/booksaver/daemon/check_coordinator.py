@@ -2024,6 +2024,13 @@ class CheckCoordinator:
             owner_user_id=user_id,
             session_material=snapshot.cookies,
             limits=limits,
+            known_confirmation_ids=tuple(
+                dict.fromkeys(
+                    reservation.observation.confirmation_id
+                    for reservation in repository.list_for_user(user_id)
+                    if reservation.observation.confirmation_id is not None
+                )
+            )[:25],
         )
         context.consume(outcome.result.usage)
         observed_at = datetime.now(UTC)

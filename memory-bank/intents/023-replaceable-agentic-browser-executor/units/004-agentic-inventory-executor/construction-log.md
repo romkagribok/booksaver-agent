@@ -194,6 +194,12 @@ updated: 2026-08-26T04:24:18Z
   visible identifier than the confirmation-keyed saved row, so it remained ineligible. Narrowed
   the tool to the visibly explicit Booking.com confirmation number and map that value to both
   stable remote identity and confirmation ID; property, DOM, and card identifiers are forbidden.
+- **2026-08-30T23:59:05Z**: implementation-diagnostic - A stochastic repeat did not locate the
+  confirmation number and terminated safely without a positive. Added at most 25 unique,
+  repr-redacted, caller-owned saved confirmation IDs to the provider-neutral request as search
+  hints. The agent may submit a hint only after exact visible re-observation; hints cannot authorize
+  absence, eligibility, navigation, or mutation and are never logged or persisted as execution
+  telemetry.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling

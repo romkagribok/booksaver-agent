@@ -193,6 +193,7 @@ class InventoryExecutionRequest:
     session_lease: SessionLeaseReference
     limits: ExecutionLimits
     required_scopes: frozenset[InventoryScope] = REQUIRED_INVENTORY_SCOPES
+    known_confirmation_ids: tuple[str, ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         _safe_id(self.execution_id, "execution_id")
@@ -200,6 +201,15 @@ class InventoryExecutionRequest:
             raise ValueError("owner_user_id must be positive")
         if self.required_scopes != REQUIRED_INVENTORY_SCOPES:
             raise ValueError("inventory execution requires upcoming, past, and cancelled scopes")
+        if len(self.known_confirmation_ids) > 25:
+            raise ValueError("known confirmation IDs exceed the bounded inventory hint limit")
+        normalized_ids = tuple(
+            _safe_id(value, "known_confirmation_id")
+            for value in self.known_confirmation_ids
+        )
+        if len(set(normalized_ids)) != len(normalized_ids):
+            raise ValueError("known confirmation IDs must be unique")
+        object.__setattr__(self, "known_confirmation_ids", normalized_ids)
         if (
             self.session_lease.owner_user_id != self.owner_user_id
             or self.session_lease.subject_id != inventory_session_subject(self.owner_user_id)

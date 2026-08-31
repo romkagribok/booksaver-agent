@@ -38,6 +38,9 @@ egress and read-only safety boundaries intact
   task; app-install/download routes remain denied before replay.
 - [ ] A bounded production replay reaches inventory perception and completes positive discovery
   without requiring a Telegram command between iterations.
+- [ ] BookSaver may provide bounded caller-owned saved confirmation IDs as redacted search hints;
+  Browser Use can submit one only when the exact number is visibly re-observed, and the hint cannot
+  authorize absence, eligibility, or any action.
 
 ## Dependencies
 

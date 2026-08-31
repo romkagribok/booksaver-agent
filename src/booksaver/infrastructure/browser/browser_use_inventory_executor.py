@@ -1502,6 +1502,11 @@ class LocalBrowserUseRuntime:
             if session.cdp_url is not None:
                 await self._refresh_after_observation(request, session.cdp_url)
 
+        known_confirmations = json.dumps(
+            request.known_confirmation_ids,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
         task = (
             "Inspect the already-open authenticated Booking.com reservations area. Review "
             "upcoming, "
@@ -1515,7 +1520,11 @@ class LocalBrowserUseRuntime:
             "advertisement, loyalty, account, help, privacy, terms, and travel-inspiration "
             "control. Do not click unless the visible context directly identifies a reservation, "
             "one required scope, pagination, or read-only trip details. If no directly relevant "
-            "control is visible, scroll instead of clicking an unrelated control. Call "
+            "control is visible, scroll instead of clicking an unrelated control. "
+            "BookSaver's locally saved confirmation IDs are "
+            f"{known_confirmations}. Treat them only as search hints: submit one only when that "
+            "exact confirmation number is visibly present on the current reservation or its "
+            "read-only details. "
             "submit_inventory_observation once for each currently visible upcoming reservation "
             "using exactly confirmation_id, scope, and identity_evidence=complete. The "
             "confirmation_id must be the visible Booking.com reservation confirmation number, "

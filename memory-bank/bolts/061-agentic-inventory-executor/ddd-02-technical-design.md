@@ -9,12 +9,16 @@ created: 2026-08-30T22:30:00Z
 ## Architecture Pattern
 
 Keep the provider-neutral port and trigger-specific adapter from ADR-041. Introduce one private
-Browser Use entry constant in its infrastructure module and navigate to it directly. Do not change
-the shared Stagehand `INVENTORY_ENTRY_URL` or any control-plane contract.
+Browser Use entry constant in its infrastructure module and navigate to it directly. Extend the
+inventory request with a bounded, repr-redacted tuple of locally saved confirmation IDs that the
+executor may use only as positive re-observation hints. Do not change the shared Stagehand
+`INVENTORY_ENTRY_URL`.
 
 ## Layer Structure
 
-- **Domain/application/coordinator**: No change.
+- **Domain/application/coordinator**: Pass at most 25 unique bounded confirmation IDs from the
+  caller-owned saved inventory through the existing owner-bound request. They are hints, never
+  absence or eligibility authority.
 - **Browser Use adapter**: Own the canonical HTTPS `mytrips` literal and use it for the initial
   code-owned navigation before agent construction. When a fully inspected safe anchor declares
   `target=_blank`, resolve its guarded HTTPS href and replay it in the existing tab rather than
@@ -34,6 +38,9 @@ the shared Stagehand `INVENTORY_ENTRY_URL` or any control-plane contract.
   host, route, and current-page checks and is followed by the existing post-action check.
 - App-install/download destinations remain prohibited. A denied pre-action proposal never reaches
   the browser; mutation, dialog, extra-target, and post-destination violations still fail closed.
+- Confirmation hints are excluded from request repr, metrics, and logs. They are sent only in the
+  same Anthropic episode already disclosed for visible authenticated Booking.com page content, and
+  the agent may submit one only after seeing the exact number on the current page.
 
 ## Reliability Design
 
@@ -47,20 +54,14 @@ sample unrelated links. Disable Browser Use's explicit thinking response field f
 typed loop; private provider inference remains provider-owned, while the harness requests only the
 bounded structured action needed for the next step. On a missing observation, log only step count,
 closed-registry action names, and bounded error categories.
-The provider-facing reservation action normalizes scalar JSON values and discards unknown keys so
-ordinary model formatting does not consume harness retries; if optional date/money/evidence fields
-still cannot be mapped, preserve only bounded identity facts and downgrade the rest to unknown.
-The trusted application validator and safe persistence merge remain authoritative for acceptance
-and eligibility. After current upcoming positives are submitted, request an immediate honest
-partial `done` instead of spending the remaining deadline trying to prove account completeness.
-For positive results, derive only an incomplete scope/count record from accepted reservation
-submissions; malformed, duplicate, or overconfident model scope claims are ignored and cannot grant
-absence-reconciliation authority.
-The provider-facing reservation action normalizes scalar JSON values and discards unknown keys so
-ordinary model formatting does not consume harness retries; the trusted mapping/validator still
-rejects missing identity, invalid scope, ambiguous money, dates, lifecycle, or eligibility facts.
-After current upcoming positives are submitted, request an immediate honest partial `done` instead
-of spending the remaining deadline trying to prove account completeness.
+Browser Use 0.11.13 makes every structured-output property required, including Pydantic defaults.
+Use a minimal three-field positive action (`confirmation_id`, `scope`, `identity_evidence`) and its
+native two-field `done(success, text)` contract. BookSaver maps the visible confirmation number to
+both stable identity fields, constructs optional facts as unknown, and derives only an incomplete
+scope/count record. The trusted validator and safe persistence merge remain authoritative for
+acceptance and eligibility; malformed identity, invalid scope, and model absence claims never gain
+authority. After current upcoming positives are submitted, request an immediate honest partial
+`done` instead of spending the remaining deadline trying to prove account completeness.
 
 ## Test Design
 
@@ -74,10 +75,10 @@ of spending the remaining deadline trying to prove account completeness.
   include tool parameters, page content, model thoughts, URLs, or provider error text.
 - Assert provider scalar/null/extra formatting is normalized, malformed optional facts become
   unknown, and stable identity remains mandatory before trusted validation.
+- Assert the strict action schemas contain only their genuinely required fields and confirmation
+  hints are bounded, unique, repr-redacted, caller-scoped, and propagated to the executor request.
 - Assert a valid positive with malformed scope claims produces only code-owned incomplete coverage
   and cannot archive unseen reservations.
-- Assert provider scalar/null/extra formatting is normalized before tool dispatch while trusted
-  observation validation remains unchanged.
 - Run the focused Browser Use/coordinator suite, repository quality gates, exact candidate image,
   and bounded authenticated VPS replay.
 
