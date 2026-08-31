@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-30T22:28:13Z
+updated: 2026-08-31T23:33:00Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
@@ -33,8 +33,9 @@ updated: 2026-08-30T22:28:13Z
 
 ### 004-agentic-inventory-executor
 
-- **Purpose**: Replace selector-dependent inventory perception with a provider-neutral Stagehand
-  executor for every disclosed authorized user while preserving positive-only reconciliation.
+- **Purpose**: Replace selector-dependent inventory perception with provider-neutral agentic
+  executors while preserving positive-only reconciliation; `/bookings` uses local Browser Use and
+  other inventory triggers retain Stagehand until separately migrated.
 - **Assigned Requirements**: FR-10, FR-12
 - **Dependencies**: Units 001 and 002; existing account synchronization and reconciliation policy.
 
@@ -87,5 +88,7 @@ flowchart LR
    its current executor.
 10. Bolt 061: use the canonical HTTPS inventory entry after production showed Booking.com's legacy
     entry redirecting through blocked HTTP before Browser Use could perceive the page.
-11. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
-   window pass.
+11. Bolt 062: remove saved-row short-circuiting and qualify genuinely new positive discovery from
+    an authenticated repository clone with no saved reservations.
+12. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
+    window pass.

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
+import json
 import shutil
 import tempfile
 import uuid
@@ -12,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PIL import Image
 from pydantic import BaseModel
 
 from booksaver.application.async_runner import AsyncLoopRunner
@@ -49,16 +53,23 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     BrowserUseCostStop,
     BrowserUseInventoryBrowserExecutor,
     BrowserUseObservationPayload,
+    BrowserUseReservationFactsSubmission,
     BrowserUseReservationPayload,
     BrowserUseReservationSubmission,
     BrowserUseRuntimeResult,
     BrowserUseTerminalPayload,
+    GuardedVisualClick,
     LocalBrowserUseRuntime,
+    _account_navigation_rejection_reason,
     _agent_history_diagnostic,
+    _attach_reservation_facts,
+    _authenticated_account_navigation,
     _browser_request_allowed,
     _continued_action_result,
+    _coordinate_chain_click_decision,
     _current_visible_saved_reservation,
     _hardened_session_type,
+    _inventory_agent_task,
     _is_unsafe_watchdog_handler,
     _map_browser_use_observation,
     _map_observation,
@@ -67,11 +78,73 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     _node_chain_click_decision,
     _prepare_environment,
     _qualified_output_format,
+    _record_reservation_identity,
+    _remember_visible_semantic_state,
     _same_tab_click_destination,
+    _screenshot_has_visible_content,
     _terminal_status,
     _validation_diagnostic,
+    _viewport_coordinates,
     _visible_saved_reservation_match,
 )
+
+
+def _png_data(*, foreground: int | None = None) -> str:
+    image = Image.new("L", (64, 64), color=255)
+    if foreground is not None:
+        for x in range(16, 48):
+            for y in range(16, 48):
+                image.putpixel((x, y), foreground)
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return base64.b64encode(output.getvalue()).decode("ascii")
+
+
+@pytest.mark.parametrize("status", [200, 202])
+def test_settled_protected_account_navigation_is_authentication_evidence(
+    status: int,
+) -> None:
+    assert _authenticated_account_navigation(
+        status=status,
+        content_type="text/html; charset=utf-8",
+        final_url="https://secure.booking.com/myaccount.html",
+        rendered_html=b"<html><body></body></html>",
+    )
+
+
+@pytest.mark.parametrize(
+    ("final_url", "rendered_html", "reason"),
+    [
+        (
+            "https://account.booking.com/sign-in?op_token=x",
+            b"<html></html>",
+            "destination",
+        ),
+        (
+            "https://secure.booking.com/myaccount.html?next=x",
+            b"<html></html>",
+            "destination",
+        ),
+        (
+            "https://secure.booking.com/myaccount.html",
+            b"<html>Verify you are human</html>",
+            "challenge",
+        ),
+    ],
+)
+def test_signed_out_or_challenged_account_navigation_is_rejected(
+    final_url: str,
+    rendered_html: bytes,
+    reason: str,
+) -> None:
+    evidence = {
+        "status": 202,
+        "content_type": "text/html",
+        "final_url": final_url,
+        "rendered_html": rendered_html,
+    }
+    assert not _authenticated_account_navigation(**evidence)
+    assert _account_navigation_rejection_reason(**evidence) == reason
 
 
 class _Ledger:
@@ -180,6 +253,15 @@ def test_action_guard_allows_read_only_inventory_navigation_without_exact_labels
         role="link",
         attributes={
             "href": "/confirmation.html?reservation_id=123",
+            "target": "_blank",
+        },
+    )
+    assert guard.allows_click(
+        current_url="https://secure.booking.com/mytrips.html",
+        label="West Lafayette Nov 24 Nov 25 1 booking",
+        role="link",
+        attributes={
+            "href": "/mytrips.html?auth_key=opaque-token&aid=123",
             "target": "_blank",
         },
     )
@@ -336,6 +418,52 @@ def test_click_chain_classifies_app_install_link_before_execution() -> None:
     assert decision.reason == "guard_unsafe_destination"
 
 
+def test_visual_click_chain_reuses_generic_read_only_guard() -> None:
+    safe = _coordinate_chain_click_decision(
+        BrowserUseActionGuard(),
+        chain=[
+            {"node_name": "span", "label": "West Lafayette", "attributes": {}, "visible": True},
+            {
+                "node_name": "a",
+                "label": "West Lafayette Nov 24 Nov 25 1 booking",
+                "attributes": {"href": "/mytrips.html?trip=123"},
+                "visible": True,
+            },
+        ],
+        current_url="https://secure.booking.com/mytrips.html",
+    )
+    unsafe = _coordinate_chain_click_decision(
+        BrowserUseActionGuard(),
+        chain=[
+            {
+                "node_name": "button",
+                "label": "Cancel reservation",
+                "attributes": {"role": "button"},
+                "visible": True,
+            }
+        ],
+        current_url="https://secure.booking.com/mytrips.html",
+    )
+
+    assert safe.allowed is True
+    assert unsafe.allowed is False
+    assert unsafe.reason == "guard_unsafe_label"
+
+
+def test_visual_click_coordinates_are_bounded_and_scaled_to_css_viewport() -> None:
+    session = SimpleNamespace(
+        llm_screenshot_size=(824, 1678),
+        _original_viewport_size=(412, 839),
+    )
+
+    assert GuardedVisualClick(coordinate_x=412, coordinate_y=839)
+    assert _viewport_coordinates(
+        session,
+        coordinate_x=412,
+        coordinate_y=839,
+    ) == (206, 419)
+
+
 def test_safe_popup_link_is_normalized_to_guarded_same_tab_destination() -> None:
     safe_parent = _Node(
         "Trip information",
@@ -367,6 +495,10 @@ def test_safe_popup_link_is_normalized_to_guarded_same_tab_destination() -> None
         ("http://127.0.0.1:8765/fixture", True),
         ("https://cdn.example/track.js", False),
         ("https://cf.bstatic.com/static/app.js", True),
+        ("https://abc.eu-west-1.token.awswaf.com/challenge", True),
+        ("https://token.awswaf.com/challenge", False),
+        ("https://token.awswaf.com.attacker.example/challenge", False),
+        ("http://abc.eu-west-1.token.awswaf.com/challenge", False),
         ("wss://booking.com/socket", True),
         ("data:text/plain,fixture", True),
     ],
@@ -462,6 +594,7 @@ def test_provider_reservation_payload_normalizes_scalars_and_discards_extras() -
 
 def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -> None:
     submission_schema = BrowserUseReservationSubmission.model_json_schema()
+    facts_schema = BrowserUseReservationFactsSubmission.model_json_schema()
     terminal_schema = BrowserUseTerminalPayload.model_json_schema()
 
     assert submission_schema["required"] == [
@@ -474,8 +607,101 @@ def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -
         "scope",
         "identity_evidence",
     }
+    assert facts_schema["required"] == ["confirmation_id", "facts_json"]
+    assert set(facts_schema["properties"]) == {"confirmation_id", "facts_json"}
     assert terminal_schema["required"] == ["success"]
     assert set(terminal_schema["properties"]) == {"success"}
+
+
+def test_identity_and_optional_facts_merge_without_discarding_sparse_positive() -> None:
+    reservations: list[BrowserUseReservationPayload] = []
+    identity = BrowserUseReservationSubmission(
+        confirmation_id="6992391225",
+        scope="upcoming",
+        identity_evidence="complete",
+    )
+
+    assert _record_reservation_identity(reservations, identity) is True
+    assert _record_reservation_identity(reservations, identity) is False
+    assert _attach_reservation_facts(
+        reservations,
+        BrowserUseReservationFactsSubmission(
+            confirmation_id="6992391225",
+            facts_json=json.dumps(
+                {
+                    "property_name": "Hotel Example",
+                    "check_in": "2026-11-24",
+                    "check_out": "2026-11-25",
+                    "booked_total": 301,
+                    "currency": "USD",
+                }
+            ),
+        ),
+    )
+
+    mapped_scopes, mapped = _map_browser_use_observation(
+        BrowserUseObservationPayload(
+            authenticated="true",
+            scopes=[],
+            reservations=reservations,
+        )
+    )
+    assert mapped_scopes[0].scope is InventoryScope.UPCOMING
+    assert mapped[0].confirmation_id == "6992391225"
+    assert mapped[0].property_name == "Hotel Example"
+    assert mapped[0].check_in == date(2026, 11, 24)
+    assert mapped[0].booked_total is not None
+    assert mapped[0].booked_total.amount == Decimal("301")
+
+
+def test_optional_fact_failure_preserves_submitted_identity() -> None:
+    reservations: list[BrowserUseReservationPayload] = []
+    _record_reservation_identity(
+        reservations,
+        BrowserUseReservationSubmission(
+            confirmation_id="6992391225",
+            scope="upcoming",
+            identity_evidence="complete",
+        ),
+    )
+
+    assert not _attach_reservation_facts(
+        reservations,
+        BrowserUseReservationFactsSubmission(
+            confirmation_id="6992391225",
+            facts_json='{"unexpected":"page content"}',
+        ),
+    )
+    assert len(reservations) == 1
+    assert reservations[0].confirmation_id == "6992391225"
+    assert reservations[0].property_name == "unknown"
+
+
+def test_inventory_task_requires_unknown_discovery_after_saved_match() -> None:
+    broker = InMemorySessionLeaseBroker()
+    base = _request(broker)
+    known = KnownInventoryReservation(
+        confirmation_id="ABC123",
+        property_name="Example Hotel",
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+    task = _inventory_agent_task(
+        InventoryExecutionRequest(
+            execution_id=base.execution_id,
+            owner_user_id=base.owner_user_id,
+            session_lease=base.session_lease,
+            limits=base.limits,
+            known_confirmation_ids=("ABC123",),
+            known_reservations=(known,),
+        )
+    )
+
+    assert "including reservations BookSaver has never saved" in task
+    assert "not completion" in task
+    assert "continue scanning instead of calling done immediately" in task
+    assert "destination/date/booking-count group" in task
+    assert "one current positive, not complete account traversal" not in task
 
 
 def test_visible_saved_reservation_match_uses_semantic_text_without_selectors() -> None:
@@ -589,6 +815,31 @@ def test_saved_match_uses_bounded_semantic_snapshots_from_the_current_episode() 
     assert match == candidate
     assert len(snapshots) == 6
     assert all("Example Hotel" not in snapshot for snapshot in snapshots)
+
+
+def test_large_semantic_state_is_bounded_instead_of_discarded() -> None:
+    class _DomState:
+        def llm_representation(self) -> str:
+            return "reservation-card " + "x" * 300_000
+
+    class _Session:
+        async def get_browser_state_summary(self, **kwargs: object) -> object:
+            assert kwargs["cached"] is False
+            return SimpleNamespace(dom_state=_DomState())
+
+    snapshots: list[str] = []
+    ready = asyncio.run(_remember_visible_semantic_state(_Session(), snapshots))
+
+    assert ready is True
+    assert len(snapshots) == 1
+    assert len(snapshots[0]) == 250_000
+    assert snapshots[0].startswith("reservation-card")
+
+
+def test_screenshot_readiness_rejects_blank_frame_and_accepts_visible_content() -> None:
+    assert _screenshot_has_visible_content(_png_data()) is False
+    assert _screenshot_has_visible_content(_png_data(foreground=0)) is True
+    assert _screenshot_has_visible_content("not-an-image") is False
 
 
 def test_agent_semantic_match_requires_one_exact_saved_stay() -> None:
@@ -1156,14 +1407,15 @@ def test_initial_authentication_is_code_verified_before_agent_execution(
     request = _request(broker)
     runtime = LocalBrowserUseRuntime()
 
-    async def verified(_cdp_url: str) -> bytes | None:
+    async def verified(_browser_session: object, _cdp_url: str) -> bytes | None:
         return b"verified-session"
 
     monkeypatch.setattr(runtime, "_verified_session_refresh", verified)
     terminal = asyncio.run(
-        runtime._initial_authentication_terminal(  # noqa: SLF001 - trust-boundary test
-            request,
-            "ws://127.0.0.1/devtools/browser/test",
+            runtime._initial_authentication_terminal(  # noqa: SLF001 - trust-boundary test
+                request,
+                object(),
+                "ws://127.0.0.1/devtools/browser/test",
         )
     )
 
@@ -1186,16 +1438,17 @@ def test_initial_authentication_failure_stops_before_agent(
     request = _request(broker)
     runtime = LocalBrowserUseRuntime()
 
-    async def fail(_cdp_url: str) -> bytes | None:
+    async def fail(_browser_session: object, _cdp_url: str) -> bytes | None:
         if failure == "provider":
             raise RuntimeError("content-bearing-probe-failure")
         return None
 
     monkeypatch.setattr(runtime, "_verified_session_refresh", fail)
     terminal = asyncio.run(
-        runtime._initial_authentication_terminal(  # noqa: SLF001 - trust-boundary test
-            request,
-            "ws://127.0.0.1/devtools/browser/test",
+            runtime._initial_authentication_terminal(  # noqa: SLF001 - trust-boundary test
+                request,
+                object(),
+                "ws://127.0.0.1/devtools/browser/test",
         )
     )
 
@@ -1215,14 +1468,15 @@ def test_post_agent_refresh_failure_preserves_verified_observation(
     )
     runtime._state.observation = observation  # noqa: SLF001 - callback contract test
 
-    async def fail(_cdp_url: str) -> bytes | None:
+    async def fail(_browser_session: object, _cdp_url: str) -> bytes | None:
         raise TimeoutError("content-bearing-refresh-timeout")
 
     monkeypatch.setattr(runtime, "_verified_session_refresh", fail)
     asyncio.run(
-        runtime._refresh_after_observation(  # noqa: SLF001 - callback contract test
-            request,
-            "ws://127.0.0.1/devtools/browser/test",
+            runtime._refresh_after_observation(  # noqa: SLF001 - callback contract test
+                request,
+                object(),
+                "ws://127.0.0.1/devtools/browser/test",
         )
     )
 

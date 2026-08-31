@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-30T18:15:00Z
-total_decisions: 41
+last_updated: 2026-08-31T23:20:00Z
+total_decisions: 42
 ---
 
 # Decision Index
@@ -17,6 +17,17 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-042: Admit Booking-required AWS WAF token bootstrap subresources
+- **Status**: accepted
+- **Date**: 2026-08-31
+- **Bolt**: 062-agentic-inventory-executor (agentic-inventory-executor)
+- **Path**: `bolts/062-agentic-inventory-executor/adr-042-booking-waf-token-bootstrap-egress.md`
+- **Summary**: Permit only HTTPS subresources on proper `token.awswaf.com` subdomains required to
+  render Booking.com's authenticated trips UI, while keeping that domain outside agent-observable
+  navigation and interaction authority.
+- **Read when**: Changing authenticated browser egress, Booking WAF/bootstrap behavior, Browser Use
+  blank-page readiness, blocked-host diagnostics, or external subresource policy.
 
 ### ADR-041: Trigger-specific local Browser Use execution for `/bookings`
 - **Status**: accepted

@@ -7,6 +7,43 @@ updated: 2026-08-26T04:24:18Z
 
 # Construction Log: Agentic Inventory Executor
 
+- **2026-08-31T21:57:00Z**: append - Added bolt 062 after production showed bolt 061's successful
+  replay was only a caller-owned saved-stay re-observation. The correction requires Browser Use to
+  execute even when a known stay is visible and qualifies genuine discovery against an isolated
+  authenticated repository clone with no saved reservations.
+- **2026-08-31T21:58:00Z**: 062-agentic-inventory-executor stage-complete - domain-model to
+  technical-design.
+- **2026-08-31T21:59:00Z**: 062-agentic-inventory-executor stage-complete - technical-design to
+  adr-analysis.
+- **2026-08-31T22:00:00Z**: 062-agentic-inventory-executor stage-complete - adr-analysis to
+  implement; ADR-039 through ADR-041 continue to bind positive-only discovery, guarded interaction,
+  and `/bookings` Browser Use routing.
+- **2026-08-31T22:36:00Z**: implementation-diagnostic - Booking's protected account endpoint now
+  returns the same empty HTTP 202 bootstrap to requests with and without cookies. Browser navigation
+  separates the states: authenticated sessions settle on the exact protected route, while signed-out
+  sessions redirect to the account sign-in host. Authentication verification now uses that bounded
+  settled-browser evidence and rejects challenge markers without inspecting reservation DOM.
+- **2026-08-31T22:48:00Z**: implementation-diagnostic - Browser Use received a blank semantic and
+  visual page while direct Playwright rendered the trips UI. Content-free network diagnostics found
+  three blocked randomized `token.awswaf.com` requests required by Booking's bootstrap. ADR-042
+  admits only proper HTTPS token subdomains as non-navigable subresources; blank-frame readiness
+  prevents model spend when neither semantic nor visual state exists.
+- **2026-08-31T23:03:00Z**: implementation-diagnostic - After WAF rendering succeeded, the trip
+  destination/date/count group was still denied because an opaque `auth_*` query key was classified
+  as a login path. Route guarding now keeps authentication and mutation terms forbidden in the path
+  while query guarding rejects only mutating terms; the agent still cannot navigate outside HTTPS
+  Booking.com or execute unsafe labels/actions.
+- **2026-08-31T23:24:00Z**: 062-agentic-inventory-executor stage-complete - implement to test;
+  identity/fact separation, mandatory agent traversal, same-browser authentication, mobile CDP
+  completion, generic hit-tested visual clicks, bounded readiness, WAF admission, and query-policy
+  regressions passed 86 focused tests.
+- **2026-08-31T23:33:00Z**: 062-agentic-inventory-executor complete - the 1,896-test repository
+  gate, Ruff, mypy, dependency/CLI smokes, AI-DLC validators, and an exact-image VPS replay passed.
+  The isolated replay began with zero saved reservations and reported one discovered/persisted
+  positive with property/stay facts, zero rejections, zero safety codes, 8 actions, 110.871 seconds,
+  and USD 0.177190 model cost. Production data was not mutated and the live service restarted
+  healthy after the proof.
+
 - **2026-08-26T03:37:34Z**: 053-agentic-inventory-executor started - Stage 1: domain-model
 - **2026-08-26T03:42:00Z**: 053-agentic-inventory-executor stage-complete - domain-model → technical-design
 - **2026-08-26T03:47:00Z**: 053-agentic-inventory-executor stage-complete - technical-design → adr-analysis

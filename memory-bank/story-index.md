@@ -523,7 +523,8 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-158` | Use provider-compatible agentic schemas | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/004-use-provider-compatible-agentic-schemas.md` |
 | `US-159` | Preserve mobile session identity and classify navigation failure | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/005-preserve-mobile-session-identity-and-classify-navigation-failure.md` |
 | `US-160` | Execute `/bookings` inventory with Browser Use | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/006-execute-bookings-inventory-with-browser-use.md` |
-| `US-161` | Enter Browser Use inventory through canonical HTTPS | Agentic Browser | In progress | `004-agentic-inventory-executor/stories/007-enter-browser-use-inventory-through-canonical-https.md` |
+| `US-161` | Enter Browser Use inventory through canonical HTTPS | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/007-enter-browser-use-inventory-through-canonical-https.md` |
+| `US-162` | Discover previously unknown Browser Use inventory | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/008-discover-previously-unknown-browser-use-inventory.md` |
 
 ### 005-legacy-price-selector-retirement: Legacy Price Selector Retirement
 
@@ -557,8 +558,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 5 | 19 | In construction (bolt 061 active; price canary bolt 052 active, bolt 055 blocked) |
+| `023-replaceable-agentic-browser-executor` | 5 | 20 | In construction (inventory bolt 062 complete; price canary bolt 052 active, bolt 055 blocked) |
 
-All 161 stories (156 complete in-scope, 2 post-MVP extensibility, 2 live-gated/blocked stories, and
-1 corrective story in progress) are
+All 161 stories (157 complete in-scope, 2 post-MVP extensibility, and 2 live-gated/blocked stories) are
 assigned exactly once.
