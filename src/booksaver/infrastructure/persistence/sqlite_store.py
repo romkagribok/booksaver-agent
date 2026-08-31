@@ -1357,6 +1357,28 @@ class SqliteAccountReservationRepository:
                         decision=decision,
                         observed_at=observed_at,
                     )
+                # Agentic positives may intentionally carry only enough semantic evidence to
+                # identify a saved row.  The safe merge above restores established facts and can
+                # therefore change eligibility.  Report the persisted post-merge result rather
+                # than the pre-merge sparse candidate.
+                persisted_eligible = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM account_reservations "
+                        "WHERE user_id = ? AND last_sync_run_id = ? "
+                        "AND eligibility_status = ?",
+                        (user_id, run_id, EligibilityStatus.ELIGIBLE.value),
+                    ).fetchone()[0]
+                )
+                report = replace(
+                    report,
+                    eligible=persisted_eligible,
+                    ineligible=report.discovered - persisted_eligible,
+                )
+                conn.execute(
+                    "UPDATE booking_sync_runs SET eligible_count = ?, ineligible_count = ? "
+                    "WHERE run_id = ? AND user_id = ?",
+                    (report.eligible, report.ineligible, run_id, user_id),
+                )
                 if result.completeness is InventoryCompleteness.COMPLETE:
                     self._mark_unseen_absent(conn, user_id, run_id, observed_at)
             conn.commit()
@@ -1560,6 +1582,20 @@ class SqliteAccountReservationRepository:
             "SELECT * FROM account_reservations WHERE user_id = ? AND remote_key_hash = ?",
             (user_id, fingerprint),
         ).fetchone()
+        if (
+            existing is None
+            and observation.extraction_method == "agentic_inventory"
+            and observation.confirmation_id is not None
+        ):
+            # The legacy inventory may key the same reservation by Booking's internal reservation
+            # ID while the semantic executor can safely recover only its visible confirmation ID.
+            # Reconcile through the caller-scoped unique confirmation before considering an insert;
+            # the existing agentic conflict checks below still protect every established fact.
+            existing = conn.execute(
+                "SELECT * FROM account_reservations "
+                "WHERE user_id = ? AND confirmation_id = ?",
+                (user_id, observation.confirmation_id),
+            ).fetchone()
         if existing is not None and observation.extraction_method == "agentic_inventory":
             if self._agentic_observation_conflicts(existing, observation):
                 raise sqlite3.IntegrityError(

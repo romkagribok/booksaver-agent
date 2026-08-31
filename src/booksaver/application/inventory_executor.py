@@ -30,6 +30,7 @@ from booksaver.domain.inventory_executor import (
     InventoryExecutionResult,
     InventoryExecutionStatus,
     InventoryScope,
+    KnownInventoryReservation,
     ObservedInventoryScope,
     ObservedReservation,
     inventory_session_subject,
@@ -273,6 +274,8 @@ class OwnerBoundAgenticInventoryExecution:
         owner_user_id: int,
         session_material: bytes,
         limits: ExecutionLimits | None = None,
+        known_confirmation_ids: tuple[str, ...] = (),
+        known_reservations: tuple[KnownInventoryReservation, ...] = (),
     ) -> InventoryExecutionOutcome:
         execution_id = f"agentic-inventory-{uuid.uuid4().hex}"
         lease = self._leases.issue(
@@ -287,6 +290,8 @@ class OwnerBoundAgenticInventoryExecution:
             owner_user_id=owner_user_id,
             session_lease=lease,
             limits=limits or ExecutionLimits(deadline=now + timedelta(seconds=180)),
+            known_confirmation_ids=known_confirmation_ids,
+            known_reservations=known_reservations,
         )
         return self._service.execute(request)
 

@@ -49,8 +49,8 @@ merge, and production redeployment.
 | System Context | Complete | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
 | Units | Complete | `units.md` and four unit briefs |
-| Stories | Amended | 18 story files (US-143 through US-160) |
-| Bolt Plan | Amended | Bolts 050 through 060, with 052 live-gated and 055 blocked |
+| Stories | Amended | 19 story files (US-143 through US-161) |
+| Bolt Plan | Amended | Bolts 050 through 061, with 052 live-gated and 055 blocked |
 
 ## Summary
 
@@ -59,8 +59,8 @@ merge, and production redeployment.
 | Functional Requirements | 12 |
 | Non-Functional Requirements | 7 |
 | Units | 5 |
-| Stories | 18 |
-| Bolts Planned | 5 plus corrective bolts 054 and 056 through 060 |
+| Stories | 19 |
+| Bolts Planned | 5 plus corrective bolts 054 and 056 through 061 |
 
 ## Decision Log
 
@@ -83,6 +83,8 @@ merge, and production redeployment.
 | 2026-08-29 | Classify browser transport failures before perception | Internal Chrome errors and OAuth loops must not become unsafe destinations or trigger model spend | Yes |
 | 2026-08-30 | Use local Browser Use OSS only for `/bookings` | Test a more established full agent without risking other inventory triggers or price execution | Yes |
 | 2026-08-30 | Keep Browser Use bounded and fail closed | Existing session, budget, action, validation, positive-only, privacy, and no-same-job-fallback boundaries remain authoritative | Yes |
+| 2026-08-30 | Enter `/bookings` at canonical HTTPS `mytrips` | The legacy HTTPS `myreservations` entry redirected through HTTP and BookSaver correctly blocked it before Browser Use could run; direct HTTPS entry restores reliability without weakening egress | Yes |
+| 2026-08-30 | Recover from harmless pre-action guard rejections | Live Browser Use selected structural footer/app-install controls; no unsafe action executed, so bounded correction is more reliable than terminating the entire episode while all physical replay guards and caps remain binding | Yes |
 
 ## Ready for Construction
 
@@ -96,6 +98,6 @@ merge, and production redeployment.
 
 ## Next Steps
 
-1. Execute bolt 060 and qualify the Browser Use `/bookings` slice without changing other triggers.
+1. Execute bolt 061 and qualify the corrected Browser Use `/bookings` entry without changing other triggers.
 2. Keep price routing in its current owner-canary state.
 3. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.

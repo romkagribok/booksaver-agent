@@ -43,6 +43,7 @@ from booksaver.domain.inventory_executor import (
     InventoryExecutionResult,
     InventoryExecutionStatus,
     InventoryScope,
+    KnownInventoryReservation,
     ObservedInventoryScope,
     ObservedReservation,
     inventory_session_subject,
@@ -80,6 +81,32 @@ def _request(*, limits: ExecutionLimits | None = None) -> InventoryExecutionRequ
         session_lease=_lease(),
         limits=limits or ExecutionLimits(deadline=NOW + timedelta(minutes=3)),
     )
+
+
+def test_inventory_request_bounds_and_redacts_known_confirmation_hints() -> None:
+    known = KnownInventoryReservation(
+        confirmation_id="ABC123",
+        property_name="Hotel Example",
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+    request = replace(
+        _request(),
+        known_confirmation_ids=("ABC123", "6992391225"),
+        known_reservations=(known,),
+    )
+
+    assert request.known_confirmation_ids == ("ABC123", "6992391225")
+    assert "ABC123" not in repr(request)
+    assert "Hotel Example" not in repr(request)
+    with pytest.raises(ValueError, match="unique"):
+        replace(request, known_confirmation_ids=("ABC123", "ABC123"))
+    with pytest.raises(ValueError, match="bounded machine identifier"):
+        replace(request, known_confirmation_ids=("not a safe confirmation",))
+    with pytest.raises(ValueError, match="bounded inventory hint"):
+        replace(request, known_confirmation_ids=tuple(f"ID-{index}" for index in range(26)))
+    with pytest.raises(ValueError, match="known reservations exceed"):
+        replace(request, known_reservations=(known,) * 26)
 
 
 def _scope(
@@ -359,10 +386,21 @@ def test_owner_bound_inventory_uses_supplied_residual_limits() -> None:
         owner_user_id=7,
         session_material=b"secret-session",
         limits=limits,
+        known_confirmation_ids=("ABC123",),
+        known_reservations=(
+            KnownInventoryReservation(
+                confirmation_id="ABC123",
+                property_name="Hotel Example",
+                check_in=date(2026, 11, 24),
+                check_out=date(2026, 11, 25),
+            ),
+        ),
     )
     assert outcome.discovery_result.completeness is InventoryCompleteness.INCOMPLETE
     assert fake.requests[0].limits is limits
     assert fake.requests[0].session_lease.subject_id == "account:7"
+    assert fake.requests[0].known_confirmation_ids == ("ABC123",)
+    assert fake.requests[0].known_reservations[0].confirmation_id == "ABC123"
     assert broker.active_count() == 0
 
 

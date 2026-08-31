@@ -219,6 +219,56 @@ def test_partial_agentic_positive_preserves_last_safe_projection_and_facts(
         ) == (before.monitoring_booking_id,)
 
 
+def test_agentic_confirmation_match_merges_legacy_internal_remote_identity(
+    tmp_path: Path,
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+        original = _reservation()
+        repo.reconcile(
+            user_id=owner.user_id,
+            run_id="seed-internal-remote-id",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((original,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW,
+        )
+        before = repo.list_for_user(owner.user_id)[0]
+        agentic = replace(
+            original,
+            remote_id=original.confirmation_id or "",
+            observed_at=NOW + timedelta(minutes=1),
+            property_ref=None,
+            room_type=None,
+            booked_total=None,
+            refundable=None,
+            refund_note="",
+            refund_deadline=None,
+            occupancy=None,
+            extraction_method="agentic_inventory",
+        )
+
+        report = repo.reconcile(
+            user_id=owner.user_id,
+            run_id="agentic-confirmation-match",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((agentic,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW + timedelta(minutes=1),
+        )
+        rows = repo.list_for_user(owner.user_id)
+
+        assert report.eligible == 1
+        assert len(rows) == 1
+        assert rows[0].account_reservation_id == before.account_reservation_id
+        assert rows[0].observation.property_ref == original.property_ref
+        assert repo.positively_observed_booking_ids_for_run(
+            user_id=owner.user_id,
+            run_id=report.run_id,
+        ) == (before.monitoring_booking_id,)
+
+
 def test_conflicting_agentic_positive_fails_closed_without_overwriting_safe_state(
     tmp_path: Path,
 ) -> None:

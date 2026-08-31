@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-30T18:00:44.000Z
+updated: 2026-08-30T22:28:13.000Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -37,6 +37,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - Version-matched mobile browser identity across `/connect`, session verification, and Stagehand.
 - Typed, content-free browser navigation failures before semantic or computer-use execution.
 - Trigger-specific local Browser Use OSS execution for Telegram `/bookings`.
+- Code-owned canonical HTTPS inventory entry that avoids Booking.com's blocked legacy HTTP
+  redirect without permitting HTTP browser egress.
 
 ### Out of Scope
 
@@ -56,8 +58,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 6 |
-| Must Have | 6 |
+| Total Stories | 7 |
+| Must Have | 7 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -69,6 +71,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 | US-158 | Use provider-compatible agentic schemas | Must | Complete |
 | US-159 | Preserve mobile session identity and classify navigation failure | Must | Complete |
 | US-160 | Execute `/bookings` inventory with Browser Use | Must | Complete |
+| US-161 | Enter Browser Use inventory through canonical HTTPS | Must | In progress |
 
 ## Dependencies
 
@@ -114,3 +117,5 @@ validation, positive-only reconciliation, scheduling, and check authority.
   correction after the live Booking.com OAuth loop.
 - `060-agentic-inventory-executor`: US-160 trigger-specific local Browser Use execution for
   `/bookings` without changing the inventory port or other routes.
+- `061-agentic-inventory-executor`: US-161 production correction for the blocked legacy HTTP
+  redirect at Browser Use inventory entry.
