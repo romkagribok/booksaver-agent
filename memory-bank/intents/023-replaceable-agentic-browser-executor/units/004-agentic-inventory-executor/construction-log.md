@@ -227,6 +227,12 @@ updated: 2026-08-26T04:24:18Z
   harness boundary to its minimum reliable claims: one caller-owned candidate index and one success
   boolean. BookSaver supplies authentication, upcoming scope, identity completeness, confirmation,
   property, and dates from local trusted state; the model cannot resolve outside the bounded set.
+- **2026-08-31T00:23:23Z**: implementation-diagnostic - Source audit found the recurring missing
+  fields were not action payloads: Browser Use's no-thinking Agent output retains disabled
+  `current_plan_item` and `plan_update`, then its Anthropic schema optimizer makes every property
+  required. Added a qualified-output subclass that removes only those disabled fields before schema
+  optimization; the exact optimizer regression proves the four active cognitive/action fields stay
+  required and the completion remains an instance of Browser Use's expected output model.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling

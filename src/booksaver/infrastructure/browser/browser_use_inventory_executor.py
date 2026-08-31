@@ -975,6 +975,31 @@ def _hardened_session_type(base: type[Any]) -> type[Any]:
     return HardenedBrowserSession
 
 
+def _qualified_output_format(output_format: type[BaseModel]) -> type[BaseModel]:
+    """Remove Browser Use planning fields that are disabled but made strict-required upstream."""
+
+    class QualifiedBrowserUseOutput(output_format):  # type: ignore[misc, valid-type]
+        @classmethod
+        def model_json_schema(cls, **kwargs: Any) -> dict[str, Any]:
+            schema = cast(dict[str, Any], super().model_json_schema(**kwargs))
+            properties = schema.get("properties")
+            if isinstance(properties, dict):
+                properties.pop("current_plan_item", None)
+                properties.pop("plan_update", None)
+            required = schema.get("required")
+            if isinstance(required, list):
+                schema["required"] = [
+                    name
+                    for name in required
+                    if name not in {"current_plan_item", "plan_update"}
+                ]
+            return schema
+
+    QualifiedBrowserUseOutput.__name__ = output_format.__name__
+    QualifiedBrowserUseOutput.__qualname__ = output_format.__qualname__
+    return QualifiedBrowserUseOutput
+
+
 def _model_type(base: type[Any]) -> type[Any]:
     class BudgetedBrowserUseModel(base):  # type: ignore[misc]
         def __init__(
@@ -1024,7 +1049,16 @@ def _model_type(base: type[Any]) -> type[Any]:
             admitted = admission.attempt
             started = time.monotonic()
             try:
-                response = await super().ainvoke(messages, output_format, **kwargs)
+                qualified_format = (
+                    _qualified_output_format(output_format)
+                    if output_format is not None
+                    and {
+                        "current_plan_item",
+                        "plan_update",
+                    }.issubset(output_format.model_fields)
+                    else output_format
+                )
+                response = await super().ainvoke(messages, qualified_format, **kwargs)
             except BaseException:
                 try:
                     reconciliation = self._booksaver_budget.reconcile(

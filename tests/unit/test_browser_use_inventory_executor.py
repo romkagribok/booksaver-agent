@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from booksaver.application.async_runner import AsyncLoopRunner
 from booksaver.application.browser_executor import ExecutionMeter, InMemorySessionLeaseBroker
@@ -64,6 +65,7 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     _node_chain_allows_click,
     _node_chain_click_decision,
     _prepare_environment,
+    _qualified_output_format,
     _same_tab_click_destination,
     _terminal_status,
     _validation_diagnostic,
@@ -474,6 +476,39 @@ def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -
     assert terminal_schema["required"] == ["success"]
     assert set(terminal_schema["properties"]) == {"success"}
     assert saved_match_schema["required"] == ["candidate_index"]
+
+
+def test_qualified_output_removes_disabled_planning_fields_before_strict_optimizer() -> None:
+    from browser_use.llm.schema import SchemaOptimizer
+
+    class _Output(BaseModel):
+        evaluation_previous_goal: str
+        memory: str
+        next_goal: str
+        action: list[str]
+        current_plan_item: int | None = None
+        plan_update: list[str] | None = None
+
+    qualified = _qualified_output_format(_Output)
+    schema = SchemaOptimizer.create_optimized_json_schema(qualified)
+
+    assert "current_plan_item" not in schema["properties"]
+    assert "plan_update" not in schema["properties"]
+    assert schema["required"] == [
+        "evaluation_previous_goal",
+        "memory",
+        "next_goal",
+        "action",
+    ]
+    assert isinstance(
+        qualified(
+            evaluation_previous_goal="ok",
+            memory="bounded",
+            next_goal="act",
+            action=["done"],
+        ),
+        _Output,
+    )
 
 
 def test_browser_use_mapping_downgrades_malformed_optional_facts_to_unknown() -> None:
