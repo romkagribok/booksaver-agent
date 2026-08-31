@@ -206,6 +206,12 @@ updated: 2026-08-26T04:24:18Z
   candidate index plus visible property and ISO stay dates. BookSaver accepts the match only when
   those facts exactly equal its caller-owned record, then supplies the hidden confirmation identity;
   mismatch, unknown evidence, non-upcoming scope, and malformed dates remain bounded corrections.
+- **2026-08-31T00:08:42Z**: implementation-diagnostic - The semantic saved-match tool returned one
+  accepted positive, but the legacy row was keyed by Booking's internal reservation ID while the
+  agentic observation used the confirmation ID. Added caller-scoped confirmation lookup before an
+  agentic insert, retained every established-fact conflict check, and recompute sync-run eligibility
+  from the persisted post-merge row so a sparse positive can refresh rather than duplicate the
+  last-safe projection.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling
