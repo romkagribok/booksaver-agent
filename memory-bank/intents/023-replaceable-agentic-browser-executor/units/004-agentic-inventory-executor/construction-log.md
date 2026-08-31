@@ -212,6 +212,11 @@ updated: 2026-08-26T04:24:18Z
   agentic insert, retained every established-fact conflict check, and recompute sync-run eligibility
   from the persisted post-merge row so a sparse positive can refresh rather than duplicate the
   last-safe projection.
+- **2026-08-31T00:11:27Z**: implementation-diagnostic - A stochastic replay never invoked the
+  saved-match tool because the task still prioritized full traversal and detail exploration. Moved
+  visible upcoming-card comparison to the first decision, requires immediate saved-match submission
+  and `done` on exact property/date equality, and defers clicks, scrolling, details, and other scopes
+  until no visible candidate matches. Safety guards and all hard caps remain unchanged.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling
