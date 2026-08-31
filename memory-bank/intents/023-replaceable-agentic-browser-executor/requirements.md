@@ -130,7 +130,8 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
     owner-configured Anthropic account may process visible Booking.com page content and escalation
     screenshots.
   - An egress test proves authenticated jobs contact only Booking.com application/static-delivery
-    hosts (`booking.com` and `bstatic.com`), Anthropic, and loopback.
+    hosts (`booking.com` and `bstatic.com`), Booking-required HTTPS subdomains of
+    `token.awswaf.com`, Anthropic, and loopback. The WAF token domain is never agent-navigable.
   - Destination rejection logs contain only a closed destination class, sanitized bounded path
     template, sorted query-key names, and code-owned phase/reason; raw URLs, query values,
     fragments, page content, reservation identity, and session material are prohibited.
@@ -228,13 +229,21 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
   - The adapter emits the existing typed positive inventory observations and terminal metadata;
     BookSaver remains solely responsible for validation, eligibility, positive-only reconciliation,
     session refresh proof, metrics, and last-safe-state preservation.
+  - A saved reservation re-observation is not an inventory-discovery completion condition. The
+    agent continues through the visible upcoming inventory and can submit a previously unknown
+    reservation using a visibly explicit Booking.com confirmation number.
+  - Unknown positives retain separately submitted visible property, stay, booking, policy, and
+    occupancy facts when available. Malformed or absent optional facts degrade to an ineligible
+    positive without discarding its validated confirmation identity.
   - A Browser Use failure is terminal for that `/bookings` operation and never cascades to Stagehand
     or the legacy selector parser within the same job.
   - Anonymous telemetry, cloud synchronization, version checks, conversation/history export, GIF,
     video, HAR, trace, and screenshot persistence are disabled before Browser Use is imported.
   - The exact container image proves dependency compatibility, transient-profile teardown, no
     persisted content artifacts, and authenticated egress limited to Booking.com page/application
-    hosts, Booking.com's `bstatic.com` static-delivery hosts, Anthropic, and loopback.
+    hosts, Booking.com's `bstatic.com` static-delivery hosts, Booking-required HTTPS subdomains of
+    `token.awswaf.com`, Anthropic, and loopback. The WAF token domain cannot become an observable or
+    interactive browser destination.
 - **Priority**: Must
 
 ## Non-Functional Requirements
@@ -254,6 +263,8 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
   typed and fail closed.
 - Failed or partial inventory preserves last-safe rows, while only current-run positive observations
   may unblock monitoring.
+- Qualification includes an authenticated replay whose caller-owned repository contains no saved
+  reservation; the visible Booking.com booking must be inserted from current page evidence.
 
 ### NFR-4: Cost
 - Promotion requires average model cost no greater than USD 0.10/check, approximating USD 9 per

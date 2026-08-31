@@ -1,10 +1,10 @@
 ---
 unit: 004-agentic-inventory-executor
 intent: 023-replaceable-agentic-browser-executor
-phase: inception
+phase: construction
 status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-30T22:28:13.000Z
+updated: 2026-08-31T23:33:00Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -13,9 +13,10 @@ default_bolt_type: ddd-construction-bolt
 
 ## Purpose
 
-Replace selector-dependent Booking.com inventory perception with a provider-neutral Stagehand
-capability for every disclosed authorized user, while BookSaver retains session custody,
-validation, positive-only reconciliation, scheduling, and check authority.
+Replace selector-dependent Booking.com inventory perception with provider-neutral agentic browser
+execution while BookSaver retains session custody, validation, positive-only reconciliation,
+scheduling, and check authority. Telegram `/bookings` uses the qualified Browser Use adapter;
+other triggers retain Stagehand until separately migrated.
 
 ## Scope
 
@@ -58,8 +59,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 7 |
-| Must Have | 7 |
+| Total Stories | 8 |
+| Must Have | 8 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -71,7 +72,8 @@ validation, positive-only reconciliation, scheduling, and check authority.
 | US-158 | Use provider-compatible agentic schemas | Must | Complete |
 | US-159 | Preserve mobile session identity and classify navigation failure | Must | Complete |
 | US-160 | Execute `/bookings` inventory with Browser Use | Must | Complete |
-| US-161 | Enter Browser Use inventory through canonical HTTPS | Must | In progress |
+| US-161 | Enter Browser Use inventory through canonical HTTPS | Must | Complete |
+| US-162 | Discover previously unknown Browser Use inventory | Must | Complete |
 
 ## Dependencies
 
@@ -103,6 +105,7 @@ validation, positive-only reconciliation, scheduling, and check authority.
 - [x] Current-run positives can proceed while cached-only rows cannot.
 - [x] No agentic terminal can mark an unseen reservation absent.
 - [x] Session, action, destination, privacy, cost, timeout, and teardown tests pass.
+- [x] An authenticated empty-repository replay discovers and persists the visible upcoming booking.
 
 ## Bolt Suggestions
 
@@ -119,3 +122,5 @@ validation, positive-only reconciliation, scheduling, and check authority.
   `/bookings` without changing the inventory port or other routes.
 - `061-agentic-inventory-executor`: US-161 production correction for the blocked legacy HTTP
   redirect at Browser Use inventory entry.
+- `062-agentic-inventory-executor`: US-162 correction after the saved-stay fast path was shown to
+  revalidate cached state without executing account discovery.

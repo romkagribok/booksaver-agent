@@ -40,6 +40,10 @@ On 2026-08-30 the owner approved a reliability-first Browser Use OSS slice for T
 `/bookings` only. Stagehand remains active for post-connect, `/checknow`, scheduled inventory, and
 price execution. The owner authorized the amended AI-DLC flow through implementation, Bugbot,
 merge, and production redeployment.
+On 2026-08-31 production evidence showed the accepted replay had re-observed one caller-owned saved
+stay through a code shortcut and had not exercised discovery. The owner required continued work
+until `/bookings` can discover inventory as expected. The correction defines empty-repository live
+rediscovery as the acceptance gate and does not broaden absence or browser action authority.
 
 ## Artifacts Created
 
@@ -49,8 +53,8 @@ merge, and production redeployment.
 | System Context | Complete | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
 | Units | Complete | `units.md` and four unit briefs |
-| Stories | Amended | 19 story files (US-143 through US-161) |
-| Bolt Plan | Amended | Bolts 050 through 061, with 052 live-gated and 055 blocked |
+| Stories | Amended | 20 story files (US-143 through US-162) |
+| Bolt Plan | Amended | Bolts 050 through 062, with 052 live-gated and 055 blocked |
 
 ## Summary
 
@@ -59,7 +63,7 @@ merge, and production redeployment.
 | Functional Requirements | 12 |
 | Non-Functional Requirements | 7 |
 | Units | 5 |
-| Stories | 19 |
+| Stories | 20 |
 | Bolts Planned | 5 plus corrective bolts 054 and 056 through 061 |
 
 ## Decision Log
@@ -85,6 +89,8 @@ merge, and production redeployment.
 | 2026-08-30 | Keep Browser Use bounded and fail closed | Existing session, budget, action, validation, positive-only, privacy, and no-same-job-fallback boundaries remain authoritative | Yes |
 | 2026-08-30 | Enter `/bookings` at canonical HTTPS `mytrips` | The legacy HTTPS `myreservations` entry redirected through HTTP and BookSaver correctly blocked it before Browser Use could run; direct HTTPS entry restores reliability without weakening egress | Yes |
 | 2026-08-30 | Recover from harmless pre-action guard rejections | Live Browser Use selected structural footer/app-install controls; no unsafe action executed, so bounded correction is more reliable than terminating the entire episode while all physical replay guards and caps remain binding | Yes |
+| 2026-08-31 | Require discovery rather than cached-row re-observation | A saved-stay fast path prevented the Browser Use agent from looking for unknown reservations; qualification must begin without saved reservation rows | Yes |
+| 2026-08-31 | Admit only Booking-required AWS WAF token subresources | The authenticated trips bootstrap stayed blank while the guard blocked randomized `token.awswaf.com` subdomains; narrow subresource admission restores rendering without granting agent navigation | Yes |
 
 ## Ready for Construction
 
