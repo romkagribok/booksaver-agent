@@ -593,6 +593,15 @@ def _visible_date_markers(value: date) -> tuple[str, ...]:
     )
 
 
+def _visible_date_in_normalized_text(value: date, padded_visible: str) -> bool:
+    markers = _visible_date_markers(value)
+    if any(f" {marker} " in padded_visible for marker in markers[:4]):
+        return True
+    return f" {value.year} " in padded_visible and any(
+        f" {marker} " in padded_visible for marker in markers[4:]
+    )
+
+
 def _visible_saved_reservation_match(
     visible_dom_text: str,
     candidates: tuple[KnownInventoryReservation, ...],
@@ -618,22 +627,49 @@ def _visible_saved_reservation_match(
     if len(confirmation_matches) > 1:
         return None
 
-    def date_visible(value: date) -> bool:
-        markers = _visible_date_markers(value)
-        if any(f" {marker} " in padded for marker in markers[:4]):
-            return True
-        return f" {value.year} " in padded and any(
-            f" {marker} " in padded for marker in markers[4:]
-        )
-
     semantic_matches = tuple(
         candidate
         for candidate in candidates
         if f" {_normalized_visible_text(candidate.property_name)} " in padded
-        and date_visible(candidate.check_in)
-        and date_visible(candidate.check_out)
+        and _visible_date_in_normalized_text(candidate.check_in, padded)
+        and _visible_date_in_normalized_text(candidate.check_out, padded)
     )
     return semantic_matches[0] if len(semantic_matches) == 1 else None
+
+
+def _visible_evidence_diagnostic(
+    snapshots: list[str],
+    candidates: tuple[KnownInventoryReservation, ...],
+) -> tuple[int, int, int, int, int, int]:
+    confirmation_hits = 0
+    property_hits = 0
+    check_in_hits = 0
+    check_out_hits = 0
+    full_hits = 0
+    for snapshot in snapshots:
+        visible = f" {_normalized_visible_text(snapshot)} "
+        for candidate in candidates:
+            confirmation = (
+                f" {_normalized_visible_text(candidate.confirmation_id)} " in visible
+            )
+            property_name = (
+                f" {_normalized_visible_text(candidate.property_name)} " in visible
+            )
+            check_in = _visible_date_in_normalized_text(candidate.check_in, visible)
+            check_out = _visible_date_in_normalized_text(candidate.check_out, visible)
+            confirmation_hits += int(confirmation)
+            property_hits += int(property_name)
+            check_in_hits += int(check_in)
+            check_out_hits += int(check_out)
+            full_hits += int(confirmation or (property_name and check_in and check_out))
+    return (
+        len(snapshots),
+        confirmation_hits,
+        property_hits,
+        check_in_hits,
+        check_out_hits,
+        full_hits,
+    )
 
 
 def _saved_reservation_payload(
@@ -1631,6 +1667,17 @@ class LocalBrowserUseRuntime:
                 self._state.visible_dom_snapshots,
             )
             if candidate is None:
+                diagnostic = _visible_evidence_diagnostic(
+                    self._state.visible_dom_snapshots,
+                    request.known_reservations,
+                )
+                logger.warning(
+                    "Browser Use saved match unavailable execution_id=%s snapshots=%s "
+                    "confirmation_hits=%s property_hits=%s check_in_hits=%s "
+                    "check_out_hits=%s full_hits=%s",
+                    request.execution_id,
+                    *diagnostic,
+                )
                 return _continued_action_result(
                     ActionResult,
                     "No unique saved reservation is visible yet; inspect or scroll to the "
@@ -1809,13 +1856,19 @@ class LocalBrowserUseRuntime:
             history = await agent.run(max_steps=remaining_steps)
             diagnostic = _agent_history_diagnostic(history)
             if self._state.observation is None:
+                evidence_diagnostic = _visible_evidence_diagnostic(
+                    self._state.visible_dom_snapshots,
+                    request.known_reservations,
+                )
                 logger.warning(
                     "Browser Use agent ended without observation execution_id=%s steps=%s "
-                    "actions=%s errors=%s",
+                    "actions=%s errors=%s snapshots=%s confirmation_hits=%s "
+                    "property_hits=%s check_in_hits=%s check_out_hits=%s full_hits=%s",
                     request.execution_id,
                     diagnostic.steps,
                     diagnostic.actions,
                     diagnostic.errors,
+                    *evidence_diagnostic,
                 )
             del history
         except BrowserUseCostStop:
