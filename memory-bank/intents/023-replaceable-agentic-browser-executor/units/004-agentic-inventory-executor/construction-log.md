@@ -217,6 +217,11 @@ updated: 2026-08-26T04:24:18Z
   visible upcoming-card comparison to the first decision, requires immediate saved-match submission
   and `done` on exact property/date equality, and defers clicks, scrolling, details, and other scopes
   until no visible candidate matches. Safety guards and all hard caps remain unchanged.
+- **2026-08-31T00:15:01Z**: implementation-diagnostic - Three saved-match model turns were rejected
+  before execution because Browser Use's strict schema again required every one of six semantic
+  fields. Reduced the claim to candidate index, upcoming scope, and complete identity evidence;
+  the agent still compares visible property/dates to the prompt's caller-owned candidates, while
+  BookSaver can resolve only within that bounded set and retains positive-only/no-absence policy.
 - **2026-08-30T23:29:00Z**: implementation-diagnostic - The no-thinking replay completed 13 steps
   and reached five incremental reservation submissions, but four provider payloads failed strict
   string-shape validation and the agent spent its remaining deadline traversing instead of calling

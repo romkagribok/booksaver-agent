@@ -42,8 +42,8 @@ egress and read-only safety boundaries intact
   Browser Use can submit one only when the exact number is visibly re-observed, and the hint cannot
   authorize absence, eligibility, or any action.
 - [ ] When the number is hidden, Browser Use may propose a saved candidate only with the exact
-  visible property and stay dates; BookSaver compares those facts to its caller-owned record before
-  supplying identity, and any mismatch is rejected without persistence.
+  visible property and stay dates; BookSaver resolves identity only from the bounded caller-owned
+  candidate set, while unknown evidence or scope is rejected without persistence.
 
 ## Dependencies
 

@@ -18,7 +18,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
@@ -274,9 +274,6 @@ _DIAGNOSTIC_FIELDS = (
     "scopes",
     "reservations",
     "candidate_index",
-    "observed_property_name",
-    "observed_check_in",
-    "observed_check_out",
 )
 _DIAGNOSTIC_VALIDATION_TYPES = (
     "string_type",
@@ -574,22 +571,16 @@ class BrowserUseTerminalPayload(BaseModel):
 
 
 class BrowserUseSavedReservationMatch(BaseModel):
-    """Visible semantic facts BookSaver can compare with one caller-owned saved candidate."""
+    """Minimal semantic match claim resolved only against a caller-owned saved candidate."""
 
     model_config = ConfigDict(extra="forbid")
     candidate_index: int = Field(ge=1, le=25)
     scope: str
     identity_evidence: str
-    observed_property_name: str
-    observed_check_in: str
-    observed_check_out: str
 
     @field_validator(
         "scope",
         "identity_evidence",
-        "observed_property_name",
-        "observed_check_in",
-        "observed_check_out",
         mode="before",
     )
     @classmethod
@@ -1486,7 +1477,7 @@ class LocalBrowserUseRuntime:
             )
 
         @tools.action(  # type: ignore[untyped-decorator]
-            "Submit a saved candidate only after exact visible property and stay-date matching.",
+            "Submit a saved candidate only after visually matching its property and stay dates.",
             param_model=BrowserUseSavedReservationMatch,
             allowed_domains=_ALLOWED_DOMAINS,
         )
@@ -1503,28 +1494,16 @@ class LocalBrowserUseRuntime:
                     "Saved candidate index is unavailable; inspect the visible reservation again",
                 )
             candidate = request.known_reservations[candidate_index]
-            try:
-                observed_check_in = date.fromisoformat(params.observed_check_in.strip())
-                observed_check_out = date.fromisoformat(params.observed_check_out.strip())
-            except ValueError:
-                return _continued_action_result(
-                    ActionResult,
-                    "Observed stay dates must use exact ISO YYYY-MM-DD values",
-                )
-            normalized_property = " ".join(params.observed_property_name.split()).casefold()
             if any(
                 (
                     params.scope.strip().casefold() != InventoryScope.UPCOMING.value,
                     params.identity_evidence.strip().casefold()
                     != EvidenceCompleteness.COMPLETE.value,
-                    normalized_property != candidate.property_name.casefold(),
-                    observed_check_in != candidate.check_in,
-                    observed_check_out != candidate.check_out,
                 )
             ):
                 return _continued_action_result(
                     ActionResult,
-                    "Visible property and stay dates did not exactly match the saved candidate",
+                    "Saved match requires upcoming scope and complete visible semantic evidence",
                 )
             if len(self._state.reservations) >= 25:
                 self._state.terminal = InventoryExecutionStatus.VALIDATION_FAILURE
@@ -1625,7 +1604,7 @@ class LocalBrowserUseRuntime:
             "with these saved semantic candidates: "
             f"{known_matches}. If one candidate's property name and both stay dates exactly match, "
             "immediately call submit_saved_inventory_match with its index, upcoming scope, "
-            "identity_evidence=complete, and the exact visible property and ISO stay dates; then "
+            "and identity_evidence=complete; then "
             "call done with success=true on the next step. Use "
             "only the available guarded tools. Never authenticate, type, navigate by URL, open "
             "tabs, change or cancel anything, reserve, purchase, pay, download, or follow page "

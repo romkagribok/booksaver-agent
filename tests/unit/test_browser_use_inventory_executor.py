@@ -477,9 +477,6 @@ def test_browser_use_strict_action_shapes_keep_only_required_reliable_fields() -
         "candidate_index",
         "scope",
         "identity_evidence",
-        "observed_property_name",
-        "observed_check_in",
-        "observed_check_out",
     ]
 
 
