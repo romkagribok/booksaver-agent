@@ -591,6 +591,47 @@ def test_saved_match_uses_bounded_semantic_snapshots_from_the_current_episode() 
     assert all("Example Hotel" not in snapshot for snapshot in snapshots)
 
 
+def test_agent_semantic_match_requires_one_exact_saved_stay() -> None:
+    first = KnownInventoryReservation(
+        confirmation_id="ABC123",
+        property_name="First Hotel",
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+    same_dates = KnownInventoryReservation(
+        confirmation_id="DEF456",
+        property_name="Second Hotel",
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+
+    class _DomState:
+        def llm_representation(self) -> str:
+            return "Upcoming stay Tue, Nov 24 - Wed, Nov 25, 2026"
+
+    class _Session:
+        async def get_browser_state_summary(self, **_kwargs: object) -> object:
+            return SimpleNamespace(dom_state=_DomState())
+
+    async def exercise() -> tuple[
+        KnownInventoryReservation | None,
+        KnownInventoryReservation | None,
+    ]:
+        session = _Session()
+        unique = await _current_visible_saved_reservation(session, (first,), [])
+        ambiguous = await _current_visible_saved_reservation(
+            session,
+            (first, same_dates),
+            [],
+        )
+        return unique, ambiguous
+
+    unique, ambiguous = asyncio.run(exercise())
+
+    assert unique == first
+    assert ambiguous is None
+
+
 def test_qualified_output_removes_disabled_planning_fields_before_strict_optimizer() -> None:
     from browser_use.llm.schema import SchemaOptimizer
 

@@ -730,7 +730,26 @@ async def _current_visible_saved_reservation(
         candidate = _visible_saved_reservation_match(visible_dom, candidates)
         if candidate is not None:
             matches[candidate.confirmation_id] = candidate
-    return next(iter(matches.values())) if len(matches) == 1 else None
+    if len(matches) == 1:
+        return next(iter(matches.values()))
+    if len(matches) > 1:
+        return None
+
+    # Browser Use's screenshot can expose a property label that its serialized DOM omits. The
+    # model invokes this dedicated tool only after making that semantic property/date match. Keep
+    # code authority over the caller-owned identity by requiring both exact dates in one current-
+    # episode snapshot and exactly one saved candidate with that stay. Same-date ambiguity fails
+    # closed, and this evidence remains positive-only.
+    date_matches: dict[str, KnownInventoryReservation] = {}
+    for visible_dom in reversed(snapshots):
+        visible = f" {_normalized_visible_text(visible_dom)} "
+        for candidate in candidates:
+            if _visible_date_in_normalized_text(
+                candidate.check_in,
+                visible,
+            ) and _visible_date_in_normalized_text(candidate.check_out, visible):
+                date_matches[candidate.confirmation_id] = candidate
+    return next(iter(date_matches.values())) if len(date_matches) == 1 else None
 
 
 async def _remember_visible_semantic_state(
