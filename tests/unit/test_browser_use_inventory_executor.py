@@ -57,6 +57,7 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     _agent_history_diagnostic,
     _browser_request_allowed,
     _continued_action_result,
+    _current_visible_saved_reservation,
     _hardened_session_type,
     _is_unsafe_watchdog_handler,
     _map_browser_use_observation,
@@ -525,6 +526,46 @@ def test_visible_saved_reservation_match_fails_closed_on_ambiguity_and_large_tex
 
     assert _visible_saved_reservation_match(visible, (first, second)) is None
     assert _visible_saved_reservation_match("x" * 250_001, (first,)) is None
+
+
+def test_saved_match_uses_bounded_semantic_snapshots_from_the_current_episode() -> None:
+    candidate = KnownInventoryReservation(
+        confirmation_id="ABC123",
+        property_name="Example Hotel",
+        check_in=date(2026, 11, 24),
+        check_out=date(2026, 11, 25),
+    )
+
+    class _DomState:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def llm_representation(self) -> str:
+            return self._text
+
+    class _Session:
+        def __init__(self) -> None:
+            self.text = "Example Hotel Nov 24 2026 Nov 25 2026"
+
+        async def get_browser_state_summary(self, **_kwargs: object) -> object:
+            return SimpleNamespace(dom_state=_DomState(self.text))
+
+    async def exercise() -> tuple[KnownInventoryReservation | None, list[str]]:
+        session = _Session()
+        snapshots: list[str] = []
+        first = await _current_visible_saved_reservation(session, (candidate,), snapshots)
+        session.text = "Unrelated footer controls"
+        second = await _current_visible_saved_reservation(session, (candidate,), snapshots)
+        for index in range(10):
+            session.text = f"Unrelated page state {index}"
+            await _current_visible_saved_reservation(session, (candidate,), snapshots)
+        return first if second == candidate else None, snapshots
+
+    match, snapshots = asyncio.run(exercise())
+
+    assert match == candidate
+    assert len(snapshots) == 6
+    assert all("Example Hotel" not in snapshot for snapshot in snapshots)
 
 
 def test_qualified_output_removes_disabled_planning_fields_before_strict_optimizer() -> None:

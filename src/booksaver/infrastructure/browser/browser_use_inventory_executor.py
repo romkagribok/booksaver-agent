@@ -654,17 +654,35 @@ def _saved_reservation_payload(
 async def _current_visible_saved_reservation(
     browser_session: Any,
     candidates: tuple[KnownInventoryReservation, ...],
+    snapshots: list[str],
 ) -> KnownInventoryReservation | None:
+    await _remember_visible_semantic_state(browser_session, snapshots)
+    matches: dict[str, KnownInventoryReservation] = {}
+    for visible_dom in reversed(snapshots):
+        candidate = _visible_saved_reservation_match(visible_dom, candidates)
+        if candidate is not None:
+            matches[candidate.confirmation_id] = candidate
+    return next(iter(matches.values())) if len(matches) == 1 else None
+
+
+async def _remember_visible_semantic_state(
+    browser_session: Any,
+    snapshots: list[str],
+) -> None:
     try:
         state = await browser_session.get_browser_state_summary(
             include_screenshot=False,
-            cached=False,
+            cached=True,
             include_recent_events=False,
         )
         visible_dom = state.dom_state.llm_representation()
     except Exception:
-        return None
-    return _visible_saved_reservation_match(visible_dom, candidates)
+        return
+    if not visible_dom or len(visible_dom) > 250_000:
+        return
+    if not snapshots or snapshots[-1] != visible_dom:
+        snapshots.append(visible_dom)
+        del snapshots[:-6]
 
 
 @dataclass(frozen=True, slots=True)
@@ -816,6 +834,7 @@ class _EpisodeState:
     safety_violations: set[ExecutorSafetyViolation] = field(default_factory=set)
     dialog_rejected: bool = False
     refreshed_session: bytes | None = field(default=None, repr=False)
+    visible_dom_snapshots: list[str] = field(default_factory=list, repr=False)
 
 
 class _InMemoryScreenshotService:
@@ -1362,6 +1381,10 @@ class LocalBrowserUseRuntime:
             return BrowserUseRuntimeResult(navigation_terminal)
         if not self._guard.observable_url(entry_url) or len(session.get_page_targets()) != 1:
             return self._unsafe_result(non_allowlisted=True)
+        await _remember_visible_semantic_state(
+            session,
+            self._state.visible_dom_snapshots,
+        )
 
         tools: Any = Tools(
             exclude_actions=list(_STOCK_ACTIONS), display_files_in_done_text=False
@@ -1402,7 +1425,13 @@ class LocalBrowserUseRuntime:
             return True
 
         async def before_action(browser_session: Any) -> bool:
-            return await action_invariant(browser_session, phase="before")
+            allowed = await action_invariant(browser_session, phase="before")
+            if allowed:
+                await _remember_visible_semantic_state(
+                    browser_session,
+                    self._state.visible_dom_snapshots,
+                )
+            return allowed
 
         async def after_action(browser_session: Any) -> bool:
             return await action_invariant(browser_session, phase="after")
@@ -1599,6 +1628,7 @@ class LocalBrowserUseRuntime:
             candidate = await _current_visible_saved_reservation(
                 browser_session,
                 request.known_reservations,
+                self._state.visible_dom_snapshots,
             )
             if candidate is None:
                 return _continued_action_result(
