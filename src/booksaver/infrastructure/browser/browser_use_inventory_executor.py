@@ -719,6 +719,22 @@ def _saved_reservation_payload(
     )
 
 
+def _unique_visible_saved_stay(
+    snapshots: list[str],
+    candidates: tuple[KnownInventoryReservation, ...],
+) -> KnownInventoryReservation | None:
+    matches: dict[str, KnownInventoryReservation] = {}
+    for visible_dom in reversed(snapshots):
+        visible = f" {_normalized_visible_text(visible_dom)} "
+        for candidate in candidates:
+            if _visible_date_in_normalized_text(
+                candidate.check_in,
+                visible,
+            ) and _visible_date_in_normalized_text(candidate.check_out, visible):
+                matches[candidate.confirmation_id] = candidate
+    return next(iter(matches.values())) if len(matches) == 1 else None
+
+
 async def _current_visible_saved_reservation(
     browser_session: Any,
     candidates: tuple[KnownInventoryReservation, ...],
@@ -740,16 +756,7 @@ async def _current_visible_saved_reservation(
     # code authority over the caller-owned identity by requiring both exact dates in one current-
     # episode snapshot and exactly one saved candidate with that stay. Same-date ambiguity fails
     # closed, and this evidence remains positive-only.
-    date_matches: dict[str, KnownInventoryReservation] = {}
-    for visible_dom in reversed(snapshots):
-        visible = f" {_normalized_visible_text(visible_dom)} "
-        for candidate in candidates:
-            if _visible_date_in_normalized_text(
-                candidate.check_in,
-                visible,
-            ) and _visible_date_in_normalized_text(candidate.check_out, visible):
-                date_matches[candidate.confirmation_id] = candidate
-    return next(iter(date_matches.values())) if len(date_matches) == 1 else None
+    return _unique_visible_saved_stay(snapshots, candidates)
 
 
 async def _remember_visible_semantic_state(
@@ -1472,6 +1479,29 @@ class LocalBrowserUseRuntime:
             session,
             self._state.visible_dom_snapshots,
         )
+        visible_stay = _unique_visible_saved_stay(
+            self._state.visible_dom_snapshots,
+            request.known_reservations,
+        )
+        if visible_stay is not None:
+            self._state.observation = BrowserUseObservationPayload(
+                authenticated="true",
+                scopes=[],
+                reservations=[_saved_reservation_payload(visible_stay)],
+            )
+            if session.cdp_url is not None:
+                await self._refresh_after_observation(request, session.cdp_url)
+            scopes, reservations = _map_browser_use_observation(self._state.observation)
+            logger.info(
+                "Browser Use unique visible saved-stay fast path completed execution_id=%s",
+                request.execution_id,
+            )
+            return BrowserUseRuntimeResult(
+                InventoryExecutionStatus.OBSERVED,
+                scopes=scopes,
+                reservations=reservations,
+                refreshed_session=self._state.refreshed_session,
+            )
 
         tools: Any = Tools(
             exclude_actions=list(_STOCK_ACTIONS), display_files_in_done_text=False
