@@ -86,6 +86,37 @@ def test_failed_discovery_requires_redacted_failure_code() -> None:
     assert result.observations == ()
 
 
+def test_report_distinguishes_positive_observations_from_complete_scope() -> None:
+    complete = SynchronizationReport(
+        run_id="complete",
+        completeness=InventoryCompleteness.COMPLETE,
+        discovered=1,
+        eligible=1,
+        ineligible=0,
+    )
+    positive_only = SynchronizationReport(
+        run_id="positive-only",
+        completeness=InventoryCompleteness.INCOMPLETE,
+        discovered=1,
+        eligible=1,
+        ineligible=0,
+    )
+    ambiguous = SynchronizationReport(
+        run_id="ambiguous",
+        completeness=InventoryCompleteness.INCOMPLETE,
+        discovered=1,
+        eligible=1,
+        ineligible=0,
+        failure_code=SynchronizationFailureCode.EXTRACTION_AMBIGUOUS,
+    )
+
+    assert complete.succeeded
+    assert not complete.accepted_positive_observations
+    assert not positive_only.succeeded
+    assert positive_only.accepted_positive_observations
+    assert not ambiguous.accepted_positive_observations
+
+
 def test_synchronization_preserves_inventory_terminal_diagnosis() -> None:
     diagnosis = TerminalBrowserDiagnosis(
         reason=TerminalBrowserReason.UNRESOLVED_AMBIGUITY,

@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: construction
 status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-08-31T23:33:00Z
+updated: 2026-09-01T01:22:26Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -40,6 +40,8 @@ other triggers retain Stagehand until separately migrated.
 - Trigger-specific local Browser Use OSS execution for Telegram `/bookings`.
 - Code-owned canonical HTTPS inventory entry that avoids Booking.com's blocked legacy HTTP
   redirect without permitting HTTP browser egress.
+- A `/bookings` outcome that distinguishes accepted positive observations from authoritative
+  inventory completeness without weakening positive-only reconciliation.
 
 ### Out of Scope
 
@@ -59,8 +61,8 @@ other triggers retain Stagehand until separately migrated.
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 8 |
-| Must Have | 8 |
+| Total Stories | 9 |
+| Must Have | 9 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -74,6 +76,7 @@ other triggers retain Stagehand until separately migrated.
 | US-160 | Execute `/bookings` inventory with Browser Use | Must | Complete |
 | US-161 | Enter Browser Use inventory through canonical HTTPS | Must | Complete |
 | US-162 | Discover previously unknown Browser Use inventory | Must | Complete |
+| US-163 | Report accepted positive inventory refreshes accurately | Must | Complete |
 
 ## Dependencies
 
@@ -106,6 +109,8 @@ other triggers retain Stagehand until separately migrated.
 - [x] No agentic terminal can mark an unseen reservation absent.
 - [x] Session, action, destination, privacy, cost, timeout, and teardown tests pass.
 - [x] An authenticated empty-repository replay discovers and persists the visible upcoming booking.
+- [x] A waiting coordinator-level VPS replay reports accepted positive observations as success
+  while preserving every unseen saved reservation and exits zero.
 
 ## Bolt Suggestions
 
@@ -124,3 +129,5 @@ other triggers retain Stagehand until separately migrated.
   redirect at Browser Use inventory entry.
 - `062-agentic-inventory-executor`: US-162 correction after the saved-stay fast path was shown to
   revalidate cached state without executing account discovery.
+- `063-agentic-inventory-executor`: US-163 correction after an exact waiting coordinator replay
+  accepted a current positive but the command mislabeled the positive-only result as a failure.

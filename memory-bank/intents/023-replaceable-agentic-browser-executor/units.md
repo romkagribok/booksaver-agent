@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-31T23:33:00Z
+updated: 2026-09-01T01:10:18Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
@@ -88,6 +88,9 @@ flowchart LR
    its current executor.
 10. Bolt 061: use the canonical HTTPS inventory entry after production showed Booking.com's legacy
     entry redirecting through blocked HTTP before Browser Use could perceive the page.
+11. Bolt 062: remove cached-row completion and prove unknown live inventory discovery.
+12. Bolt 063: distinguish accepted positive observations from authoritative completeness in the
+    `/bookings` outcome and verify the waiting coordinator process exits successfully.
 11. Bolt 062: remove saved-row short-circuiting and qualify genuinely new positive discovery from
     an authenticated repository clone with no saved reservations.
 12. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback

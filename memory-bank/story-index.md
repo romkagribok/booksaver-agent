@@ -484,7 +484,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `001-agentic-executor-control-plane` | 4 stories | Complete (bolt 050) |
 | `002-local-agentic-price-executor` | 5 stories | Complete (bolts 051 and 054) |
 | `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
-| `004-agentic-inventory-executor` | 7 stories | In progress (bolt 061) |
+| `004-agentic-inventory-executor` | 9 stories | Complete (bolt 063) |
 | `005-legacy-price-selector-retirement` | 1 story | Blocked (bolt 055; post-promotion) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
@@ -525,6 +525,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-160` | Execute `/bookings` inventory with Browser Use | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/006-execute-bookings-inventory-with-browser-use.md` |
 | `US-161` | Enter Browser Use inventory through canonical HTTPS | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/007-enter-browser-use-inventory-through-canonical-https.md` |
 | `US-162` | Discover previously unknown Browser Use inventory | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/008-discover-previously-unknown-browser-use-inventory.md` |
+| `US-163` | Report accepted positive inventory refreshes accurately | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/009-report-positive-only-bookings-refresh.md` |
 
 ### 005-legacy-price-selector-retirement: Legacy Price Selector Retirement
 
@@ -558,7 +559,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 5 | 20 | In construction (inventory bolt 062 complete; price canary bolt 052 active, bolt 055 blocked) |
+| `023-replaceable-agentic-browser-executor` | 5 | 21 | In construction (inventory bolt 063 complete; price canary bolt 052 active, bolt 055 blocked) |
 
-All 161 stories (157 complete in-scope, 2 post-MVP extensibility, and 2 live-gated/blocked stories) are
-assigned exactly once.
+All 162 stories (158 complete in-scope, 2 post-MVP extensibility, and 2 live-gated/blocked stories)
+are assigned exactly once.

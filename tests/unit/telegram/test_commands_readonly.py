@@ -511,6 +511,97 @@ def test_bookings_unexpected_worker_failure_is_not_rendered_as_empty_account(
     assert "No future reservations found" not in text
 
 
+def test_bookings_reports_accepted_positive_only_refresh_as_success(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    user_id = _register_caller(db_path, telegram_id=1)
+    _sync_booking(db_path, user_id, _booking())
+    with SqliteStore(db_path) as store:
+        reservations = tuple(
+            SqliteAccountReservationRepository(store).list_for_user(user_id)
+        )
+    router = CommandRouter()
+    sent: list[tuple[int, str]] = []
+
+    class Coordinator:
+        def request_inventory(self, _user_id, callback):
+            callback(
+                InventoryCompletion(
+                    SynchronizationReport(
+                        run_id="sync-positive-only",
+                        completeness=InventoryCompleteness.INCOMPLETE,
+                        discovered=1,
+                        eligible=1,
+                        ineligible=0,
+                    ),
+                    reservations,
+                )
+            )
+            return ImmediateAdmission.ACCEPTED
+
+    register_readonly_commands(
+        router=router,
+        reply=lambda chat_id, text: sent.append((chat_id, text)),
+        db_path=db_path,
+        scheduler=Scheduler(),
+        check_coordinator=Coordinator(),  # type: ignore[arg-type]
+    )
+
+    router.dispatch(_cmd("/bookings"))
+
+    text = "\n".join(message for _chat_id, message in sent)
+    assert "refreshed from current positive observations" in text
+    assert "Unseen saved reservations were preserved" in text
+    assert "refresh was incomplete" not in text
+    assert "refresh failed" not in text
+
+
+def test_bookings_keeps_incomplete_warning_for_ambiguous_positive_run(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    user_id = _register_caller(db_path, telegram_id=1)
+    _sync_booking(db_path, user_id, _booking())
+    with SqliteStore(db_path) as store:
+        reservations = tuple(
+            SqliteAccountReservationRepository(store).list_for_user(user_id)
+        )
+    router = CommandRouter()
+    sent: list[tuple[int, str]] = []
+
+    class Coordinator:
+        def request_inventory(self, _user_id, callback):
+            callback(
+                InventoryCompletion(
+                    SynchronizationReport(
+                        run_id="sync-ambiguous",
+                        completeness=InventoryCompleteness.INCOMPLETE,
+                        discovered=1,
+                        eligible=1,
+                        ineligible=0,
+                        failure_code=SynchronizationFailureCode.EXTRACTION_AMBIGUOUS,
+                    ),
+                    reservations,
+                )
+            )
+            return ImmediateAdmission.ACCEPTED
+
+    register_readonly_commands(
+        router=router,
+        reply=lambda chat_id, text: sent.append((chat_id, text)),
+        db_path=db_path,
+        scheduler=Scheduler(),
+        check_coordinator=Coordinator(),  # type: ignore[arg-type]
+    )
+
+    router.dispatch(_cmd("/bookings"))
+
+    text = "\n".join(message for _chat_id, message in sent)
+    assert "refresh was incomplete" in text
+    assert "refreshed from current positive observations" not in text
+
+
 def test_bookings_personal_key_failure_shows_key_recovery_guidance(
     tmp_path: Path,
 ) -> None:

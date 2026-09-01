@@ -389,6 +389,15 @@ class SynchronizationReport:
         return self.completeness is InventoryCompleteness.COMPLETE
 
     @property
+    def accepted_positive_observations(self) -> bool:
+        """Whether current presence was accepted without claiming complete scope."""
+        return (
+            self.completeness is InventoryCompleteness.INCOMPLETE
+            and self.failure_code is None
+            and self.discovered > 0
+        )
+
+    @property
     def assisted(self) -> bool:
         return self.recovery_outcome in {
             InventoryRecoveryOutcome.RECOVERED,

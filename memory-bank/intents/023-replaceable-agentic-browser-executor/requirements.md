@@ -232,6 +232,9 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
   - A saved reservation re-observation is not an inventory-discovery completion condition. The
     agent continues through the visible upcoming inventory and can submit a previously unknown
     reservation using a visibly explicit Booking.com confirmation number.
+  - A successful positive-only observation is reported as a refreshed observation rather than a
+    failed refresh. It remains distinct from authoritative inventory completeness, and unseen saved
+    reservations are still preserved.
   - Unknown positives retain separately submitted visible property, stay, booking, policy, and
     occupancy facts when available. Malformed or absent optional facts degrade to an ineligible
     positive without discarding its validated confirmation identity.
