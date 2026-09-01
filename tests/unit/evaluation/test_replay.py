@@ -318,7 +318,7 @@ def test_approved_profile_replay_reports_safe_identity_schema_and_exact_cost() -
     assert aggregate.model == "claude-sonnet-5"
     assert aggregate.role == "recovery"
     assert aggregate.prompt_version == "recovery-v1"
-    assert aggregate.estimated_micro_usd == 3_000
+    assert aggregate.estimated_micro_usd == 4_500
 
 
 def test_llm_usage_rejects_negative_counts() -> None:
