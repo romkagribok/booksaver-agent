@@ -199,6 +199,29 @@ updated: 2026-08-26T04:24:18Z
   `done`. Added provider-boundary scalar/null normalization and unknown-key discard while preserving
   trusted mapping, plus an explicit positive-first instruction to submit current upcoming facts and
   finish immediately with honest incomplete scope evidence.
+- **2026-09-01T01:10:18Z**: append - Added bolt 063 after the exact waiting production coordinator
+  replay accepted one positive observation with no failure but exited nonzero because presentation
+  treated intentionally incomplete scope as a failed refresh.
+- **2026-09-01T01:11:00Z**: 063-agentic-inventory-executor stage-complete - domain-model to
+  technical-design; accepted positive presence is distinct from absence-authoritative completeness.
+- **2026-09-01T01:12:00Z**: 063-agentic-inventory-executor stage-complete - technical-design to
+  adr-analysis; add one report predicate and one presentation branch, with no browser, persistence,
+  or reconciliation authority change.
+- **2026-09-01T01:13:00Z**: 063-agentic-inventory-executor stage-complete - adr-analysis to
+  implement; no new ADR because ADR-039 already binds positive-only inventory semantics.
+- **2026-09-01T01:17:00Z**: 063-agentic-inventory-executor stage-complete - implement to test;
+  focused domain and Telegram regressions passed, and a candidate-image coordinator replay waited
+  97.2 seconds, accepted one reservation with zero rejected evidence, and exited zero.
+- **2026-09-01T01:20:00Z**: test-diagnostic - The first full suite crossed the already-modeled
+  Sonnet introductory-price boundary and exposed two stale time-dependent expectations: current
+  pricing correctly produced 4,500 rather than 3,000 microdollars. Pinned the historical estimator
+  assertion to its intended date and updated the current replay expectation; runtime pricing code
+  was unchanged.
+- **2026-09-01T01:22:00Z**: 063-agentic-inventory-executor stage-complete - test passed with Ruff,
+  mypy over 128 source files, 1,899 tests, CLI smoke, and the waiting VPS coordinator exit-zero
+  proof documented in `ddd-03-test-report.md`.
+- **2026-09-01T01:22:26Z**: 063-agentic-inventory-executor complete - the deterministic completion
+  cascade marked US-163 implemented and returned the inventory unit to complete status.
 - **2026-08-30T23:34:00Z**: implementation-diagnostic - The next replay completed the intended
   guarded traversal, submitted one positive reservation, and called `done` with zero harness errors
   in 58 seconds. Trusted mapping rejected malformed optional evidence before application validation.

@@ -44,6 +44,11 @@ On 2026-08-31 production evidence showed the accepted replay had re-observed one
 stay through a code shortcut and had not exercised discovery. The owner required continued work
 until `/bookings` can discover inventory as expected. The correction defines empty-repository live
 rediscovery as the acceptance gate and does not broaden absence or browser action authority.
+On 2026-09-01 an exact coordinator-level VPS replay waited for Browser Use to terminate, accepted
+one current reservation, and exited nonzero only because the Telegram outcome treated every
+positive-only result as a failed refresh. The owner required the command to distinguish successful
+positive observation from authoritative completeness and to pass the same waiting replay before
+release.
 
 ## Artifacts Created
 
@@ -53,8 +58,8 @@ rediscovery as the acceptance gate and does not broaden absence or browser actio
 | System Context | Complete | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
 | Units | Complete | `units.md` and four unit briefs |
-| Stories | Amended | 20 story files (US-143 through US-162) |
-| Bolt Plan | Amended | Bolts 050 through 062, with 052 live-gated and 055 blocked |
+| Stories | Amended | 21 story files (US-143 through US-163) |
+| Bolt Plan | Amended | Bolts 050 through 063, with 052 live-gated and 055 blocked |
 
 ## Summary
 
@@ -63,8 +68,8 @@ rediscovery as the acceptance gate and does not broaden absence or browser actio
 | Functional Requirements | 12 |
 | Non-Functional Requirements | 7 |
 | Units | 5 |
-| Stories | 20 |
-| Bolts Planned | 5 plus corrective bolts 054 and 056 through 061 |
+| Stories | 21 |
+| Bolts Planned | 5 plus corrective bolts 054 and 056 through 063 |
 
 ## Decision Log
 
@@ -91,6 +96,7 @@ rediscovery as the acceptance gate and does not broaden absence or browser actio
 | 2026-08-30 | Recover from harmless pre-action guard rejections | Live Browser Use selected structural footer/app-install controls; no unsafe action executed, so bounded correction is more reliable than terminating the entire episode while all physical replay guards and caps remain binding | Yes |
 | 2026-08-31 | Require discovery rather than cached-row re-observation | A saved-stay fast path prevented the Browser Use agent from looking for unknown reservations; qualification must begin without saved reservation rows | Yes |
 | 2026-08-31 | Admit only Booking-required AWS WAF token subresources | The authenticated trips bootstrap stayed blank while the guard blocked randomized `token.awswaf.com` subdomains; narrow subresource admission restores rendering without granting agent navigation | Yes |
+| 2026-09-01 | Distinguish positive refresh from authoritative completeness | Browser Use accepted a current reservation, but the presentation layer mislabeled the intentionally positive-only result as a failed refresh | Yes |
 
 ## Ready for Construction
 

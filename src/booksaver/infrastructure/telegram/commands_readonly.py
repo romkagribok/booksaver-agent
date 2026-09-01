@@ -319,6 +319,16 @@ def register_readonly_commands(
                 f"{' with guarded LLM assistance' if report.assisted else ''} "
                 f"({eligible} eligible, {len(reservations) - eligible} ineligible):"
             )
+        elif report.accepted_positive_observations:
+            eligible = sum(
+                reservation.eligibility.is_eligible for reservation in reservations
+            )
+            header = (
+                "Future Booking.com reservations refreshed from current positive observations"
+                f"{' with guarded LLM assistance' if report.assisted else ''}. "
+                "Unseen saved reservations were preserved "
+                f"({eligible} eligible, {len(reservations) - eligible} ineligible):"
+            )
         elif report.completeness is InventoryCompleteness.INCOMPLETE:
             header = (
                 "Booking.com refresh was incomplete; no missing reservations were "

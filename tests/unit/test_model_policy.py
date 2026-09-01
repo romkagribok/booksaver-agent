@@ -204,8 +204,16 @@ def test_cost_estimation_and_reconciliation_use_exact_microdollars() -> None:
     portfolio = AdaptiveModelPortfolio()
     profile = portfolio.primary(ModelRole.EXTRACTION, "extract-v1")
     estimator = ModelCostEstimator()
-    assert estimator.estimate(profile, TokenEnvelope(1_000, 100)) == UsdAmount(3_000)
-    assert estimator.charge(profile, LLMUsage(800, 50)) == UsdAmount(2_100)
+    assert estimator.estimate(
+        profile,
+        TokenEnvelope(1_000, 100),
+        utc_date=date(2026, 8, 13),
+    ) == UsdAmount(3_000)
+    assert estimator.charge(
+        profile,
+        LLMUsage(800, 50),
+        utc_date=date(2026, 8, 13),
+    ) == UsdAmount(2_100)
 
     ledger = _Ledger()
     budget = _budget(ledger)
