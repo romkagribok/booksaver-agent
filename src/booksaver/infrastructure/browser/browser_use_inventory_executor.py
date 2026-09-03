@@ -25,7 +25,7 @@ from datetime import UTC, date, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -1296,8 +1296,28 @@ class BrowserUseActionGuard:
             return "decoded_bounds"
         if _UNSAFE_ROUTE_TERMS.search(route) is not None:
             return "unsafe_route_term"
-        if _UNSAFE_QUERY_TERMS.search(query) is not None:
-            return "unsafe_query_term"
+        try:
+            query_items = parse_qsl(
+                query,
+                keep_blank_values=True,
+                max_num_fields=200,
+            )
+        except ValueError:
+            return "query_bounds"
+        for key, value in query_items:
+            normalized_key = key.strip().casefold()
+            # Booking.com's search contract calls the non-mutating departure date
+            # ``checkout``.  Do not confuse that exact ISO-date field with a checkout or
+            # payment workflow elsewhere in a URL.
+            if normalized_key == "checkout" and re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}", value.strip()
+            ):
+                continue
+            if (
+                _UNSAFE_QUERY_TERMS.search(key) is not None
+                or _UNSAFE_QUERY_TERMS.search(value) is not None
+            ):
+                return "unsafe_query_term"
         return None
 
     @staticmethod

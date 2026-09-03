@@ -30,7 +30,10 @@ from booksaver.domain.model_policy import (
     ReservationStatus,
 )
 from booksaver.domain.value_objects import Money, Occupancy, StayDates
-from booksaver.infrastructure.browser.agentic_executor import TypedObservation
+from booksaver.infrastructure.browser.agentic_executor import (
+    TypedObservation,
+    build_trusted_search_url,
+)
 from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     BrowserUseActionGuard,
 )
@@ -245,6 +248,16 @@ def test_price_prompt_preserves_read_only_and_explicit_evidence_boundaries() -> 
     assert "Never infer missing facts" in task
     assert "all-in total for the whole stay" in task
     assert "submit_price_offer" in task
+
+
+def test_guard_accepts_the_code_owned_search_url_but_not_transaction_checkout() -> None:
+    broker = InMemorySessionLeaseBroker()
+    trusted_url = build_trusted_search_url(_request(broker))
+
+    assert BrowserUseActionGuard.observable_url_rejection_reason(trusted_url) is None
+    assert not BrowserUseActionGuard.observable_url(
+        "https://www.booking.com/searchresults.html?action=checkout"
+    )
 
 
 def test_terminal_submission_cannot_claim_observed() -> None:
