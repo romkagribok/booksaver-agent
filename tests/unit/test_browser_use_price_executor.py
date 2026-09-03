@@ -4,6 +4,9 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from booksaver.application.async_runner import AsyncLoopRunner
 from booksaver.application.browser_executor import InMemorySessionLeaseBroker
 from booksaver.application.model_policy import BrowserJobCostBudget
@@ -50,6 +53,7 @@ from booksaver.infrastructure.browser.browser_use_price_executor import (
     _PriceEpisodeState,
     _terminal_status,
     _trusted_input_node_allowed,
+    _typed_observation_error_code,
 )
 
 
@@ -245,6 +249,62 @@ def test_price_action_schemas_are_strict_and_all_required() -> None:
     assert terminal_schema["required"] == ["success", "status"]
     assert query_schema["additionalProperties"] is False
     assert offer_schema["additionalProperties"] is False
+    assert set(query_schema["properties"]["completeness"]["enum"]) == {
+        "complete",
+        "incomplete",
+        "conflicting",
+    }
+    assert set(offer_schema["properties"]["refundability"]["enum"]) == {
+        "explicit_refundable",
+        "explicit_nonrefundable",
+        "unknown",
+        "conflicting",
+    }
+
+
+def test_price_action_schemas_reject_ambiguous_evidence_labels() -> None:
+    with pytest.raises(ValidationError):
+        BrowserUsePriceOfferSubmission(
+            room_label="Deluxe King Room",
+            total="275.00",
+            currency="USD",
+            all_in="yes",  # type: ignore[arg-type]
+            refundability="refundable",  # type: ignore[arg-type]
+            refundability_text="Free cancellation until November 23",
+            completeness="complete",
+        )
+
+
+def test_typed_observation_error_is_reduced_to_privacy_safe_code() -> None:
+    state = _PriceEpisodeState(
+        query=BrowserUsePriceQuerySubmission(
+            property_name="Hotel Example",
+            check_in="not-a-date",
+            check_out="2026-11-25",
+            adults="2",
+            children="0",
+            rooms="1",
+            currency="USD",
+            genius="true",
+            completeness="complete",
+        ),
+        property_reference="https://www.booking.com/hotel/us/example.html",
+        offers=[
+            BrowserUsePriceOfferSubmission(
+                room_label="Deluxe King Room",
+                total="275.00",
+                currency="USD",
+                all_in="explicit",
+                refundability="explicit_refundable",
+                refundability_text="Free cancellation until November 23",
+                completeness="complete",
+            )
+        ],
+    )
+    with pytest.raises(ValueError) as captured:
+        _observation_from_state(state)
+
+    assert _typed_observation_error_code(captured.value) == "stay_dates"
 
 
 def test_trusted_type_requires_safe_visible_input_and_exact_bounded_shape() -> None:

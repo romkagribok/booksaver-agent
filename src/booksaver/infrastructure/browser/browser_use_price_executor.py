@@ -18,7 +18,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -104,8 +104,8 @@ class BrowserUsePriceQuerySubmission(BaseModel):
     children: str
     rooms: str
     currency: str
-    genius: str
-    completeness: str
+    genius: Literal["true", "false", "unknown"]
+    completeness: Literal["complete", "incomplete", "conflicting"]
 
     @field_validator("*", mode="before")
     @classmethod
@@ -126,10 +126,15 @@ class BrowserUsePriceOfferSubmission(BaseModel):
     room_label: str
     total: str
     currency: str
-    all_in: str
-    refundability: str
+    all_in: Literal["explicit", "unknown", "conflicting"]
+    refundability: Literal[
+        "explicit_refundable",
+        "explicit_nonrefundable",
+        "unknown",
+        "conflicting",
+    ]
     refundability_text: str
-    completeness: str
+    completeness: Literal["complete", "incomplete", "conflicting"]
 
     @field_validator("*", mode="before")
     @classmethod
@@ -289,6 +294,36 @@ def _observation_from_state(state: _PriceEpisodeState) -> TypedObservation:
             "offers": [offer.model_dump() for offer in state.offers],
         }
     )
+
+
+def _typed_observation_error_code(exc: ValueError) -> str:
+    """Map content-bearing validation errors to fixed, privacy-safe diagnostics."""
+
+    cause = exc.__cause__
+    message = str(cause).casefold() if cause is not None else ""
+    if "property_reference" in message:
+        return "property_reference"
+    if "property_name" in message:
+        return "property_name"
+    if "isoformat" in message or "check_out" in message:
+        return "stay_dates"
+    if "occupancy" in message or "invalid literal for int" in message:
+        return "occupancy"
+    if "currency" in message:
+        return "currency"
+    if "allinevidence" in message:
+        return "all_in"
+    if "refundabilityevidence" in message:
+        return "refundability"
+    if "evidencecompleteness" in message:
+        return "completeness"
+    if "monetary amount" in message or "offer total" in message:
+        return "total"
+    if "room_label" in message:
+        return "room_label"
+    if "refundability_text" in message:
+        return "refundability_text"
+    return "unknown"
 
 
 def _price_agent_task(request: PriceExecutionRequest) -> str:
@@ -814,10 +849,13 @@ class LocalBrowserUsePriceRuntime:
                     self._price_state.observation = _observation_from_state(
                         self._price_state
                     )
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as exc:
                     logger.warning(
-                        "Browser Use typed price observation rejected execution_id=%s reason=shape",
+                        "Browser Use typed price observation rejected execution_id=%s reason=%s",
                         request.execution_id,
+                        _typed_observation_error_code(exc)
+                        if isinstance(exc, ValueError)
+                        else "type",
                     )
                     return _continued_action_result(
                         ActionResult,
