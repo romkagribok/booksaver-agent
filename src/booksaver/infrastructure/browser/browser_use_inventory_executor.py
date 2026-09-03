@@ -1,4 +1,4 @@
-"""Local Browser Use OSS inventory executor for Telegram ``/bookings`` only.
+"""Local Browser Use OSS executor for BookSaver account-inventory perception.
 
 Browser Use is an untrusted browser harness.  This adapter removes its stock actions and unsafe
 watchdogs, restores owner cookies only through local CDP, meters every model call, and returns the

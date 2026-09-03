@@ -25,7 +25,7 @@ price-check triggers
 - [ ] The trigger does not change validation, budgeting, deadlines, session ownership, persistence,
   savings evaluation, or notification policy.
 - [ ] Invited-user execution retains disclosure and qualification admission.
-- [ ] Inventory and `/connect` routing remain unchanged.
+- [ ] The current-run inventory prerequisite also uses Browser Use; `/connect` remains unchanged.
 
 ## Dependencies
 

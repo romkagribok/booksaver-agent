@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-02T23:44:45Z
+updated: 2026-09-03T00:36:00Z
 ---
 
 # System Context: Replaceable Agentic Browser Executor
@@ -19,9 +19,9 @@ updated: 2026-09-02T23:44:45Z
 - **BookSaver validation/evaluation** (System): Independently validates untrusted observations,
   selects equivalent refundable all-in offers, persists results, and permits notifications.
 - **Local browser executor** (System): Performs bounded perception and read-only navigation in a
-  transient browser without domain authority. Browser Use handles `/bookings` inventory and is the
-  default executor for both manual and scheduled price checks; Stagehand remains an explicit price
-  rollback and continues to handle other inventory triggers.
+  transient browser without domain authority. Browser Use handles every inventory trigger and is
+  the default executor for both manual and scheduled price checks; Stagehand remains an explicit
+  price rollback.
 - **Inventory reconciliation policy** (System): Accepts only validated positive reservation
   observations, derives eligibility, and prevents agentic evidence from marking unseen rows absent.
 

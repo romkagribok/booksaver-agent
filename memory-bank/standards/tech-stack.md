@@ -23,8 +23,8 @@ use; each choice is recorded in `standards/decision-index.md`.
   (ADR-007, ADR-008). Every admitted manual and scheduled agentic price check defaults to
   exact-pinned Browser Use 0.11.13 in-process; Stagehand 4.0.1 remains an explicit adapter rollback
   and is never an automatic same-job fallback (ADR-043). Agentic inventory uses Browser Use for
-  `/bookings` and Stagehand for the other triggers, behind provider-neutral contracts and
-  BookSaver-owned validation boundaries (ADR-041). No Browserbase service, cross-run cache,
+  every trigger behind provider-neutral contracts and BookSaver-owned validation boundaries
+  (ADR-044). No Browserbase service, cross-run cache,
   selector learning, generated repair, or self-heal persistence is enabled.
 - **Authenticated mobile web**: each check uses a fresh Android Chromium context with the exact
   booking owner's session and records authenticated/Genius provenance (ADR-025).

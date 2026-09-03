@@ -259,7 +259,9 @@ owns every acceptance and savings decision.
     pipeline; trigger type cannot select a different price implementation.
   - Owner-canary price routes use Browser Use immediately after deployment.
   - Invited-user price routing retains the current disclosure and qualification gates.
-  - Inventory routing and `/connect` behavior remain unchanged by this slice.
+  - The price operation's required current-run inventory verification uses the already-qualified
+    Browser Use inventory adapter, so a Stagehand prerequisite cannot prevent Browser Use price
+    execution; `/connect` behavior remains unchanged.
 - **Priority**: Must
 
 ### FR-14: Guarded Browser Use price operation
@@ -346,6 +348,20 @@ owns every acceptance and savings decision.
     executor; the VPS replay proves the actual Browser Use loop terminates successfully.
 - **Priority**: Must
 
+### FR-20: Browser Use for price-operation inventory prerequisites
+- **Description**: Expand the proven local Browser Use inventory adapter from `/bookings` to the
+  inventory verification required by `/checknow`, scheduled checks, and post-connect sync so the
+  default price flow does not retain a Stagehand availability dependency.
+- **Acceptance Criteria**:
+  - Every agentic inventory trigger resolves the same Browser Use adapter in production
+    composition; `inventory_routing = "legacy"` remains the explicit capability rollback.
+  - Current-run positive evidence, authorization, disclosure, session isolation, validation,
+    reconciliation, safety, cost, and deadline rules remain unchanged.
+  - The operation still performs exactly one inventory verification before price execution and
+    shares one outer coordinator/browser admission and budget.
+  - No same-job Stagehand or legacy fallback is added.
+- **Priority**: Must
+
 ## Non-Functional Requirements
 
 ### NFR-1: Safety
@@ -418,4 +434,6 @@ duplicate `/checknow` synchronization, and authorizes construction through final
 decisions and rejected alternatives are recorded in `architecture-decisions.md` and ADR-036 through
 ADR-039. On 2026-09-02 the owner approved FR-13 through FR-19 and authorized the Browser Use price
 extension through construction, review, merge, production deployment, and production-equivalent
-verification.
+verification. On 2026-09-03 the first exact-container replay proved that Stagehand inventory still
+blocked the price adapter before construction; the owner's instruction to continue until the full
+flow works accepted FR-20 and ADR-044's Browser Use inventory-trigger expansion.

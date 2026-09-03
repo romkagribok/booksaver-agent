@@ -93,11 +93,11 @@ inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"
 ```
 
-`inventory_routing = "agentic"` uses the pinned Browser Use classic agent for the user-initiated
-`/bookings` refresh and Stagehand for the other read-only inventory triggers. Both run locally in a
-fresh browser, receive only a closed set of code-guarded read-only actions, and use the deployment's
-Anthropic key. BookSaver accepts only positively observed reservations from that run and never lets
-model output mark an unseen saved reservation absent. Set it to `legacy` only as a
+`inventory_routing = "agentic"` uses the pinned Browser Use classic agent for every read-only
+inventory trigger, including `/bookings`, `/checknow`, scheduled checks, and post-connect sync. It
+runs locally in a fresh browser, receives only a closed set of code-guarded read-only actions, and
+uses the deployment's Anthropic key. BookSaver accepts only positively observed reservations from
+that run and never lets model output mark an unseen saved reservation absent. Set it to `legacy` as a
 capability-specific rollback; this setting does not promote the price executor.
 
 The Docker build installs the exact resolved runtime graph from `requirements.lock`; this is

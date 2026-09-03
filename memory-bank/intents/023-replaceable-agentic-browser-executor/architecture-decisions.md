@@ -78,6 +78,14 @@ failed Browser Use job. A distinct qualification identity prevents Stagehand evi
 promoting Browser Use, and a production-equivalent replay must prove the deployed price loop before
 the release is accepted.
 
+## Decision 11: Browser Use serves every agentic inventory trigger
+
+The successful `/bookings` adapter is also the inventory implementation used by post-connect,
+`/checknow`, and scheduled work. Price operations retain their required current-run positive
+inventory verification, but that verification no longer depends on Stagehand. Positive-only
+reconciliation, the shared limits, the provider-neutral port, and fail-closed behavior remain
+unchanged; there is still no second harness inside a failed job.
+
 ## Formal ADRs
 
 - ADR-036: Trusted control plane and provider-neutral browser-executor port.
@@ -87,3 +95,4 @@ the release is accepted.
 - ADR-040: Separate destination observation from interaction authority.
 - ADR-041: Trigger-specific local Browser Use execution for `/bookings`.
 - ADR-043: Browser Use default price execution with explicit rollback.
+- ADR-044: Browser Use for all agentic inventory triggers.

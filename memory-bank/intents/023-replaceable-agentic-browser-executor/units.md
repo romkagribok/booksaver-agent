@@ -34,8 +34,8 @@ updated: 2026-09-01T01:10:18Z
 ### 004-agentic-inventory-executor
 
 - **Purpose**: Replace selector-dependent inventory perception with provider-neutral agentic
-  executors while preserving positive-only reconciliation; `/bookings` uses local Browser Use and
-  other inventory triggers retain Stagehand until separately migrated.
+  executors while preserving positive-only reconciliation; `/bookings` first qualified local
+  Browser Use and Unit 006 expands it to every agentic inventory trigger.
 - **Assigned Requirements**: FR-10, FR-12
 - **Dependencies**: Units 001 and 002; existing account synchronization and reconciliation policy.
 
@@ -50,9 +50,10 @@ updated: 2026-09-01T01:10:18Z
 ### 006-browser-use-price-executor
 
 - **Purpose**: Make local Browser Use the default provider-neutral price executor for manual and
-  scheduled checks, preserve explicit Stagehand/deterministic rollback, version qualification, and
-  prove the deployed path with an operator-only replay.
-- **Assigned Requirements**: FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19
+  scheduled checks, remove the Stagehand inventory prerequisite, preserve explicit
+  Stagehand/deterministic rollback, version qualification, and prove the deployed path with an
+  operator-only replay.
+- **Assigned Requirements**: FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20
 - **Dependencies**: Units 001, 002, 003, and 004; existing coordinator, price validation,
   qualification ledger, and Browser Use runtime.
 
@@ -65,7 +66,7 @@ updated: 2026-09-01T01:10:18Z
 | FR-9 | `003-agentic-browser-qualification` |
 | FR-10, FR-12 | `004-agentic-inventory-executor` |
 | FR-11 | `005-legacy-price-selector-retirement` |
-| FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19 | `006-browser-use-price-executor` |
+| FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20 | `006-browser-use-price-executor` |
 
 Each functional requirement is assigned exactly once. Cross-unit constraints remain traced through
 dependencies and story acceptance criteria.
@@ -107,7 +108,8 @@ flowchart LR
 12. Bolt 062: remove cached-row completion and prove unknown live inventory discovery.
 13. Bolt 063: distinguish accepted positive observations from authoritative completeness in the
     `/bookings` outcome and verify the waiting coordinator process exits successfully.
-14. Bolt 064: make Browser Use the default price executor for `/checknow` and scheduled work, add
-    model-view preflight and production-equivalent replay, and preserve explicit rollback.
+14. Bolt 064: make Browser Use the default price executor for `/checknow` and scheduled work,
+    expand it to every agentic inventory prerequisite, add model-view preflight and
+    production-equivalent replay, and preserve explicit rollback.
 15. Bolt 055: legacy price-selector retirement, blocked until Browser Use price promotion and the 30-day rollback
     window pass.

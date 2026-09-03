@@ -60,21 +60,21 @@ production deployment, and a production-equivalent price replay.
 
 | Artifact | Status | File |
 |----------|--------|------|
-| Requirements | Amended | `requirements.md` (FR-1 through FR-19) |
+| Requirements | Amended | `requirements.md` (FR-1 through FR-20) |
 | System Context | Amended | `system-context.md` |
-| Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-043 |
+| Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-044 |
 | Units | Amended | `units.md` and six unit briefs |
-| Stories | Amended | 26 story files (US-143 through US-168) |
+| Stories | Amended | 27 story files (US-143 through US-169) |
 | Bolt Plan | Amended | Bolts 050 through 064, with 052 live-gated and 055 blocked |
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
-| Functional Requirements | 19 |
+| Functional Requirements | 20 |
 | Non-Functional Requirements | 7 |
 | Units | 6 |
-| Stories | 26 |
+| Stories | 27 |
 | Bolts Planned | 6 plus corrective bolts 054 and 056 through 064 |
 
 ## Decision Log
@@ -106,6 +106,7 @@ production deployment, and a production-equivalent price replay.
 | 2026-09-02 | Make Browser Use the default price executor for manual and scheduled checks | One provider-neutral adapter removes trigger-specific selector dependence while BookSaver retains price authority | Yes |
 | 2026-09-02 | Keep Stagehand and deterministic execution as explicit rollback only | Avoid masking Browser Use failures or doubling model spend while preserving reversible future-job routing | Yes |
 | 2026-09-02 | Qualify Browser Use under a new policy identity and production replay | Old Stagehand evidence cannot prove the new adapter; live deployed execution must terminate with accepted evidence | Yes |
+| 2026-09-03 | Expand Browser Use to every agentic inventory trigger | The exact `/checknow` replay stopped at its Stagehand inventory prerequisite before Browser Use price execution; the already-proven Browser Use inventory adapter removes that reliability dependency without expanding authority | Yes |
 
 ## Ready for Construction
 
@@ -119,7 +120,8 @@ production deployment, and a production-equivalent price replay.
 
 ## Next Steps
 
-1. Execute bolt 064 to extend the proven local Browser Use runtime to price execution.
+1. Execute bolt 064 to extend the proven local Browser Use runtime to price execution and all
+   agentic inventory prerequisites.
 2. Verify the exact deployed price path through the operator-only isolated replay.
 3. Continue Browser Use-specific owner-canary evidence under the amended cost gates.
 4. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.

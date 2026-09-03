@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import fields, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +14,7 @@ from booksaver.application.browser_executor import (
     InMemorySessionLeaseBroker,
 )
 from booksaver.application.load_config import load_config
-from booksaver.cli.commands import _make_agentic_price_executor
+from booksaver.cli.commands import _make_agentic_price_executor, _make_check_coordinator
 from booksaver.domain.agent import LLMUsage
 from booksaver.domain.browser_executor import (
     AgenticBrowserSettings,
@@ -546,3 +547,24 @@ def test_shared_price_factory_defaults_browser_use_and_keeps_stagehand_rollback(
 
     assert isinstance(browser_use, LocalBrowserUsePriceExecutor)
     assert isinstance(stagehand, LocalAgenticPriceExecutor)
+
+
+def test_production_composition_uses_browser_use_for_every_agentic_inventory_trigger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from booksaver.infrastructure.browser.browser_use_inventory_executor import (
+        LocalBrowserUseInventoryExecutor,
+    )
+
+    cfg = load_config(_ConfigSource())
+    cfg.data_directory = type(cfg.data_directory)(tmp_path)
+    monkeypatch.setenv("BOOKSAVER_LLM_API_KEY", "test-key")
+    coordinator = _make_check_coordinator(cfg, object())
+    regular = coordinator._agentic_inventory_executor_factory  # noqa: SLF001
+    bookings = coordinator._bookings_inventory_executor_factory  # noqa: SLF001
+    assert regular is not None and bookings is not None
+    broker = InMemorySessionLeaseBroker()
+
+    assert isinstance(regular(object(), broker), LocalBrowserUseInventoryExecutor)
+    assert isinstance(bookings(object(), broker), LocalBrowserUseInventoryExecutor)

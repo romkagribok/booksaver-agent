@@ -486,7 +486,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
 | `004-agentic-inventory-executor` | 9 stories | Complete (bolt 063) |
 | `005-legacy-price-selector-retirement` | 1 story | Blocked (bolt 055; post-promotion) |
-| `006-browser-use-price-executor` | 5 stories | Planned (bolt 064) |
+| `006-browser-use-price-executor` | 6 stories | Planned (bolt 064) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
 
@@ -543,6 +543,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-166` | Diagnose the model-visible price page before paid inference | Agentic Browser | Ready | `006-browser-use-price-executor/stories/003-diagnose-model-visible-price-page.md` |
 | `US-167` | Preserve explicit rollback and qualify Browser Use independently | Agentic Browser | Ready | `006-browser-use-price-executor/stories/004-preserve-rollback-and-qualify-browser-use.md` |
 | `US-168` | Replay the deployed Browser Use price path without Telegram | Agentic Browser | Ready | `006-browser-use-price-executor/stories/005-replay-deployed-browser-use-price-path.md` |
+| `US-169` | Remove the Stagehand inventory prerequisite from price operations | Agentic Browser | Ready | `006-browser-use-price-executor/stories/006-remove-stagehand-inventory-price-prerequisite.md` |
 
 ## Summary
 

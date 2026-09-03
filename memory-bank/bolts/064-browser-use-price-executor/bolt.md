@@ -10,6 +10,7 @@ stories:
   - 003-diagnose-model-visible-price-page
   - 004-preserve-rollback-and-qualify-browser-use
   - 005-replay-deployed-browser-use-price-path
+  - 006-remove-stagehand-inventory-price-prerequisite
 created: 2026-09-02T23:44:45Z
 started: 2026-09-02T23:50:00Z
 completed: null
@@ -62,6 +63,7 @@ privacy-safe diagnostics, and production-equivalent replay.
 - [ ] **US-166**: Diagnose the model-visible price page before paid inference - Priority: Must
 - [ ] **US-167**: Preserve explicit rollback and qualify Browser Use independently - Priority: Must
 - [ ] **US-168**: Replay the deployed Browser Use price path without Telegram - Priority: Must
+- [ ] **US-169**: Remove the Stagehand inventory prerequisite from price operations - Priority: Must
 
 ## Expected Outputs
 
@@ -70,6 +72,7 @@ privacy-safe diagnostics, and production-equivalent replay.
 - Guarded actions, typed observation mapping, model-view preflight, and redacted diagnostics.
 - Browser Use-specific qualification policy and regression coverage.
 - Operator-only isolated price replay and exact-container production verification.
+- Browser Use composition for every agentic inventory prerequisite in the price flow.
 
 ## Dependencies
 

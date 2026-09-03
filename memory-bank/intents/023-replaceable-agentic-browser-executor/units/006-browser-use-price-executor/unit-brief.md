@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: construction
 status: in-progress
 created: 2026-09-02T23:44:45Z
-updated: 2026-09-02T23:50:00Z
+updated: 2026-09-03T00:36:00Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -28,13 +28,14 @@ BookSaver. Preserve Stagehand and the deterministic path as explicit future-job 
 - Browser Use-specific qualification identity and canary cost thresholds.
 - Explicit Browser Use, Stagehand, and deterministic rollback selection without same-job fallback.
 - An operator-only production-equivalent price replay using isolated state.
+- Browser Use for the current-run inventory prerequisite of every price operation.
 
 ### Out of Scope
 
 - Automatic Browser Use-to-Stagehand fallback.
 - Selecting Stagehand as the optimized primary before comparative production evidence exists.
 - Browser Use Cloud, managed browsers, new model providers, local GPUs, or cached action learning.
-- Changes to inventory routing, `/connect`, equivalence, savings, or notification policy.
+- Changes to `/connect`, equivalence, savings, or notification policy.
 - Legacy selector removal before qualification and the approved rollback window.
 
 ## Assigned Requirements
@@ -48,6 +49,7 @@ BookSaver. Preserve Stagehand and the deterministic path as explicit future-job 
 | FR-17 | Explicit Stagehand and deterministic rollback | Must |
 | FR-18 | Browser Use-specific price qualification | Must |
 | FR-19 | Production-equivalent price replay | Must |
+| FR-20 | Browser Use for price-operation inventory prerequisites | Must |
 
 ## Domain Concepts
 
@@ -65,8 +67,8 @@ BookSaver. Preserve Stagehand and the deterministic path as explicit future-job 
 
 | Metric | Count |
 |--------|-------|
-| Total Stories | 5 |
-| Must Have | 5 |
+| Total Stories | 6 |
+| Must Have | 6 |
 | Should Have | 0 |
 | Could Have | 0 |
 
@@ -77,6 +79,7 @@ BookSaver. Preserve Stagehand and the deterministic path as explicit future-job 
 | US-166 | Diagnose the model-visible page before paid inference | Must | Planned |
 | US-167 | Preserve explicit rollback and qualify Browser Use independently | Must | Planned |
 | US-168 | Replay the deployed price path without Telegram | Must | Planned |
+| US-169 | Remove the Stagehand inventory prerequisite from price operations | Must | Planned |
 
 ## Dependencies
 
@@ -105,4 +108,4 @@ BookSaver. Preserve Stagehand and the deterministic path as explicit future-job 
 
 ## Bolt Suggestions
 
-- `064-browser-use-price-executor`: US-164 through US-168 after bolt 063.
+- `064-browser-use-price-executor`: US-164 through US-169 after bolt 063.
