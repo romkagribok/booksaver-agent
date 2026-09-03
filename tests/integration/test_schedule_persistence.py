@@ -87,7 +87,7 @@ def test_schema_v12_migration_is_additive_and_preserves_v11_state(tmp_path: Path
             "PRAGMA foreign_key_list(scheduled_check_slots)"
         ).fetchall()
 
-    assert version == SCHEMA_VERSION == 17
+    assert version == SCHEMA_VERSION == 18
     assert owner.encrypted_key == b"preserved-encrypted-key"
     assert tuple(booking) == ("CONF-V11", owner.user_id)
     assert {"idx_scheduled_slots_due", "idx_scheduled_slots_user_next"} <= indexes

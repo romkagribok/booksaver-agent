@@ -18,6 +18,7 @@ timezone_id = "UTC"
 # Inventory execution is independent: /bookings uses Browser Use and the other inventory triggers
 # use Stagehand for authorized, disclosed users. Switch only inventory back to legacy for rollback.
 routing = "legacy" # price: legacy | owner_canary | agentic
+price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
 inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"
 

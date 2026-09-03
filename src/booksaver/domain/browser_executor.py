@@ -22,6 +22,8 @@ MAX_COMPUTER_USE_ACTIONS = 6
 MAX_EXECUTOR_SECONDS = 180
 MAX_JOB_COST_MICRO_USD = 1_000_000
 MAX_DAILY_COST_MICRO_USD = 10_000_000
+BROWSER_USE_PRICE_POLICY_VERSION = "browser-use-price-v1"
+STAGEHAND_PRICE_POLICY_VERSION = "agentic-price-v1"
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -83,6 +85,7 @@ class ObservationSource(Enum):
     STAGEHAND_INVENTORY_EXTRACT = "stagehand_inventory_extract"
     COMPUTER_USE_INVENTORY_SUBMISSION = "computer_use_inventory_submission"
     BROWSER_USE_INVENTORY_SUBMISSION = "browser_use_inventory_submission"
+    BROWSER_USE_PRICE_SUBMISSION = "browser_use_price_submission"
     FAKE = "fake"
 
 
@@ -115,6 +118,31 @@ class InventoryExecutionRoutingMode(Enum):
             raise ValueError(
                 f"agentic_browser.inventory_routing must be one of: {allowed}"
             ) from exc
+
+
+class PriceExecutorKind(Enum):
+    """Configured implementation behind the provider-neutral price-executor port."""
+
+    BROWSER_USE = "browser_use"
+    STAGEHAND = "stagehand"
+
+    @classmethod
+    def parse(cls, raw: object) -> PriceExecutorKind:
+        try:
+            return cls(str(raw).strip().lower())
+        except ValueError as exc:
+            allowed = ", ".join(kind.value for kind in cls)
+            raise ValueError(
+                f"agentic_browser.price_executor must be one of: {allowed}"
+            ) from exc
+
+    @property
+    def qualification_policy_version(self) -> str:
+        return (
+            BROWSER_USE_PRICE_POLICY_VERSION
+            if self is PriceExecutorKind.BROWSER_USE
+            else STAGEHAND_PRICE_POLICY_VERSION
+        )
 
 
 class RoutingReason(Enum):
@@ -151,6 +179,7 @@ class AgenticBrowserSettings:
     routing: ExecutionRoutingMode = ExecutionRoutingMode.LEGACY
     disclosure_version: str = "anthropic-visible-booking-page-v1"
     inventory_routing: InventoryExecutionRoutingMode = InventoryExecutionRoutingMode.AGENTIC
+    price_executor: PriceExecutorKind = PriceExecutorKind.BROWSER_USE
 
     def __post_init__(self) -> None:
         _require_safe_id(self.disclosure_version, "agentic_browser.disclosure_version")
@@ -439,7 +468,7 @@ class PriceObservationValidation:
 @dataclass(frozen=True, slots=True)
 class QualificationState:
     status: QualificationStatus = QualificationStatus.UNQUALIFIED
-    policy_version: str = "agentic-price-v1"
+    policy_version: str = BROWSER_USE_PRICE_POLICY_VERSION
     qualified_at: datetime | None = None
 
     def __post_init__(self) -> None:
@@ -456,9 +485,14 @@ class RoutingContext:
     qualification: QualificationState
     disclosure_version: str
     acknowledged_disclosure_version: str | None = None
+    qualification_policy_version: str = BROWSER_USE_PRICE_POLICY_VERSION
 
     def __post_init__(self) -> None:
         _require_safe_id(self.disclosure_version, "disclosure_version")
+        _require_safe_id(
+            self.qualification_policy_version,
+            "qualification_policy_version",
+        )
         if self.acknowledged_disclosure_version is not None:
             _require_safe_id(
                 self.acknowledged_disclosure_version, "acknowledged_disclosure_version"
@@ -482,6 +516,8 @@ def resolve_execution_route(
         if context.is_owner:
             return RoutingDecision(True, RoutingReason.OWNER_CANARY)
         return RoutingDecision(False, RoutingReason.INVITEE_EXCLUDED_FROM_CANARY)
+    if context.qualification.policy_version != context.qualification_policy_version:
+        return RoutingDecision(False, RoutingReason.QUALIFICATION_REQUIRED)
     if context.qualification.status is not QualificationStatus.QUALIFIED:
         return RoutingDecision(False, RoutingReason.QUALIFICATION_REQUIRED)
     if context.is_owner:

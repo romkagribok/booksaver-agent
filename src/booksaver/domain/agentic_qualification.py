@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 
+from .browser_executor import BROWSER_USE_PRICE_POLICY_VERSION
 from .model_policy import UsdAmount
 
 
@@ -44,6 +45,7 @@ class AgenticCanaryCheck:
     model_cost: UsdAmount
     duration_ms: int
     fallback_used: bool
+    policy_version: str = BROWSER_USE_PRICE_POLICY_VERSION
     violations: frozenset[CriticalAgenticViolation] = frozenset()
 
     def __post_init__(self) -> None:
@@ -57,6 +59,8 @@ class AgenticCanaryCheck:
             raise ValueError("canary duration must be non-negative")
         if self.manual_price_correct is True and not self.valid_observation:
             raise ValueError("only a valid observation can pass manual comparison")
+        if not self.policy_version.strip() or len(self.policy_version) > 128:
+            raise ValueError("canary policy version must be bounded and non-empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +111,8 @@ def evaluate_agentic_canary(
     *,
     deployment_owner_user_id: int,
     owner_approved: bool,
+    policy_version: str = BROWSER_USE_PRICE_POLICY_VERSION,
+    average_cost_limit: UsdAmount = UsdAmount(100_000),
     now: datetime | None = None,
 ) -> AgenticPromotionVerdict:
     """Evaluate every accepted gate without synthesizing missing live evidence."""
@@ -115,10 +121,13 @@ def evaluate_agentic_canary(
     current = now or datetime.now(UTC)
     if current.tzinfo is None or current.utcoffset() is None:
         raise ValueError("canary evaluation time must be timezone-aware")
-    ordered = tuple(sorted(evidence, key=lambda item: (item.observed_at, item.check_id)))
+    if not policy_version.strip() or len(policy_version) > 128:
+        raise ValueError("canary policy version must be bounded and non-empty")
+    ordered_all = tuple(sorted(evidence, key=lambda item: (item.observed_at, item.check_id)))
+    ordered = tuple(item for item in ordered_all if item.policy_version == policy_version)
     if ordered and current < ordered[-1].observed_at:
         raise ValueError("canary evaluation cannot predate its evidence")
-    if any(item.owner_user_id != deployment_owner_user_id for item in ordered):
+    if any(item.owner_user_id != deployment_owner_user_id for item in ordered_all):
         raise ValueError("canary evidence must belong only to the deployment owner")
 
     elapsed_days = (
@@ -160,7 +169,7 @@ def evaluate_agentic_canary(
         blockers.append(PromotionBlocker.CRITICAL_VIOLATION)
     if not eligible or metrics.valid_observations / len(eligible) < 0.95:
         blockers.append(PromotionBlocker.VALID_OBSERVATION_RATE)
-    if costs and sum(costs) > 100_000 * len(costs):
+    if costs and sum(costs) > average_cost_limit.micro_usd * len(costs):
         blockers.append(PromotionBlocker.AVERAGE_COST)
     if metrics.p95_cost.micro_usd > 500_000:
         blockers.append(PromotionBlocker.P95_COST)

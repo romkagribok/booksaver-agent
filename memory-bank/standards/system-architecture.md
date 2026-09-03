@@ -17,6 +17,11 @@ flowchart TB
     Inventory --> Store["LocalPersistence (+ sync audit/check traces)"]
     Coordinator --> Monitor["BookingComSearchMonitor"]
     SessionVault --> Monitor
+    Monitor --> PricePort["PriceBrowserExecutor"]
+    PricePort --> BrowserUse["Browser Use (default agentic)"]
+    PricePort --> Stagehand["Stagehand (explicit rollback)"]
+    BrowserUse --> Validation["BookSaver validation/equivalence"]
+    Stagehand --> Validation
     Monitor --> Journey["SearchJourney (trusted results query → verified property)"]
     Journey --> Browser["BrowserAutomation"]
     Journey -- "step failed" --> Agent["BrowserAgent (LLM, guarded)"]
@@ -41,6 +46,11 @@ flowchart TB
 - Scheduled and Telegram-triggered live checks enter one daemon-lifetime coordinator. It serializes
   Playwright work, shares per-user daily check/actual-LLM counters, and reuses the complete monitor,
   trace, savings, and notification pipeline (ADR-021); do not add a second scheduler or browser path.
+- The agentic price route selects one replaceable adapter behind `PriceBrowserExecutor`. Browser Use
+  is the default for both manual and scheduled jobs; Stagehand is an explicit future-job rollback.
+  Both restore the owner session only through local CDP and return untrusted typed evidence.
+  BookSaver alone verifies query identity, dates, occupancy, authentication, currency, all-in total,
+  refundability, equivalence, and savings. Never chain adapters within one job (ADR-043).
 - Telegram-owned checks resolve the booking owner's encrypted session and create a fresh Android
   Chromium mobile-web context; missing, stale, rendered-signed-out, or mismatched state fails closed
   as `auth_required` (ADRs 024–025). Never substitute a global, public, or another user's session.

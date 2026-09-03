@@ -2,7 +2,7 @@
 intent: 023-replaceable-agentic-browser-executor
 status: accepted
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-30T18:00:44Z
+updated: 2026-09-02T23:44:45Z
 ---
 
 # Architecture Decisions: Replaceable Agentic Browser Executor
@@ -60,14 +60,23 @@ current-run positive observations, never lets agentic evidence mark unseen reser
 requires a selected reservation to be re-observed before its price check. Price and inventory routes
 remain independently reversible, and bare `/checknow` no longer performs a duplicate inventory run.
 
-## Decision 9: Browser Use replaces Stagehand only for `/bookings`
+## Decision 9: Browser Use is first proven through `/bookings`
 
-Reliability is evaluated through a trigger-specific adapter rather than a wholesale executor swap.
-Telegram `/bookings` uses a pinned local Browser Use OSS agent behind the existing
-`InventoryBrowserExecutor` port. Post-connect, `/checknow`, scheduled inventory, and all price work
-retain their existing executors. Browser Use receives only guarded read-only tools, one action per
+Reliability is initially evaluated through a trigger-specific adapter rather than a wholesale
+executor swap. Telegram `/bookings` uses a pinned local Browser Use OSS agent behind the existing
+`InventoryBrowserExecutor` port. Browser Use receives only guarded read-only tools, one action per
 step, the existing Anthropic key and hard limits, and no cloud or persistence features. Failure is
 terminal for that operation so qualification cannot be masked by a second browser harness.
+
+## Decision 10: Browser Use becomes the default price executor
+
+After live `/bookings` discovery proved that the local Browser Use loop can operate against the
+authenticated Booking.com account, both `/checknow` and scheduled price checks select a Browser Use
+adapter behind `PriceBrowserExecutor`. Stagehand remains explicitly selectable for future jobs and
+the deterministic path remains available during its rollback window, but neither runs after a
+failed Browser Use job. A distinct qualification identity prevents Stagehand evidence from
+promoting Browser Use, and a production-equivalent replay must prove the deployed price loop before
+the release is accepted.
 
 ## Formal ADRs
 
@@ -77,3 +86,4 @@ terminal for that operation so qualification cannot be masked by a second browse
 - ADR-039: Capability-specific agentic inventory with positive-only reconciliation.
 - ADR-040: Separate destination observation from interaction authority.
 - ADR-041: Trigger-specific local Browser Use execution for `/bookings`.
+- ADR-043: Browser Use default price execution with explicit rollback.

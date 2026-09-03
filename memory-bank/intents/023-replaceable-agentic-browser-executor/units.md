@@ -44,7 +44,17 @@ updated: 2026-09-01T01:10:18Z
 - **Purpose**: Retire the legacy price path only after price promotion and the complete rollback
   window.
 - **Assigned Requirements**: FR-11
-- **Dependencies**: Unit 003 promotion approval and 30 days without rollback.
+- **Dependencies**: Unit 003 promotion approval, Unit 006 Browser Use qualification, and 30 days
+  without rollback.
+
+### 006-browser-use-price-executor
+
+- **Purpose**: Make local Browser Use the default provider-neutral price executor for manual and
+  scheduled checks, preserve explicit Stagehand/deterministic rollback, version qualification, and
+  prove the deployed path with an operator-only replay.
+- **Assigned Requirements**: FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19
+- **Dependencies**: Units 001, 002, 003, and 004; existing coordinator, price validation,
+  qualification ledger, and Browser Use runtime.
 
 ## Requirement-to-Unit Mapping
 
@@ -55,6 +65,7 @@ updated: 2026-09-01T01:10:18Z
 | FR-9 | `003-agentic-browser-qualification` |
 | FR-10, FR-12 | `004-agentic-inventory-executor` |
 | FR-11 | `005-legacy-price-selector-retirement` |
+| FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19 | `006-browser-use-price-executor` |
 
 Each functional requirement is assigned exactly once. Cross-unit constraints remain traced through
 dependencies and story acceptance criteria.
@@ -69,7 +80,12 @@ flowchart LR
     u1 --> u4["004 Agentic inventory executor"]
     u2 --> u4
     u4 -->|"/bookings adapter"| u4b["Browser Use OSS"]
+    u1 --> u6["006 Browser Use price executor"]
+    u3 --> u6
+    u4 --> u6
+    u6 -->|"default price adapter"| u4b
     u3 -->|"promotion plus rollback window"| u5["005 Legacy selector retirement"]
+    u6 --> u5
 ```
 
 ## Construction Sequence
@@ -88,10 +104,10 @@ flowchart LR
    its current executor.
 10. Bolt 061: use the canonical HTTPS inventory entry after production showed Booking.com's legacy
     entry redirecting through blocked HTTP before Browser Use could perceive the page.
-11. Bolt 062: remove cached-row completion and prove unknown live inventory discovery.
-12. Bolt 063: distinguish accepted positive observations from authoritative completeness in the
+12. Bolt 062: remove cached-row completion and prove unknown live inventory discovery.
+13. Bolt 063: distinguish accepted positive observations from authoritative completeness in the
     `/bookings` outcome and verify the waiting coordinator process exits successfully.
-11. Bolt 062: remove saved-row short-circuiting and qualify genuinely new positive discovery from
-    an authenticated repository clone with no saved reservations.
-12. Bolt 055: legacy price-selector retirement, blocked until price promotion and the 30-day rollback
+14. Bolt 064: make Browser Use the default price executor for `/checknow` and scheduled work, add
+    model-view preflight and production-equivalent replay, and preserve explicit rollback.
+15. Bolt 055: legacy price-selector retirement, blocked until Browser Use price promotion and the 30-day rollback
     window pass.

@@ -1,7 +1,7 @@
 ---
 intent: 023-replaceable-agentic-browser-executor
 created: 2026-08-14T02:46:26Z
-completed: 2026-08-27T23:13:41Z
+completed: 2026-09-02T23:44:45Z
 status: amended
 ---
 
@@ -49,27 +49,33 @@ one current reservation, and exited nonzero only because the Telegram outcome tr
 positive-only result as a failed refresh. The owner required the command to distinguish successful
 positive observation from authoritative completeness and to pass the same waiting replay before
 release.
+On 2026-09-02 the owner approved making Browser Use the default price executor for both `/checknow`
+and scheduled checks, retaining Stagehand and the deterministic path as explicit future-job
+rollback choices without same-job fallback. The owner accepted an initial USD 0.25/check canary
+average with the existing USD 0.50 p95 and USD 1 hard cap, while retaining USD 0.10/check for
+invited-user promotion, and authorized construction through Bugbot review when available, merge,
+production deployment, and a production-equivalent price replay.
 
 ## Artifacts Created
 
 | Artifact | Status | File |
 |----------|--------|------|
-| Requirements | Complete | `requirements.md` |
-| System Context | Complete | `system-context.md` |
-| Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-038 |
-| Units | Complete | `units.md` and four unit briefs |
-| Stories | Amended | 21 story files (US-143 through US-163) |
-| Bolt Plan | Amended | Bolts 050 through 063, with 052 live-gated and 055 blocked |
+| Requirements | Amended | `requirements.md` (FR-1 through FR-19) |
+| System Context | Amended | `system-context.md` |
+| Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-043 |
+| Units | Amended | `units.md` and six unit briefs |
+| Stories | Amended | 26 story files (US-143 through US-168) |
+| Bolt Plan | Amended | Bolts 050 through 064, with 052 live-gated and 055 blocked |
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
-| Functional Requirements | 12 |
+| Functional Requirements | 19 |
 | Non-Functional Requirements | 7 |
-| Units | 5 |
-| Stories | 21 |
-| Bolts Planned | 5 plus corrective bolts 054 and 056 through 063 |
+| Units | 6 |
+| Stories | 26 |
+| Bolts Planned | 6 plus corrective bolts 054 and 056 through 064 |
 
 ## Decision Log
 
@@ -97,6 +103,9 @@ release.
 | 2026-08-31 | Require discovery rather than cached-row re-observation | A saved-stay fast path prevented the Browser Use agent from looking for unknown reservations; qualification must begin without saved reservation rows | Yes |
 | 2026-08-31 | Admit only Booking-required AWS WAF token subresources | The authenticated trips bootstrap stayed blank while the guard blocked randomized `token.awswaf.com` subdomains; narrow subresource admission restores rendering without granting agent navigation | Yes |
 | 2026-09-01 | Distinguish positive refresh from authoritative completeness | Browser Use accepted a current reservation, but the presentation layer mislabeled the intentionally positive-only result as a failed refresh | Yes |
+| 2026-09-02 | Make Browser Use the default price executor for manual and scheduled checks | One provider-neutral adapter removes trigger-specific selector dependence while BookSaver retains price authority | Yes |
+| 2026-09-02 | Keep Stagehand and deterministic execution as explicit rollback only | Avoid masking Browser Use failures or doubling model spend while preserving reversible future-job routing | Yes |
+| 2026-09-02 | Qualify Browser Use under a new policy identity and production replay | Old Stagehand evidence cannot prove the new adapter; live deployed execution must terminate with accepted evidence | Yes |
 
 ## Ready for Construction
 
@@ -110,6 +119,7 @@ release.
 
 ## Next Steps
 
-1. Execute bolt 061 and qualify the corrected Browser Use `/bookings` entry without changing other triggers.
-2. Keep price routing in its current owner-canary state.
-3. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.
+1. Execute bolt 064 to extend the proven local Browser Use runtime to price execution.
+2. Verify the exact deployed price path through the operator-only isolated replay.
+3. Continue Browser Use-specific owner-canary evidence under the amended cost gates.
+4. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.

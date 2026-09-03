@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-08-31T23:20:00Z
-total_decisions: 42
+last_updated: 2026-09-03T00:00:00Z
+total_decisions: 43
 ---
 
 # Decision Index
@@ -17,6 +17,17 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-043: Browser Use default price execution with explicit rollback
+- **Status**: accepted
+- **Date**: 2026-09-03
+- **Bolt**: 064-browser-use-price-executor (browser-use-price-executor)
+- **Path**: `bolts/064-browser-use-price-executor/adr-043-browser-use-default-price-executor.md`
+- **Summary**: Select pinned local Browser Use for every admitted manual and scheduled price check,
+  keep Stagehand and deterministic execution as explicit future-job rollback choices, and require
+  independently versioned qualification plus a production-equivalent replay.
+- **Read when**: Changing price executor selection, Browser Use price tools or prompts, Stagehand
+  coexistence, price qualification thresholds, same-job fallback, or production price replay.
 
 ### ADR-042: Admit Booking-required AWS WAF token bootstrap subresources
 - **Status**: accepted

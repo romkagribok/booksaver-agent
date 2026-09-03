@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-08-30T22:28:13Z
+updated: 2026-09-02T23:44:45Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -26,9 +26,11 @@ inventory is pulled forward because the legacy inventory prerequisite prevents t
 from running. It rolls out to every authorized, disclosed user with positive-only reconciliation;
 legacy inventory remains a capability-specific rollback path.
 
-The `/bookings` command is the first reliability-focused Browser Use slice. It runs the local
-Browser Use OSS agent through the existing inventory executor port while Stagehand remains the
-executor for post-connect, `/checknow`, and scheduled inventory work. Price execution is unchanged.
+The `/bookings` command proved the first reliability-focused Browser Use slice against live
+Booking.com inventory. The next slice makes local Browser Use the default price executor for both
+`/checknow` and scheduled checks through the existing price-executor port. Stagehand and the
+deterministic path remain explicit rollback choices rather than same-job fallbacks. BookSaver still
+owns every acceptance and savings decision.
 
 ## Functional Requirements
 
@@ -249,6 +251,101 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
     interactive browser destination.
 - **Priority**: Must
 
+### FR-13: Browser Use as the default price executor
+- **Description**: Implement local Browser Use behind the existing provider-neutral
+  `PriceBrowserExecutor` and select it for both owner `/checknow` and scheduled price checks.
+- **Acceptance Criteria**:
+  - Manual and scheduled price checks use the same executor, validation, budgeting, and result
+    pipeline; trigger type cannot select a different price implementation.
+  - Owner-canary price routes use Browser Use immediately after deployment.
+  - Invited-user price routing retains the current disclosure and qualification gates.
+  - Inventory routing and `/connect` behavior remain unchanged by this slice.
+- **Priority**: Must
+
+### FR-14: Guarded Browser Use price operation
+- **Description**: Run the pinned Browser Use OSS release locally in a fresh mobile Chromium using
+  the owner-bound session lease and only a closed, code-guarded price-check tool vocabulary.
+- **Acceptance Criteria**:
+  - Browser Use stock actions are unavailable; one model step may request at most one guarded
+    click, visual click, scroll, trusted-value type, safe key, wait, back, typed observation, or
+    typed terminal action.
+  - Typed values must be exact code-owned property, date, occupancy, or currency values from the
+    trusted request; arbitrary model-authored values are rejected.
+  - Arbitrary URL navigation, tabs/popups, credentials, authentication, MFA/captcha solving,
+    files, shell, clipboard, cancellation, modification, reservation, checkout, purchase, and
+    payment remain prohibited.
+  - The existing 15-action, 180-second, USD 1/check, and USD 10/deployment-day hard limits remain
+    binding and exactly reconciled.
+  - The adapter contains no Booking.com CSS selector, test ID, or exact DOM-nesting dependency.
+- **Priority**: Must
+
+### FR-15: BookSaver-owned price evidence acceptance
+- **Description**: Translate Browser Use output into the existing typed price observation and
+  preserve BookSaver as the only authority for evidence acceptance and savings evaluation.
+- **Acceptance Criteria**:
+  - Browser Use returns only observed property/date/occupancy/authentication/Genius facts, visible
+    room labels, all-in totals and currencies, refundability evidence, redacted provenance, usage,
+    cost, latency, and closed terminal metadata.
+  - Browser Use never declares room equivalence, cheapest-valid offer, savings, persistence, or
+    notification eligibility.
+  - Missing, ambiguous, or conflicting facts fail the existing independent BookSaver validator.
+  - Refreshed cookies remain eligible for persistence only after code-owned authentication and
+    owner/session binding verification.
+- **Priority**: Must
+
+### FR-16: Model-view preflight and redacted diagnostics
+- **Description**: Verify the actual page state available to Browser Use before paid inference and
+  expose content-free failure evidence suitable for local operations.
+- **Acceptance Criteria**:
+  - Before the first model call, code verifies the active mobile context, settled allowed HTTPS
+    destination, browser attachment, and a usable visual or semantic page representation.
+  - Blank screenshots, unusable empty state, authentication redirects, bot walls, transport
+    failures, and browser attachment failures terminate before paid inference whenever detectable.
+  - Redacted logs contain only execution ID, phase, closed reason, destination class, bounded
+    render measurements, action/model counts, token usage, cost, and duration.
+  - Screenshots, DOM/accessibility content, page text, cookies, credentials, reservation facts,
+    model prompts, and model reasoning are never persisted by default.
+- **Priority**: Must
+
+### FR-17: Explicit Stagehand and deterministic rollback
+- **Description**: Keep Browser Use, Stagehand, and the deterministic price path replaceable behind
+  the same port while preventing hidden same-job cascades.
+- **Acceptance Criteria**:
+  - A price-executor selection setting defaults to `browser_use` and permits explicit `stagehand`
+    selection without changing domain policy or stored bookings.
+  - The existing deterministic route remains available for its approved rollback window.
+  - A failed Browser Use job fails closed and does not invoke Stagehand or the deterministic path
+    in the same operation.
+  - Comparative Stagehand cost/reliability optimization and automatic future-job fallback are
+    deferred until Browser Use has production evidence.
+- **Priority**: Must
+
+### FR-18: Browser Use-specific price qualification
+- **Description**: Qualify Browser Use price execution under a distinct policy identity so prior
+  Stagehand evidence cannot promote the new adapter.
+- **Acceptance Criteria**:
+  - The owner canary records at least 30 authentic checks across at least 14 days and at least 10
+    manual comparisons with visible Booking.com offers.
+  - Eligible unblocked checks achieve at least 95% accepted observations, average cost at most USD
+    0.25, p95 cost at most USD 0.50, p95 duration at most 180 seconds, and no hard-limit breach.
+  - Invited-user promotion additionally requires average cost at most USD 0.10/check.
+  - Any prohibited action, unsafe destination, session leak, false accepted offer, transaction
+    attempt, or cost-cap breach blocks promotion and invokes existing regression handling.
+- **Priority**: Must
+
+### FR-19: Production-equivalent price replay
+- **Description**: Provide an operator-only replay that waits for the real deployed Browser Use
+  price path without requiring repeated Telegram commands or mutating production booking truth.
+- **Acceptance Criteria**:
+  - Replay uses the deployed container, production executor wiring, owner-authorized encrypted
+    session, and an isolated database/state copy under the existing coordinator/browser lease.
+  - It exits zero only after BookSaver accepts a complete price observation and nonzero for every
+    rejected, failed, limited, or timed-out terminal result.
+  - It suppresses savings notifications and authoritative production booking mutations.
+  - Automated routing tests prove `/checknow` and scheduled jobs select the same Browser Use price
+    executor; the VPS replay proves the actual Browser Use loop terminates successfully.
+- **Priority**: Must
+
 ## Non-Functional Requirements
 
 ### NFR-1: Safety
@@ -270,8 +367,10 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
   reservation; the visible Booking.com booking must be inserted from current page evidence.
 
 ### NFR-4: Cost
-- Promotion requires average model cost no greater than USD 0.10/check, approximating USD 9 per
-  booking-month at three checks per day, while preserving the USD 1/check and USD 10/day hard caps.
+- Initial Browser Use owner canary requires average model cost no greater than USD 0.25/check;
+  invited-user promotion requires no greater than USD 0.10/check, approximating USD 9 per
+  booking-month at three checks per day. The USD 0.50 p95, USD 1/check, and USD 10/day hard caps
+  remain binding.
 - Inventory and price phases in one operation share admission, reconciliation, and one absolute
   deadline; duplicate `/checknow` inventory execution is prohibited.
 
@@ -286,6 +385,8 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
 ### NFR-7: Replaceability
 - Future OpenAI, Google, Browser Use, or local-model adapters must implement the same executor port
   and repeat qualification without changing BookSaver domain policy.
+- Stagehand remains selectable as an explicit rollback adapter; no automatic or same-job fallback
+  policy is introduced in this slice.
 
 ## Constraints
 
@@ -294,8 +395,8 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
   notification boundaries.
 - Final cancellation, reservation, payment, purchase, or booking submission remains human-only on
   the user's own device.
-- Stagehand is pinned to the qualified release initially; local v4 has no relied-upon cross-run
-  cache.
+- Browser Use and Stagehand are pinned to qualified releases; neither executor relies on a
+  cross-run action cache.
 - Only `BOOKSAVER_LLM_API_KEY` is used for the first executor.
 
 ## Assumptions
@@ -303,7 +404,7 @@ executor for post-connect, `/checknow`, and scheduled inventory work. Price exec
 | Assumption | Risk if Invalid | Mitigation |
 |------------|-----------------|------------|
 | Anthropic processing of visible authenticated page data is acceptable after disclosure | Invitees may reject the privacy boundary | Keep them on legacy routing and make consent revocable |
-| Stagehand semantic execution reduces selector maintenance | It may fail under severe visual or accessibility degradation | Require visual fixtures and bounded computer-use fallback |
+| Browser Use materially reduces selector maintenance | Harness, browser, provider, or bot-defense changes may still require maintenance | Require model-view preflight, redacted diagnostics, fixtures, and live replay; do not claim zero maintenance |
 | Existing Chromium can be shared by executable path, not profile | Packaging mismatch could break VPS startup | Adapter startup test, explicit executable discovery failure, and exact-image Stagehand launch smoke |
 | The live canary can be run by the owner without automation of manual comparison | Promotion may take longer than 14 days | Keep legacy default and expose auditable qualification records |
 | Positive-only agentic inventory can safely unblock known reservations | A reservation may remain preserved after disappearing from Booking.com | Require same-run positive evidence for checks and defer absence authority |
@@ -315,4 +416,6 @@ directive dated 2026-08-16. On 2026-08-25 the owner approved an inception amendm
 agentic inventory for every authorized user, preserves positive-only reconciliation, removes the
 duplicate `/checknow` synchronization, and authorizes construction through final merge. Detailed
 decisions and rejected alternatives are recorded in `architecture-decisions.md` and ADR-036 through
-ADR-039.
+ADR-039. On 2026-09-02 the owner approved FR-13 through FR-19 and authorized the Browser Use price
+extension through construction, review, merge, production deployment, and production-equivalent
+verification.

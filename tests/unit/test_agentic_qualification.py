@@ -123,3 +123,40 @@ def test_evidence_from_non_owner_is_rejected_not_aggregated() -> None:
 
     with pytest.raises(ValueError, match="deployment owner"):
         _evaluate(tuple(evidence))
+
+
+def test_each_executor_policy_qualifies_from_its_own_evidence_only() -> None:
+    stagehand = tuple(
+        replace(item, policy_version="agentic-price-v1")
+        for item in _passing_evidence()
+    )
+
+    browser_use_verdict = _evaluate(stagehand)
+    stagehand_verdict = evaluate_agentic_canary(
+        stagehand,
+        deployment_owner_user_id=1,
+        owner_approved=True,
+        policy_version="agentic-price-v1",
+        now=START + timedelta(days=15),
+    )
+
+    assert browser_use_verdict.metrics.checks == 0
+    assert PromotionBlocker.TOO_FEW_CHECKS in browser_use_verdict.blockers
+    assert stagehand_verdict.promotable is True
+
+
+def test_owner_canary_cost_health_can_use_quarter_dollar_boundary() -> None:
+    evidence = tuple(
+        replace(item, model_cost=UsdAmount(250_000))
+        for item in _passing_evidence()
+    )
+
+    verdict = evaluate_agentic_canary(
+        evidence,
+        deployment_owner_user_id=1,
+        owner_approved=True,
+        average_cost_limit=UsdAmount(250_000),
+        now=START + timedelta(days=15),
+    )
+
+    assert PromotionBlocker.AVERAGE_COST not in verdict.blockers

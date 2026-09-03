@@ -37,7 +37,11 @@ from booksaver.domain.agentic_qualification import (
     CriticalAgenticViolation,
     evaluate_agentic_canary,
 )
-from booksaver.domain.browser_executor import QualificationState, QualificationStatus
+from booksaver.domain.browser_executor import (
+    BROWSER_USE_PRICE_POLICY_VERSION,
+    QualificationState,
+    QualificationStatus,
+)
 from booksaver.domain.check_result import (
     CheckOutcome,
     CheckResult,
@@ -89,7 +93,7 @@ from booksaver.domain.value_objects import (
     StayDates,
 )
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 _MACHINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
@@ -691,6 +695,19 @@ def _migrate_v17(conn: sqlite3.Connection) -> None:
     conn.executescript(schema[start:end])
 
 
+def _migrate_v18(conn: sqlite3.Connection) -> None:
+    """Tag canary evidence by executor policy so adapters qualify independently."""
+
+    columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(agentic_canary_checks)")
+    }
+    if "policy_version" not in columns:
+        conn.execute(
+            "ALTER TABLE agentic_canary_checks ADD COLUMN policy_version TEXT NOT NULL "
+            "DEFAULT 'agentic-price-v1'"
+        )
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -707,6 +724,7 @@ def _migrate_v17(conn: sqlite3.Connection) -> None:
 # v14 -> v15: DOM-drift incidents, alert state, and encrypted diagnostics.
 # v15 -> v16: redacted agentic canary, promotion, and disclosure consent.
 # v16 -> v17: content-free agentic inventory execution metrics.
+# v17 -> v18: tag agentic price canary evidence by executor policy.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -720,6 +738,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     15: _migrate_v15,
     16: _migrate_v16,
     17: _migrate_v17,
+    18: _migrate_v18,
 }
 
 
@@ -2610,8 +2629,8 @@ class SqliteAgenticQualificationRepository:
             INSERT INTO agentic_canary_checks (
                 check_id, owner_user_id, observed_at, eligible_unblocked,
                 valid_observation, manual_price_correct, model_cost_micro_usd,
-                duration_ms, fallback_used, violations_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                duration_ms, fallback_used, policy_version, violations_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 check.check_id,
@@ -2623,6 +2642,7 @@ class SqliteAgenticQualificationRepository:
                 check.model_cost.micro_usd,
                 check.duration_ms,
                 int(check.fallback_used),
+                check.policy_version,
                 json.dumps(
                     sorted(item.value for item in check.violations),
                     separators=(",", ":"),
@@ -2632,6 +2652,7 @@ class SqliteAgenticQualificationRepository:
         self._auto_regress_if_needed(
             check.owner_user_id,
             observed_at=check.observed_at,
+            policy_version=check.policy_version,
             immediate_code=("critical_violation" if check.violations else None),
         )
         self._store.conn.commit()
@@ -2656,7 +2677,8 @@ class SqliteAgenticQualificationRepository:
             raise ValueError("manual comparison requires one valid owner canary check")
         if not correct:
             row = self._store.conn.execute(
-                "SELECT observed_at, violations_json FROM agentic_canary_checks "
+                "SELECT observed_at, policy_version, violations_json "
+                "FROM agentic_canary_checks "
                 "WHERE check_id = ? AND owner_user_id = ?",
                 (check_id, owner_user_id),
             ).fetchone()
@@ -2674,6 +2696,7 @@ class SqliteAgenticQualificationRepository:
             self._auto_regress_if_needed(
                 owner_user_id,
                 observed_at=datetime.now(UTC),
+                policy_version=row["policy_version"],
                 immediate_code="false_accepted_offer",
             )
         self._store.conn.commit()
@@ -2706,6 +2729,7 @@ class SqliteAgenticQualificationRepository:
                     model_cost=UsdAmount(int(row["model_cost_micro_usd"])),
                     duration_ms=int(row["duration_ms"]),
                     fallback_used=bool(row["fallback_used"]),
+                    policy_version=row["policy_version"],
                     violations=frozenset(
                         CriticalAgenticViolation(str(item)) for item in raw_violations
                     ),
@@ -2734,12 +2758,14 @@ class SqliteAgenticQualificationRepository:
         *,
         owner_user_id: int,
         approved_at: datetime,
+        policy_version: str = BROWSER_USE_PRICE_POLICY_VERSION,
     ) -> QualificationState:
         self._require_owner(owner_user_id)
         verdict = evaluate_agentic_canary(
             self.list_checks(owner_user_id),
             deployment_owner_user_id=owner_user_id,
             owner_approved=True,
+            policy_version=policy_version,
             now=approved_at,
         )
         if not verdict.promotable:
@@ -2747,7 +2773,6 @@ class SqliteAgenticQualificationRepository:
         if approved_at.tzinfo is None or approved_at.utcoffset() is None:
             raise ValueError("promotion approval time must be timezone-aware")
         approved = approved_at.astimezone(UTC)
-        policy_version = "agentic-price-v1"
         self._store.conn.execute(
             """
             INSERT INTO agentic_promotion_state (
@@ -2785,6 +2810,7 @@ class SqliteAgenticQualificationRepository:
         owner_user_id: int,
         regression_code: str,
         observed_at: datetime,
+        policy_version: str = BROWSER_USE_PRICE_POLICY_VERSION,
     ) -> QualificationState:
         self._require_owner(owner_user_id)
         if (
@@ -2801,16 +2827,17 @@ class SqliteAgenticQualificationRepository:
             INSERT INTO agentic_promotion_state (
                 singleton_id, status, policy_version, qualified_at,
                 regression_code, updated_at
-            ) VALUES (1, 'regressed', 'agentic-price-v1', NULL, ?, ?)
+            ) VALUES (1, 'regressed', ?, NULL, ?, ?)
             ON CONFLICT(singleton_id) DO UPDATE SET
-                status = 'regressed', qualified_at = NULL,
+                status = 'regressed', policy_version = excluded.policy_version,
+                qualified_at = NULL,
                 regression_code = excluded.regression_code,
                 updated_at = excluded.updated_at
             """,
-            (regression_code, observed.isoformat()),
+            (policy_version, regression_code, observed.isoformat()),
         )
         self._store.conn.commit()
-        return QualificationState(QualificationStatus.REGRESSED)
+        return QualificationState(QualificationStatus.REGRESSED, policy_version)
 
     def _require_owner(self, user_id: int) -> None:
         row = self._store.conn.execute(
@@ -2825,14 +2852,18 @@ class SqliteAgenticQualificationRepository:
         owner_user_id: int,
         *,
         observed_at: datetime,
+        policy_version: str,
         immediate_code: str | None,
     ) -> None:
         """Fail closed only while the qualified release still has a legacy rollback path."""
         state = self._store.conn.execute(
-            "SELECT status, qualified_at, rollback_until FROM agentic_promotion_state "
+            "SELECT status, policy_version, qualified_at, rollback_until "
+            "FROM agentic_promotion_state "
             "WHERE singleton_id = 1"
         ).fetchone()
         if state is None or state["status"] != QualificationStatus.QUALIFIED.value:
+            return
+        if state["policy_version"] != policy_version:
             return
         if observed_at.tzinfo is None or observed_at.utcoffset() is None:
             raise ValueError("automatic regression time must be timezone-aware")
@@ -2845,10 +2876,11 @@ class SqliteAgenticQualificationRepository:
             recent = self._store.conn.execute(
                 """
                 SELECT valid_observation FROM agentic_canary_checks
-                WHERE owner_user_id = ? AND observed_at >= ? AND eligible_unblocked = 1
+                WHERE owner_user_id = ? AND policy_version = ?
+                  AND observed_at >= ? AND eligible_unblocked = 1
                 ORDER BY observed_at DESC, check_id DESC LIMIT 3
                 """,
-                (owner_user_id, state["qualified_at"]),
+                (owner_user_id, policy_version, state["qualified_at"]),
             ).fetchall()
             if len(recent) == 3 and all(not bool(row["valid_observation"]) for row in recent):
                 code = "repeated_reliability"

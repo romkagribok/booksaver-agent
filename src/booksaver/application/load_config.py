@@ -11,6 +11,7 @@ from booksaver.domain.browser_executor import (
     AgenticBrowserSettings,
     ExecutionRoutingMode,
     InventoryExecutionRoutingMode,
+    PriceExecutorKind,
 )
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.mobile_web import MobileWebSettings
@@ -300,6 +301,11 @@ def load_config(source: ConfigSource) -> Config:
             inventory_routing=InventoryExecutionRoutingMode.parse(
                 agentic_browser_raw.get(
                     "inventory_routing", agentic_defaults.inventory_routing.value
+                )
+            ),
+            price_executor=PriceExecutorKind.parse(
+                agentic_browser_raw.get(
+                    "price_executor", agentic_defaults.price_executor.value
                 )
             ),
             disclosure_version=str(

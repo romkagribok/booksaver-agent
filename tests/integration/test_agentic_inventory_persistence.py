@@ -147,7 +147,7 @@ def test_schema_v17_migration_preserves_existing_sync_runs(tmp_path: Path) -> No
             "SELECT user_id FROM booking_sync_runs WHERE run_id = 'preserved-v16-run'"
         ).fetchone()
 
-        assert version == SCHEMA_VERSION == 17
+        assert version == SCHEMA_VERSION == 18
         assert preserved is not None
         assert preserved[0] == user_id
         assert (

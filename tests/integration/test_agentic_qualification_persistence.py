@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -122,7 +123,7 @@ def test_redacted_canary_consent_promotion_and_regression_round_trip(
             & columns
         )
         version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
-        assert version == SCHEMA_VERSION == 17
+        assert version == SCHEMA_VERSION == 18
 
 
 def test_invitee_cannot_record_owner_canary_or_promote(tmp_path: Path) -> None:
@@ -142,6 +143,33 @@ def test_invitee_cannot_record_owner_canary_or_promote(tmp_path: Path) -> None:
                 owner_user_id=owner.user_id,
                 approved_at=START,
             )
+
+
+def test_v18_migration_tags_existing_canary_evidence_as_stagehand(tmp_path: Path) -> None:
+    db_path = tmp_path / "v17.db"
+    with SqliteStore(db_path) as store:
+        owner = SqliteUserRepository(store).get_owner()
+        SqliteAgenticQualificationRepository(store).record_check(
+            _check(0, owner.user_id)
+        )
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("ALTER TABLE agentic_canary_checks DROP COLUMN policy_version")
+    conn.execute("DELETE FROM schema_meta WHERE version > 17")
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_meta (version, applied_at) VALUES (17, ?)",
+        (START.isoformat(),),
+    )
+    conn.commit()
+    conn.close()
+
+    with SqliteStore(db_path) as store:
+        owner = SqliteUserRepository(store).get_owner()
+        check = SqliteAgenticQualificationRepository(store).list_checks(owner.user_id)[0]
+        version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
+
+    assert check.policy_version == "agentic-price-v1"
+    assert version == SCHEMA_VERSION == 18
 
 
 def _promote_clean_canary(
