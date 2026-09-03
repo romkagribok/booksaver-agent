@@ -2,7 +2,7 @@
 intent: 023-replaceable-agentic-browser-executor
 status: accepted
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-02T23:44:45Z
+updated: 2026-09-03T01:41:00Z
 ---
 
 # Architecture Decisions: Replaceable Agentic Browser Executor
@@ -77,6 +77,11 @@ the deterministic path remains available during its rollback window, but neither
 failed Browser Use job. A distinct qualification identity prevents Stagehand evidence from
 promoting Browser Use, and a production-equivalent replay must prove the deployed price loop before
 the release is accepted.
+
+Price execution enters a verified canonical property URL directly when one is stored and falls back
+to semantic search only for name-only records. The agent submits query facts and offers atomically.
+BookSaver—not the model—may ignore only a recognized flexible/refundable rate-plan suffix after a
+separator when comparing room identity; bed, accessibility, and room-variant text remains binding.
 
 ## Decision 11: Browser Use serves every agentic inventory trigger
 

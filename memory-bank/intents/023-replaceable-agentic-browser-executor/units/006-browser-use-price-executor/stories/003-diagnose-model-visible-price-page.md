@@ -2,11 +2,11 @@
 id: 003-diagnose-model-visible-price-page
 unit: 006-browser-use-price-executor
 intent: 023-replaceable-agentic-browser-executor
-status: draft
+status: complete
 priority: must
 created: 2026-09-02T23:44:45Z
 assigned_bolt: 064-browser-use-price-executor
-implemented: false
+implemented: true
 ---
 
 # Story: Diagnose the Model-Visible Price Page Before Paid Inference
@@ -20,13 +20,13 @@ are diagnosable without wasting API budget or retaining private content
 
 ## Acceptance Criteria
 
-- [ ] Preflight verifies the active mobile context, settled allowed destination, browser attachment,
+- [x] Preflight verifies the active mobile context, settled allowed destination, browser attachment,
   and usable visual or semantic representation before the first paid model call.
-- [ ] Detectable blank, signed-out, challenged, internal-error, or unusable empty states return a
+- [x] Detectable blank, signed-out, challenged, internal-error, or unusable empty states return a
   closed terminal outcome with zero paid calls.
-- [ ] Logs and results expose only bounded content-free phase/reason/render metrics and existing
+- [x] Logs and results expose only bounded content-free phase/reason/render metrics and existing
   execution/cost metadata.
-- [ ] No screenshot, DOM/accessibility content, page text, cookie, prompt, reservation fact, or model
+- [x] No screenshot, DOM/accessibility content, page text, cookie, prompt, reservation fact, or model
   reasoning is persisted by default.
 
 ## Dependencies

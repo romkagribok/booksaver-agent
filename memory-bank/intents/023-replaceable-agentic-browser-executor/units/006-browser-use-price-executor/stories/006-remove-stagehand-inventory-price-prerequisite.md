@@ -2,11 +2,11 @@
 id: 006-remove-stagehand-inventory-price-prerequisite
 unit: 006-browser-use-price-executor
 intent: 023-replaceable-agentic-browser-executor
-status: draft
+status: complete
 priority: must
 created: 2026-09-03T00:36:00Z
 assigned_bolt: 064-browser-use-price-executor
-implemented: false
+implemented: true
 ---
 
 # Story: Remove the Stagehand Inventory Prerequisite from Price Operations
@@ -21,13 +21,13 @@ Stagehand inventory adapter
 
 ## Acceptance Criteria
 
-- [ ] `/checknow`, scheduled, post-connect, and `/bookings` agentic inventory triggers construct the
+- [x] `/checknow`, scheduled, post-connect, and `/bookings` agentic inventory triggers construct the
   same Browser Use inventory adapter in production composition.
-- [ ] Each selected price operation still performs exactly one current-run inventory verification
+- [x] Each selected price operation still performs exactly one current-run inventory verification
   and preserves positive-only admission.
-- [ ] Existing authorization, disclosure, session, validation, reconciliation, budget, deadline,
+- [x] Existing authorization, disclosure, session, validation, reconciliation, budget, deadline,
   safety, and privacy boundaries remain unchanged.
-- [ ] `inventory_routing = "legacy"` remains explicit rollback; no same-job fallback is introduced.
+- [x] `inventory_routing = "legacy"` remains explicit rollback; no same-job fallback is introduced.
 
 ## Dependencies
 

@@ -291,6 +291,9 @@ owns every acceptance and savings decision.
   - Browser Use never declares room equivalence, cheapest-valid offer, savings, persistence, or
     notification eligibility.
   - Missing, ambiguous, or conflicting facts fail the existing independent BookSaver validator.
+  - BookSaver may qualify a visible room label only by removing a recognized flexible/refundable
+    rate-plan suffix after a separator; room type, bed type, accessibility, and other variant text
+    remain identity-bearing and cannot be removed by the executor or model.
   - Refreshed cookies remain eligible for persistence only after code-owned authentication and
     owner/session binding verification.
 - **Priority**: Must

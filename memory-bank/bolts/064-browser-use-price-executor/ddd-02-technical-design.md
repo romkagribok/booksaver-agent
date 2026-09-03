@@ -64,6 +64,8 @@ Scheduled slot ─────┘                                      │
   lease broker, job cost budget, and mobile-web settings.
 - Restore cookies only through the code-owned transient browser bootstrap. Browser Use receives the
   browser session, never cookie values.
+- Enter the stored, verified canonical Booking.com property URL directly with trusted dates,
+  occupancy, and currency; use semantic search only when the booking has no canonical URL.
 - Remove all stock Browser Use actions and assert exact equality with the BookSaver-owned registry
   before agent execution.
 - Register price-specific guarded actions: click, coordinate click, scroll, trusted-value type,
@@ -76,14 +78,16 @@ Scheduled slot ─────┘                                      │
 
 ### Typed evidence
 
-- Define a strict Browser Use output model for query facts and bounded offers using the provider's
-  supported schema subset.
+- Define one atomic strict Browser Use observation action for query facts and bounded offers using
+  the provider's supported schema subset and literal evidence-state values.
 - Map decoded output to the existing `PriceExecutionResult`; do not add provider fields to the
   application port.
 - Treat a Browser Use final answer without the typed submission action as a provider failure.
 - Map signed-out, MFA, captcha, bot wall, unavailable, timeout, budget, unsafe action, and provider
   failure to existing closed price statuses.
 - Pass every successful submission to existing BookSaver validation before offer selection.
+- Qualify room labels only through a code-owned suffix rule for recognized flexible/refundable rate
+  plans after a separator. Preserve bed, accessibility, and other room-variant terms exactly.
 
 ### Model-view preflight
 
@@ -124,6 +128,8 @@ Scheduled slot ─────┘                                      │
 - Acquire the same browser/coordinator gate, wait for terminal completion, print only redacted
   status/usage/cost/duration counts, and exit zero only for a BookSaver-accepted observation.
 - Always remove the isolated state and transient profile.
+- Do not perform a second price-stage session refresh after the immediately preceding current-run
+  inventory verification; this preserves the accepted price result within the shared deadline.
 
 ## Data Model
 

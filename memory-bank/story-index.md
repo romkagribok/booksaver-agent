@@ -486,7 +486,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
 | `004-agentic-inventory-executor` | 9 stories | Complete (bolt 063) |
 | `005-legacy-price-selector-retirement` | 1 story | Blocked (bolt 055; post-promotion) |
-| `006-browser-use-price-executor` | 6 stories | Planned (bolt 064) |
+| `006-browser-use-price-executor` | 6 stories | Complete (bolt 064) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
 
@@ -538,12 +538,12 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-164` | Default manual and scheduled price checks to Browser Use | Agentic Browser | Ready | `006-browser-use-price-executor/stories/001-default-price-checks-to-browser-use.md` |
-| `US-165` | Execute a guarded typed Browser Use price episode | Agentic Browser | Ready | `006-browser-use-price-executor/stories/002-execute-guarded-browser-use-price-episode.md` |
-| `US-166` | Diagnose the model-visible price page before paid inference | Agentic Browser | Ready | `006-browser-use-price-executor/stories/003-diagnose-model-visible-price-page.md` |
-| `US-167` | Preserve explicit rollback and qualify Browser Use independently | Agentic Browser | Ready | `006-browser-use-price-executor/stories/004-preserve-rollback-and-qualify-browser-use.md` |
-| `US-168` | Replay the deployed Browser Use price path without Telegram | Agentic Browser | Ready | `006-browser-use-price-executor/stories/005-replay-deployed-browser-use-price-path.md` |
-| `US-169` | Remove the Stagehand inventory prerequisite from price operations | Agentic Browser | Ready | `006-browser-use-price-executor/stories/006-remove-stagehand-inventory-price-prerequisite.md` |
+| `US-164` | Default manual and scheduled price checks to Browser Use | Agentic Browser | Complete | `006-browser-use-price-executor/stories/001-default-price-checks-to-browser-use.md` |
+| `US-165` | Execute a guarded typed Browser Use price episode | Agentic Browser | Complete | `006-browser-use-price-executor/stories/002-execute-guarded-browser-use-price-episode.md` |
+| `US-166` | Diagnose the model-visible price page before paid inference | Agentic Browser | Complete | `006-browser-use-price-executor/stories/003-diagnose-model-visible-price-page.md` |
+| `US-167` | Preserve explicit rollback and qualify Browser Use independently | Agentic Browser | Complete | `006-browser-use-price-executor/stories/004-preserve-rollback-and-qualify-browser-use.md` |
+| `US-168` | Replay the deployed Browser Use price path without Telegram | Agentic Browser | Complete | `006-browser-use-price-executor/stories/005-replay-deployed-browser-use-price-path.md` |
+| `US-169` | Remove the Stagehand inventory prerequisite from price operations | Agentic Browser | Complete | `006-browser-use-price-executor/stories/006-remove-stagehand-inventory-price-prerequisite.md` |
 
 ## Summary
 

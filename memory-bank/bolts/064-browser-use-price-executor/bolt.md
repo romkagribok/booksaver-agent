@@ -3,7 +3,7 @@ id: 064-browser-use-price-executor
 unit: 006-browser-use-price-executor
 intent: 023-replaceable-agentic-browser-executor
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-default-price-checks-to-browser-use
   - 002-execute-guarded-browser-use-price-episode
@@ -13,8 +13,8 @@ stories:
   - 006-remove-stagehand-inventory-price-prerequisite
 created: 2026-09-02T23:44:45Z
 started: 2026-09-02T23:50:00Z
-completed: null
-current_stage: test
+completed: 2026-09-03T01:41:00Z
+current_stage: complete
 stages_completed:
   - name: domain-model
     completed: 2026-09-02T23:52:00Z
@@ -28,6 +28,9 @@ stages_completed:
   - name: implement
     completed: 2026-09-03T00:14:45Z
     artifact: src/booksaver/infrastructure/browser/browser_use_price_executor.py
+  - name: test
+    completed: 2026-09-03T01:41:00Z
+    artifact: ddd-03-test-report.md
 requires_bolts:
   - 050-agentic-executor-control-plane
   - 051-local-agentic-price-executor
@@ -58,12 +61,12 @@ privacy-safe diagnostics, and production-equivalent replay.
 
 ## Stories Included
 
-- [ ] **US-164**: Default manual and scheduled price checks to Browser Use - Priority: Must
-- [ ] **US-165**: Execute a guarded typed Browser Use price episode - Priority: Must
-- [ ] **US-166**: Diagnose the model-visible price page before paid inference - Priority: Must
-- [ ] **US-167**: Preserve explicit rollback and qualify Browser Use independently - Priority: Must
-- [ ] **US-168**: Replay the deployed Browser Use price path without Telegram - Priority: Must
-- [ ] **US-169**: Remove the Stagehand inventory prerequisite from price operations - Priority: Must
+- [x] **US-164**: Default manual and scheduled price checks to Browser Use - Priority: Must
+- [x] **US-165**: Execute a guarded typed Browser Use price episode - Priority: Must
+- [x] **US-166**: Diagnose the model-visible price page before paid inference - Priority: Must
+- [x] **US-167**: Preserve explicit rollback and qualify Browser Use independently - Priority: Must
+- [x] **US-168**: Replay the deployed Browser Use price path without Telegram - Priority: Must
+- [x] **US-169**: Remove the Stagehand inventory prerequisite from price operations - Priority: Must
 
 ## Expected Outputs
 
@@ -82,8 +85,8 @@ privacy-safe diagnostics, and production-equivalent replay.
 
 ## Success Criteria
 
-- [ ] Both price triggers resolve Browser Use by default and preserve existing BookSaver policy.
-- [ ] No same-job browser-harness fallback or selector dependency is introduced.
-- [ ] Safety, privacy, cost, deadline, teardown, and typed-evidence tests pass.
-- [ ] Stagehand and deterministic rollback remain explicit and tested.
-- [ ] The exact deployed VPS replay returns one BookSaver-accepted price observation.
+- [x] Both price triggers resolve Browser Use by default and preserve existing BookSaver policy.
+- [x] No same-job browser-harness fallback or selector dependency is introduced.
+- [x] Safety, privacy, cost, deadline, teardown, and typed-evidence tests pass.
+- [x] Stagehand and deterministic rollback remain explicit and tested.
+- [x] The exact candidate-image VPS replay returns one BookSaver-accepted price observation.

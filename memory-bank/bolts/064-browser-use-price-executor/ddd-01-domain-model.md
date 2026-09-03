@@ -42,6 +42,9 @@ created: 2026-09-02T23:52:00Z
 - **PriceExecutionUsage**: Exact action/model-call/token/cost/latency measurements with no content.
 - **BrowserUsePricePolicyIdentity**: Versioned executor/prompt/model/guard identity that prevents
   Stagehand evidence from qualifying Browser Use.
+- **QualifiedRoomIdentity**: BookSaver-owned normalized identity that strips only a recognized
+  flexible/refundable rate-plan suffix after a separator. Bed, accessibility, and room-variant text
+  remain identity-bearing.
 
 ## Aggregates
 
@@ -80,6 +83,8 @@ created: 2026-09-02T23:52:00Z
   values, and allowed pre/post destinations.
 - **PriceObservationValidator**: Existing BookSaver service that independently verifies query facts,
   evidence completeness, currency, all-in status, and refundability before equivalence/savings.
+- **QualifiedRoomMatcher**: Existing BookSaver policy extended narrowly to accept a recognized
+  rate-plan suffix without trusting a model-authored equivalence conclusion.
 - **PriceQualificationEvaluator**: Evaluates policy-versioned owner evidence against reliability,
   correctness, safety, privacy, cost, duration, and explicit-promotion gates.
 - **PriceReplayRunner**: Obtains the normal coordinator/browser lease for isolated state, disables
@@ -119,3 +124,4 @@ created: 2026-09-02T23:52:00Z
 - **US-167**: BrowserUsePricePolicyIdentity, qualification aggregate/evaluator, and explicit
   rollback language.
 - **US-168**: PriceReplay aggregate, runner, repository boundaries, and completion event.
+- **US-169**: Shared Browser Use inventory composition and current-run positive verification.

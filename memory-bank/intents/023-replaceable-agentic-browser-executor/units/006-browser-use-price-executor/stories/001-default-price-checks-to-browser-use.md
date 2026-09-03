@@ -2,11 +2,11 @@
 id: 001-default-price-checks-to-browser-use
 unit: 006-browser-use-price-executor
 intent: 023-replaceable-agentic-browser-executor
-status: draft
+status: complete
 priority: must
 created: 2026-09-02T23:44:45Z
 assigned_bolt: 064-browser-use-price-executor
-implemented: false
+implemented: true
 ---
 
 # Story: Default Manual and Scheduled Price Checks to Browser Use
@@ -20,12 +20,12 @@ price-check triggers
 
 ## Acceptance Criteria
 
-- [ ] Owner-canary `/checknow` and scheduled price routes construct the same Browser Use-backed
+- [x] Owner-canary `/checknow` and scheduled price routes construct the same Browser Use-backed
   `PriceBrowserExecutor`.
-- [ ] The trigger does not change validation, budgeting, deadlines, session ownership, persistence,
+- [x] The trigger does not change validation, budgeting, deadlines, session ownership, persistence,
   savings evaluation, or notification policy.
-- [ ] Invited-user execution retains disclosure and qualification admission.
-- [ ] The current-run inventory prerequisite also uses Browser Use; `/connect` remains unchanged.
+- [x] Invited-user execution retains disclosure and qualification admission.
+- [x] The current-run inventory prerequisite also uses Browser Use; `/connect` remains unchanged.
 
 ## Dependencies
 
