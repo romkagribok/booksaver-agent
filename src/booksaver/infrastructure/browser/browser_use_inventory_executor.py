@@ -1,4 +1,4 @@
-"""Local Browser Use OSS inventory executor for Telegram ``/bookings`` only.
+"""Local Browser Use OSS executor for BookSaver account-inventory perception.
 
 Browser Use is an untrusted browser harness.  This adapter removes its stock actions and unsafe
 watchdogs, restores owner cookies only through local CDP, meters every model call, and returns the
@@ -25,7 +25,7 @@ from datetime import UTC, date, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -38,6 +38,7 @@ from booksaver.domain.browser_executor import (
     EvidenceCompleteness,
     ExecutorSafetyViolation,
     ObservationSource,
+    PriceExecutionRequest,
     RedactedProvenance,
 )
 from booksaver.domain.browser_guard import ExecutorEgressKind, classify_executor_egress
@@ -1265,23 +1266,23 @@ class BrowserUseActionGuard:
     """Deny-oriented action policy without exact benign labels or routes."""
 
     @staticmethod
-    def observable_url(url: str) -> bool:
+    def observable_url_rejection_reason(url: str) -> str | None:
         if not isinstance(url, str) or not 1 <= len(url) <= 4_000:
-            return False
+            return "url_bounds"
         try:
             parsed = urlsplit(url)
             port = parsed.port
         except ValueError:
-            return False
+            return "url_parse"
         host = (parsed.hostname or "").casefold().rstrip(".")
-        if (
-            parsed.scheme.casefold() != "https"
-            or parsed.username is not None
-            or parsed.password is not None
-            or port not in (None, 443)
-            or not (host == "booking.com" or host.endswith(".booking.com"))
-        ):
-            return False
+        if parsed.scheme.casefold() != "https":
+            return "scheme"
+        if parsed.username is not None or parsed.password is not None:
+            return "credentials"
+        if port not in (None, 443):
+            return "port"
+        if not (host == "booking.com" or host.endswith(".booking.com")):
+            return "host"
         route = f"{parsed.path} {parsed.fragment}"
         query = parsed.query
         for _ in range(4):
@@ -1292,11 +1293,36 @@ class BrowserUseActionGuard:
             route = decoded
             query = decoded_query
         if len(route) > 4_000 or len(query) > 4_000:
-            return False
-        return (
-            _UNSAFE_ROUTE_TERMS.search(route) is None
-            and _UNSAFE_QUERY_TERMS.search(query) is None
-        )
+            return "decoded_bounds"
+        if _UNSAFE_ROUTE_TERMS.search(route) is not None:
+            return "unsafe_route_term"
+        try:
+            query_items = parse_qsl(
+                query,
+                keep_blank_values=True,
+                max_num_fields=200,
+            )
+        except ValueError:
+            return "query_bounds"
+        for key, value in query_items:
+            normalized_key = key.strip().casefold()
+            # Booking.com's search contract calls the non-mutating departure date
+            # ``checkout``.  Do not confuse that exact ISO-date field with a checkout or
+            # payment workflow elsewhere in a URL.
+            if normalized_key == "checkout" and re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}", value.strip()
+            ):
+                continue
+            if (
+                _UNSAFE_QUERY_TERMS.search(key) is not None
+                or _UNSAFE_QUERY_TERMS.search(value) is not None
+            ):
+                return "unsafe_query_term"
+        return None
+
+    @staticmethod
+    def observable_url(url: str) -> bool:
+        return BrowserUseActionGuard.observable_url_rejection_reason(url) is None
 
     def allows_click(
         self,
@@ -1355,7 +1381,24 @@ class BrowserUseActionGuard:
                 return "unsafe_new_tab_destination"
         if "disabled" in normalized or normalized.get("aria-disabled", "").casefold() == "true":
             return "disabled"
-        attribute_text = " ".join(normalized.values())
+        # URL-bearing attributes are validated as destinations below. Treating their encoded
+        # query text as a visible action label creates false positives for normal Booking.com
+        # fields such as ``checkout=YYYY-MM-DD``. Presentational class/style values are likewise
+        # implementation detail; continue scanning semantic and action-bearing metadata.
+        attribute_text = " ".join(
+            value
+            for key, value in normalized.items()
+            if key
+            not in {
+                "href",
+                "src",
+                "srcset",
+                "action",
+                "formaction",
+                "class",
+                "style",
+            }
+        )
         if len(attribute_text) > 4_000:
             return "attribute_text_bounds"
         if _UNSAFE_LABEL_TERMS.search(attribute_text):
@@ -1655,7 +1698,7 @@ def _qualified_output_format(output_format: type[BaseModel]) -> type[BaseModel]:
     return QualifiedBrowserUseOutput
 
 
-def _model_type(base: type[Any]) -> type[Any]:
+def _model_type(base: type[Any], prompt_version: str = _PROMPT_VERSION) -> type[Any]:
     class BudgetedBrowserUseModel(base):  # type: ignore[misc]
         def __init__(
             self,
@@ -1688,7 +1731,7 @@ def _model_type(base: type[Any]) -> type[Any]:
         ) -> Any:
             profile = AdaptiveModelPortfolio().primary(
                 ModelRole.INTERPRETATION,
-                _PROMPT_VERSION,
+                prompt_version,
             )
             try:
                 admission = self._booksaver_budget.admit(
@@ -1810,21 +1853,11 @@ class LocalBrowserUseRuntime:
         budget: BrowserJobCostBudget,
         meter: ExecutionMeter,
     ) -> BrowserUseRuntimeResult:
-        self._failure_stage = "environment_prepare"
-        _prepare_environment()
-        self._failure_stage = "dependency_check"
-        try:
-            installed_version = version("browser-use")
-        except PackageNotFoundError as exc:
-            raise RuntimeError("Browser Use 0.11.13 runtime is not installed") from exc
-        if installed_version != "0.11.13":
-            raise RuntimeError("Browser Use runtime differs from qualified version 0.11.13")
+        session, viewport, file_system_dir = await self._start_session()
         try:
             from browser_use import (
                 ActionResult,
                 Agent,
-                BrowserProfile,
-                BrowserSession,
                 ChatAnthropic,
                 Tools,
             )
@@ -1836,85 +1869,8 @@ class LocalBrowserUseRuntime:
                 SendKeysEvent,
                 WaitEvent,
             )
-            from browser_use.browser.profile import ViewportSize
         except ImportError as exc:
             raise RuntimeError("Browser Use 0.11.13 runtime is not installed") from exc
-
-        self._failure_stage = "transient_filesystem"
-        self._root = Path(tempfile.mkdtemp(prefix="booksaver-browser-use-"))
-        # Browser Use clones ordinary Chrome profile paths into an untracked system temp path.
-        # Its own prefix suppresses that copy, keeping every profile byte under our owned root.
-        profile_dir = self._root / "browser-use-user-data-dir-profile"
-        downloads_dir = self._root / "downloads"
-        file_system_dir = self._root / "agent-files"
-        for directory in (profile_dir, downloads_dir, file_system_dir, _CONFIG_DIR, _CACHE_DIR):
-            directory.mkdir(parents=True, exist_ok=True)
-
-        from playwright.async_api import async_playwright
-
-        self._failure_stage = "playwright_probe"
-        playwright = await async_playwright().start()
-        try:
-            executable_path = playwright.chromium.executable_path
-            descriptor = dict(
-                playwright.devices[
-                    self._mobile_settings.profile.playwright_device_name
-                ]
-            )
-            mobile_options = self._mobile_settings.context_options(descriptor)
-        finally:
-            await playwright.stop()
-        viewport = cast(dict[str, int], mobile_options["viewport"])
-        profile = BrowserProfile(
-            executable_path=executable_path,
-            headless=True,
-            chromium_sandbox=False,
-            user_data_dir=profile_dir,
-            downloads_path=downloads_dir,
-            accept_downloads=False,
-            auto_download_pdfs=False,
-            record_har_path=None,
-            record_video_dir=None,
-            traces_dir=None,
-            storage_state=None,
-            permissions=[],
-            user_agent=str(mobile_options["user_agent"]),
-            viewport=ViewportSize(
-                width=int(viewport["width"]), height=int(viewport["height"])
-            ),
-            screen=ViewportSize(
-                width=int(viewport["width"]), height=int(viewport["height"])
-            ),
-            device_scale_factor=float(mobile_options["device_scale_factor"]),
-            allowed_domains=_ALLOWED_DOMAINS,
-            block_ip_addresses=True,
-            keep_alive=False,
-            enable_default_extensions=False,
-            captcha_solver=False,
-            highlight_elements=True,
-            dom_highlight_elements=False,
-            cross_origin_iframes=True,
-        )
-        self._failure_stage = "browser_session_start"
-        session_type = _hardened_session_type(BrowserSession)
-        session = session_type(browser_profile=profile)
-        self._session = session
-        await session.start()
-        actual_profile = Path(session.browser_profile.user_data_dir).resolve()
-        if self._root.resolve() not in actual_profile.parents:
-            raise RuntimeError("Browser Use profile escaped the BookSaver transient root")
-        if session.cdp_url is None:
-            raise RuntimeError("Browser Use did not expose local CDP")
-        self._failure_stage = "mobile_emulation"
-        await self._install_mobile_emulation(
-            session,
-            viewport=viewport,
-            device_scale_factor=float(mobile_options["device_scale_factor"]),
-            user_agent=str(mobile_options["user_agent"]),
-        )
-        await self._deny_downloads(session)
-        await self._install_network_guard(session)
-        await self._install_dialog_guard(session)
         self._failure_stage = "session_bootstrap"
         await self._bootstrap.apply(session.cdp_url)
 
@@ -2527,6 +2483,102 @@ class LocalBrowserUseRuntime:
             refreshed_session=self._state.refreshed_session,
         )
 
+    async def _start_session(self) -> tuple[Any, dict[str, int], Path]:
+        """Start one confined Browser Use browser shared by inventory and price adapters."""
+
+        self._failure_stage = "environment_prepare"
+        _prepare_environment()
+        self._failure_stage = "dependency_check"
+        try:
+            installed_version = version("browser-use")
+        except PackageNotFoundError as exc:
+            raise RuntimeError("Browser Use 0.11.13 runtime is not installed") from exc
+        if installed_version != "0.11.13":
+            raise RuntimeError("Browser Use runtime differs from qualified version 0.11.13")
+        try:
+            from browser_use import BrowserProfile, BrowserSession
+            from browser_use.browser.profile import ViewportSize
+        except ImportError as exc:
+            raise RuntimeError("Browser Use 0.11.13 runtime is not installed") from exc
+
+        self._failure_stage = "transient_filesystem"
+        self._root = Path(tempfile.mkdtemp(prefix="booksaver-browser-use-"))
+        # Browser Use clones ordinary Chrome profile paths into an untracked system temp path.
+        # Its own prefix suppresses that copy, keeping every profile byte under our owned root.
+        profile_dir = self._root / "browser-use-user-data-dir-profile"
+        downloads_dir = self._root / "downloads"
+        file_system_dir = self._root / "agent-files"
+        for directory in (profile_dir, downloads_dir, file_system_dir, _CONFIG_DIR, _CACHE_DIR):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        from playwright.async_api import async_playwright
+
+        self._failure_stage = "playwright_probe"
+        playwright = await async_playwright().start()
+        try:
+            executable_path = playwright.chromium.executable_path
+            descriptor = dict(
+                playwright.devices[
+                    self._mobile_settings.profile.playwright_device_name
+                ]
+            )
+            mobile_options = self._mobile_settings.context_options(descriptor)
+        finally:
+            await playwright.stop()
+        viewport = cast(dict[str, int], mobile_options["viewport"])
+        profile = BrowserProfile(
+            executable_path=executable_path,
+            headless=True,
+            chromium_sandbox=False,
+            user_data_dir=profile_dir,
+            downloads_path=downloads_dir,
+            accept_downloads=False,
+            auto_download_pdfs=False,
+            record_har_path=None,
+            record_video_dir=None,
+            traces_dir=None,
+            storage_state=None,
+            permissions=[],
+            user_agent=str(mobile_options["user_agent"]),
+            viewport=ViewportSize(
+                width=int(viewport["width"]), height=int(viewport["height"])
+            ),
+            screen=ViewportSize(
+                width=int(viewport["width"]), height=int(viewport["height"])
+            ),
+            device_scale_factor=float(mobile_options["device_scale_factor"]),
+            allowed_domains=_ALLOWED_DOMAINS,
+            block_ip_addresses=True,
+            keep_alive=False,
+            enable_default_extensions=False,
+            captcha_solver=False,
+            highlight_elements=True,
+            dom_highlight_elements=False,
+            cross_origin_iframes=True,
+        )
+        self._failure_stage = "browser_session_start"
+        session_type = _hardened_session_type(BrowserSession)
+        session = session_type(browser_profile=profile)
+        self._session = session
+        await session.start()
+        actual_profile = Path(session.browser_profile.user_data_dir).resolve()
+        assert self._root is not None
+        if self._root.resolve() not in actual_profile.parents:
+            raise RuntimeError("Browser Use profile escaped the BookSaver transient root")
+        if session.cdp_url is None:
+            raise RuntimeError("Browser Use did not expose local CDP")
+        self._failure_stage = "mobile_emulation"
+        await self._install_mobile_emulation(
+            session,
+            viewport=viewport,
+            device_scale_factor=float(mobile_options["device_scale_factor"]),
+            user_agent=str(mobile_options["user_agent"]),
+        )
+        await self._deny_downloads(session)
+        await self._install_network_guard(session)
+        await self._install_dialog_guard(session)
+        return session, viewport, file_system_dir
+
     async def _install_mobile_emulation(
         self,
         session: Any,
@@ -2645,7 +2697,7 @@ expectedTimezone => ({
 
     async def _initial_authentication_terminal(
         self,
-        request: InventoryExecutionRequest,
+        request: InventoryExecutionRequest | PriceExecutionRequest,
         browser_session: Any,
         cdp_url: str,
     ) -> InventoryExecutionStatus | None:

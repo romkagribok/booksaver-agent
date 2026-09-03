@@ -176,6 +176,31 @@ def test_computer_use_source_is_marked_agent_without_giving_it_equivalence_autho
     assert result.failure_reason.code is FailureCode.NO_EQUIVALENT_OFFER
 
 
+def test_qualified_room_equivalence_ignores_only_rate_plan_suffix() -> None:
+    check = _AgenticCheck(_outcome(room_label="Standard Double - Flexible"))
+    monitor, _browser, _history = _monitor(check)
+
+    result = monitor.run_authenticated(make_booking(), _snapshot())
+
+    assert result.outcome is CheckOutcome.SUCCESS
+
+
+def test_qualified_room_equivalence_preserves_room_variant_boundaries() -> None:
+    for room_label in (
+        "Standard Twin Room - Flexible",
+        "Standard Double - Hearing Accessible - Flexible",
+        "Deluxe Double - Flexible",
+    ):
+        check = _AgenticCheck(_outcome(room_label=room_label))
+        monitor, _browser, _history = _monitor(check)
+
+        result = monitor.run_authenticated(make_booking(), _snapshot())
+
+        assert result.outcome is CheckOutcome.FAILURE
+        assert result.failure_reason is not None
+        assert result.failure_reason.code is FailureCode.NO_EQUIVALENT_OFFER
+
+
 def test_agentic_provider_failure_is_terminal_without_legacy_retry() -> None:
     check = _AgenticCheck(_outcome(status=PriceExecutionStatus.PROVIDER_FAILURE))
     monitor, browser, _history = _monitor(check)

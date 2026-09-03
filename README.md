@@ -44,11 +44,12 @@ issues are exploratory future capabilities, not missing parts of the current hot
    broad part of the day. At each slot it synchronizes that user's account once, then opens a fresh
    authenticated mobile Chromium context for every eligible booking. `/checknow` remains available
    for an immediate check.
-3. Price execution defaults to the `legacy` deterministic journey. The separately opt-in
-   `owner_canary` price route uses local Stagehand semantic observation and, only when necessary, one
-   guarded Anthropic computer-use episode in a fresh local Chromium profile. Every proposed action
-   is code-authorized; reservation, checkout, payment, cancellation, credential, MFA/captcha,
-   arbitrary navigation, shell, clipboard, upload, and download capabilities are absent.
+3. Price routing defaults to the `legacy` deterministic journey. When `owner_canary` or qualified
+   `agentic` routing is admitted, the default executor is the pinned local Browser Use classic agent
+   in a fresh local Chromium profile. Every physical action is code-authorized; reservation,
+   checkout, payment, cancellation, credential, MFA/captcha, arbitrary navigation, shell,
+   clipboard, upload, and download capabilities are absent. Stagehand remains an explicit rollback
+   adapter for a future job, never an automatic second attempt.
 4. Only a cheaper, currency-aligned, still-refundable equivalent offer becomes a savings result.
 5. Telegram or email reports the result. You independently review and make any change in
    Booking.com; the next synchronization observes the updated account state.
@@ -87,15 +88,16 @@ the agentic price executor remains disabled by default:
 ```toml
 [agentic_browser]
 routing = "legacy" # price: legacy | owner_canary | agentic
+price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
 inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"
 ```
 
-`inventory_routing = "agentic"` uses the pinned Browser Use classic agent for the user-initiated
-`/bookings` refresh and Stagehand for the other read-only inventory triggers. Both run locally in a
-fresh browser, receive only a closed set of code-guarded read-only actions, and use the deployment's
-Anthropic key. BookSaver accepts only positively observed reservations from that run and never lets
-model output mark an unseen saved reservation absent. Set it to `legacy` only as a
+`inventory_routing = "agentic"` uses the pinned Browser Use classic agent for every read-only
+inventory trigger, including `/bookings`, `/checknow`, scheduled checks, and post-connect sync. It
+runs locally in a fresh browser, receives only a closed set of code-guarded read-only actions, and
+uses the deployment's Anthropic key. BookSaver accepts only positively observed reservations from
+that run and never lets model output mark an unseen saved reservation absent. Set it to `legacy` as a
 capability-specific rollback; this setting does not promote the price executor.
 
 The Docker build installs the exact resolved runtime graph from `requirements.lock`; this is
@@ -104,12 +106,14 @@ sync, external version checks, downloads, persistent screenshots, and stock Brow
 disabled by the BookSaver adapter.
 
 For price execution, `owner_canary` is the only pre-qualification agentic mode and routes only the
-deployment owner. The executor runs Stagehand 4.0.1 in-process against the installed Playwright
-Chromium, injects encrypted Booking.com cookies through a code-owned local CDP connection, disables
-cross-run caching and self-healing, and sends visible page content to Sonnet 5 using
-`BOOKSAVER_LLM_API_KEY`. Stagehand semantic calls are the primary path; a screenshot-based
-computer-use fallback receives at most six of the shared 15 actions. USD 1 per-check, USD 10
-deployment-day, and 180-second limits remain hard.
+deployment owner. The default adapter runs Browser Use 0.11.13 in-process against the installed
+Playwright Chromium, injects encrypted Booking.com cookies through a code-owned local CDP
+connection, and sends the exact transient browser's semantic view and screenshots to Sonnet 5 using
+`BOOKSAVER_LLM_API_KEY`. BookSaver constructs the trusted search URL, removes Browser Use's stock
+actions, exposes only guarded read-only clicks/scrolls/keys/waits and typed submissions, and proves
+authentication independently. USD 1 per-check, USD 10 deployment-day, 15-action, six visual-click,
+and 180-second limits remain hard. Set `price_executor = "stagehand"` only to roll a future job back
+to the prior Stagehand semantic/computer-use adapter.
 
 The executor returns observations only. BookSaver still verifies property, dates, occupancy,
 authentication, Genius evidence, currency, all-in totals, explicit refundability, room equivalence,
@@ -161,8 +165,8 @@ seven days and are never sent through Telegram.
 
 - a Linux host with Docker Compose v2, 2 GB RAM minimum, and a DNS name if `/connect` is enabled;
 - a private Telegram bot token from BotFather and your numeric Telegram chat ID;
-- an Anthropic API key for the default Browser Use/Stagehand inventory routes and LLM price extraction/recovery
-  (without one, set `agentic_browser.inventory_routing = "legacy"` to use scripted inventory);
+- an Anthropic API key for Browser Use price/inventory execution, Stagehand rollback routes, and
+  legacy LLM extraction/recovery (without one, use only the configured scripted routes);
 - acceptance of the trust boundary: the VPS runs the temporary login browser and must be under
   your control.
 

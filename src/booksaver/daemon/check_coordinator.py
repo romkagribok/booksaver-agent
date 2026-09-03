@@ -2176,6 +2176,9 @@ class CheckCoordinator:
                 acknowledged_disclosure_version=(
                     consent.disclosure_version if consent is not None else None
                 ),
+                qualification_policy_version=(
+                    agentic_settings.price_executor.qualification_policy_version
+                ),
             ),
         )
         remaining_llm = max(
@@ -2339,6 +2342,9 @@ class CheckCoordinator:
                         model_cost=agentic_outcome.result.usage.cost,
                         duration_ms=agentic_outcome.result.latency_ms,
                         fallback_used=agentic_outcome.result.fallback_used,
+                        policy_version=(
+                            agentic_settings.price_executor.qualification_policy_version
+                        ),
                         violations=frozenset(violations),
                     )
                 )

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import fields, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +14,7 @@ from booksaver.application.browser_executor import (
     InMemorySessionLeaseBroker,
 )
 from booksaver.application.load_config import load_config
+from booksaver.cli.commands import _make_agentic_price_executor, _make_check_coordinator
 from booksaver.domain.agent import LLMUsage
 from booksaver.domain.browser_executor import (
     AgenticBrowserSettings,
@@ -28,6 +30,7 @@ from booksaver.domain.browser_executor import (
     PriceExecutionRequest,
     PriceExecutionResult,
     PriceExecutionStatus,
+    PriceExecutorKind,
     QualificationState,
     QualificationStatus,
     RedactedProvenance,
@@ -328,6 +331,26 @@ def test_invitee_agentic_requires_qualification_and_current_disclosure() -> None
     assert admitted.use_agentic
 
 
+def test_invitee_agentic_rejects_qualification_from_another_executor_policy() -> None:
+    context = _route_context(
+        status=QualificationStatus.QUALIFIED,
+        acknowledged="disclosure-v1",
+    )
+    context = replace(
+        context,
+        qualification=QualificationState(
+            status=QualificationStatus.QUALIFIED,
+            policy_version="agentic-price-v1",
+            qualified_at=NOW,
+        ),
+    )
+
+    decision = resolve_execution_route(ExecutionRoutingMode.AGENTIC, context)
+
+    assert decision.use_agentic is False
+    assert decision.reason is RoutingReason.QUALIFICATION_REQUIRED
+
+
 def test_owner_agentic_mode_still_requires_completed_qualification() -> None:
     blocked = resolve_execution_route(
         ExecutionRoutingMode.AGENTIC,
@@ -443,9 +466,11 @@ class _ConfigSource:
         self,
         routing: str | None = None,
         inventory_routing: str | None = None,
+        price_executor: str | None = None,
     ) -> None:
         self.routing = routing
         self.inventory_routing = inventory_routing
+        self.price_executor = price_executor
 
     def read(self) -> dict[str, object]:
         data: dict[str, object] = {
@@ -456,6 +481,8 @@ class _ConfigSource:
             agentic_browser["routing"] = self.routing
         if self.inventory_routing is not None:
             agentic_browser["inventory_routing"] = self.inventory_routing
+        if self.price_executor is not None:
+            agentic_browser["price_executor"] = self.price_executor
         if agentic_browser:
             data["agentic_browser"] = agentic_browser
         return data
@@ -465,6 +492,7 @@ def test_config_defaults_agentic_browser_to_legacy() -> None:
     settings = load_config(_ConfigSource()).agentic_browser_settings
     assert settings.routing is ExecutionRoutingMode.LEGACY
     assert settings.inventory_routing is InventoryExecutionRoutingMode.AGENTIC
+    assert settings.price_executor is PriceExecutorKind.BROWSER_USE
 
 
 def test_config_inventory_routing_is_independent_from_price() -> None:
@@ -484,3 +512,59 @@ def test_config_rejects_unknown_agentic_routing() -> None:
 def test_config_rejects_owner_canary_inventory_routing() -> None:
     with pytest.raises(ConfigValidationError, match="agentic_browser.inventory_routing"):
         load_config(_ConfigSource(inventory_routing="owner_canary"))
+
+
+def test_config_accepts_stagehand_as_explicit_price_rollback() -> None:
+    settings = load_config(_ConfigSource(price_executor="stagehand")).agentic_browser_settings
+
+    assert settings.price_executor is PriceExecutorKind.STAGEHAND
+
+
+def test_config_rejects_unknown_price_executor() -> None:
+    with pytest.raises(ConfigValidationError, match="agentic_browser.price_executor"):
+        load_config(_ConfigSource(price_executor="automatic"))
+
+
+def test_shared_price_factory_defaults_browser_use_and_keeps_stagehand_rollback() -> None:
+    from booksaver.infrastructure.browser.agentic_executor import LocalAgenticPriceExecutor
+    from booksaver.infrastructure.browser.browser_use_price_executor import (
+        LocalBrowserUsePriceExecutor,
+    )
+
+    broker = InMemorySessionLeaseBroker()
+    browser_use = _make_agentic_price_executor(
+        load_config(_ConfigSource()),
+        "test-key",
+        object(),
+        broker,
+    )
+    stagehand = _make_agentic_price_executor(
+        load_config(_ConfigSource(price_executor="stagehand")),
+        "test-key",
+        object(),
+        broker,
+    )
+
+    assert isinstance(browser_use, LocalBrowserUsePriceExecutor)
+    assert isinstance(stagehand, LocalAgenticPriceExecutor)
+
+
+def test_production_composition_uses_browser_use_for_every_agentic_inventory_trigger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from booksaver.infrastructure.browser.browser_use_inventory_executor import (
+        LocalBrowserUseInventoryExecutor,
+    )
+
+    cfg = load_config(_ConfigSource())
+    cfg.data_directory = type(cfg.data_directory)(tmp_path)
+    monkeypatch.setenv("BOOKSAVER_LLM_API_KEY", "test-key")
+    coordinator = _make_check_coordinator(cfg, object())
+    regular = coordinator._agentic_inventory_executor_factory  # noqa: SLF001
+    bookings = coordinator._bookings_inventory_executor_factory  # noqa: SLF001
+    assert regular is not None and bookings is not None
+    broker = InMemorySessionLeaseBroker()
+
+    assert isinstance(regular(object(), broker), LocalBrowserUseInventoryExecutor)
+    assert isinstance(bookings(object(), broker), LocalBrowserUseInventoryExecutor)

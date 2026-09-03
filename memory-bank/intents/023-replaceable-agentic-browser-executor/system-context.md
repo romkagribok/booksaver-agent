@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-30T18:00:44Z
+updated: 2026-09-03T00:36:00Z
 ---
 
 # System Context: Replaceable Agentic Browser Executor
@@ -19,8 +19,9 @@ updated: 2026-08-30T18:00:44Z
 - **BookSaver validation/evaluation** (System): Independently validates untrusted observations,
   selects equivalent refundable all-in offers, persists results, and permits notifications.
 - **Local browser executor** (System): Performs bounded perception and read-only navigation in a
-  transient browser without domain authority. Browser Use handles only `/bookings`; Stagehand
-  remains active for other inventory triggers and price execution.
+  transient browser without domain authority. Browser Use handles every inventory trigger and is
+  the default executor for both manual and scheduled price checks; Stagehand remains an explicit
+  price rollback.
 - **Inventory reconciliation policy** (System): Accepts only validated positive reservation
   observations, derives eligibility, and prevents agentic evidence from marking unseen rows absent.
 
@@ -55,7 +56,7 @@ updated: 2026-08-30T18:00:44Z
   deadline, action limit, and cost reservation.
 - Trusted inventory scopes, authorized account binding, and current-run execution identity.
 - Stagehand semantic action proposals and typed extraction.
-- Browser Use guarded read-only proposals and typed inventory submission for `/bookings` only.
+- Browser Use guarded read-only proposals and typed inventory or price submissions.
 - Anthropic computer-use action requests, typed observation submissions, terminal outcomes, and
   usage data.
 - Booking.com rendered visible content and server-verified authentication state.
@@ -87,8 +88,8 @@ flowchart LR
     telegram --> control
     control --> lease["Owner-bound transient session lease"]
     lease --> executor["Replaceable local browser executor"]
-    executor --> browseruse["Browser Use OSS for /bookings"]
-    executor --> stagehand["Stagehand for other triggers"]
+    executor --> browseruse["Browser Use OSS for /bookings and price"]
+    executor --> stagehand["Stagehand inventory and explicit price rollback"]
     executor --> booking["Booking.com"]
     executor --> anthropic["Anthropic Sonnet 5"]
     executor --> evidence["Typed redacted observations"]
@@ -106,14 +107,28 @@ flowchart LR
 1. Coordinator authorizes the user and booking, reserves budget, and selects routing mode.
 2. Session service decrypts verified cookies into a fresh local browser owned by a scoped lease.
 3. The executor first reaches the requested protected Booking.com capability with the matching
-   mobile identity. Sanitized transport failures terminate with a typed authentication, provider,
-   or timeout outcome before Stagehand perception.
-4. Stagehand observes, proposes, and extracts; code replays only guarded actions.
-5. One guarded Anthropic computer-use episode may continue on the same browser after semantic
-   failure.
+   mobile identity. A code-owned preflight rejects unusable model views and sanitized transport,
+   authentication, or challenge failures before paid inference whenever detectable.
+4. Browser Use receives only task-specific guarded actions and typed terminal submissions; every
+   physical action and resulting destination remains code-authorized.
+5. Stagehand remains selectable for future jobs as an explicit rollback but never runs after a
+   failed Browser Use operation in the same job.
 6. Executor returns typed evidence without domain conclusions or secret material.
 7. BookSaver validates facts, evaluates equivalence/savings, reconciles cost, optionally persists
    verified refreshed cookies, records redacted metrics, and destroys the browser profile.
+
+## Price Lifecycle
+
+1. `/checknow` and scheduled work resolve through the same price-executor factory and
+   `PriceBrowserExecutor` application service.
+2. Owner-canary price routes select Browser Use by default; invited-user routing retains disclosure
+   and Browser Use-specific qualification gates.
+3. The local Browser Use agent navigates and perceives through guarded human-like actions, then
+   submits typed query facts and offers or one closed terminal outcome.
+4. BookSaver independently verifies property, dates, occupancy, authentication, currency, all-in
+   status, explicit refundability, room equivalence, and savings.
+5. An operator-only production replay can execute this exact path against isolated state, wait for
+   terminal completion, and suppress notifications and authoritative booking mutations.
 
 ## Inventory Lifecycle
 

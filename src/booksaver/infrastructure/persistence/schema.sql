@@ -339,6 +339,7 @@ CREATE TABLE IF NOT EXISTS agentic_canary_checks (
     model_cost_micro_usd INTEGER NOT NULL CHECK(model_cost_micro_usd >= 0),
     duration_ms INTEGER NOT NULL CHECK(duration_ms >= 0),
     fallback_used INTEGER NOT NULL CHECK(fallback_used IN (0, 1)),
+    policy_version TEXT NOT NULL,
     violations_json TEXT NOT NULL
 );
 

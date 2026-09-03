@@ -80,6 +80,21 @@ DOM_STEPS: tuple[DomStepId, ...] = (
 )
 
 _GENIUS_EVIDENCE = re.compile(r"\bGenius(?:\s+(?:Level|discount|deal|rate))?\b", re.I)
+_ROOM_RATE_PLAN_SUFFIX = re.compile(
+    r"\s*(?:-|\u2013|\u2014|\|)\s*(?:flexible(?:\s+rate)?|refundable(?:\s+rate)?|"
+    r"free\s+cancellation)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _normalized_room_identity(label: str) -> str:
+    normalized = " ".join(label.casefold().split())
+    for _ in range(3):
+        stripped = _ROOM_RATE_PLAN_SUFFIX.sub("", normalized).strip()
+        if stripped == normalized:
+            break
+        normalized = stripped
+    return normalized
 
 
 def _model_stop_diagnosis(step_id: DomStepId, reason: ModelStopReason) -> TerminalBrowserDiagnosis:
@@ -177,7 +192,7 @@ class BookingComSearchMonitor:
         self._agentic_owner_user_id = agentic_owner_user_id
         self._agentic_route = agentic_route
         self._agentic_execution_limits = agentic_execution_limits
-        self._room_equivalence_policy = room_equivalence_policy or self._exact_room_equivalence
+        self._room_equivalence_policy = room_equivalence_policy or self._qualified_room_equivalence
         self._last_agentic_outcome: PriceExecutionOutcome | None = None
 
     @property
@@ -432,14 +447,16 @@ class BookingComSearchMonitor:
         )
 
     @staticmethod
-    def _exact_room_equivalence(
+    def _qualified_room_equivalence(
         observed_room_label: str,
         booking: Booking,
     ) -> tuple[bool, float]:
-        exact = " ".join(observed_room_label.casefold().split()) == " ".join(
-            booking.room_type.label.casefold().split()
-        )
-        return exact, 1.0 if exact else 0.0
+        observed = " ".join(observed_room_label.casefold().split())
+        booked = " ".join(booking.room_type.label.casefold().split())
+        if observed == booked:
+            return True, 1.0
+        qualified = _normalized_room_identity(observed_room_label) == booked
+        return qualified, 0.95 if qualified else 0.0
 
     @staticmethod
     def _agentic_failure_code(

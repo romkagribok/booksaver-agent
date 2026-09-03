@@ -82,6 +82,7 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # Price execution stays legacy until the owner canary passes every local promotion gate.
 # Inventory execution is independently agentic by default; legacy is its rollback route.
 # routing = "legacy"           # price: legacy | owner_canary | agentic
+# price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
 # inventory_routing = "agentic" # inventory: legacy | agentic
 # disclosure_version = "anthropic-visible-booking-page-v1"
 
@@ -199,6 +200,10 @@ def cmd_config_validate(args: argparse.Namespace) -> int:
     )
     print(f"  agentic_browser.routing    : {cfg.agentic_browser_settings.routing.value}")
     print(
+        "  agentic_browser.price_executor: "
+        f"{cfg.agentic_browser_settings.price_executor.value}"
+    )
+    print(
         "  agentic_browser.inventory_routing: "
         f"{cfg.agentic_browser_settings.inventory_routing.value}"
     )
@@ -263,6 +268,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"agent.screenshot_after_no_progress: {agent.screenshot_after_no_progress}")
     print(f"agent.semantic_action_executions: {agent.max_semantic_action_executions}")
     print(f"agentic_browser.routing      : {agentic.routing.value}")
+    print(f"agentic_browser.price_executor: {agentic.price_executor.value}")
     print(f"agentic_browser.inventory_routing: {agentic.inventory_routing.value}")
     print(f"agentic_browser.disclosure   : {agentic.disclosure_version}")
     print(f"remote_auth.enabled          : {remote_auth.enabled}")
@@ -564,6 +570,7 @@ def _make_check_coordinator(
     stop_event: Any,
     auth_required_notifier: Any = None,
     execution_gate: threading.Lock | None = None,
+    notifier_builder_override: Any = None,
 ) -> Any:
     """Build the one daemon-lifetime boundary shared by scheduler and Telegram."""
     from booksaver.application.dom_incident import DomIncidentRecorder
@@ -578,32 +585,10 @@ def _make_check_coordinator(
     api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
 
     def _agentic_executor(budget: Any, lease_broker: Any) -> Any:
-        from booksaver.infrastructure.browser.agentic_executor import (
-            LocalAgenticPriceExecutor,
-        )
-
         assert api_key is not None
-        return LocalAgenticPriceExecutor(
-            api_key=api_key,
-            lease_broker=lease_broker,
-            budget=budget,
-            mobile_settings=cfg.mobile_web_settings,
-        )
+        return _make_agentic_price_executor(cfg, api_key, budget, lease_broker)
 
-    def _agentic_inventory_executor(budget: Any, lease_broker: Any) -> Any:
-        from booksaver.infrastructure.browser.agentic_inventory_executor import (
-            LocalAgenticInventoryExecutor,
-        )
-
-        assert api_key is not None
-        return LocalAgenticInventoryExecutor(
-            api_key=api_key,
-            lease_broker=lease_broker,
-            budget=budget,
-            mobile_settings=cfg.mobile_web_settings,
-        )
-
-    def _bookings_inventory_executor(budget: Any, lease_broker: Any) -> Any:
+    def _browser_use_inventory_executor(budget: Any, lease_broker: Any) -> Any:
         from booksaver.infrastructure.browser.browser_use_inventory_executor import (
             LocalBrowserUseInventoryExecutor,
         )
@@ -630,18 +615,49 @@ def _make_check_coordinator(
         cfg,
         stop_event,
         llm_factory_builder=lambda config, store: _make_llm_client_factory(config, store=store),
-        notifier_builder=_make_notifiers,
+        notifier_builder=notifier_builder_override or _make_notifiers,
         invalid_key_notifier=_notify_invalid_user_keys,
         auth_required_notifier=auth_required_notifier,
         execution_gate=execution_gate,
         incident_recorder_factory=_incident_recorder,
         agentic_executor_factory=_agentic_executor if api_key else None,
         agentic_inventory_executor_factory=(
-            _agentic_inventory_executor if api_key else None
+            _browser_use_inventory_executor if api_key else None
         ),
         bookings_inventory_executor_factory=(
-            _bookings_inventory_executor if api_key else None
+            _browser_use_inventory_executor if api_key else None
         ),
+    )
+
+
+def _make_agentic_price_executor(
+    cfg: Config,
+    api_key: str,
+    budget: Any,
+    lease_broker: Any,
+) -> Any:
+    """Select one explicit adapter behind the shared manual/scheduled price port."""
+
+    if cfg.agentic_browser_settings.price_executor.value == "stagehand":
+        from booksaver.infrastructure.browser.agentic_executor import (
+            LocalAgenticPriceExecutor,
+        )
+
+        return LocalAgenticPriceExecutor(
+            api_key=api_key,
+            lease_broker=lease_broker,
+            budget=budget,
+            mobile_settings=cfg.mobile_web_settings,
+        )
+    from booksaver.infrastructure.browser.browser_use_price_executor import (
+        LocalBrowserUsePriceExecutor,
+    )
+
+    return LocalBrowserUsePriceExecutor(
+        api_key=api_key,
+        lease_broker=lease_broker,
+        budget=budget,
+        mobile_settings=cfg.mobile_web_settings,
     )
 
 
@@ -1412,8 +1428,9 @@ def cmd_validate_model_qualification(args: argparse.Namespace) -> int:
 
 
 def cmd_agentic_status(args: argparse.Namespace) -> int:
-    """Show only redacted local canary metrics and exact remaining gates."""
+    """Show redacted owner-health and invitee-promotion canary gates."""
     from booksaver.domain.agentic_qualification import evaluate_agentic_canary
+    from booksaver.domain.model_policy import UsdAmount
     from booksaver.infrastructure.persistence.sqlite_store import (
         SqliteAgenticQualificationRepository,
     )
@@ -1424,13 +1441,29 @@ def cmd_agentic_status(args: argparse.Namespace) -> int:
         repository = SqliteAgenticQualificationRepository(store)
         state = repository.qualification_state()
         evidence = repository.list_checks(owner.user_id)
-        verdict = evaluate_agentic_canary(
+        policy_version = (
+            cfg.agentic_browser_settings.price_executor.qualification_policy_version
+        )
+        owner_health = evaluate_agentic_canary(
             evidence,
             deployment_owner_user_id=owner.user_id,
             owner_approved=False,
+            policy_version=policy_version,
+            average_cost_limit=UsdAmount(250_000),
         )
-    metrics = verdict.metrics
+        promotion = evaluate_agentic_canary(
+            evidence,
+            deployment_owner_user_id=owner.user_id,
+            owner_approved=False,
+            policy_version=policy_version,
+        )
+    metrics = promotion.metrics
     print(f"Routing config  : {cfg.agentic_browser_settings.routing.value}")
+    print(f"Price executor  : {cfg.agentic_browser_settings.price_executor.value}")
+    print(
+        "Price policy    : "
+        f"{cfg.agentic_browser_settings.price_executor.qualification_policy_version}"
+    )
     print(f"Inventory route : {cfg.agentic_browser_settings.inventory_routing.value}")
     print(f"Qualification   : {state.status.value}")
     print(f"Owner checks    : {metrics.checks}")
@@ -1444,12 +1477,21 @@ def cmd_agentic_status(args: argparse.Namespace) -> int:
     print(f"p95 cost        : ${metrics.p95_cost.as_decimal_string()}")
     print(f"p95 duration    : {metrics.p95_duration_ms}ms")
     print(f"Fallback rate   : {metrics.fallback_rate:.1%}")
-    non_approval = [
+    owner_blockers = [
         blocker.value
-        for blocker in verdict.blockers
+        for blocker in owner_health.blockers
         if blocker.value != "owner_approval_required"
     ]
-    print("Remaining gates : " + (", ".join(non_approval) or "owner promotion approval"))
+    promotion_blockers = [
+        blocker.value
+        for blocker in promotion.blockers
+        if blocker.value != "owner_approval_required"
+    ]
+    print("Owner health    : " + (", ".join(owner_blockers) or "healthy"))
+    print(
+        "Invitee gates   : "
+        + (", ".join(promotion_blockers) or "owner promotion approval")
+    )
     return 0
 
 
@@ -1493,6 +1535,9 @@ def cmd_agentic_promote(args: argparse.Namespace) -> int:
             repository.list_checks(owner.user_id),
             deployment_owner_user_id=owner.user_id,
             owner_approved=True,
+            policy_version=(
+                cfg.agentic_browser_settings.price_executor.qualification_policy_version
+            ),
             now=approved_at,
         )
         if not verdict.promotable:
@@ -1505,6 +1550,9 @@ def cmd_agentic_promote(args: argparse.Namespace) -> int:
         repository.promote(
             owner_user_id=owner.user_id,
             approved_at=approved_at,
+            policy_version=(
+                cfg.agentic_browser_settings.price_executor.qualification_policy_version
+            ),
         )
     print(
         "Agentic qualification promoted locally. Set [agentic_browser] routing = "
@@ -1526,6 +1574,9 @@ def cmd_agentic_regress(args: argparse.Namespace) -> int:
                 owner_user_id=owner.user_id,
                 regression_code=args.code,
                 observed_at=datetime.now(UTC),
+                policy_version=(
+                    cfg.agentic_browser_settings.price_executor.qualification_policy_version
+                ),
             )
         except (PermissionError, ValueError) as exc:
             print(f"Agentic regression rejected: {exc}", file=sys.stderr)

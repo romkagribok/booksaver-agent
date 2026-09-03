@@ -1,12 +1,15 @@
 ---
 id: ADR-041
 title: Trigger-specific local Browser Use execution for bookings
-status: accepted
+status: superseded
 created: 2026-08-30T18:15:00Z
 bolt: 060-agentic-inventory-executor
 ---
 
 # ADR-041: Trigger-Specific Local Browser Use Execution for `/bookings`
+
+> Superseded by ADR-044 after `/bookings` qualification and an exact-container price replay proved
+> that the remaining Stagehand inventory prerequisite prevented Browser Use price execution.
 
 ## Context
 

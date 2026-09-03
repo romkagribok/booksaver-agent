@@ -48,6 +48,7 @@ ENV ANONYMIZED_TELEMETRY=false \
 # Install Python dependencies first for better layer caching.
 COPY pyproject.toml requirements.lock ./
 COPY src ./src
+COPY scripts/price_check_probe.py ./scripts/price_check_probe.py
 RUN pip install --no-cache-dir --requirement requirements.lock \
     && pip install --no-cache-dir --no-deps . \
     && pip check \

@@ -20,13 +20,12 @@ use; each choice is recorded in `standards/decision-index.md`.
   mode-0700 vault (ADRs 019 and 024). Legacy global session state is explicit migration input only.
 - **Config**: `config.toml` via stdlib `tomllib`; secrets exclusively from environment variables (ADR-002).
 - **Browser automation**: Playwright + bundled Chromium remains the legacy and `/connect` runtime
-  (ADR-007, ADR-008). The opt-in price executor adds exact-pinned Stagehand 4.0.1 in-process on the
-  same installed Chromium, with semantic observe/guard/replay/extract followed by at most one
-  guarded Anthropic computer-use episode (ADRs 036 and 037). Agentic inventory uses exact-pinned
-  Browser Use 0.11.13 only for `/bookings` and Stagehand for the other triggers, behind the same
-  provider-neutral executor contract and BookSaver-owned positive-only validation boundary
-  (ADR-041). No Browserbase service, cross-run cache, selector learning, generated repair, or
-  self-heal persistence is enabled.
+  (ADR-007, ADR-008). Every admitted manual and scheduled agentic price check defaults to
+  exact-pinned Browser Use 0.11.13 in-process; Stagehand 4.0.1 remains an explicit adapter rollback
+  and is never an automatic same-job fallback (ADR-043). Agentic inventory uses Browser Use for
+  every trigger behind provider-neutral contracts and BookSaver-owned validation boundaries
+  (ADR-044). No Browserbase service, cross-run cache,
+  selector learning, generated repair, or self-heal persistence is enabled.
 - **Authenticated mobile web**: each check uses a fresh Android Chromium context with the exact
   booking owner's session and records authenticated/Genius provenance (ADR-025).
 - **Remote authentication (opt-in)**: stdlib `http.server` application behind a Caddy TLS sidecar;

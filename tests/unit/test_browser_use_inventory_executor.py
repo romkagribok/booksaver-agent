@@ -257,6 +257,15 @@ def test_action_guard_allows_read_only_inventory_navigation_without_exact_labels
         },
     )
     assert guard.allows_click(
+        current_url="https://www.booking.com/searchresults.html?checkout=2026-11-25",
+        label="The Union Club Hotel",
+        role="link",
+        attributes={
+            "href": "/hotel/us/union-club.html?checkin=2026-11-24&checkout=2026-11-25",
+            "class": "property-card checkout-date-result",
+        },
+    )
+    assert guard.allows_click(
         current_url="https://secure.booking.com/mytrips.html",
         label="West Lafayette Nov 24 Nov 25 1 booking",
         role="link",
@@ -275,6 +284,12 @@ def test_action_guard_rejects_overlong_and_multiply_encoded_unsafe_metadata() ->
     )
     assert not guard.observable_url(
         "https://secure.booking.com/myreservations.html?value=" + "x" * 4_001
+    )
+    assert (
+        guard.observable_url_rejection_reason(
+            "https://secure.booking.com/%252563ancel-reservation"
+        )
+        == "unsafe_route_term"
     )
     assert not guard.allows_click(
         current_url="https://secure.booking.com/myreservations.html",

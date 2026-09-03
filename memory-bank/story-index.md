@@ -486,6 +486,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
 | `004-agentic-inventory-executor` | 9 stories | Complete (bolt 063) |
 | `005-legacy-price-selector-retirement` | 1 story | Blocked (bolt 055; post-promotion) |
+| `006-browser-use-price-executor` | 6 stories | Complete (bolt 064) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
 
@@ -533,6 +534,17 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 |-------|-------|-----|--------|------|
 | `US-154` | Retire legacy price selectors after rollback window | Agentic Browser | Blocked | `005-legacy-price-selector-retirement/stories/001-retire-legacy-price-selectors-after-rollback.md` |
 
+### 006-browser-use-price-executor: Browser Use Price Executor
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-164` | Default manual and scheduled price checks to Browser Use | Agentic Browser | Complete | `006-browser-use-price-executor/stories/001-default-price-checks-to-browser-use.md` |
+| `US-165` | Execute a guarded typed Browser Use price episode | Agentic Browser | Complete | `006-browser-use-price-executor/stories/002-execute-guarded-browser-use-price-episode.md` |
+| `US-166` | Diagnose the model-visible price page before paid inference | Agentic Browser | Complete | `006-browser-use-price-executor/stories/003-diagnose-model-visible-price-page.md` |
+| `US-167` | Preserve explicit rollback and qualify Browser Use independently | Agentic Browser | Complete | `006-browser-use-price-executor/stories/004-preserve-rollback-and-qualify-browser-use.md` |
+| `US-168` | Replay the deployed Browser Use price path without Telegram | Agentic Browser | Complete | `006-browser-use-price-executor/stories/005-replay-deployed-browser-use-price-path.md` |
+| `US-169` | Remove the Stagehand inventory prerequisite from price operations | Agentic Browser | Complete | `006-browser-use-price-executor/stories/006-remove-stagehand-inventory-price-prerequisite.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -559,7 +571,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 5 | 21 | In construction (inventory bolt 063 complete; price canary bolt 052 active, bolt 055 blocked) |
+| `023-replaceable-agentic-browser-executor` | 6 | 26 | In construction (Browser Use price bolt 064 planned; price canary bolt 052 active, bolt 055 blocked) |
 
-All 162 stories (158 complete in-scope, 2 post-MVP extensibility, and 2 live-gated/blocked stories)
-are assigned exactly once.
+All 167 stories (158 complete in-scope, 5 ready, 2 post-MVP extensibility, and 2
+live-gated/blocked stories) are assigned exactly once.

@@ -67,6 +67,8 @@ def test_agentic_status_is_redacted_and_promotion_stays_blocked(tmp_path, capsys
     assert "Inventory route : agentic" in output
     assert "Owner checks    : 1" in output
     assert "too_few_checks" in output
+    assert "Owner health    :" in output
+    assert "Invitee gates   :" in output
     assert "Hotel" not in output
 
     promote = _args(config_path, "promote")
