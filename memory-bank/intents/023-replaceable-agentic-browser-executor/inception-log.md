@@ -1,7 +1,7 @@
 ---
 intent: 023-replaceable-agentic-browser-executor
 created: 2026-08-14T02:46:26Z
-completed: 2026-09-02T23:44:45Z
+completed: 2026-09-03T23:32:00Z
 status: amended
 ---
 
@@ -55,27 +55,31 @@ rollback choices without same-job fallback. The owner accepted an initial USD 0.
 average with the existing USD 0.50 p95 and USD 1 hard cap, while retaining USD 0.10/check for
 invited-user promotion, and authorized construction through Bugbot review when available, merge,
 production deployment, and a production-equivalent price replay.
+On 2026-09-03 the owner authorized an explicit early rollout to every active invitee who has
+accepted the current disclosure and requested owner-only API funding visibility. This approval
+covers FR-21, FR-22, Unit 007, both DDD decisions, construction checkpoints, Cursor Bugbot review,
+and merge. It does not authorize silent consent, personal-key use by Browser Use, or deployment.
 
 ## Artifacts Created
 
 | Artifact | Status | File |
 |----------|--------|------|
-| Requirements | Amended | `requirements.md` (FR-1 through FR-20) |
+| Requirements | Amended | `requirements.md` (FR-1 through FR-22) |
 | System Context | Amended | `system-context.md` |
-| Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-044 |
-| Units | Amended | `units.md` and six unit briefs |
-| Stories | Amended | 27 story files (US-143 through US-169) |
-| Bolt Plan | Amended | Bolts 050 through 064, with 052 live-gated and 055 blocked |
+| Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-046 |
+| Units | Amended | `units.md` and seven unit briefs |
+| Stories | Amended | 29 story files (US-143 through US-171) |
+| Bolt Plan | Amended | Bolts 050 through 065, with 052 live-gated and 055 blocked |
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
-| Functional Requirements | 20 |
+| Functional Requirements | 22 |
 | Non-Functional Requirements | 7 |
-| Units | 6 |
-| Stories | 27 |
-| Bolts Planned | 6 plus corrective bolts 054 and 056 through 064 |
+| Units | 7 |
+| Stories | 29 |
+| Bolts Planned | 16 (050 through 065; 052 live-gated and 055 blocked) |
 
 ## Decision Log
 
@@ -107,6 +111,8 @@ production deployment, and a production-equivalent price replay.
 | 2026-09-02 | Keep Stagehand and deterministic execution as explicit rollback only | Avoid masking Browser Use failures or doubling model spend while preserving reversible future-job routing | Yes |
 | 2026-09-02 | Qualify Browser Use under a new policy identity and production replay | Old Stagehand evidence cannot prove the new adapter; live deployed execution must terminate with accepted evidence | Yes |
 | 2026-09-03 | Expand Browser Use to every agentic inventory trigger | The exact `/checknow` replay stopped at its Stagehand inventory prerequisite before Browser Use price execution; the already-proven Browser Use inventory adapter removes that reliability dependency without expanding authority | Yes |
+| 2026-09-03 | Add an explicit consented-user Browser Use route | Give disclosed invitees parity now without renaming owner canary or inventing qualification evidence | Yes |
+| 2026-09-03 | Show only secret-safe API funding provenance to the owner | The owner needs cost responsibility visibility, while raw keys and exact user data remain forbidden | Yes |
 
 ## Ready for Construction
 
@@ -120,8 +126,6 @@ production deployment, and a production-equivalent price replay.
 
 ## Next Steps
 
-1. Execute bolt 064 to extend the proven local Browser Use runtime to price execution and all
-   agentic inventory prerequisites.
-2. Verify the exact deployed price path through the operator-only isolated replay.
-3. Continue Browser Use-specific owner-canary evidence under the amended cost gates.
-4. Keep bolt 055 blocked until price promotion and the 30-day rollback window complete.
+1. Configure and deploy `consented_users` only through a separately authorized operations step.
+2. Continue Browser Use-specific qualification evidence as a monitoring and rollback signal.
+3. Keep bolt 055 blocked until the actual rollout and the 30-day rollback window complete.

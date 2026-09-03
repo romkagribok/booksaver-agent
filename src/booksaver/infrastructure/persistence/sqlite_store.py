@@ -100,13 +100,14 @@ _MACHINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 @dataclass(frozen=True, slots=True)
 class AdminUserAggregate:
-    """Allowlisted admin projection; contains no Telegram id or booking data."""
+    """Allowlisted admin projection; contains no secret, Telegram id, or booking data."""
 
     user_id: int
     telegram_username: str | None
     role: UserRole
     access_state: UserAccessState
     active_booking_count: int
+    personal_key_configured: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -3023,7 +3024,9 @@ class SqliteUserRepository:
                 u.telegram_username,
                 u.role,
                 u.access_state,
-                COUNT(CASE WHEN b.status = 'active' THEN 1 END) AS active_booking_count
+                COUNT(CASE WHEN b.status = 'active' THEN 1 END) AS active_booking_count,
+                MAX(CASE WHEN u.encrypted_key IS NULL THEN 0 ELSE 1 END)
+                    AS personal_key_configured
             FROM users AS u
             LEFT JOIN bookings AS b ON b.user_id = u.user_id
             GROUP BY
@@ -3042,6 +3045,7 @@ class SqliteUserRepository:
                 role=UserRole(row["role"]),
                 access_state=UserAccessState(row["access_state"]),
                 active_booking_count=int(row["active_booking_count"]),
+                personal_key_configured=bool(row["personal_key_configured"]),
             )
             for row in rows
         ]

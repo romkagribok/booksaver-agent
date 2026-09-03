@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-09-03T00:00:00Z
-total_decisions: 43
+last_updated: 2026-09-03T23:40:07Z
+total_decisions: 46
 ---
 
 # Decision Index
@@ -17,6 +17,28 @@ Use this to find relevant prior decisions when working on related features.
 ---
 
 ## Decisions
+
+### ADR-046: Secret-safe admin API funding provenance
+- **Status**: accepted
+- **Date**: 2026-09-03
+- **Bolt**: 065-shared-browser-use-access (shared-browser-use-access)
+- **Path**: `bolts/065-shared-browser-use-access/adr-046-secret-safe-admin-api-funding-provenance.md`
+- **Summary**: Show the owner that Browser Use is deployment-owner-funded and whether each user's
+  personal legacy key is configured, using only an aggregate SQL boolean and never a key
+  representation or unsupported historical attribution.
+- **Read when**: Changing `/admin users`, user aggregate projections, personal-key visibility,
+  Browser Use funding, hybrid billing, or API-key privacy boundaries.
+
+### ADR-045: Explicit consented-user Browser Use rollout
+- **Status**: accepted
+- **Date**: 2026-09-03
+- **Bolt**: 065-shared-browser-use-access (shared-browser-use-access)
+- **Path**: `bolts/065-shared-browser-use-access/adr-045-explicit-consented-user-browser-use-rollout.md`
+- **Summary**: Add an explicit owner-authorized route that admits the owner and currently disclosed
+  active invitees to Browser Use before statistical qualification, without changing historical
+  route meanings, fabricating evidence, or weakening regression and safety gates.
+- **Read when**: Changing agentic routing, invitee Browser Use access, disclosure admission,
+  qualification semantics, regression rollback, or manual-versus-scheduled parity.
 
 ### ADR-043: Browser Use default price execution with explicit rollback
 - **Status**: accepted
@@ -88,7 +110,7 @@ Use this to find relevant prior decisions when working on related features.
   inventory rollback.
 
 ### ADR-038: Owner-only canary, consented promotion, and rollback window
-- **Status**: accepted
+- **Status**: amended by ADR-045
 - **Date**: 2026-08-16
 - **Bolt**: 052-agentic-browser-qualification (agentic-browser-qualification)
 - **Path**: `bolts/052-agentic-browser-qualification/adr-038-owner-canary-promotion-and-rollback.md`

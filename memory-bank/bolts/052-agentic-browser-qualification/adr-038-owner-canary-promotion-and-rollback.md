@@ -1,7 +1,7 @@
 ---
 bolt: 052-agentic-browser-qualification
 created: 2026-08-16T19:18:41Z
-status: accepted
+status: amended-by-ADR-045
 ---
 
 # ADR-038: Owner-Only Canary, Consented Promotion, and Rollback Window
@@ -36,3 +36,10 @@ removed only by a later release decision if unused.
 
 Promotion takes at least 14 days and requires owner work. In exchange, the deployment has observable
 evidence, user consent, and a bounded rollback path.
+
+## Amendment by ADR-045
+
+ADR-045 preserves the qualification-gated `agentic` route defined here and adds a distinct
+`consented_users` route. That explicit owner-selected route may admit currently disclosed invitees
+before the statistical gate completes, does not fabricate or mutate qualification evidence, and
+remains subject to recorded regression and every existing safety boundary.

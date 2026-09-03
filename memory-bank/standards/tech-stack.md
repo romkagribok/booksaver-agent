@@ -24,7 +24,9 @@ use; each choice is recorded in `standards/decision-index.md`.
   exact-pinned Browser Use 0.11.13 in-process; Stagehand 4.0.1 remains an explicit adapter rollback
   and is never an automatic same-job fallback (ADR-043). Agentic inventory uses Browser Use for
   every trigger behind provider-neutral contracts and BookSaver-owned validation boundaries
-  (ADR-044). No Browserbase service, cross-run cache,
+  (ADR-044). An explicit `consented_users` route admits the owner and currently disclosed active
+  invitees before statistical qualification without changing stored evidence (ADR-045). No
+  Browserbase service, cross-run cache,
   selector learning, generated repair, or self-heal persistence is enabled.
 - **Authenticated mobile web**: each check uses a fresh Android Chromium context with the exact
   booking owner's session and records authenticated/Genius provenance (ADR-025).
@@ -35,6 +37,9 @@ use; each choice is recorded in `standards/decision-index.md`.
   portfolio and `BOOKSAVER_LLM_API_KEY` (ADRs 009 and 031). The agentic executor permits Sonnet 5
   only for semantic and computer-use control; Opus never controls the browser. Calls share exact
   persisted USD admission/reconciliation and the existing hard job/day/time/action limits.
+  Agentic Browser Use always uses the deployment owner's environment key; the owner-only Telegram
+  aggregate may show that policy and boolean personal legacy-key presence, never key material
+  (ADR-046).
 - **Notifications**: stdlib `smtplib` (STARTTLS) for email, stdlib `urllib` against the Telegram Bot API (ADR-011); no BookSaver cloud relay.
 - **Reservation authority**: authenticated Booking.com inventory is synchronized read-only;
   BookSaver reports savings but never creates or guides a rebooking workflow (ADR-027).

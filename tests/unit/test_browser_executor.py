@@ -312,6 +312,35 @@ def test_routing_is_legacy_by_default_and_owner_only_in_canary() -> None:
     assert owner.reason is RoutingReason.OWNER_CANARY
 
 
+def test_consented_users_admits_owner_and_disclosed_invitee_before_qualification() -> None:
+    owner = resolve_execution_route(
+        ExecutionRoutingMode.CONSENTED_USERS,
+        _route_context(owner=True),
+    )
+    invitee = resolve_execution_route(
+        ExecutionRoutingMode.CONSENTED_USERS,
+        _route_context(acknowledged="disclosure-v1"),
+    )
+
+    assert owner.use_agentic
+    assert invitee.use_agentic
+    assert owner.reason is RoutingReason.OWNER_CONSENTED_ROLLOUT
+    assert invitee.reason is RoutingReason.INVITEE_CONSENTED_ROLLOUT
+
+
+@pytest.mark.parametrize("acknowledged", [None, "disclosure-v0"])
+def test_consented_users_requires_current_invitee_disclosure(
+    acknowledged: str | None,
+) -> None:
+    decision = resolve_execution_route(
+        ExecutionRoutingMode.CONSENTED_USERS,
+        _route_context(acknowledged=acknowledged),
+    )
+
+    assert not decision.use_agentic
+    assert decision.reason is RoutingReason.DISCLOSURE_REQUIRED
+
+
 def test_invitee_agentic_requires_qualification_and_current_disclosure() -> None:
     unqualified = resolve_execution_route(
         ExecutionRoutingMode.AGENTIC, _route_context(acknowledged="disclosure-v1")
@@ -367,9 +396,13 @@ def test_owner_agentic_mode_still_requires_completed_qualification() -> None:
     assert admitted.reason is RoutingReason.OWNER_AGENTIC
 
 
-def test_regression_forces_legacy_even_for_owner() -> None:
+@pytest.mark.parametrize(
+    "mode",
+    [ExecutionRoutingMode.AGENTIC, ExecutionRoutingMode.CONSENTED_USERS],
+)
+def test_regression_forces_legacy_even_for_owner(mode: ExecutionRoutingMode) -> None:
     decision = resolve_execution_route(
-        ExecutionRoutingMode.AGENTIC,
+        mode,
         _route_context(owner=True, status=QualificationStatus.REGRESSED),
     )
     assert not decision.use_agentic
@@ -502,6 +535,12 @@ def test_config_inventory_routing_is_independent_from_price() -> None:
 
     assert settings.routing is ExecutionRoutingMode.OWNER_CANARY
     assert settings.inventory_routing is InventoryExecutionRoutingMode.LEGACY
+
+
+def test_config_accepts_consented_users_price_routing() -> None:
+    settings = load_config(_ConfigSource(routing="consented_users")).agentic_browser_settings
+
+    assert settings.routing is ExecutionRoutingMode.CONSENTED_USERS
 
 
 def test_config_rejects_unknown_agentic_routing() -> None:

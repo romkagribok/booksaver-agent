@@ -2,7 +2,7 @@
 intent: 023-replaceable-agentic-browser-executor
 status: accepted
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-03T01:41:00Z
+updated: 2026-09-03T23:32:00Z
 ---
 
 # Architecture Decisions: Replaceable Agentic Browser Executor
@@ -91,6 +91,22 @@ inventory verification, but that verification no longer depends on Stagehand. Po
 reconciliation, the shared limits, the provider-neutral port, and fail-closed behavior remain
 unchanged; there is still no second harness inside a failed job.
 
+## Decision 12: A distinct consented-user route enables explicit early rollout
+
+Add `consented_users` without changing the historical meaning of `owner_canary` or the
+qualification-gated `agentic` route. The owner is admitted immediately; an active invitee is
+admitted only when the stored disclosure acknowledgement matches the configured version. A recorded
+regression remains stronger than this route. Selecting it records an owner decision rather than
+fabricating qualification evidence, and manual and scheduled work continue through one route.
+
+## Decision 13: Admin visibility exposes provenance, never key identity
+
+The owner-only aggregate user projection may state that Browser Use is funded by the deployment
+owner and whether an encrypted personal key exists for legacy work. The projection derives only a
+boolean presence flag in SQL and never decrypts, fingerprints, fragments, validates, or returns key
+material. This narrowly amends Intent 010's prohibition on personal-key state while preserving its
+aggregate-only and no-exact-record guarantees.
+
 ## Formal ADRs
 
 - ADR-036: Trusted control plane and provider-neutral browser-executor port.
@@ -99,5 +115,8 @@ unchanged; there is still no second harness inside a failed job.
 - ADR-039: Capability-specific agentic inventory with positive-only reconciliation.
 - ADR-040: Separate destination observation from interaction authority.
 - ADR-041: Trigger-specific local Browser Use execution for `/bookings`.
+- ADR-042: Booking-required AWS WAF token bootstrap egress.
 - ADR-043: Browser Use default price execution with explicit rollback.
 - ADR-044: Browser Use for all agentic inventory triggers.
+- ADR-045: Explicit consented-user Browser Use rollout.
+- ADR-046: Secret-safe admin API funding provenance.

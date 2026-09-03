@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-09-02T23:44:45Z
+updated: 2026-09-03T23:30:00Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -20,10 +20,10 @@ use -> BookSaver validation/evaluation`. The executor may perceive and navigate 
 but it never becomes authoritative for identity, authentication, equivalence, refundability,
 pricing eligibility, savings, persistence, notification, or any transaction.
 
-The first vertical slice replaces both navigation and rate-table perception for owner price checks.
-Legacy price checks remain the default and rollback path until qualification succeeds. Agentic
-inventory is pulled forward because the legacy inventory prerequisite prevents the price canary
-from running. It rolls out to every authorized, disclosed user with positive-only reconciliation;
+The initially accepted vertical slice replaced both navigation and rate-table perception for owner
+price checks while keeping legacy price checks as the default and rollback path. Agentic inventory
+was pulled forward because the legacy inventory prerequisite prevented the price canary from
+running. It rolled out to every authorized, disclosed user with positive-only reconciliation;
 legacy inventory remains a capability-specific rollback path.
 
 The `/bookings` command proved the first reliability-focused Browser Use slice against live
@@ -31,6 +31,13 @@ Booking.com inventory. The next slice makes local Browser Use the default price 
 `/checknow` and scheduled checks through the existing price-executor port. Stagehand and the
 deterministic path remain explicit rollback choices rather than same-job fallbacks. BookSaver still
 owns every acceptance and savings decision.
+
+The deployment owner has now authorized Browser Use for every active invited user who accepts the
+current disclosure. A distinct `consented_users` route records that deliberate early rollout without
+claiming the statistical qualification gate has passed. Qualification remains an ongoing reliability,
+cost, and regression signal. The owner-only Telegram admin projection may also expose the effective
+Browser Use funding policy and a coarse personal-legacy-key configured/not-configured flag, but no
+secret value or fingerprint.
 
 ## Functional Requirements
 
@@ -113,7 +120,10 @@ owns every acceptance and savings decision.
 - **Description**: Route price and inventory capabilities independently while preserving legacy
   price and inventory paths as explicit rollback modes.
 - **Acceptance Criteria**:
-  - Price routing keeps the existing `legacy`, `owner_canary`, and `agentic` qualification rules.
+  - Price routing keeps `legacy`, `owner_canary`, and qualification-gated `agentic`, and adds an
+    explicit `consented_users` mode for owner-authorized early rollout.
+  - `consented_users` admits the owner immediately and active invitees only after acknowledgement of
+    the current disclosure; it never fabricates or mutates qualification evidence.
   - Inventory routing is `agentic` for every authorized user who has accepted the current
     disclosure; it does not wait for price qualification.
   - A capability can regress to `legacy` without changing the other capability's route.
@@ -140,25 +150,30 @@ owns every acceptance and savings decision.
 - **Priority**: Must
 
 ### FR-9: Price qualification and automatic regression response
-- **Description**: Qualify the agentic price path against adversarial fixtures and an owner-only
-  live canary before invited-user price promotion.
+- **Description**: Measure the agentic price path against adversarial fixtures and an owner-only
+  live canary for qualification-gated promotion and ongoing regression decisions.
 - **Acceptance Criteria**:
   - Fixtures vary classes, test IDs, nesting, overlays, iframe/shadow placement, and accessibility
     quality without changing BookSaver selectors.
   - At least 30 live checks span at least 14 days, with at least 10 successful observations manually
     compared to visible Booking.com offers.
-  - Eligible unblocked checks achieve at least 95% valid observations, average cost at most USD 0.10,
-    p95 cost at most USD 0.50, p95 duration at most 180 seconds, and ordinary computer-use
-    escalation at most 20%.
+  - Eligible unblocked owner-canary checks achieve at least 95% valid observations, average cost at
+    most USD 0.25, p95 cost at most USD 0.50, p95 duration at most 180 seconds, and ordinary
+    computer-use escalation at most 20%. Qualification-gated invited-user promotion additionally
+    requires average cost at most USD 0.10/check.
   - Any prohibited action, non-allowlisted destination, session leak, false accepted offer, or
-    cost-cap breach blocks or reverses promotion. During rollback, three consecutive eligible
-    invalid observations are a repeated reliability regression and return routing to legacy.
+    cost-cap breach blocks or reverses qualification-gated promotion. During rollback, three
+    consecutive eligible invalid owner observations are a repeated reliability regression and
+    return future price routing to legacy.
+  - An explicit `consented_users` rollout does not claim these statistical gates passed; evidence
+    remains visible for monitoring, cost tuning, and an operator rollback decision.
 - **Priority**: Must
 
 ### FR-10: Provider-neutral agentic inventory execution
-- **Description**: Add a separate `InventoryBrowserExecutor` and use local Stagehand plus one
-  guarded computer-use episode for every authorized user's account-inventory perception, without
-  inserting Stagehand as another recovery tier inside the legacy selector parser.
+- **Description**: Add a separate `InventoryBrowserExecutor` for every authorized user's
+  account-inventory perception without inserting a harness as another recovery tier inside the
+  legacy selector parser. Stagehand was the initial adapter; FR-20 makes Browser Use the selected
+  adapter for every agentic inventory trigger.
 - **Acceptance Criteria**:
   - The request contains an execution ID, authorized user/account binding, fixed required scopes,
     opaque session lease, absolute deadline, action limit, and cost limit; the result contains only
@@ -258,7 +273,9 @@ owns every acceptance and savings decision.
   - Manual and scheduled price checks use the same executor, validation, budgeting, and result
     pipeline; trigger type cannot select a different price implementation.
   - Owner-canary price routes use Browser Use immediately after deployment.
-  - Invited-user price routing retains the current disclosure and qualification gates.
+  - Invited-user price routing retains the current disclosure gate. The qualification-gated
+    `agentic` route remains available, while `consented_users` permits explicit owner-authorized
+    rollout before the statistical gate completes.
   - The price operation's required current-run inventory verification uses the already-qualified
     Browser Use inventory adapter, so a Stagehand prerequisite cannot prevent Browser Use price
     execution; `/connect` behavior remains unchanged.
@@ -333,7 +350,10 @@ owns every acceptance and savings decision.
     manual comparisons with visible Booking.com offers.
   - Eligible unblocked checks achieve at least 95% accepted observations, average cost at most USD
     0.25, p95 cost at most USD 0.50, p95 duration at most 180 seconds, and no hard-limit breach.
-  - Invited-user promotion additionally requires average cost at most USD 0.10/check.
+  - Qualification-gated invited-user promotion additionally requires average cost at most USD
+    0.10/check.
+  - The distinct `consented_users` route may be selected by the deployment owner before those
+    statistical gates complete, without rewriting the stored qualification state.
   - Any prohibited action, unsafe destination, session leak, false accepted offer, transaction
     attempt, or cost-cap breach blocks promotion and invokes existing regression handling.
 - **Priority**: Must
@@ -365,6 +385,40 @@ owns every acceptance and savings decision.
   - No same-job Stagehand or legacy fallback is added.
 - **Priority**: Must
 
+### FR-21: Consented invited-user Browser Use parity
+- **Description**: Give every active invited user who has accepted the current disclosure the same
+  Browser Use inventory and price execution path as the deployment owner for manual and scheduled
+  work.
+- **Acceptance Criteria**:
+  - A closed `consented_users` price-routing mode admits the owner and currently disclosed active
+    invitees without requiring a statistically qualified state.
+  - Missing or stale disclosure acknowledgement keeps an invitee out of Browser Use; no authenticated
+    page content is sent to Anthropic silently.
+  - A recorded regression continues to force legacy price routing for every user, and all existing
+    authorization, session, action, destination, cost, timeout, validation, and no-transaction guards
+    remain binding.
+  - `/checknow` and scheduled price checks resolve the same route, and agentic inventory continues to
+    use Browser Use for the owner and currently disclosed active invitees.
+  - Existing `legacy`, `owner_canary`, and qualification-gated `agentic` behavior remains available
+    for explicit rollback, diagnosis, and later evidence-based promotion.
+- **Priority**: Must
+
+### FR-22: Secret-safe admin API funding visibility
+- **Description**: Let the deployment owner see how each user's browser work is funded and whether
+  that user has a personal key configured for legacy LLM work, without exposing secret material.
+- **Acceptance Criteria**:
+  - `/admin users` states that Browser Use is funded by the deployment owner's
+    `BOOKSAVER_LLM_API_KEY` for every user.
+  - The aggregate user projection exposes only `personal legacy key=configured` or
+    `personal legacy key=not configured`, derived without decrypting the stored ciphertext.
+  - Output never contains plaintext, ciphertext, prefix, suffix, hash, fingerprint, validation
+    result, or any other reusable or correlatable representation of an API key.
+  - The projection remains owner-only and aggregate-only, does not materialize exact booking/check
+    records, and stays available even when in-memory usage counters are unavailable.
+  - No schema migration is required and historical costs are not falsely attributed to a key source
+    that was not persisted with the attempt.
+- **Priority**: Must
+
 ## Non-Functional Requirements
 
 ### NFR-1: Safety
@@ -375,6 +429,8 @@ owns every acceptance and savings decision.
 - Authenticated page content may be sent only to the owner-configured Anthropic account after
   disclosure; session material stays local and ephemeral. Content-bearing evidence is never
   persisted by default.
+- Telegram may expose coarse key presence only to the deployment owner; all key representations and
+  exact user domain data remain prohibited.
 
 ### NFR-3: Reliability
 - Ordinary DOM churn should be absorbed without BookSaver selector changes; qualification measures
@@ -387,9 +443,9 @@ owns every acceptance and savings decision.
 
 ### NFR-4: Cost
 - Initial Browser Use owner canary requires average model cost no greater than USD 0.25/check;
-  invited-user promotion requires no greater than USD 0.10/check, approximating USD 9 per
-  booking-month at three checks per day. The USD 0.50 p95, USD 1/check, and USD 10/day hard caps
-  remain binding.
+  qualification-gated invited-user promotion requires no greater than USD 0.10/check. An explicit
+  `consented_users` rollout may precede that target, but the USD 0.50 p95, USD 1/check, and USD
+  10/day hard caps remain binding and measurements remain visible for tuning.
 - Inventory and price phases in one operation share admission, reconciliation, and one absolute
   deadline; duplicate `/checknow` inventory execution is prohibited.
 
@@ -416,7 +472,8 @@ owns every acceptance and savings decision.
   the user's own device.
 - Browser Use and Stagehand are pinned to qualified releases; neither executor relies on a
   cross-run action cache.
-- Only `BOOKSAVER_LLM_API_KEY` is used for the first executor.
+- Agentic Browser Use uses only `BOOKSAVER_LLM_API_KEY`; optional encrypted personal keys remain
+  confined to legacy LLM paths until a separate design is accepted.
 
 ## Assumptions
 
@@ -425,7 +482,7 @@ owns every acceptance and savings decision.
 | Anthropic processing of visible authenticated page data is acceptable after disclosure | Invitees may reject the privacy boundary | Keep them on legacy routing and make consent revocable |
 | Browser Use materially reduces selector maintenance | Harness, browser, provider, or bot-defense changes may still require maintenance | Require model-view preflight, redacted diagnostics, fixtures, and live replay; do not claim zero maintenance |
 | Existing Chromium can be shared by executable path, not profile | Packaging mismatch could break VPS startup | Adapter startup test, explicit executable discovery failure, and exact-image Stagehand launch smoke |
-| The live canary can be run by the owner without automation of manual comparison | Promotion may take longer than 14 days | Keep legacy default and expose auditable qualification records |
+| The live canary can be run by the owner without automation of manual comparison | Qualification may take longer than 14 days | Keep auditable records while the explicit consented-user route remains independently reversible |
 | Positive-only agentic inventory can safely unblock known reservations | A reservation may remain preserved after disappearing from Booking.com | Require same-run positive evidence for checks and defer absence authority |
 
 ## Approved Architecture Decisions
@@ -439,4 +496,7 @@ ADR-039. On 2026-09-02 the owner approved FR-13 through FR-19 and authorized the
 extension through construction, review, merge, production deployment, and production-equivalent
 verification. On 2026-09-03 the first exact-container replay proved that Stagehand inventory still
 blocked the price adapter before construction; the owner's instruction to continue until the full
-flow works accepted FR-20 and ADR-044's Browser Use inventory-trigger expansion.
+flow works accepted FR-20 and ADR-044's Browser Use inventory-trigger expansion. On 2026-09-03 the
+owner explicitly authorized currently disclosed invitees to receive the same Browser Use execution
+as the owner and requested secret-safe key/funding visibility in `/admin users`, accepting FR-21,
+FR-22, Unit 007, and construction through Cursor Bugbot review and merge.

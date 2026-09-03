@@ -92,6 +92,7 @@ class ObservationSource(Enum):
 class ExecutionRoutingMode(Enum):
     LEGACY = "legacy"
     OWNER_CANARY = "owner_canary"
+    CONSENTED_USERS = "consented_users"
     AGENTIC = "agentic"
 
     @classmethod
@@ -149,6 +150,8 @@ class RoutingReason(Enum):
     CONFIGURED_LEGACY = "configured_legacy"
     OWNER_CANARY = "owner_canary"
     INVITEE_EXCLUDED_FROM_CANARY = "invitee_excluded_from_canary"
+    OWNER_CONSENTED_ROLLOUT = "owner_consented_rollout"
+    INVITEE_CONSENTED_ROLLOUT = "invitee_consented_rollout"
     OWNER_AGENTIC = "owner_agentic"
     INVITEE_QUALIFIED_AND_CONSENTED = "invitee_qualified_and_consented"
     QUALIFICATION_REQUIRED = "qualification_required"
@@ -516,6 +519,12 @@ def resolve_execution_route(
         if context.is_owner:
             return RoutingDecision(True, RoutingReason.OWNER_CANARY)
         return RoutingDecision(False, RoutingReason.INVITEE_EXCLUDED_FROM_CANARY)
+    if configured is ExecutionRoutingMode.CONSENTED_USERS:
+        if context.is_owner:
+            return RoutingDecision(True, RoutingReason.OWNER_CONSENTED_ROLLOUT)
+        if context.acknowledged_disclosure_version != context.disclosure_version:
+            return RoutingDecision(False, RoutingReason.DISCLOSURE_REQUIRED)
+        return RoutingDecision(True, RoutingReason.INVITEE_CONSENTED_ROLLOUT)
     if context.qualification.policy_version != context.qualification_policy_version:
         return RoutingDecision(False, RoutingReason.QUALIFICATION_REQUIRED)
     if context.qualification.status is not QualificationStatus.QUALIFIED:

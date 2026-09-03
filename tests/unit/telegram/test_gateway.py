@@ -556,6 +556,11 @@ def test_admin_users_command_works_for_owner(tmp_path: Path) -> None:
         tmp_path, cfg, chat_id=owner_chat_id, user_id=owner_chat_id, text="/admin users"
     )
     assert any("Users:" in text for _cid, text in sent)
+    assert any(
+        "API funding: Browser Use=deployment owner; "
+        "personal legacy key=not configured" in text
+        for _cid, text in sent
+    )
 
 
 def test_admin_purge_wiring_cancels_remote_auth_and_deletes_session(

@@ -47,6 +47,7 @@ from booksaver.domain.browser_executor import (
     ExecutionRoutingMode,
     ExecutionUsage,
     ObservationSource,
+    QualificationStatus,
     RedactedProvenance,
     RefundabilityEvidence,
 )
@@ -109,6 +110,7 @@ from booksaver.infrastructure.persistence.scheduled_check_slots import (
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteAccountReservationRepository,
     SqliteAgenticDisclosureConsentRepository,
+    SqliteAgenticQualificationRepository,
     SqliteBookingRepository,
     SqliteCheckHistoryRepository,
     SqliteCheckTraceRepository,
@@ -2282,6 +2284,79 @@ def test_agentic_price_exhausted_shared_allowance_reports_budget(
     assert executor_calls == []
     assert history == [result]
     assert trace is not None
+
+
+def test_disclosed_unqualified_invitee_uses_consented_users_agentic_price_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = _session_repo(tmp_path)
+    booking = make_booking("consented-invitee-agentic-price")
+    config = _config(tmp_path)
+    config.agentic_browser_settings = replace(
+        config.agentic_browser_settings,
+        routing=ExecutionRoutingMode.CONSENTED_USERS,
+    )
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        users = SqliteUserRepository(store)
+        invitee = users.get_or_create_by_telegram_id(202, UserRole.USER)
+        SqliteBookingRepository(store).add(booking, user_id=invitee.user_id)
+        SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+            user_id=invitee.user_id,
+            disclosure_version=config.agentic_browser_settings.disclosure_version,
+            acknowledged_at=datetime.now(UTC),
+        )
+    _seed_session(sessions, invitee.user_id)
+    observed_routes: list[Any] = []
+    executor_factory_calls: list[None] = []
+
+    class Monitor:
+        last_agentic_outcome = None
+        last_agent_steps_used = 0
+        last_llm_calls_used = 0
+
+        def __init__(self, **kwargs: Any) -> None:
+            self.history = kwargs["check_history"]
+            observed_routes.append(kwargs["agentic_route"])
+
+        def set_llm_enabled(self, _enabled: bool) -> None:
+            return None
+
+        def run_authenticated(self, selected: Any, _snapshot: Any) -> CheckResult:
+            result = _failure(selected.booking_id)
+            self.history.add(result)
+            return result
+
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.BookingComSearchMonitor",
+        Monitor,
+    )
+    coordinator = CheckCoordinator(
+        config,
+        threading.Event(),
+        llm_factory_builder=lambda _cfg, _store: object(),
+        notifier_builder=lambda _cfg: [],
+        invalid_key_notifier=lambda _repo, _results: None,
+        browser_factory=BrowserContext,
+        session_repository=sessions,
+        agentic_executor_factory=lambda _budget, _leases: (
+            executor_factory_calls.append(None) or object()
+        ),
+    )
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        qualification = SqliteAgenticQualificationRepository(store).qualification_state()
+        coordinator._run_booking(  # noqa: SLF001 - price-route integration contract
+            store,
+            object(),
+            invitee.user_id,
+            booking,
+        )
+
+    assert qualification.status is QualificationStatus.UNQUALIFIED
+    assert len(observed_routes) == 1
+    assert observed_routes[0].use_agentic
+    assert executor_factory_calls == [None]
 
 
 def test_coordinated_job_never_starts_unbudgeted_legacy_llm_fallback(

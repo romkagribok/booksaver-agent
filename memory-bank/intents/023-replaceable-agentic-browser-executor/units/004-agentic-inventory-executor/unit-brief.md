@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: construction
 status: complete
 created: 2026-08-25T13:00:00.000Z
-updated: 2026-09-01T01:22:26Z
+updated: 2026-09-03T23:40:07Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -15,8 +15,8 @@ default_bolt_type: ddd-construction-bolt
 
 Replace selector-dependent Booking.com inventory perception with provider-neutral agentic browser
 execution while BookSaver retains session custody, validation, positive-only reconciliation,
-scheduling, and check authority. Telegram `/bookings` uses the qualified Browser Use adapter;
-other triggers retain Stagehand until separately migrated.
+scheduling, and check authority. Browser Use now serves every agentic inventory trigger; Stagehand
+is no longer an inventory prerequisite and remains only an explicit price rollback adapter.
 
 ## Scope
 
@@ -98,8 +98,8 @@ other triggers retain Stagehand until separately migrated.
   the coordinator and async browser threads.
 - Provider SDK schema subsets never weaken BookSaver's post-decode validation or positive-only
   reconciliation authority.
-- Browser Use is selected only for `/bookings`, cannot silently fall back within the same job, and
-  receives no cloud, persistent-history, or unsafe default tools.
+- Browser Use is selected for every agentic inventory trigger, cannot silently fall back within the
+  same job, and receives no cloud, persistent-history, or unsafe default tools.
 
 ## Success Criteria
 
