@@ -56,7 +56,16 @@ def _clone_state(source_data: Path, isolated_data: Path) -> None:
     source_db = source_data / "booksaver.db"
     if not source_db.exists():
         raise RuntimeError("production BookSaver database is missing")
-    source = sqlite3.connect(f"file:{source_db}?mode=ro", uri=True)
+    source_wal = source_data / "booksaver.db-wal"
+    if source_wal.exists() and source_wal.stat().st_size:
+        raise RuntimeError(
+            "production BookSaver database still has an uncheckpointed WAL; stop the daemon "
+            "cleanly before replay"
+        )
+    # A WAL-mode database normally asks SQLite to create coordination files even for a read-only
+    # connection.  The production volume is deliberately mounted read-only for this probe, so use
+    # immutable mode only after proving there is no uncheckpointed WAL to omit.
+    source = sqlite3.connect(f"file:{source_db}?mode=ro&immutable=1", uri=True)
     target = sqlite3.connect(isolated_data / "booksaver.db")
     try:
         source.backup(target)

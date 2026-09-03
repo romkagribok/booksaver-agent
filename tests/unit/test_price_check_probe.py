@@ -48,3 +48,20 @@ def test_clone_state_copies_consistent_database_and_encrypted_sessions(tmp_path)
     assert (isolated_data / "booking_sessions" / "7.session").read_bytes() == (
         b"encrypted-session"
     )
+
+
+def test_clone_state_rejects_uncheckpointed_source_wal(tmp_path) -> None:
+    source_data = tmp_path / "production"
+    source_data.mkdir()
+    with sqlite3.connect(source_data / "booksaver.db") as connection:
+        connection.execute("CREATE TABLE proof (value TEXT NOT NULL)")
+        connection.commit()
+    (source_data / "booksaver.db-wal").write_bytes(b"pending")
+    (source_data / "booking_sessions").mkdir()
+
+    try:
+        _clone_state(source_data, tmp_path / "probe")
+    except RuntimeError as exc:
+        assert "uncheckpointed WAL" in str(exc)
+    else:
+        raise AssertionError("an uncheckpointed source database must not be cloned")
