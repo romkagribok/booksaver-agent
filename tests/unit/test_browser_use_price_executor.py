@@ -46,6 +46,7 @@ from booksaver.infrastructure.browser.browser_use_price_executor import (
     GuardedTrustedType,
     _observation_from_state,
     _price_agent_task,
+    _price_entry_url,
     _PriceEpisodeState,
     _terminal_status,
     _trusted_input_node_allowed,
@@ -297,6 +298,42 @@ def test_guard_accepts_the_code_owned_search_url_but_not_transaction_checkout() 
     assert not BrowserUseActionGuard.observable_url(
         "https://www.booking.com/searchresults.html?action=checkout"
     )
+
+
+def test_price_entry_prefers_canonical_property_url_with_trusted_query() -> None:
+    broker = InMemorySessionLeaseBroker()
+    request = _request(broker)
+    request = PriceExecutionRequest(
+        execution_id=request.execution_id,
+        owner_user_id=request.owner_user_id,
+        booking_id=request.booking_id,
+        query=TrustedPriceQuery(
+            property_name=request.query.property_name,
+            property_reference="https://www.booking.com/hotel/us/example.html?old=tracking#top",
+            stay_dates=request.query.stay_dates,
+            occupancy=request.query.occupancy,
+            currency=request.query.currency,
+        ),
+        session_lease=request.session_lease,
+        limits=request.limits,
+    )
+
+    url, kind = _price_entry_url(request)
+
+    assert kind == "property"
+    assert url.startswith("https://www.booking.com/hotel/us/example.html?")
+    assert "checkin=2026-11-24" in url
+    assert "checkout=2026-11-25" in url
+    assert "old=tracking" not in url
+    assert "#" not in url
+
+
+def test_price_entry_uses_search_for_name_only_reference() -> None:
+    broker = InMemorySessionLeaseBroker()
+    url, kind = _price_entry_url(_request(broker))
+
+    assert kind == "search"
+    assert url.startswith("https://www.booking.com/searchresults.html?")
 
 
 def test_terminal_submission_cannot_claim_observed() -> None:

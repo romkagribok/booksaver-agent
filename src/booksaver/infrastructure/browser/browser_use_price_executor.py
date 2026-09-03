@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -312,6 +312,33 @@ def _price_agent_task(request: PriceExecutionRequest) -> str:
     )
 
 
+def _price_entry_url(request: PriceExecutionRequest) -> tuple[str, str]:
+    """Prefer a trusted canonical property page; retain name-only search compatibility."""
+
+    parsed = urlsplit(request.query.property_reference.strip())
+    if parsed.scheme.casefold() == "https" and parsed.hostname:
+        params = {
+            "checkin": request.query.stay_dates.check_in.isoformat(),
+            "checkout": request.query.stay_dates.check_out.isoformat(),
+            "group_adults": str(request.query.occupancy.adults),
+            "group_children": str(request.query.occupancy.children),
+            "no_rooms": str(request.query.occupancy.rooms),
+            "selected_currency": request.query.currency,
+        }
+        candidate = urlunsplit(
+            (
+                "https",
+                parsed.netloc,
+                parsed.path,
+                urlencode(params),
+                "",
+            )
+        )
+        if BrowserUseActionGuard.observable_url(candidate):
+            return candidate, "property"
+    return build_trusted_search_url(request), "search"
+
+
 class LocalBrowserUsePriceRuntime:
     """Hardened Browser Use classic-agent episode for one exact price query."""
 
@@ -378,7 +405,8 @@ class LocalBrowserUsePriceRuntime:
 
         self._failure_stage = "price_navigation"
         meter.record_action()
-        await session.navigate_to(build_trusted_search_url(request), new_tab=False)
+        entry_destination, entry_kind = _price_entry_url(request)
+        await session.navigate_to(entry_destination, new_tab=False)
         await asyncio.sleep(0.5)
         entry_url = await session.get_current_page_url()
         entry_rejection = self._guard.observable_url_rejection_reason(entry_url)
@@ -405,10 +433,11 @@ class LocalBrowserUsePriceRuntime:
         screenshot_ready = await _browser_use_screenshot_available(session)
         logger.info(
             "Browser Use price model-view preflight execution_id=%s semantic_ready=%s "
-            "screenshot_ready=%s blocked_requests=%s blocked_hosts=%s",
+            "screenshot_ready=%s entry_kind=%s blocked_requests=%s blocked_hosts=%s",
             request.execution_id,
             semantic_ready,
             screenshot_ready,
+            entry_kind,
             self._host._blocked_network_requests,
             ",".join(sorted(self._host._blocked_network_hosts)) or "none",
         )
