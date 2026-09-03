@@ -195,6 +195,45 @@ def test_price_submission_maps_to_existing_typed_contract() -> None:
     )
 
 
+def test_price_submission_canonicalizes_property_reference_without_query() -> None:
+    state = _PriceEpisodeState(
+        query=BrowserUsePriceQuerySubmission(
+            property_name="Hotel Example",
+            check_in="2026-11-24",
+            check_out="2026-11-25",
+            adults="2",
+            children="0",
+            rooms="1",
+            currency="USD",
+            genius="true",
+            completeness="complete",
+        ),
+        property_reference=(
+            "https://www.booking.com/hotel/us/example.html?"
+            + "opaque_tracking_value="
+            + "x" * 400
+        ),
+        offers=[
+            BrowserUsePriceOfferSubmission(
+                room_label="Deluxe King Room",
+                total="275.00",
+                currency="USD",
+                all_in="explicit",
+                refundability="explicit_refundable",
+                refundability_text="Free cancellation until November 23",
+                completeness="complete",
+            )
+        ],
+    )
+
+    observation = _observation_from_state(state)
+
+    assert (
+        observation.facts.property_reference
+        == "https://www.booking.com/hotel/us/example.html"
+    )
+
+
 def test_price_action_schemas_are_strict_and_all_required() -> None:
     query_schema = BrowserUsePriceQuerySubmission.model_json_schema()
     offer_schema = BrowserUsePriceOfferSubmission.model_json_schema()

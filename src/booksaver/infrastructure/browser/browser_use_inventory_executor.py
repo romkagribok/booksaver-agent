@@ -1381,7 +1381,24 @@ class BrowserUseActionGuard:
                 return "unsafe_new_tab_destination"
         if "disabled" in normalized or normalized.get("aria-disabled", "").casefold() == "true":
             return "disabled"
-        attribute_text = " ".join(normalized.values())
+        # URL-bearing attributes are validated as destinations below. Treating their encoded
+        # query text as a visible action label creates false positives for normal Booking.com
+        # fields such as ``checkout=YYYY-MM-DD``. Presentational class/style values are likewise
+        # implementation detail; continue scanning semantic and action-bearing metadata.
+        attribute_text = " ".join(
+            value
+            for key, value in normalized.items()
+            if key
+            not in {
+                "href",
+                "src",
+                "srcset",
+                "action",
+                "formaction",
+                "class",
+                "style",
+            }
+        )
         if len(attribute_text) > 4_000:
             return "attribute_text_bounds"
         if _UNSAFE_LABEL_TERMS.search(attribute_text):

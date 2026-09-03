@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -267,10 +268,14 @@ def _observation_from_state(state: _PriceEpisodeState) -> TypedObservation:
     if state.query is None or state.property_reference is None or not state.offers:
         raise ValueError("price observation is incomplete")
     query = state.query
+    parsed_reference = urlsplit(state.property_reference)
+    canonical_reference = (
+        f"{parsed_reference.scheme}://{parsed_reference.netloc}{parsed_reference.path}"
+    )
     return _map_extracted_observation(
         {
             "property_name": query.property_name,
-            "property_reference": state.property_reference,
+            "property_reference": canonical_reference,
             "check_in": query.check_in,
             "check_out": query.check_out,
             "adults": query.adults,
