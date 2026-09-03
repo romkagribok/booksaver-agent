@@ -42,6 +42,7 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
 )
 from booksaver.infrastructure.browser.browser_use_price_executor import (
     BrowserUsePriceBrowserExecutor,
+    BrowserUsePriceObservationSubmission,
     BrowserUsePriceOfferSubmission,
     BrowserUsePriceQuerySubmission,
     BrowserUsePriceRuntimeResult,
@@ -243,12 +244,15 @@ def test_price_action_schemas_are_strict_and_all_required() -> None:
     query_schema = BrowserUsePriceQuerySubmission.model_json_schema()
     offer_schema = BrowserUsePriceOfferSubmission.model_json_schema()
     terminal_schema = BrowserUsePriceTerminalSubmission.model_json_schema()
+    observation_schema = BrowserUsePriceObservationSubmission.model_json_schema()
 
     assert set(query_schema["required"]) == set(query_schema["properties"])
     assert set(offer_schema["required"]) == set(offer_schema["properties"])
     assert terminal_schema["required"] == ["success", "status"]
     assert query_schema["additionalProperties"] is False
     assert offer_schema["additionalProperties"] is False
+    assert "offers" in observation_schema["required"]
+    assert observation_schema["properties"]["offers"]["minItems"] == 1
     assert set(query_schema["properties"]["completeness"]["enum"]) == {
         "complete",
         "incomplete",
@@ -347,7 +351,7 @@ def test_price_prompt_preserves_read_only_and_explicit_evidence_boundaries() -> 
     assert "Never sign in" in task
     assert "Never infer missing facts" in task
     assert "all-in total for the whole stay" in task
-    assert "submit_price_offer" in task
+    assert "submit_price_observation" in task
 
 
 def test_guard_accepts_the_code_owned_search_url_but_not_transaction_checkout() -> None:

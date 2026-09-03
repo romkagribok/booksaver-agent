@@ -81,8 +81,7 @@ _EXPECTED_ACTIONS = frozenset(
         "guarded_type",
         "guarded_wait",
         "guarded_back",
-        "submit_price_query",
-        "submit_price_offer",
+        "submit_price_observation",
         "done",
     }
 )
@@ -107,7 +106,18 @@ class BrowserUsePriceQuerySubmission(BaseModel):
     genius: Literal["true", "false", "unknown"]
     completeness: Literal["complete", "incomplete", "conflicting"]
 
-    @field_validator("*", mode="before")
+    @field_validator(
+        "property_name",
+        "check_in",
+        "check_out",
+        "adults",
+        "children",
+        "rooms",
+        "currency",
+        "genius",
+        "completeness",
+        mode="before",
+    )
     @classmethod
     def normalize_provider_scalar(cls, value: object) -> object:
         if value is None:
@@ -136,7 +146,16 @@ class BrowserUsePriceOfferSubmission(BaseModel):
     refundability_text: str
     completeness: Literal["complete", "incomplete", "conflicting"]
 
-    @field_validator("*", mode="before")
+    @field_validator(
+        "room_label",
+        "total",
+        "currency",
+        "all_in",
+        "refundability",
+        "refundability_text",
+        "completeness",
+        mode="before",
+    )
     @classmethod
     def normalize_provider_scalar(cls, value: object) -> object:
         if value is None:
@@ -146,6 +165,12 @@ class BrowserUsePriceOfferSubmission(BaseModel):
         if isinstance(value, (int, float)):
             return str(value)
         return value if isinstance(value, str) else "unknown"
+
+
+class BrowserUsePriceObservationSubmission(BrowserUsePriceQuerySubmission):
+    """One complete query plus all visibly supported offers in a single terminal action."""
+
+    offers: list[BrowserUsePriceOfferSubmission] = Field(min_length=1, max_length=100)
 
 
 class BrowserUsePriceTerminalSubmission(BaseModel):
@@ -336,14 +361,14 @@ def _price_agent_task(request: PriceExecutionRequest) -> str:
         f"currency={query.currency}. This is read-only. Never sign in, type credentials, solve "
         "MFA or captcha, reserve, book, pay, cancel, modify, upload, download, or leave "
         "Booking.com. Inspect the intended property and its current bookable room/rate table. "
-        "Use submit_price_query once only when the property, dates, occupancy, and currency are "
-        "visibly explicit. Call submit_price_offer once for each visibly explicit offer. total "
-        "must be the all-in total for the whole stay as a plain decimal with no currency symbol "
-        "or thousands separator. Mark all_in=explicit only when the displayed total explicitly "
-        "includes taxes and fees. Mark refundability=explicit_refundable only when visible text "
-        "explicitly says the rate is refundable/free-cancellation and copy that text. Never infer "
-        "missing facts. Finish with done(success=true,status='observed') only after at least one "
-        "typed offer; otherwise finish with a truthful closed terminal status."
+        "Call submit_price_observation once only when the property, dates, occupancy, currency, "
+        "and all currently visible room/rate offers are explicit. total must be the all-in total "
+        "for the whole stay as a plain decimal with no currency symbol or thousands separator. "
+        "Mark all_in=explicit only when the displayed total explicitly includes taxes and fees. "
+        "Mark refundability=explicit_refundable only when visible text explicitly says the rate "
+        "is refundable/free-cancellation and copy that text. Never infer missing facts. The "
+        "observation submission completes the job; use done(success=false, status=<reason>) only "
+        "when complete evidence cannot be obtained."
     )
 
 
@@ -783,51 +808,52 @@ class LocalBrowserUsePriceRuntime:
             return ActionResult(extracted_content="Guarded browser history return completed")
 
         @tools.action(  # type: ignore[untyped-decorator]
-            "Submit visibly explicit property, date, occupancy, currency, and Genius facts.",
-            param_model=BrowserUsePriceQuerySubmission,
+            "Submit one complete visible query with every visible current room/rate offer.",
+            param_model=BrowserUsePriceObservationSubmission,
             allowed_domains=_ALLOWED_DOMAINS,
+            terminates_sequence=True,
         )
-        async def submit_price_query(  # type: ignore[no-untyped-def]
-            params: BrowserUsePriceQuerySubmission, browser_session
+        async def submit_price_observation(  # type: ignore[no-untyped-def]
+            params: BrowserUsePriceObservationSubmission, browser_session
         ) -> Any:
             if not await before_action(browser_session):
                 return await stop_unsafe(non_allowlisted=True)
-            current_url = await browser_session.get_current_page_url()
-            if (
-                params.completeness.strip().casefold()
-                != EvidenceCompleteness.COMPLETE.value
-                or self._price_state.query is not None
-            ):
+            if params.completeness != EvidenceCompleteness.COMPLETE.value:
                 return _continued_action_result(
                     ActionResult,
-                    "Submit exactly one complete visible query after resolving ambiguity",
+                    "Submit only after the visible query evidence is complete",
                 )
-            self._price_state.query = params
-            self._price_state.property_reference = current_url
-            return _continued_action_result(
-                ActionResult,
-                "Typed query evidence submitted; submit each visible offer next",
+            current_url = await browser_session.get_current_page_url()
+            candidate = _PriceEpisodeState(
+                query=BrowserUsePriceQuerySubmission.model_validate(
+                    params.model_dump(exclude={"offers"})
+                ),
+                property_reference=current_url,
+                offers=list(params.offers),
             )
-
-        @tools.action(  # type: ignore[untyped-decorator]
-            "Submit one visibly explicit current room/rate offer.",
-            param_model=BrowserUsePriceOfferSubmission,
-            allowed_domains=_ALLOWED_DOMAINS,
-        )
-        async def submit_price_offer(  # type: ignore[no-untyped-def]
-            params: BrowserUsePriceOfferSubmission, browser_session
-        ) -> Any:
-            if not await before_action(browser_session):
-                return await stop_unsafe(non_allowlisted=True)
-            if len(self._price_state.offers) >= 100:
-                self._price_state.terminal = PriceExecutionStatus.NO_VALID_OBSERVATION
-                return ActionResult(
-                    is_done=True,
-                    success=False,
-                    error="Offer submission limit reached",
+            try:
+                observation = _observation_from_state(candidate)
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "Browser Use typed price observation rejected execution_id=%s reason=%s",
+                    request.execution_id,
+                    _typed_observation_error_code(exc)
+                    if isinstance(exc, ValueError)
+                    else "type",
                 )
-            self._price_state.offers.append(params)
-            return _continued_action_result(ActionResult, "One typed offer submitted")
+                return _continued_action_result(
+                    ActionResult,
+                    "Typed evidence was invalid; re-inspect and submit exact visible values",
+                )
+            self._price_state.query = candidate.query
+            self._price_state.property_reference = candidate.property_reference
+            self._price_state.offers = candidate.offers
+            self._price_state.observation = observation
+            return ActionResult(
+                is_done=True,
+                success=True,
+                extracted_content="Typed price evidence submitted",
+            )
 
         @tools.action(  # type: ignore[untyped-decorator]
             "Finish with a typed observation or one closed non-success status.",
@@ -840,32 +866,9 @@ class LocalBrowserUsePriceRuntime:
             if not await before_action(browser_session):
                 return await stop_unsafe(non_allowlisted=True)
             if params.success:
-                if params.status.strip().casefold() != PriceExecutionStatus.OBSERVED.value:
-                    return _continued_action_result(
-                        ActionResult,
-                        "A successful price submission requires status=observed",
-                    )
-                try:
-                    self._price_state.observation = _observation_from_state(
-                        self._price_state
-                    )
-                except (TypeError, ValueError) as exc:
-                    logger.warning(
-                        "Browser Use typed price observation rejected execution_id=%s reason=%s",
-                        request.execution_id,
-                        _typed_observation_error_code(exc)
-                        if isinstance(exc, ValueError)
-                        else "type",
-                    )
-                    return _continued_action_result(
-                        ActionResult,
-                        "No valid typed price observation is ready; inspect and resubmit explicit "
-                        "query and offer facts",
-                    )
-                return ActionResult(
-                    is_done=True,
-                    success=True,
-                    extracted_content="Typed price evidence submitted",
+                return _continued_action_result(
+                    ActionResult,
+                    "Use submit_price_observation for success; done is only for closed failure",
                 )
             try:
                 self._price_state.terminal = _terminal_status(params.status)
