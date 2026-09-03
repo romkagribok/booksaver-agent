@@ -28,6 +28,7 @@ qualification or authorize invited-user promotion and legacy-selector retirement
 | specs.md artifact validator | Passed: 0 issues |
 | specs.md status integrity | Passed: 0 inconsistencies |
 | Git whitespace validation | Passed |
+| Cursor Bugbot | Unavailable: official Cursor response reported its usage limit was reached |
 
 Coverage includes default and explicit executor selection, shared manual/scheduled composition,
 Browser Use action-registry confinement, trusted values, URL admission, atomic typed observation,
@@ -51,6 +52,10 @@ including different bed types and accessibility labels remain non-equivalent.
 The candidate replay is below the USD 0.25 owner-canary average threshold and the USD 1/check hard
 cap. A single run does not establish the average, p95, correctness comparison, or invited-user USD
 0.10 promotion gates.
+
+The repository's executable Bugbot gate was run and correctly rejected the PR because no review
+could complete. The owner explicitly authorized merge when Bugbot was unavailable for this task;
+the usage-limit response is treated as a documented review exception, not a clean Bugbot pass.
 
 ## Live Failure-to-Fix Evidence
 

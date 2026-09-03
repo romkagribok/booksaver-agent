@@ -2,7 +2,7 @@
 unit: 006-browser-use-price-executor
 intent: 023-replaceable-agentic-browser-executor
 created: 2026-09-02T23:50:00Z
-updated: 2026-09-03T01:41:00Z
+updated: 2026-09-03T01:44:00Z
 ---
 
 # Construction Log: Browser Use Price Executor
@@ -25,3 +25,6 @@ updated: 2026-09-03T01:41:00Z
   zero with an accepted observation in 81,436 ms at USD 0.175276, zero safety violations, and no
   fallback. Stage 3 test completed; Unit 006 construction completed while Unit 003 live
   qualification remains in progress.
+- **2026-09-03T01:44:00Z**: The executable pre-merge Bugbot gate was attempted and remained
+  unavailable because Cursor reported its usage limit was reached. The owner had explicitly
+  authorized proceeding when Bugbot was unavailable; this is a documented exception, not a pass.
