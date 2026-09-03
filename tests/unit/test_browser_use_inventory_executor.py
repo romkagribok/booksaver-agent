@@ -276,6 +276,12 @@ def test_action_guard_rejects_overlong_and_multiply_encoded_unsafe_metadata() ->
     assert not guard.observable_url(
         "https://secure.booking.com/myreservations.html?value=" + "x" * 4_001
     )
+    assert (
+        guard.observable_url_rejection_reason(
+            "https://secure.booking.com/%252563ancel-reservation"
+        )
+        == "unsafe_route_term"
+    )
     assert not guard.allows_click(
         current_url="https://secure.booking.com/myreservations.html",
         label="x" * 1_001 + " cancel",

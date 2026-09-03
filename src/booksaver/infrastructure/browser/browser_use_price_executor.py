@@ -376,7 +376,15 @@ class LocalBrowserUsePriceRuntime:
         await session.navigate_to(build_trusted_search_url(request), new_tab=False)
         await asyncio.sleep(0.5)
         entry_url = await session.get_current_page_url()
-        if not self._guard.observable_url(entry_url) or len(session.get_page_targets()) != 1:
+        entry_rejection = self._guard.observable_url_rejection_reason(entry_url)
+        target_count = len(session.get_page_targets())
+        if entry_rejection is not None or target_count != 1:
+            logger.warning(
+                "Browser Use price entry rejected execution_id=%s reason=%s target_count=%s",
+                request.execution_id,
+                entry_rejection or "target_count",
+                target_count,
+            )
             return self._unsafe_result(non_allowlisted=True)
 
         semantic_ready = False

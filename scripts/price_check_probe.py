@@ -195,6 +195,9 @@ def main() -> int:
                         "duration_ms": check.duration_ms,
                         "fallback_used": check.fallback_used,
                         "violation_count": len(check.violations),
+                        "violation_codes": sorted(
+                            violation.value for violation in check.violations
+                        ),
                     }
                 )
         elif completion.unavailable_detail:

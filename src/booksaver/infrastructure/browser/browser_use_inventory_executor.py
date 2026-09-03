@@ -1266,23 +1266,23 @@ class BrowserUseActionGuard:
     """Deny-oriented action policy without exact benign labels or routes."""
 
     @staticmethod
-    def observable_url(url: str) -> bool:
+    def observable_url_rejection_reason(url: str) -> str | None:
         if not isinstance(url, str) or not 1 <= len(url) <= 4_000:
-            return False
+            return "url_bounds"
         try:
             parsed = urlsplit(url)
             port = parsed.port
         except ValueError:
-            return False
+            return "url_parse"
         host = (parsed.hostname or "").casefold().rstrip(".")
-        if (
-            parsed.scheme.casefold() != "https"
-            or parsed.username is not None
-            or parsed.password is not None
-            or port not in (None, 443)
-            or not (host == "booking.com" or host.endswith(".booking.com"))
-        ):
-            return False
+        if parsed.scheme.casefold() != "https":
+            return "scheme"
+        if parsed.username is not None or parsed.password is not None:
+            return "credentials"
+        if port not in (None, 443):
+            return "port"
+        if not (host == "booking.com" or host.endswith(".booking.com")):
+            return "host"
         route = f"{parsed.path} {parsed.fragment}"
         query = parsed.query
         for _ in range(4):
@@ -1293,11 +1293,16 @@ class BrowserUseActionGuard:
             route = decoded
             query = decoded_query
         if len(route) > 4_000 or len(query) > 4_000:
-            return False
-        return (
-            _UNSAFE_ROUTE_TERMS.search(route) is None
-            and _UNSAFE_QUERY_TERMS.search(query) is None
-        )
+            return "decoded_bounds"
+        if _UNSAFE_ROUTE_TERMS.search(route) is not None:
+            return "unsafe_route_term"
+        if _UNSAFE_QUERY_TERMS.search(query) is not None:
+            return "unsafe_query_term"
+        return None
+
+    @staticmethod
+    def observable_url(url: str) -> bool:
+        return BrowserUseActionGuard.observable_url_rejection_reason(url) is None
 
     def allows_click(
         self,
