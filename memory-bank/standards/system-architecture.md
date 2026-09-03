@@ -51,6 +51,10 @@ flowchart TB
   Both restore the owner session only through local CDP and return untrusted typed evidence.
   BookSaver alone verifies query identity, dates, occupancy, authentication, currency, all-in total,
   refundability, equivalence, and savings. Never chain adapters within one job (ADR-043).
+- Price admission supports an explicit `consented_users` mode that routes the active owner and
+  currently disclosed active invitees through Browser Use before statistical qualification without
+  mutating qualification evidence. Missing/stale invitee consent and global regression still fail
+  closed; owner-canary and qualification-gated modes retain their original meaning (ADR-045).
 - Telegram-owned checks resolve the booking owner's encrypted session and create a fresh Android
   Chromium mobile-web context; missing, stale, rendered-signed-out, or mismatched state fails closed
   as `auth_required` (ADRs 024–025). Never substitute a global, public, or another user's session.
@@ -73,6 +77,9 @@ flowchart TB
 - Savings notifications are informational. BookSaver does not create or guide a rebooking workflow;
   users manage reservations directly in Booking.com and later synchronization observes the result.
 - All secrets, sessions, booking data, logs, and check history remain on the user's machine.
+- The owner-only Telegram aggregate may expose current Browser Use funding as deployment-owner-paid
+  and personal legacy-key presence as configured/not configured. It never selects, decrypts,
+  fingerprints, or displays key material and makes no unsupported historical attribution (ADR-046).
 
 ## Unit Build Order
 

@@ -487,6 +487,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `004-agentic-inventory-executor` | 9 stories | Complete (bolt 063) |
 | `005-legacy-price-selector-retirement` | 1 story | Blocked (bolt 055; post-promotion) |
 | `006-browser-use-price-executor` | 6 stories | Complete (bolt 064) |
+| `007-shared-browser-use-access` | 2 stories | Complete (bolt 065) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
 
@@ -545,6 +546,13 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-168` | Replay the deployed Browser Use price path without Telegram | Agentic Browser | Complete | `006-browser-use-price-executor/stories/005-replay-deployed-browser-use-price-path.md` |
 | `US-169` | Remove the Stagehand inventory prerequisite from price operations | Agentic Browser | Complete | `006-browser-use-price-executor/stories/006-remove-stagehand-inventory-price-prerequisite.md` |
 
+### 007-shared-browser-use-access: Shared Browser Use Access
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-170` | Route disclosed invitees through Browser Use | Agentic Browser | Complete | `007-shared-browser-use-access/stories/001-route-disclosed-invitees-through-browser-use.md` |
+| `US-171` | Show secret-safe API-key provenance | Telegram Administration | Complete | `007-shared-browser-use-access/stories/002-show-secret-safe-api-key-provenance.md` |
+
 ## Summary
 
 | Intent | Units | Stories | Status |
@@ -571,7 +579,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 6 | 26 | In construction (Browser Use price bolt 064 planned; price canary bolt 052 active, bolt 055 blocked) |
+| `023-replaceable-agentic-browser-executor` | 7 | 29 | In construction (bolt 065 complete; price qualification bolt 052 active, bolt 055 blocked) |
 
-All 167 stories (158 complete in-scope, 5 ready, 2 post-MVP extensibility, and 2
+All 171 story files (167 complete in-scope, 0 ready, 2 post-MVP extensibility, and 2
 live-gated/blocked stories) are assigned exactly once.

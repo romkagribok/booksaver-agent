@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-03T00:36:00Z
+updated: 2026-09-03T23:32:00Z
 ---
 
 # System Context: Replaceable Agentic Browser Executor
@@ -13,7 +13,7 @@ updated: 2026-09-03T00:36:00Z
 - **Deployment owner** (Human): Self-hosts BookSaver, configures the Anthropic key, owns operational
   cost and privacy policy, runs the live canary, and controls promotion/rollback.
 - **Invited user** (Human): Uses the private Telegram bot, supplies a Booking session through
-  `/connect`, and may consent to owner-funded agentic checks.
+  `/connect`, and may consent to owner-funded Browser Use checks across inventory and price work.
 - **BookSaver scheduler/coordinator** (System): Authorizes and serializes checks under the global
   browser lease and daily limits.
 - **BookSaver validation/evaluation** (System): Independently validates untrusted observations,
@@ -24,6 +24,8 @@ updated: 2026-09-03T00:36:00Z
   price rollback.
 - **Inventory reconciliation policy** (System): Accepts only validated positive reservation
   observations, derives eligibility, and prevents agentic evidence from marking unseen rows absent.
+- **Owner administration projection** (System): Shows identity, aggregate usage, Browser Use funding
+  policy, and coarse personal legacy-key presence without decrypting keys or loading exact records.
 
 ## External Systems
 
@@ -68,12 +70,16 @@ updated: 2026-09-03T00:36:00Z
 - Typed, redacted price observations to BookSaver validation.
 - Typed positive reservation observations and traversal coverage to BookSaver inventory validation.
 - Redacted metrics/failure codes to local persistence and owner-only operations.
+- Owner-only aggregate funding provenance and configured/not-configured personal legacy-key state to
+  Telegram administration.
 - Existing savings notifications after independent validation.
 
 ### Forbidden Flows
 
 - Cookies, credentials, MFA values, clipboard, files, model reasoning, or full page evidence to
   results/logs/persistence.
+- API key plaintext, ciphertext, prefix, suffix, hash, fingerprint, or validation details to any
+  admin projection, log, trace, or Telegram response.
 - Model-selected arbitrary URLs or unguarded browser actions.
 - Executor decisions about equivalence, savings, transaction authority, or user identity.
 - Executor decisions that inventory is authoritatively complete or that an unseen reservation is
@@ -88,8 +94,8 @@ flowchart LR
     telegram --> control
     control --> lease["Owner-bound transient session lease"]
     lease --> executor["Replaceable local browser executor"]
-    executor --> browseruse["Browser Use OSS for /bookings and price"]
-    executor --> stagehand["Stagehand inventory and explicit price rollback"]
+    executor --> browseruse["Browser Use OSS for agentic inventory and price"]
+    executor --> stagehand["Stagehand explicit price rollback"]
     executor --> booking["Booking.com"]
     executor --> anthropic["Anthropic Sonnet 5"]
     executor --> evidence["Typed redacted observations"]
@@ -100,11 +106,14 @@ flowchart LR
     reconcile --> persistence
     control -. "legacy rollback" .-> legacy["Existing Playwright price path"]
     legacy --> booking
+    control --> admin["Owner-only aggregate admin projection"]
+    admin --> funding["Browser Use: deployment owner key<br/>Personal legacy key: configured/not configured"]
 ```
 
 ## Lifecycle
 
-1. Coordinator authorizes the user and booking, reserves budget, and selects routing mode.
+1. Coordinator authorizes the user and booking, verifies current invitee disclosure where required,
+   reserves budget, and selects routing mode.
 2. Session service decrypts verified cookies into a fresh local browser owned by a scoped lease.
 3. The executor first reaches the requested protected Booking.com capability with the matching
    mobile identity. A code-owned preflight rejects unusable model views and sanitized transport,
@@ -121,8 +130,9 @@ flowchart LR
 
 1. `/checknow` and scheduled work resolve through the same price-executor factory and
    `PriceBrowserExecutor` application service.
-2. Owner-canary price routes select Browser Use by default; invited-user routing retains disclosure
-   and Browser Use-specific qualification gates.
+2. Owner-canary routes select Browser Use for the owner. The explicit `consented_users` route selects
+   Browser Use for the owner and every currently disclosed active invitee without claiming the
+   statistical qualification gate passed; qualification-gated `agentic` remains available.
 3. The local Browser Use agent navigates and perceives through guarded human-like actions, then
    submits typed query facts and offers or one closed terminal outcome.
 4. BookSaver independently verifies property, dates, occupancy, authentication, currency, all-in
@@ -133,19 +143,19 @@ flowchart LR
 ## Inventory Lifecycle
 
 1. A disclosed authorized user triggers `/bookings`, post-connect synchronization, `/checknow`, or a
-   scheduled slot under the single coordinator gate. `/bookings` selects Browser Use; the other
-   inventory triggers select Stagehand.
+   scheduled slot under the single coordinator gate. Every agentic inventory trigger selects the
+   same Browser Use adapter.
 2. BookSaver issues an account-bound session lease and fixed upcoming, past, and cancelled work
    scopes to the inventory executor.
 3. The executor restores the session into BookSaver's configured mobile identity and reaches the
    protected inventory resource. Redirect loops and internal browser error pages are classified
    from content-free transport evidence instead of being treated as Booking.com destinations.
-4. The selected local harness proposes bounded read-only perception actions. Browser Use uses a
-   deny-oriented generic guard for `/bookings`; Stagehand retains its existing task-specific guard
-   for other triggers. BookSaver checks every executed destination.
+4. Browser Use proposes bounded read-only perception actions through the same deny-oriented guard
+   across triggers. BookSaver checks every executed destination; Stagehand remains an explicit price
+   rollback rather than an inventory prerequisite.
 5. The executor returns positive reservation evidence and redacted traversal metadata. It cannot
    establish authoritative absence or completeness.
 6. BookSaver validates stable identities and domain facts, persists accepted current-run positives,
    preserves unseen rows, and permits a price check only for a reservation re-observed in that run.
-7. A `/bookings` Browser Use failure closes that operation without a same-job Stagehand or legacy
+7. A Browser Use inventory failure closes that operation without a same-job Stagehand or legacy
    retry; saved last-safe inventory remains visible.

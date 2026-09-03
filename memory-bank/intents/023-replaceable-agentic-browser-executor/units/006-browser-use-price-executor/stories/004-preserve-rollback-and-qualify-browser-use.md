@@ -32,3 +32,8 @@ promote a new executor
 ## Dependencies
 
 - US-152, US-164, and US-165.
+
+## Amendment
+
+US-170 and ADR-045 preserve this qualification-gated route while adding explicit owner-authorized
+`consented_users` rollout that does not fabricate or modify qualification evidence.

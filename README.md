@@ -44,9 +44,9 @@ issues are exploratory future capabilities, not missing parts of the current hot
    broad part of the day. At each slot it synchronizes that user's account once, then opens a fresh
    authenticated mobile Chromium context for every eligible booking. `/checknow` remains available
    for an immediate check.
-3. Price routing defaults to the `legacy` deterministic journey. When `owner_canary` or qualified
-   `agentic` routing is admitted, the default executor is the pinned local Browser Use classic agent
-   in a fresh local Chromium profile. Every physical action is code-authorized; reservation,
+3. Price routing defaults to the `legacy` deterministic journey. `owner_canary`, explicit
+   `consented_users`, or qualified `agentic` routing admits the pinned local Browser Use classic
+   agent in a fresh local Chromium profile. Every physical action is code-authorized; reservation,
    checkout, payment, cancellation, credential, MFA/captcha, arbitrary navigation, shell,
    clipboard, upload, and download capabilities are absent. Stagehand remains an explicit rollback
    adapter for a future job, never an automatic second attempt.
@@ -87,7 +87,7 @@ the agentic price executor remains disabled by default:
 
 ```toml
 [agentic_browser]
-routing = "legacy" # price: legacy | owner_canary | agentic
+routing = "legacy" # price: legacy | owner_canary | consented_users | agentic
 price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
 inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"
@@ -105,8 +105,11 @@ intentional because Browser Use 0.11.13 has broad transitive dependency ranges. 
 sync, external version checks, downloads, persistent screenshots, and stock Browser Use actions are
 disabled by the BookSaver adapter.
 
-For price execution, `owner_canary` is the only pre-qualification agentic mode and routes only the
-deployment owner. The default adapter runs Browser Use 0.11.13 in-process against the installed
+For price execution, `owner_canary` routes only the deployment owner. An owner may explicitly select
+`consented_users` to route the owner and every active invitee with current `/connect` disclosure
+consent through Browser Use before statistical qualification completes. This choice does not mark
+the canary qualified; qualification remains useful for monitoring and rollback. The default adapter
+runs Browser Use 0.11.13 in-process against the installed
 Playwright Chromium, injects encrypted Booking.com cookies through a code-owned local CDP
 connection, and sends the exact transient browser's semantic view and screenshots to Sonnet 5 using
 `BOOKSAVER_LLM_API_KEY`. BookSaver constructs the trusted search URL, removes Browser Use's stock
@@ -119,8 +122,13 @@ The executor returns observations only. BookSaver still verifies property, dates
 authentication, Genius evidence, currency, all-in totals, explicit refundability, room equivalence,
 and the cheapest valid offer before any savings alert. Agentic failure is terminal for that check;
 the legacy browser is a configured rollback route, not an automatic second attempt. Invited users
-cannot receive agentic routing until the live promotion gate and their current versioned `/connect`
-disclosure consent are recorded.
+always require current versioned `/connect` disclosure consent. They may be admitted either by the
+explicit `consented_users` route or by the statistically qualified `agentic` route.
+
+All Browser Use inventory and price calls use the deployment owner's
+`BOOKSAVER_LLM_API_KEY`, including calls initiated by invitees. `/admin users` shows that funding
+policy and only whether an optional personal key is configured for legacy LLM work; it never prints,
+decrypts, fingerprints, or validates a key.
 
 The owner governs that release entirely from the local VPS:
 

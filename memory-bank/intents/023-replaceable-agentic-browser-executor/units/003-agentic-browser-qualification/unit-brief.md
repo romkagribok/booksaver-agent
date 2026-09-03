@@ -4,7 +4,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: in-progress
 created: 2026-08-16T19:18:41Z
-updated: 2026-08-17T04:21:00Z
+updated: 2026-09-03T23:40:07Z
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 ---
@@ -13,8 +13,10 @@ default_bolt_type: ddd-construction-bolt
 
 ## Purpose
 
-Make promotion evidence-based by testing DOM resilience, privacy, safety, reliability, cost, and
-duration and by requiring a real owner-only canary before invited-user routing.
+Make qualification-gated promotion evidence-based by testing DOM resilience, privacy, safety,
+reliability, cost, and duration through a real owner-only canary. ADR-045 separately permits an
+explicit owner-authorized early rollout to currently disclosed invitees without claiming these
+qualification gates passed.
 
 ## Scope
 
@@ -60,7 +62,9 @@ duration and by requiring a real owner-only canary before invited-user routing.
 
 - Qualification records contain metrics and closed outcomes only.
 - Any safety/privacy/correctness violation is terminal regardless of aggregate reliability.
-- Owner canary cannot authorize invited users until thresholds and consent both pass.
+- Owner canary alone cannot authorize invited users. The qualification-gated `agentic` route still
+  requires thresholds and consent; ADR-045's distinct `consented_users` route requires consent and
+  remains independently reversible without mutating qualification evidence.
 
 ## Success Criteria
 

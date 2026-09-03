@@ -3,7 +3,7 @@ intent: 010-telegram-privacy-boundaries
 phase: inception
 status: complete
 created: 2026-07-19T02:29:55Z
-updated: 2026-07-19T14:48:51Z
+updated: 2026-09-03T23:40:07Z
 ---
 
 # Requirements: Telegram Privacy Boundaries
@@ -71,7 +71,7 @@ processors under their established boundaries.
     today, and LLM calls today. Owner/user role may be shown where operationally necessary.
   - In-memory daily values are labeled `today (resets at UTC midnight and daemon restart)`; checks are
     reserved/executed attempts and LLM calls are actual metered calls.
-  - Output omits chat IDs, personal-key state, properties/references, confirmations, dates, rooms,
+  - Output omits chat IDs, all API-key representations, properties/references, confirmations, dates, rooms,
     booking/check/opportunity IDs, prices/currencies, outcomes/failures, savings, cancellation data,
     traces/snapshots, and rebook events.
   - Revoke/purge callbacks carry only an internal user identifier and display no exact owned data.
@@ -79,6 +79,9 @@ processors under their established boundaries.
     records. A narrow injected usage provider merges SQL `COUNT` aggregates with CheckCoordinator
     counter snapshots; if runtime counters are unavailable the output says usage is unavailable
     rather than fabricating zeros.
+  - As narrowly amended by ADR-046, the private owner-only projection may show the code-owned Browser
+    Use funding policy and boolean personal legacy-key presence; it never shows plaintext,
+    ciphertext, fragments, fingerprints, hashes, validation state, or historical per-key claims.
 - **Priority**: Must
 - **Related Stories**: US-069
 
@@ -162,8 +165,9 @@ processors under their established boundaries.
 - "Admin sees only usage" is a Telegram UI guarantee, not protection from the root/operator of the
   self-hosted host.
 - The owner can inspect the owner's own exact records through ordinary caller-scoped commands.
-- Aggregate usage is limited to identity/access plus counts; personal-key state and exact outcomes are
-  excluded.
+- Aggregate usage is limited to identity/access, counts, the code-owned Browser Use funding policy,
+  and boolean personal legacy-key presence. API-key representations and exact outcomes are excluded
+  (ADR-046 amendment).
 - This is a separate intent because it establishes a cross-cutting authorization/privacy policy rather
   than invite presentation.
 - The product owner authorized continuous Inception and Construction through final Test, then

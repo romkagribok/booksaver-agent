@@ -14,10 +14,10 @@ locale = "en-US"
 timezone_id = "UTC"
 
 [agentic_browser]
-# Price execution remains legacy until the deployment owner intentionally starts its canary.
+# Price execution remains legacy until the owner intentionally selects a rollout mode.
 # Inventory execution is independent and uses Browser Use for all authorized, disclosed triggers.
 # Switch only inventory back to legacy for rollback.
-routing = "legacy" # price: legacy | owner_canary | agentic
+routing = "legacy" # price: legacy | owner_canary | consented_users | agentic
 price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
 inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"

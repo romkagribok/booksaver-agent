@@ -79,9 +79,9 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # max_semantic_action_executions = 2   # never execute an equivalent target a third time
 
 [agentic_browser]
-# Price execution stays legacy until the owner canary passes every local promotion gate.
+# Price execution is legacy until the owner selects canary, consented rollout, or qualified mode.
 # Inventory execution is independently agentic by default; legacy is its rollback route.
-# routing = "legacy"           # price: legacy | owner_canary | agentic
+# routing = "legacy"           # price: legacy | owner_canary | consented_users | agentic
 # price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
 # inventory_routing = "agentic" # inventory: legacy | agentic
 # disclosure_version = "anthropic-visible-booking-page-v1"

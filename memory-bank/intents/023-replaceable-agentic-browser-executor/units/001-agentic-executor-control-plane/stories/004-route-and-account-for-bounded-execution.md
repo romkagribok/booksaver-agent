@@ -19,7 +19,8 @@ implemented: true
 
 ## Acceptance Criteria
 
-- [x] Routing modes are exactly `legacy`, `owner_canary`, and `agentic`; legacy is default.
+- [x] Routing is closed and config-validated; `legacy`, `owner_canary`, and `agentic` retain their
+  original meanings, ADR-045 adds `consented_users`, and legacy remains the default.
 - [x] Owner canary admits only the owner; agentic requires qualification and current disclosure
   consent for invited users.
 - [x] Fifteen total actions, six computer-use actions, 180 seconds, USD 1/check, and USD 10/day are
@@ -33,3 +34,8 @@ implemented: true
 ## Out of Scope
 
 - Live promotion approval.
+
+## Amendment
+
+US-170 and ADR-045 add explicit early rollout for currently disclosed invitees without changing the
+qualification-gated `agentic` route or the limits established by this story.

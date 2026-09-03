@@ -30,3 +30,8 @@ price-check triggers
 ## Dependencies
 
 - US-143 through US-146 and US-160 through US-163.
+
+## Amendment
+
+US-170 and ADR-045 add a distinct `consented_users` route for explicit early invitee rollout. The
+original qualification requirement remains true for the existing `agentic` route.

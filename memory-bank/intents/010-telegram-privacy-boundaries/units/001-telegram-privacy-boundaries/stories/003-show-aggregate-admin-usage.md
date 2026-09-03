@@ -21,14 +21,17 @@ implemented: true
 
 ## Acceptance Criteria
 
-- [ ] Admin rows show username/fallback label, access state, active-booking count, checks today, and
+- [x] Admin rows show username/fallback label, access state, active-booking count, checks today, and
   LLM calls today; role appears only where operationally useful.
-- [ ] In-memory counts are labeled `today (resets at UTC midnight and daemon restart)`.
-- [ ] Admin output omits chat IDs, key state, exact domain identifiers/content, prices, outcomes,
+- [x] In-memory counts are labeled `today (resets at UTC midnight and daemon restart)`.
+- [x] Admin output omits chat IDs, every API-key representation, exact domain identifiers/content, prices, outcomes,
   failures, savings, traces, and rebook events.
-- [ ] Revoke/purge callbacks display identity only and carry an internal user ID.
-- [ ] A dedicated aggregate query/projection prevents admin formatting from loading exact records.
-- [ ] A narrow injected provider supplies coordinator counter snapshots and reports usage unavailable
+- [x] ADR-046 narrowly permits only the code-owned Browser Use funding policy and boolean personal
+  legacy-key presence in the owner-only aggregate; no plaintext, ciphertext, fragment, fingerprint,
+  hash, validation state, or historical per-key attribution is exposed.
+- [x] Revoke/purge callbacks display identity only and carry an internal user ID.
+- [x] A dedicated aggregate query/projection prevents admin formatting from loading exact records.
+- [x] A narrow injected provider supplies coordinator counter snapshots and reports usage unavailable
   when absent; it never fabricates zero runtime usage.
 
 ## Technical Notes
