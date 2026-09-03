@@ -886,22 +886,6 @@ class LocalBrowserUsePriceRuntime:
         model_cls = _model_type(ChatAnthropic, _PROMPT_VERSION)
         model = model_cls(api_key=api_key, budget=budget, meter=meter)
 
-        async def verify_refresh(_history: Any) -> None:
-            if self._price_state.observation is None or session.cdp_url is None:
-                return
-            remaining = (request.limits.deadline - datetime.now(UTC)).total_seconds()
-            if remaining <= 0:
-                return
-            try:
-                refreshed = await asyncio.wait_for(
-                    self._host._verified_session_refresh(session, session.cdp_url),
-                    timeout=min(remaining, 35.0),
-                )
-            except Exception:
-                return
-            if refreshed is not None:
-                self._price_state.refreshed_session = refreshed
-
         agent_run_id = f"booksaver-price-{uuid.uuid4().hex}"
         self._host._agent_run_id = agent_run_id
         self._failure_stage = "agent_construction"
@@ -939,7 +923,10 @@ class LocalBrowserUsePriceRuntime:
             file_system_path=str(file_system_dir),
             include_recent_events=False,
             enable_planning=False,
-            register_done_callback=verify_refresh,
+            # The required inventory phase immediately before price execution already performs
+            # code-owned session verification and refresh. Repeating that optional 35-second
+            # probe here can consume the shared deadline after valid price evidence is submitted.
+            register_done_callback=None,
         )
         self._host._agent = agent
         self._host._agent_directory = Path(agent.agent_directory)
