@@ -31,12 +31,32 @@ def explicit_empty_upcoming(url: str, visible_text: str) -> bool:
 async def observe_empty_upcoming(browser_session: Any) -> bool:
     """Read current rendered body text, which the model's DOM serializer can omit."""
     try:
-        page = await browser_session.get_current_page()
-        if page is None:
-            return False
-        session_id = await page._ensure_session()
-        result = await asyncio.wait_for(
-            browser_session.cdp_client.send.Runtime.evaluate(
+        async with asyncio.timeout(5):
+            target_id = browser_session.agent_focus_target_id
+            if not isinstance(target_id, str) or not target_id:
+                return False
+            source_url = await browser_session.get_current_page_url()
+            if source_url != "https://secure.booking.com/mytrips.html":
+                return False
+
+            async def unchanged() -> bool:
+                current = await browser_session.get_current_page_url()
+                return (
+                    current == source_url
+                    and browser_session.agent_focus_target_id == target_id
+                    and len(browser_session.get_page_targets()) == 1
+                )
+
+            if not await unchanged():
+                return False
+            pooled = await browser_session.get_or_create_cdp_session(target_id, focus=False)
+            if (
+                pooled.target_id != target_id
+                or not isinstance(pooled.session_id, str) or not pooled.session_id
+                or not await unchanged()
+            ):
+                return False
+            result = await pooled.cdp_client.send.Runtime.evaluate(
                 params={
                     "expression": (
                         "JSON.stringify({url: location.href, "
@@ -44,10 +64,10 @@ async def observe_empty_upcoming(browser_session: Any) -> bool:
                     ),
                     "returnByValue": True,
                 },
-                session_id=session_id,
-            ),
-            timeout=5,
-        )
+                session_id=pooled.session_id,
+            )
+            if not await unchanged():
+                return False
         raw = result.get("result", {}).get("value")
         value = json.loads(raw) if isinstance(raw, str) else None
         if not isinstance(value, dict):

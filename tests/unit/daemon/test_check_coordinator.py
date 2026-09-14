@@ -2018,12 +2018,12 @@ def test_current_agentic_positive_allows_selected_check_with_shared_residual_lim
 
     assert completions[0].kind is ImmediateCompletionKind.RESULT
     assert completions[0].result is not None
-    assert executor.requests[0].limits.max_actions == 15
+    assert executor.requests[0].limits.max_actions == 40
     assert executor.requests[0].limits.max_computer_use_actions == 6
     assert executor.requests[0].limits.max_job_cost == UsdAmount(1_000_000)
     assert residual_limits[0] is not None
     assert residual_limits[0].deadline == executor.requests[0].limits.deadline
-    assert residual_limits[0].max_actions == 11
+    assert residual_limits[0].max_actions == 15
     assert residual_limits[0].max_computer_use_actions == 4
     assert residual_limits[0].max_job_cost == UsdAmount(750_000)
     with SqliteStore(tmp_path / "booksaver.db") as store:
@@ -2465,7 +2465,7 @@ def test_compatibility_scheduler_reuses_inventory_residual_agentic_limits(
     assert len(residual_limits) == 1
     assert residual_limits[0] is not None
     assert residual_limits[0].deadline == executor.requests[0].limits.deadline
-    assert residual_limits[0].max_actions == 11
+    assert residual_limits[0].max_actions == 15
     assert residual_limits[0].max_computer_use_actions == 4
     assert residual_limits[0].max_job_cost == UsdAmount(750_000)
 
@@ -2535,3 +2535,141 @@ def test_empty_inventory_reports_for_owner_and_invitee_without_legacy_browser(
         for user_id in (owner.user_id, invitee.user_id):
             report = SqliteAccountReservationRepository(store).latest_run_for_user(user_id)
             assert report is not None and report.upcoming_empty_observed
+
+
+@pytest.mark.parametrize("kind,seconds", [
+    (BrowserJobKind.CHECK_NOW, 360), (BrowserJobKind.SCHEDULED_SLOT, 360),
+    (BrowserJobKind.BOOKINGS_SYNC, 180), (BrowserJobKind.QUALIFICATION, 180),
+])
+def test_operation_deadline_depends_on_combined_job_kind(tmp_path, kind, seconds):
+    coordinator = _build_coordinator(_config(tmp_path))
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        before = datetime.now(UTC)
+        with coordinator._adaptive_job_scope(store, owner.user_id, kind):
+            context = coordinator._current_agentic_job()
+            assert context is not None
+            after = datetime.now(UTC)
+            assert before + timedelta(seconds=seconds) <= context.deadline
+            assert context.deadline <= after + timedelta(seconds=seconds)
+            limits = context.remaining_limits(now=after, inventory=True)
+            assert limits is not None
+            assert limits.timeout_seconds <= 180
+            assert limits.deadline <= after + timedelta(seconds=180)
+
+
+@pytest.mark.parametrize("entry", ["immediate", "scheduled", "slot"])
+@pytest.mark.parametrize("stop_during", ["inventory", "price_browser_start"])
+def test_shutdown_between_phases_prevents_price_dispatch(tmp_path, entry, stop_during):
+    stop = threading.Event()
+    opened = []
+    closed = []
+
+    class StoppingBrowser(BrowserContext):
+        def __enter__(self):
+            opened.append(True)
+            if len(opened) == 2 and stop_during == "price_browser_start":
+                stop.set()
+            return object()
+
+        def __exit__(self, *args):
+            closed.append(True)
+
+    def inventory(store, browser, user_id, trigger):
+        report = _complete_sync(store, browser, user_id, trigger)
+        if stop_during == "inventory":
+            stop.set()
+        return report
+
+    coordinator = _build_coordinator(
+        _config(tmp_path), stop, browser_factory=StoppingBrowser,
+        inventory_synchronizer=inventory,
+    )
+    user_id, bookings = _add(tmp_path, 101)
+    attempted = []
+
+    def price(self, store, browser, owner, booking):
+        attempted.append(booking.booking_id)
+        return _failure(booking.booking_id)
+
+    coordinator._run_booking = MethodType(price, coordinator)
+    completions = []
+    if entry == "immediate":
+        completed = threading.Event()
+        assert coordinator.request_immediate(
+            101, bookings[0].booking_id,
+            lambda result: (completions.append(result), completed.set()),
+        ) is ImmediateAdmission.ACCEPTED
+        assert completed.wait(1)
+        assert completions[0].kind is ImmediateCompletionKind.UNAVAILABLE
+    elif entry == "scheduled":
+        coordinator.run_scheduled()
+    else:
+        with SqliteStore(tmp_path / "booksaver.db") as store:
+            coordinator._run_scheduled_user_locked(store, user_id)
+    assert attempted == []
+    assert len(opened) == (1 if stop_during == "inventory" else 2)
+    assert len(closed) == len(opened)
+
+
+@pytest.mark.parametrize("inventory_elapsed,expected_price_seconds", [(140, 180), (330, 30)])
+def test_real_price_admission_starts_fixed_phase_after_long_inventory(
+    tmp_path, monkeypatch, inventory_elapsed, expected_price_seconds,
+):
+    config = _config(tmp_path)
+    config.agentic_browser_settings = replace(
+        config.agentic_browser_settings, routing=ExecutionRoutingMode.CONSENTED_USERS,
+    )
+    user_id, bookings = _add(tmp_path, 101)
+    sessions = _session_repo(tmp_path)
+    _seed_session(sessions, user_id)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+            user_id=user_id, disclosure_version=config.agentic_browser_settings.disclosure_version,
+            acknowledged_at=datetime.now(UTC),
+        )
+    admitted = []
+
+    class Monitor:
+        last_agentic_outcome = None
+        last_agent_steps_used = 0
+        last_llm_calls_used = 0
+
+        def __init__(self, **kwargs):
+            admitted.append(kwargs["agentic_execution_limits"])
+            self.history = kwargs["check_history"]
+
+        def set_llm_enabled(self, enabled):
+            pass
+
+        def run_authenticated(self, booking, snapshot):
+            assert snapshot.metadata.owner_user_id == user_id
+            result = _failure(booking.booking_id)
+            self.history.add(result)
+            return result
+
+    monkeypatch.setattr("booksaver.daemon.check_coordinator.BookingComSearchMonitor", Monitor)
+    coordinator = _build_coordinator(
+        config, session_repository=sessions,
+        agentic_executor_factory=lambda budget, leases: object(),
+    )
+    now = datetime.now(UTC)
+    context = AgenticBrowserJobContext(
+        local_user_id=user_id, job_kind=BrowserJobKind.CHECK_NOW, job_id="long-inventory-job",
+        deadline=now + timedelta(seconds=360 - inventory_elapsed),
+        phase_deadline=now + timedelta(seconds=180 - inventory_elapsed),
+        job_limit_micro_usd=1_000_000, daily_limit_micro_usd=10_000_000,
+        inventory_allowance=True, total_actions=29, computer_actions=2, cost_micro_usd=250_000,
+    )
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        with coordinator._resume_agentic_job(context):
+            coordinator._run_booking(store, object(), user_id, bookings[0])
+    assert len(admitted) == 1
+    limits = admitted[0]
+    assert expected_price_seconds - 1 <= limits.timeout_seconds <= expected_price_seconds
+    assert limits.deadline <= context.deadline
+    assert limits.deadline <= now + timedelta(seconds=expected_price_seconds + 1)
+    assert limits.max_actions == 11
+    assert limits.max_computer_use_actions == 4
+    assert limits.max_job_cost == UsdAmount(750_000)
+    assert context.budget.job_id == "long-inventory-job"

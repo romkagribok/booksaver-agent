@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-08T21:59:19Z
+updated: 2026-09-13T16:10:04Z
 ---
 
 # System Context: Replaceable Agentic Browser Executor
@@ -172,3 +172,16 @@ Presentation receives only caller-scoped outcomes and saved rows. Operators veri
 account states in an isolated copy with real caller routing/consent/session checks and no
 notifications or production writes. Account-specific replay and deployed acceptance remain
 separate evidence; an owner's working booking is not proof for an invitee's different inventory.
+
+## Grouped-trip coverage follow-up (Unit 011)
+
+The reservation discovery boundary must distinguish account scope, trip grouping, reservation
+identity, and required detail evidence. Code-owned coverage accounts for reachable visited and
+unresolved work under existing limits; accepted positives alone do not establish traversal.
+Current/upcoming presentation and monitoring eligibility remain separate domain decisions.
+Coverage evidence grants no absence/deletion authority and cannot substitute for complete required
+facts. Final navigation/audit representation awaits the actual grouped-page diagnosis.
+
+Caller-specific qualification uses isolated normal-coordinator execution with production as a
+read-only source, notification suppression, and serialized browser admission. The reviewed final
+source and exact staged/promoted image must be identified independently from historical probes.

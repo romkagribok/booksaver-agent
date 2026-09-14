@@ -191,6 +191,109 @@ def test_complete_observation_is_validated_without_equivalence_claim() -> None:
     }
 
 
+@pytest.mark.parametrize("trusted_suffix,observed_suffix", [
+    (".en-us", ""), (".en-gb", ""), ("", ".en-us"), ("", ".en-gb"),
+    (".en-us", ".en-gb"), (".en-gb", ".en-us"),
+])
+@pytest.mark.parametrize("host", ["www.booking.com", "secure.booking.com"])
+def test_english_booking_property_url_alias_retains_all_price_evidence_gates(
+    trusted_suffix, observed_suffix, host,
+):
+    trusted = f"https://{host}/hotel/lt/airlnn-vilnius{trusted_suffix}.html"
+    observed = f"https://{host}/hotel/lt/airlnn-vilnius{observed_suffix}.html"
+    name = "AIRINN Vilnius Airport Hotel RENOVATED 2025"
+    request = replace(
+        _request(), query=replace(_query(), property_reference=trusted, property_name=name),
+    )
+    facts = replace(_facts(), property_reference=observed, property_name=name)
+    assert validate_price_observation(request, _result(facts=facts)).accepted
+    for changes, expected in (
+        ({"property_name": name + " Different"}, ValidationRejection.PROPERTY_MISMATCH),
+        ({"check_out": date(2026, 10, 6)}, ValidationRejection.DATE_MISMATCH),
+        ({"occupancy": Occupancy(1)}, ValidationRejection.OCCUPANCY_MISMATCH),
+        ({"currency": "USD"}, ValidationRejection.CURRENCY_MISMATCH),
+        ({"authenticated": False}, ValidationRejection.AUTHENTICATION_REQUIRED),
+    ):
+        result = validate_price_observation(request, _result(facts=replace(facts, **changes)))
+        assert result.rejection is expected
+    for offer in (
+        replace(_offer(), all_in=AllInEvidence.UNKNOWN),
+        replace(_offer(), refundability=RefundabilityEvidence.EXPLICIT_NONREFUNDABLE),
+        replace(_offer(), total=Money(Decimal("320.25"), "USD")),
+    ):
+        validation = validate_price_observation(request, _result(facts=facts, offers=(offer,)))
+        assert not validation.accepted
+        assert validation.accepted_offers == ()
+
+
+@pytest.mark.parametrize("observed", [
+    "https://www.booking.com/hotel/lv/airlnn-vilnius.html",
+    "https://www.booking.com/hotel/lt/different.html",
+    "https://www.booking.com/hotel/lt/AIRLNN-vilnius.html",
+    "https://www.booking.com/hotel/LT/airlnn-vilnius.html",
+    "https://secure.booking.com/hotel/lt/airlnn-vilnius.html",
+    "https://www.booking.com.example.com/hotel/lt/airlnn-vilnius.html",
+    "https://booking.com/hotel/lt/airlnn-vilnius.html",
+    "https://www.booking.com/hotel/lt/airlnn-vilnius.fr.html",
+    "https://www.booking.com/hotel/lt/airlnn-vilnius.fr-fr.html",
+    "https://www.booking.com/hotel/lt/airlnn-vilnius.EN-US.html",
+    "https://www.booking.com/hotel/lt/airlnn-vilnius.en-us.en-gb.html",
+    "https://www.booking.com/hotel/lt/%61irlnn-vilnius.html",
+    "https://www.booking.com/hotel/lt/../airlnn-vilnius.html",
+    "https://www.booking.com/hotel/lt/%2e%2e/airlnn-vilnius.html",
+    "https://www.booking.com/hotel/lt/other/airlnn-vilnius.html",
+    "https://www.booking.com/hotel/lt/airlnn-vilnius.html/",
+    "https://www.booking.com/hotel/lt/airlnn-vilnius",
+    "https://www.booking.com:443/hotel/lt/airlnn-vilnius.html",
+    "https://www.booking.com:/hotel/lt/airlnn-vilnius.html",
+    "https://www.booking.com:invalid/hotel/lt/airlnn-vilnius.html",
+    "https://user@www.booking.com/hotel/lt/airlnn-vilnius.html",
+    "https://user:pass@www.booking.com/hotel/lt/airlnn-vilnius.html",
+    "http://www.booking.com/hotel/lt/airlnn-vilnius.html",
+    "https://www.booking.com/hotel/lt/airlnn-\nvilnius.html",
+    "https://[malformed/hotel/lt/airlnn-vilnius.html",
+])
+def test_property_alias_does_not_collapse_unqualified_urls(observed):
+    trusted = "https://www.booking.com/hotel/lt/airlnn-vilnius.en-us.html"
+    request = replace(_request(), query=replace(_query(), property_reference=trusted))
+    facts = replace(_facts(), property_reference=observed)
+    assert validate_price_observation(request, _result(facts=facts)).rejection is (
+        ValidationRejection.PROPERTY_MISMATCH
+    )
+
+
+@pytest.mark.parametrize("trusted", [
+    "https://user@www.booking.com/hotel/lt/example.en-us.html",
+    "https://www.booking.com:443/hotel/lt/example.en-us.html",
+    "https://www.booking.com/hotel/lt/example.fr.html",
+])
+def test_property_alias_requires_safe_trusted_url_too(trusted):
+    request = replace(_request(), query=replace(_query(), property_reference=trusted))
+    facts = replace(_facts(), property_reference="https://www.booking.com/hotel/lt/example.html")
+    assert validate_price_observation(request, _result(facts=facts)).rejection is (
+        ValidationRejection.PROPERTY_MISMATCH
+    )
+
+
+def test_exact_property_reference_comparison_is_unchanged():
+    trusted = "https://www.booking.com/hotel/lt/example.fr.html?old=tracking#section"
+    observed = "https://www.booking.com/hotel/lt/example.fr.html?new=tracking"
+    request = replace(_request(), query=replace(_query(), property_reference=trusted))
+    assert validate_price_observation(
+        request, _result(facts=replace(_facts(), property_reference=observed)),
+    ).accepted
+
+
+def test_english_alias_keeps_existing_host_normalization_and_ignores_query_context():
+    request = replace(_request(), query=replace(
+        _query(), property_reference="https://WWW.BOOKING.COM/hotel/lt/example.en-us.html?aid=1",
+    ))
+    facts = replace(
+        _facts(), property_reference="https://www.booking.com./hotel/lt/example.html?aid=2#top",
+    )
+    assert validate_price_observation(request, _result(facts=facts)).accepted
+
+
 @pytest.mark.parametrize(
     ("facts", "expected"),
     [

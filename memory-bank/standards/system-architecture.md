@@ -73,8 +73,13 @@ flowchart TB
 - Interactive login selects an allowlisted desktop/mobile presentation after the signed viewer
   exchange (ADR-047); unopened attempts retain the shared lease but do not launch Chromium.
   Unknown device hints use mobile. Login cookies still require the isolated mobile verifier,
-  and inventory/check contexts remain configured Android Chromium. Device hints are presentation
-  data, never identity evidence; actual desktop-login-to-mobile-check reuse needs live qualification.
+  and inventory/check contexts start in configured Android Chromium. Grouped inventory may follow
+  the actual same-confirmation desktop-view link for booking facts, without exporting its cookies
+  (ADR-048); price contexts retain the original mobile session. Device hints are presentation data,
+  never identity evidence; actual desktop-login-to-mobile-check reuse needs live qualification.
+- Combined inventory-and-price operations have a fixed 360-second ceiling, while each executor
+  phase remains capped at 180 seconds and shares the existing cost/action/visual ledger (ADR-048).
+  Inventory-only work remains capped at 180 seconds; shutdown prevents admission of another phase.
 - The remote login browser runs on the trusted self-hosted VPS. HTTPS and encryption do not protect
   keystrokes against compromised VPS root; stronger disposable/device-local isolation is future
   hardening, not a security property of the current design.

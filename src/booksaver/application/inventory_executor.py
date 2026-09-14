@@ -26,6 +26,7 @@ from booksaver.domain.browser_executor import (
 )
 from booksaver.domain.inventory_executor import (
     REQUIRED_INVENTORY_SCOPES,
+    InventoryExecutionLimits,
     InventoryExecutionRequest,
     InventoryExecutionResult,
     InventoryExecutionStatus,
@@ -279,7 +280,7 @@ class OwnerBoundAgenticInventoryExecution:
             execution_id=execution_id,
             owner_user_id=owner_user_id,
             session_lease=lease,
-            limits=limits or ExecutionLimits(deadline=now + timedelta(seconds=180)),
+            limits=limits or InventoryExecutionLimits(deadline=now + timedelta(seconds=180)),
             known_confirmation_ids=known_confirmation_ids,
             known_reservations=known_reservations,
         )

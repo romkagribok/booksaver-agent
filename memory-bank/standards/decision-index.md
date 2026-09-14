@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-09-06T21:44:35Z
-total_decisions: 47
+last_updated: 2026-09-14T18:58:48Z
+total_decisions: 48
 ---
 
 # Decision Index
@@ -481,3 +481,11 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/069-device-adaptive-login-browser/adr-047-adaptive-login-with-mobile-verification.md`
 - **Summary**: Device discovery selects only interactive desktop/mobile Chromium after signed exchange; verification and checks stay mobile.
 - **Read when**: Changing remote login presentation, device discovery, deferred launch or profile/session compatibility.
+
+### ADR-048: Bounded grouped inventory details
+- **Status**: accepted
+- **Date**: 2026-09-13
+- **Bolt**: 074-grouped-trip-discovery
+- **Path**: `bolts/074-grouped-trip-discovery/adr-048-bounded-grouped-inventory-details.md`
+- **Summary**: Guarded grouped-trip worklist and ephemeral desktop confirmation facts; preserve mobile price sessions, inventory action cap40, independent price cap15, shared spending/actions and bounded 180-second phases within combined 360-second operations.
+- **Read when**: Changing grouped inventory navigation, confirmation view/session export, or inventory and price action/time budgets.
