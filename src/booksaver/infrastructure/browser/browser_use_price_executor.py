@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, get_args
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -164,12 +164,20 @@ class BrowserUsePriceObservationSubmission(BrowserUsePriceQuerySubmission):
     offers: list[BrowserUsePriceOfferSubmission] = Field(min_length=1, max_length=100)
 
 
+PriceTerminalStatus = Literal[
+    "no_valid_observation", "session_unavailable", "signed_out", "mfa_required",
+    "captcha", "bot_wall", "unavailable", "unsafe_action", "provider_failure",
+    "budget_exhausted", "timeout",
+]
+_TERMINAL_STATUS_CHOICES = ", ".join(get_args(PriceTerminalStatus))
+
+
 class BrowserUsePriceTerminalSubmission(BaseModel):
     """Exact forced-final contract for Browser Use 0.11.13."""
 
     model_config = ConfigDict(extra="forbid")
     success: bool
-    status: str
+    status: PriceTerminalStatus
 
 
 class GuardedTrustedType(BaseModel):
@@ -347,14 +355,25 @@ def _price_agent_task(request: PriceExecutionRequest) -> str:
         f"currency={query.currency}. This is read-only. Never sign in, type credentials, solve "
         "MFA or captcha, reserve, book, pay, cancel, modify, upload, download, or leave "
         "Booking.com. Inspect the intended property and its current bookable room/rate table. "
-        "Call submit_price_observation once only when the property, dates, occupancy, currency, "
-        "and all currently visible room/rate offers are explicit. total must be the all-in total "
-        "for the whole stay as a plain decimal with no currency symbol or thousands separator. "
+        "The top-level completeness describes ONLY the visible query: property, stay dates, "
+        "adults, children, rooms, and currency. Set it to complete only when those query facts "
+        "are explicit. Genius may be unknown. Each offer has its own independent completeness, "
+        "all_in, and refundability. Call submit_price_observation with the complete query "
+        "and visible room/rate offers "
+        "even when some offers are incomplete, unknown, or nonrefundable; these do not make "
+        "the query incomplete. Use the all-in total for the whole stay when explicit; otherwise "
+        "retain the displayed whole-stay total and mark all_in=unknown. Write total as a plain "
+        "decimal with no currency symbol or thousands separator. Do not fabricate missing totals. "
         "Mark all_in=explicit only when the displayed total explicitly includes taxes and fees. "
         "Mark refundability=explicit_refundable only when visible text explicitly says the rate "
-        "is refundable/free-cancellation and copy that text. Never infer missing facts. The "
+        "is refundable/free-cancellation and copy that text. When no cancellation text is visible, "
+        "use refundability=unknown and refundability_text=unknown. Never infer missing facts. The "
         "observation submission completes the job; use done(success=false, status=<reason>) only "
-        "when complete evidence cannot be obtained."
+        "when the query facts or usable visible offer values cannot be obtained. "
+        "Allowed status values: "
+        f"{_TERMINAL_STATUS_CHOICES}. Use no_valid_observation for missing or ambiguous "
+        "query evidence. Never change a completeness value just to pass validation. "
+        "BookSaver filters each offer and decides equivalence."
     )
 
 
@@ -787,7 +806,9 @@ class LocalBrowserUsePriceRuntime:
             return ActionResult(extracted_content="Guarded browser history return completed")
 
         @tools.action(  # type: ignore[untyped-decorator]
-            "Submit one complete visible query with every visible current room/rate offer.",
+            "Submit a complete visible query with visible room/rate offers. Query completeness "
+            "covers property, dates, occupancy, and currency only; each offer's completeness, "
+            "all_in, and refundability are independent and may be unknown or incomplete.",
             param_model=BrowserUsePriceObservationSubmission,
             allowed_domains=ALLOWED_DOMAINS,
             terminates_sequence=True,
@@ -800,7 +821,13 @@ class LocalBrowserUsePriceRuntime:
             if params.completeness != EvidenceCompleteness.COMPLETE.value:
                 return continued_action_result(
                     ActionResult,
-                    "Submit only after the visible query evidence is complete",
+                    "Top-level completeness covers only the visible property, stay dates, "
+                    "adults, children, rooms, and currency. Offer completeness, all_in, and "
+                    "refundability are independent; incomplete or nonrefundable offers do not "
+                    "make the query incomplete. Inspect any missing or conflicting query facts "
+                    "before submitting again. If they remain unclear, use "
+                    "done(success=false, status=no_valid_observation). Do not resubmit unchanged "
+                    "evidence or mark missing query facts complete.",
                 )
             current_url = await browser_session.get_current_page_url()
             candidate = _PriceEpisodeState(
@@ -835,7 +862,8 @@ class LocalBrowserUsePriceRuntime:
             )
 
         @tools.action(  # type: ignore[untyped-decorator]
-            "Finish with a typed observation or one closed non-success status.",
+            "Finish without an observation using one status: " + _TERMINAL_STATUS_CHOICES
+            + ". Use no_valid_observation for missing or ambiguous evidence.",
             param_model=BrowserUsePriceTerminalSubmission,
             terminates_sequence=True,
         )
@@ -854,7 +882,8 @@ class LocalBrowserUsePriceRuntime:
             except ValueError:
                 return continued_action_result(
                     ActionResult,
-                    "Choose one supported closed non-success status",
+                    "Choose one status: " + _TERMINAL_STATUS_CHOICES
+                    + ". Use no_valid_observation for missing or ambiguous evidence.",
                 )
             return ActionResult(
                 is_done=True,
@@ -887,23 +916,49 @@ class LocalBrowserUsePriceRuntime:
 
         self._host.failure_stage = "agent_execution"
         remaining_steps = max(1, request.limits.max_actions - meter.snapshot().total_actions)
+        history = None
+        run_outcome = "error"
+        run_started = time.monotonic()
         try:
             history = await agent.run(max_steps=remaining_steps)
-            diagnostic = agent_history_diagnostic(history, _EXPECTED_ACTIONS)
-            if self._price_state.observation is None:
+            run_outcome = "returned"
+        except asyncio.CancelledError:
+            run_outcome = "cancelled"
+            raise
+        except BrowserUseCostStop:
+            run_outcome = "cost_stop"
+        finally:
+            if self._price_state.observation is None or run_outcome != "returned":
+                # agent.run keeps partial history even when the outer deadline cancels it.
+                # Inspect only bounded categories; never emit model, page, or error text.
+                try:
+                    diagnostic = agent_history_diagnostic(
+                        history if history is not None else getattr(agent, "history", None),
+                        _EXPECTED_ACTIONS,
+                    )
+                    steps, diagnostic_actions, errors = (
+                        diagnostic.steps, diagnostic.actions, diagnostic.errors,
+                    )
+                except Exception:
+                    steps, diagnostic_actions, errors = 0, (), ("diagnostic_unavailable",)
+                usage = meter.snapshot()
                 logger.warning(
-                    "Browser Use price agent ended without observation execution_id=%s steps=%s "
-                    "actions=%s errors=%s query_submitted=%s offers_submitted=%s",
+                    "Browser Use price agent summary execution_id=%s outcome=%s elapsed_ms=%s "
+                    "steps=%s actions=%s errors=%s model_calls=%s total_actions=%s "
+                    "query_submitted=%s offers_submitted=%s observation_submitted=%s",
                     request.execution_id,
-                    diagnostic.steps,
-                    diagnostic.actions,
-                    diagnostic.errors,
+                    run_outcome,
+                    max(0, round((time.monotonic() - run_started) * 1_000)),
+                    steps,
+                    diagnostic_actions,
+                    errors,
+                    usage.model_calls,
+                    usage.total_actions,
                     self._price_state.query is not None,
                     len(self._price_state.offers),
+                    self._price_state.observation is not None,
                 )
             del history
-        except BrowserUseCostStop:
-            pass
 
         if self._host.dialog_rejected:
             return self._unsafe_result()

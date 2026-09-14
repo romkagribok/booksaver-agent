@@ -58,3 +58,9 @@
   all five stages are recorded. Intent023 remains in construction for its other unfinished units.
   Unit011 returns to Operations, blocked from promotion pending final-head review and replacement
   image qualification. No staging failure was waived and no production release is claimed.
+
+## 2026-09-14T20:01:15Z — Bolt076
+
+Reopened scoped Construction after image B Park Inn timed out. Existing terminal vocabulary is
+not advertised to the model, and cancellation skips diagnostics. Fix these explicit contract
+gaps and requalify; do not attribute the timeout before observed action evidence.

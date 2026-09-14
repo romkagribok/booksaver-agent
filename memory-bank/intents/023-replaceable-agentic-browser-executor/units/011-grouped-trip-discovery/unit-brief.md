@@ -64,11 +64,12 @@ Final-head review and exact-image Operations qualification/promotion remain pend
 
 ## Story Summary
 
-- Total stories: 4; all Must; US187–190 complete for construction.
+- Total stories: 5; all Must; US187–191 complete for construction.
 - US-187: Discover every grouped reservation and detail.
 - US-188: Preserve strict eligibility and distinguish current stays.
 - US-189: Qualify grouped discovery for the actual caller and final image.
 - US-190: Close grouped-discovery review edge cases.
+- US-191: Close the price submission contract.
 
 ## 2026-09-13T16:10:42Z - Authenticated acceptance prerequisite
 
@@ -94,3 +95,12 @@ caller evidence is preserved. Bolt075 and US190 completed through the official c
 2026-09-14T19:41:31Z after the 2,609-test/83%-coverage gate. Operations remains blocked from
 promotion: initial image A failed staging, and the review-corrected replacement still requires
 final-head Bugbot and exact-image Dev/Staging verification. No production release has occurred.
+
+## 2026-09-14T20:01:15Z — Return to Construction
+
+Image B repeated the Park Inn price timeout after qualified inventory/AIRINN. Bolt076 repairs
+the independently verified terminal vocabulary gap and retains interruption diagnostics; the
+live timeout cause and final release qualification remain under investigation.
+
+Bolt076 construction completed after the 2,623-test final gate. New-image caller qualification,
+current-head review and production promotion remain pending Operations work.
