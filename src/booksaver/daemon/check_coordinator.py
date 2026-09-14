@@ -89,7 +89,12 @@ from booksaver.domain.dom_incident import (
     IncidentProviderState,
 )
 from booksaver.domain.errors import UserKeyInvalidError
-from booksaver.domain.inventory_executor import InventoryExecutionStatus, KnownInventoryReservation
+from booksaver.domain.inventory_executor import (
+    MAX_INVENTORY_ACTIONS,
+    InventoryExecutionLimits,
+    InventoryExecutionStatus,
+    KnownInventoryReservation,
+)
 from booksaver.domain.model_policy import (
     AdmissionDecision,
     BrowserJobKind,
@@ -399,19 +404,39 @@ class AgenticBrowserJobContext:
     total_actions: int = 0
     computer_actions: int = 0
     cost_micro_usd: int = 0
+    inventory_allowance: bool = False
+    phase_deadline: datetime | None = None
 
-    def remaining_limits(self, *, now: datetime | None = None) -> ExecutionLimits | None:
+    def start_phase(self, *, now: datetime | None = None) -> None:
+        """Freeze one capability's time cap inside the unchanged operation allowance."""
         current = now or datetime.now(UTC)
+        self.phase_deadline = min(
+            self.deadline, current + timedelta(seconds=MAX_EXECUTOR_SECONDS),
+        )
+
+    def remaining_limits(
+        self, *, now: datetime | None = None, inventory: bool = False,
+    ) -> ExecutionLimits | None:
+        current = now or datetime.now(UTC)
+        if self.phase_deadline is None:
+            self.start_phase(now=current)
+        assert self.phase_deadline is not None
+        deadline = min(self.deadline, self.phase_deadline)
         remaining_seconds = min(
             MAX_EXECUTOR_SECONDS,
-            int((self.deadline - current).total_seconds()),
+            int((deadline - current).total_seconds()),
         )
-        remaining_actions = MAX_EXECUTOR_ACTIONS - self.total_actions
+        self.inventory_allowance |= inventory
+        ceiling = MAX_INVENTORY_ACTIONS if self.inventory_allowance else MAX_EXECUTOR_ACTIONS
+        remaining_actions = ceiling - self.total_actions
+        if not inventory:
+            remaining_actions = min(MAX_EXECUTOR_ACTIONS, remaining_actions)
         remaining_cost = self.job_limit_micro_usd - self.cost_micro_usd
         if remaining_seconds < 1 or remaining_actions < 1 or remaining_cost < 1:
             return None
-        return ExecutionLimits(
-            deadline=self.deadline,
+        limits_type = InventoryExecutionLimits if inventory else ExecutionLimits
+        return limits_type(
+            deadline=deadline,
             max_actions=remaining_actions,
             max_computer_use_actions=min(
                 remaining_actions,
@@ -547,7 +572,11 @@ class CheckCoordinator:
             local_user_id=user_id,
             job_kind=job_kind,
             job_id=f"agentic-{job_kind.value}-{uuid.uuid4().hex}",
-            deadline=datetime.now(UTC) + timedelta(seconds=MAX_EXECUTOR_SECONDS),
+            deadline=datetime.now(UTC) + timedelta(seconds=(
+                2 * MAX_EXECUTOR_SECONDS
+                if job_kind in {BrowserJobKind.CHECK_NOW, BrowserJobKind.SCHEDULED_SLOT}
+                else MAX_EXECUTOR_SECONDS
+            )),
             job_limit_micro_usd=settings.max_job_cost_micro_usd,
             daily_limit_micro_usd=settings.max_deployment_daily_cost_micro_usd,
         )
@@ -1334,6 +1363,8 @@ class CheckCoordinator:
                         else:
                             try:
                                 with self._browser_factory() as browser:
+                                    if self._stop_event.is_set():
+                                        return
                                     result = self._run_booking(
                                         store, browser, user.user_id, booking
                                     )
@@ -1513,6 +1544,8 @@ class CheckCoordinator:
                 # Telegram user can never survive into another user's check.
                 with self._resume_agentic_job(agentic_jobs_by_user.get(user_id)):
                     with self._browser_factory() as browser:
+                        if self._stop_event.is_set():
+                            break
                         result = self._run_booking(store, browser, user_id, booking)
                 self._record_post_browser_incidents(
                     user_id=user_id,
@@ -1626,6 +1659,8 @@ class CheckCoordinator:
                 history.add(self._limit_result(booking, "Scheduled check skipped"))
                 continue
             with self._browser_factory() as browser:
+                if self._stop_event.is_set():
+                    break
                 result = self._run_booking(
                     store,
                     browser,
@@ -1991,7 +2026,8 @@ class CheckCoordinator:
             if current_agentic_job is not None
             else BrowserJobKind.BOOKINGS_SYNC,
         )
-        limits = context.remaining_limits()
+        context.start_phase()
+        limits = context.remaining_limits(inventory=True)
         if limits is None:
             return repository.reconcile(
                 user_id=user_id,
@@ -2016,7 +2052,10 @@ class CheckCoordinator:
                 check_out=reservation.observation.check_out,
             )
             for reservation in saved_reservations
-            if reservation.observation.confirmation_id is not None
+            # A presence-only match cannot fill missing booking facts. Keep incomplete
+            # records on the detail-discovery path until they qualify for monitoring.
+            if reservation.eligibility.is_eligible
+            and reservation.observation.confirmation_id is not None
             and reservation.observation.property_name is not None
             and reservation.observation.check_in is not None
             and reservation.observation.check_out is not None
@@ -2136,6 +2175,9 @@ class CheckCoordinator:
     def _run_booking(
         self, store: SqliteStore, browser: Any, user_id: int, booking: Booking
     ) -> CheckResult:
+        agentic_job = self._current_agentic_job()
+        if agentic_job is not None:
+            agentic_job.start_phase()
         history = SqliteCheckHistoryRepository(store)
         users = SqliteUserRepository(store)
         provider = AuthenticatedSessionProvider(users, self._session_repository)

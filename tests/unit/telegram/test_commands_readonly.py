@@ -623,13 +623,13 @@ def test_bookings_hidden_saved_rows_do_not_change_successful_refresh_outcome(
     assert "No future reservations found" not in text
     assert "CONF-hidden" not in text  # Display filtering remains unchanged.
     if empty_observed:
-        assert "Booking.com shows no upcoming reservations" in text
+        assert "We did not find upcoming hotel reservations in the trips we checked" in text
         assert "Your previously saved reservations are still here" in text
         assert "check which Booking.com account" not in text
     else:
         assert "We updated the reservations we could find" in text
         assert "future check-in dates" in text
-        assert "shows no upcoming reservations" not in text
+        assert "in the trips we checked" not in text
     with SqliteStore(db_path) as store:
         preserved = tuple(SqliteAccountReservationRepository(store).list_for_user(user_id))
     assert preserved == reservations

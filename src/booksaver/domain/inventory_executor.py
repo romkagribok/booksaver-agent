@@ -26,6 +26,17 @@ from .browser_executor import (
 from .value_objects import Money, Occupancy
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+MAX_INVENTORY_ACTIONS = 40
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryExecutionLimits(ExecutionLimits):
+    """Inventory may traverse multiple reservations within the same time and cost caps."""
+
+    max_actions: int = MAX_INVENTORY_ACTIONS
+
+    def __post_init__(self) -> None:
+        self._validate(maximum_actions=MAX_INVENTORY_ACTIONS)
 
 
 def _safe_id(value: str, field_name: str) -> str:
@@ -224,6 +235,8 @@ class InventoryExecutionRequest:
     )
 
     def __post_init__(self) -> None:
+        if not 1 <= self.limits.max_actions <= MAX_INVENTORY_ACTIONS:
+            raise ValueError("inventory execution cannot exceed its 40-action capability limit")
         _safe_id(self.execution_id, "execution_id")
         if isinstance(self.owner_user_id, bool) or self.owner_user_id < 1:
             raise ValueError("owner_user_id must be positive")

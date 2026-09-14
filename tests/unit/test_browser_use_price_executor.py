@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from booksaver.application.async_runner import AsyncLoopRunner
-from booksaver.application.browser_executor import InMemorySessionLeaseBroker
+from booksaver.application.browser_executor import ExecutionMeter, InMemorySessionLeaseBroker
 from booksaver.application.model_policy import BrowserJobCostBudget
 from booksaver.domain.browser_executor import (
     AllInEvidence,
@@ -19,9 +22,12 @@ from booksaver.domain.browser_executor import (
     ObservedOffer,
     ObservedQueryFacts,
     PriceExecutionRequest,
+    PriceExecutionResult,
     PriceExecutionStatus,
+    RedactedProvenance,
     RefundabilityEvidence,
     TrustedPriceQuery,
+    validate_price_observation,
 )
 from booksaver.domain.model_policy import (
     AdmissionDecision,
@@ -33,6 +39,7 @@ from booksaver.domain.model_policy import (
     ReservationStatus,
 )
 from booksaver.domain.value_objects import Money, Occupancy, StayDates
+from booksaver.infrastructure.browser import browser_use_price_executor as price_adapter
 from booksaver.infrastructure.browser.agentic_executor import (
     TypedObservation,
     build_trusted_search_url,
@@ -464,3 +471,289 @@ def test_executor_preserves_closed_unsafe_terminal() -> None:
     )
     assert result.query_facts is None
     assert runtime.closed is True
+
+
+def test_terminal_schema_and_prompt_enumerate_only_existing_failure_statuses() -> None:
+    expected = {
+        status.value for status in PriceExecutionStatus
+        if status is not PriceExecutionStatus.OBSERVED
+    }
+    schema = BrowserUsePriceTerminalSubmission.model_json_schema()
+    assert set(schema["properties"]["status"]["enum"]) == expected
+    assert len(expected) == 11
+    prompt = _price_agent_task(_request(InMemorySessionLeaseBroker()))
+    for status in expected:
+        assert status in prompt
+        assert _terminal_status(status).value == status
+        assert BrowserUsePriceTerminalSubmission(success=False, status=status).status == status
+    assert "Use no_valid_observation for missing or ambiguous query evidence" in prompt
+    assert "BookSaver filters each offer and decides equivalence" in prompt
+
+
+@pytest.mark.parametrize("status", [
+    "observed", "no_equivalent_offer", "incomplete_evidence", "secret",
+])
+def test_terminal_schema_rejects_observation_and_invented_reasons(status) -> None:
+    with pytest.raises(ValidationError):
+        BrowserUsePriceTerminalSubmission(success=False, status=status)
+
+
+def _local_price_episode(monkeypatch, tmp_path, plan):
+    """Use real registered handlers with no browser, model, or network calls."""
+    import browser_use
+
+    class Tools:
+        def __init__(self, **kwargs):
+            self.registry = SimpleNamespace(registry=SimpleNamespace(actions={}))
+            self.descriptions = {}
+
+        def action(self, description, **kwargs):
+            def register(function):
+                self.registry.registry.actions[function.__name__] = function
+                self.descriptions[function.__name__] = description
+                return function
+            return register
+
+    class Session:
+        url = "https://www.booking.com/searchresults.html"
+
+        async def navigate_to(self, url, **kwargs):
+            self.url = url
+
+        async def get_current_page_url(self):
+            return self.url
+
+        def get_page_targets(self):
+            return [object()]
+
+        async def get_browser_state_summary(self, **kwargs):
+            return SimpleNamespace(
+                dom_state=SimpleNamespace(llm_representation=lambda: "secret DOM"),
+            )
+
+    runtime = price_adapter.LocalBrowserUsePriceRuntime()
+    session = Session()
+    request = _request(InMemorySessionLeaseBroker())
+    meter = ExecutionMeter(request.limits)
+
+    async def start():
+        return SimpleNamespace(
+            browser=session, viewport={"width": 360, "height": 800}, file_system_dir=tmp_path,
+        )
+
+    async def verify(*args):
+        return None
+
+    async def screenshot(*args):
+        return True
+
+    def create_agent(agent_type, **kwargs):
+        agent = SimpleNamespace(history=SimpleNamespace(history=[]))
+
+        async def run(**run_kwargs):
+            await plan(agent, kwargs["tools"], session)
+            return agent.history
+        agent.run = run
+        return agent
+
+    monkeypatch.setattr(browser_use, "Tools", Tools)
+    monkeypatch.setattr(
+        price_adapter, "budgeted_model_type", lambda *args: lambda **kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(price_adapter, "browser_use_screenshot_available", screenshot)
+    monkeypatch.setattr(runtime, "_host", SimpleNamespace(
+        start=start, verify_authentication=verify, create_agent=create_agent,
+        dialog_rejected=False, blocked_network_requests=0, blocked_network_hosts=set(),
+    ))
+    return runtime, runtime.execute(request, api_key="secret key", budget=_budget(), meter=meter)
+
+
+@pytest.mark.parametrize("invalid", ["invented_reason", "observed"])
+def test_terminal_correction_lists_choices_then_accepts_valid_failure(
+    monkeypatch, tmp_path, invalid,
+):
+    async def plan(agent, tools, session):
+        done = tools.registry.registry.actions["done"]
+        # Exercise defensive handler validation even if a dependency bypasses the typed schema.
+        rejected = await done(SimpleNamespace(success=False, status=invalid), session)
+        assert rejected.is_done is False
+        assert rejected.success is None
+        for status in PriceExecutionStatus:
+            if status is not PriceExecutionStatus.OBSERVED:
+                assert status.value in rejected.extracted_content
+                assert status.value in tools.descriptions["done"]
+        accepted = await done(BrowserUsePriceTerminalSubmission(
+            success=False, status="no_valid_observation"), session)
+        assert accepted.is_done is True
+        assert accepted.success is False
+
+    runtime, episode = _local_price_episode(monkeypatch, tmp_path, plan)
+    result = asyncio.run(episode)
+    assert result.status is PriceExecutionStatus.NO_VALID_OBSERVATION
+    assert result.observation is None
+    assert runtime._price_state.observation is None
+
+
+def test_successful_done_still_requires_typed_observation(monkeypatch, tmp_path):
+    async def plan(agent, tools, session):
+        result = await tools.registry.registry.actions["done"](BrowserUsePriceTerminalSubmission(
+            success=True, status="no_valid_observation"), session)
+        assert result.is_done is False
+        assert "submit_price_observation" in result.extracted_content
+
+    runtime, episode = _local_price_episode(monkeypatch, tmp_path, plan)
+    result = asyncio.run(episode)
+    assert result.status is PriceExecutionStatus.PROVIDER_FAILURE
+    assert result.observation is None
+    assert runtime._price_state.terminal is None
+
+
+@pytest.mark.parametrize("broken_history", [False, True])
+def test_cancelled_price_run_logs_only_bounded_partial_history_and_reraises(
+    monkeypatch, tmp_path, caplog, broken_history,
+):
+    started = asyncio.Event()
+
+    class Action:
+        def model_dump(self, **kwargs):
+            if broken_history:
+                raise RuntimeError("secret action payload")
+            return {"done": {"status": "secret model value", "success": False}}
+
+    async def plan(agent, tools, session):
+        agent.history.history.append(SimpleNamespace(
+            model_output=SimpleNamespace(action=[Action()]),
+            result=[SimpleNamespace(error="validation done status literal_error secret error")],
+            state=SimpleNamespace(url="https://www.booking.com/?auth_key=secret-cookie"),
+        ))
+        started.set()
+        await asyncio.Event().wait()
+
+    runtime, episode = _local_price_episode(monkeypatch, tmp_path, plan)
+
+    async def cancel():
+        task = asyncio.create_task(episode)
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel())
+    assert "outcome=cancelled" in caplog.text
+    assert "steps=1" in caplog.text
+    expected_action = "invalid_action" if broken_history else "done"
+    assert f"actions=('{expected_action}',)" in caplog.text
+    assert "validation:done:status:literal_error" in caplog.text
+    assert "model_calls=0 total_actions=1" in caplog.text
+    assert "observation_submitted=False" in caplog.text
+    assert "secret" not in caplog.text
+    assert "auth_key" not in caplog.text
+    assert runtime._price_state.observation is None
+
+
+def _mixed_price_submission(*, completeness="complete"):
+    valid = BrowserUsePriceOfferSubmission(
+        room_label="Deluxe King Room", total="275.00", currency="USD", all_in="explicit",
+        refundability="explicit_refundable", refundability_text="Free cancellation",
+        completeness="complete",
+    )
+    return BrowserUsePriceObservationSubmission(
+        property_name="Hotel Example", check_in="2026-11-24", check_out="2026-11-25",
+        adults="2", children="0", rooms="1", currency="USD", genius="unknown",
+        completeness=completeness,
+        offers=[
+            valid,
+            valid.model_copy(update={
+                "total": "240.00", "all_in": "unknown", "refundability": "unknown",
+                "refundability_text": "unknown",
+                "completeness": "incomplete",
+            }),
+            valid.model_copy(update={
+                "total": "230.00", "refundability": "explicit_nonrefundable",
+                "refundability_text": "Non-refundable",
+            }),
+            valid.model_copy(update={"total": "220.00", "completeness": "conflicting"}),
+        ],
+    )
+
+
+def test_complete_query_with_mixed_offers_keeps_only_valid_candidate(monkeypatch, tmp_path):
+    submission = _mixed_price_submission()
+    property_url = "https://www.booking.com/hotel/us/example.html"
+
+    async def plan(agent, tools, session):
+        session.url = property_url
+        submitted = await tools.registry.registry.actions["submit_price_observation"](
+            submission, session,
+        )
+        assert submitted.is_done is True
+        assert submitted.success is True
+
+    runtime, episode = _local_price_episode(monkeypatch, tmp_path, plan)
+    result = asyncio.run(episode)
+    assert result.status is PriceExecutionStatus.OBSERVED
+    observation = result.observation
+    assert observation is not None
+    assert observation.facts.completeness is EvidenceCompleteness.COMPLETE
+    assert observation.facts.genius is None
+    assert len(observation.offers) == 4
+    assert observation.offers[1].completeness is EvidenceCompleteness.INCOMPLETE
+    assert observation.offers[1].all_in is AllInEvidence.UNKNOWN
+    assert observation.offers[1].refundability is RefundabilityEvidence.UNKNOWN
+    assert observation.offers[1].refundability_text == "unknown"
+    assert observation.offers[2].refundability is RefundabilityEvidence.EXPLICIT_NONREFUNDABLE
+    assert observation.offers[3].completeness is EvidenceCompleteness.CONFLICTING
+    request = _request(InMemorySessionLeaseBroker())
+    request = replace(request, query=replace(request.query, property_reference=property_url))
+    validation = validate_price_observation(request, PriceExecutionResult(
+        status=result.status, query_facts=observation.facts, offers=observation.offers,
+        provenance=RedactedProvenance(
+            source=ObservationSource.BROWSER_USE_PRICE_SUBMISSION, action_count=1,
+            evidence_item_count=observation.evidence_item_count,
+        ),
+    ))
+    assert validation.accepted
+    assert validation.rejected_offer_count == 3
+    assert len(validation.accepted_offers) == 1
+    assert validation.accepted_offers[0].total.amount == Decimal("275.00")
+    assert runtime._price_state.offers == submission.offers
+
+
+@pytest.mark.parametrize("completeness", ["incomplete", "conflicting"])
+def test_incomplete_query_still_rejected_with_separate_offer_guidance(
+    monkeypatch, tmp_path, completeness,
+):
+    submission = _mixed_price_submission(completeness=completeness)
+
+    async def plan(agent, tools, session):
+        submitted = await tools.registry.registry.actions["submit_price_observation"](
+            submission, session,
+        )
+        assert submitted.is_done is False
+        guidance = submitted.extracted_content
+        assert "Top-level completeness covers only" in guidance
+        assert "Offer completeness, all_in, and refundability are independent" in guidance
+        assert "Inspect any missing or conflicting query facts" in guidance
+        assert "done(success=false, status=no_valid_observation)" in guidance
+        assert "Do not resubmit unchanged evidence or mark missing query facts complete" in guidance
+        await tools.registry.registry.actions["done"](BrowserUsePriceTerminalSubmission(
+            success=False, status="no_valid_observation"), session)
+
+    runtime, episode = _local_price_episode(monkeypatch, tmp_path, plan)
+    result = asyncio.run(episode)
+    assert result.status is PriceExecutionStatus.NO_VALID_OBSERVATION
+    assert result.observation is None
+    assert runtime._price_state.query is None
+    assert runtime._price_state.offers == []
+    assert submission.completeness == completeness
+
+
+def test_price_prompt_separates_query_and_offer_completeness():
+    prompt = _price_agent_task(_request(InMemorySessionLeaseBroker()))
+    assert "top-level completeness describes ONLY the visible query" in prompt
+    assert "Each offer has its own independent completeness, all_in, and refundability" in prompt
+    assert "some offers are incomplete, unknown, or nonrefundable" in prompt
+    assert "Never change a completeness value just to pass validation" in prompt
+    assert "use refundability=unknown and refundability_text=unknown" in prompt
+    assert "Do not fabricate missing totals" in prompt
+    assert "and all currently visible room/rate offers are explicit" not in prompt

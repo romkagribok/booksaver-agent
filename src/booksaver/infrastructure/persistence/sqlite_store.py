@@ -1263,15 +1263,23 @@ class SqliteAccountReservationRepository:
                 (user_id, observation.confirmation_id),
             ).fetchone()
         if existing is not None and observation.extraction_method == "agentic_inventory":
-            if self._agentic_observation_conflicts(existing, observation):
+            if self._agentic_observation_conflicts(
+                existing, observation, observed_at=observed_at,
+            ):
                 raise sqlite3.IntegrityError(
                     "Agentic inventory conflicts with last-safe reservation facts"
                 )
             observation = self._merge_agentic_existing_observation(
                 existing,
                 observation,
+                observed_at=observed_at,
             )
-            decision = evaluate_eligibility(observation, today=observed_at.date())
+            observed_date = (
+                observed_at.astimezone(UTC).date()
+                if observed_at.tzinfo is not None and observed_at.utcoffset() is not None
+                else observed_at.date()
+            )
+            decision = evaluate_eligibility(observation, today=observed_date)
         if existing is not None and observation.extraction_method == "llm_inventory":
             self._merge_assisted_existing_observation(
                 conn,
@@ -1373,9 +1381,43 @@ class SqliteAccountReservationRepository:
         )
 
     @staticmethod
-    def _agentic_observation_conflicts(
+    def _agentic_lifecycle_progresses(
         existing: sqlite3.Row,
         observation: ReservationObservation,
+        *,
+        observed_at: datetime,
+    ) -> bool:
+        """Allow only forward stay progress proven by unchanged identity/dates and host UTC time."""
+        if (
+            not observation.confirmation_id
+            or observation.confirmation_id != existing["confirmation_id"]
+            or observation.check_in is None or observation.check_out is None
+            or observation.check_in >= observation.check_out
+            or observation.check_in.isoformat() != existing["check_in"]
+            or observation.check_out.isoformat() != existing["check_out"]
+            or observed_at.tzinfo is None or observed_at.utcoffset() is None
+        ):
+            return False
+        transition = (existing["remote_lifecycle"], observation.lifecycle)
+        allowed = {
+            (ReservationLifecycle.UPCOMING.value, ReservationLifecycle.CURRENT),
+            (ReservationLifecycle.UPCOMING.value, ReservationLifecycle.COMPLETED),
+            (ReservationLifecycle.CURRENT.value, ReservationLifecycle.COMPLETED),
+        }
+        if transition not in allowed:
+            return False
+        today = observed_at.astimezone(UTC).date()
+        if observation.lifecycle is ReservationLifecycle.CURRENT:
+            return observation.check_in <= today < observation.check_out
+        return observation.check_out <= today
+
+    @classmethod
+    def _agentic_observation_conflicts(
+        cls,
+        existing: sqlite3.Row,
+        observation: ReservationObservation,
+        *,
+        observed_at: datetime,
     ) -> bool:
         """Reject explicit model facts that disagree with persisted last-safe authority."""
 
@@ -1422,6 +1464,9 @@ class SqliteAccountReservationRepository:
             observation.lifecycle is not ReservationLifecycle.UNKNOWN
             and existing["remote_lifecycle"] != ReservationLifecycle.UNKNOWN.value
             and existing["remote_lifecycle"] != observation.lifecycle.value
+            and not cls._agentic_lifecycle_progresses(
+                existing, observation, observed_at=observed_at,
+            )
         ):
             return True
         if observation.booked_total is not None:
@@ -1440,12 +1485,15 @@ class SqliteAccountReservationRepository:
                 return True
         return False
 
-    @staticmethod
+    @classmethod
     def _merge_agentic_existing_observation(
+        cls,
         existing: sqlite3.Row,
         observation: ReservationObservation,
+        *,
+        observed_at: datetime,
     ) -> ReservationObservation:
-        """Fill only missing persisted facts after explicit conflict checks have passed."""
+        """Preserve established facts except for separately proven forward lifecycle progress."""
         stored_total = (
             Money(
                 Decimal(str(existing["baseline_amount"])),
@@ -1467,13 +1515,15 @@ class SqliteAccountReservationRepository:
             else None
         )
         stored_lifecycle = ReservationLifecycle(existing["remote_lifecycle"])
+        lifecycle = (
+            observation.lifecycle
+            if stored_lifecycle is ReservationLifecycle.UNKNOWN
+            or cls._agentic_lifecycle_progresses(existing, observation, observed_at=observed_at)
+            else stored_lifecycle
+        )
         return replace(
             observation,
-            lifecycle=(
-                stored_lifecycle
-                if stored_lifecycle is not ReservationLifecycle.UNKNOWN
-                else observation.lifecycle
-            ),
+            lifecycle=lifecycle,
             confirmation_id=existing["confirmation_id"] or observation.confirmation_id,
             property_name=existing["property_name"] or observation.property_name,
             property_ref=existing["property_ref"] or observation.property_ref,

@@ -246,10 +246,14 @@ class ExecutionLimits:
     max_deployment_daily_cost: UsdAmount = UsdAmount(MAX_DAILY_COST_MICRO_USD)
 
     def __post_init__(self) -> None:
+        self._validate(maximum_actions=MAX_EXECUTOR_ACTIONS)
+
+    def _validate(self, *, maximum_actions: int) -> None:
+        """Share time/cost/fallback checks while capability types own their action cap."""
         if self.deadline.tzinfo is None:
             raise ValueError("executor deadline must be timezone-aware")
-        if not 1 <= self.max_actions <= MAX_EXECUTOR_ACTIONS:
-            raise ValueError(f"max_actions must be between 1 and {MAX_EXECUTOR_ACTIONS}")
+        if not 1 <= self.max_actions <= maximum_actions:
+            raise ValueError(f"max_actions must be between 1 and {maximum_actions}")
         if (
             not 0
             <= self.max_computer_use_actions
@@ -278,6 +282,8 @@ class PriceExecutionRequest:
     limits: ExecutionLimits
 
     def __post_init__(self) -> None:
+        if not 1 <= self.limits.max_actions <= MAX_EXECUTOR_ACTIONS:
+            raise ValueError("price execution cannot exceed its 15-action capability limit")
         _require_safe_id(self.execution_id, "execution_id")
         _require_safe_id(self.booking_id, "booking_id")
         if isinstance(self.owner_user_id, bool) or self.owner_user_id < 1:
@@ -505,20 +511,56 @@ def _normalized_name(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def _english_booking_property_identity(url: str) -> tuple[str, str, str] | None:
+    """Recognize only Booking's observed English hotel filename representations."""
+    if any(character.isspace() or ord(character) < 32 for character in url):
+        return None
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").casefold().rstrip(".")
+        if (
+            parsed.scheme.casefold() != "https"
+            or host not in {"www.booking.com", "secure.booking.com"}
+            or parsed.username is not None or parsed.password is not None
+            or parsed.port is not None
+            or parsed.netloc.casefold().rstrip(".") != host
+        ):
+            return None
+        path = re.fullmatch(
+            r"/hotel/([a-z]{2})/([A-Za-z0-9_-]+)(?:\.en-(?:us|gb))?\.html",
+            parsed.path,
+        )
+        return (host, path[1], path[2]) if path is not None else None
+    except ValueError:
+        return None
+
+
 def _property_reference_matches(query: TrustedPriceQuery, facts: ObservedQueryFacts) -> bool:
     observed = facts.property_reference
     if observed is None:
         return False
     trusted = query.property_reference.strip()
-    parsed_trusted = urlsplit(trusted)
+    try:
+        parsed_trusted = urlsplit(trusted)
+    except ValueError:
+        return False
     if parsed_trusted.scheme.casefold() == "https" and parsed_trusted.hostname:
-        parsed_observed = urlsplit(observed)
+        try:
+            parsed_observed = urlsplit(observed)
+        except ValueError:
+            return False
         trusted_host = parsed_trusted.hostname.casefold().rstrip(".")
         observed_host = (parsed_observed.hostname or "").casefold().rstrip(".")
-        return (
+        if (
             parsed_observed.scheme.casefold() == "https"
             and trusted_host == observed_host
             and parsed_trusted.path.rstrip("/") == parsed_observed.path.rstrip("/")
+        ):
+            return True
+        trusted_identity = _english_booking_property_identity(trusted)
+        return (
+            trusted_identity is not None
+            and trusted_identity == _english_booking_property_identity(observed)
         )
     # The registration flow explicitly permits the property name as its reference. In that
     # representation the independently observed exact visible name is the available identity proof;

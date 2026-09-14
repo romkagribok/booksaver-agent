@@ -919,6 +919,7 @@ def test_explicit_empty_initial_page_is_code_observed_after_authentication_and_s
         def __init__(self) -> None:
             self.current_url = initial_url
             self.target_count = target_count
+            self.agent_focus_target_id = "current-target"
             self.cdp_client = SimpleNamespace(
                 send=SimpleNamespace(Runtime=SimpleNamespace(evaluate=self.evaluate)),
             )
@@ -948,10 +949,12 @@ def test_explicit_empty_initial_page_is_code_observed_after_authentication_and_s
                 ),
             })}}
 
-        async def get_current_page(self) -> Any:
-            async def ensure_session() -> str:
-                return "current-page-session"
-            return SimpleNamespace(_ensure_session=ensure_session)
+        async def get_or_create_cdp_session(self, target_id: str, *, focus: bool) -> Any:
+            assert target_id == self.agent_focus_target_id
+            assert focus is False
+            return SimpleNamespace(
+                target_id=target_id, session_id="current-page-session", cdp_client=self.cdp_client,
+            )
 
         async def navigate_to(self, url: str, **_kwargs: Any) -> None:
             navigation_calls.append(url)

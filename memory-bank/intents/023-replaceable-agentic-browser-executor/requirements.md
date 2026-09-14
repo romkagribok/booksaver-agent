@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-09-08T21:59:19Z
+updated: 2026-09-13T16:10:04Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -11,6 +11,33 @@ checkpoint_4_approved: 2026-08-16T19:18:41Z
 ---
 
 # Requirements: Replaceable Agentic Browser Executor
+
+## Grouped-trip discovery amendment
+
+FR-28 / US-187: Traverse all reachable grouped trips, included reservations, and required detail
+views within the existing admitted scope and limits. Continue beyond the first accepted positive
+and retain bounded code-owned coverage/audit evidence; a model completion claim or record count
+alone cannot establish coverage. Partial saved identities must retain required detail work on
+retry; only already-eligible complete saved records may use a processed-match shortcut, while all
+caller confirmation hints remain available. Keep existing safety and positive-only boundaries.
+
+FR-29 / US-188: Distinguish current and upcoming stays, preserve valid positives/saved rows, and
+make missing identity/room/occupancy/total/refundability facts explicitly ineligible. First-time
+valid future reservations must achieve lifecycle/persistence/display/eligibility parity with saved
+matches; UNKNOWN caused solely by missing cached state cannot hide otherwise qualifying records. Plain user
+messages must not turn filtered current stays into loading failures or partial discovery into
+full account/monitoring success. No absence-based deletion or eligibility through inferred facts.
+
+FR-30 / US-189: Qualify grouped/detail coverage using deterministic fixtures and the actual affected
+caller's normal-coordinator isolated replay. Follow the user's authorized verify/repair loop with
+final-head successful Bugbot review and exact-image staging/promotion/production verification;
+owner success and prior partial counts cannot replace actual-caller coverage evidence.
+
+Unit 011 / Bolt 074 owns this September 13 follow-up. The user explicitly authorized end-to-end
+AI-DLC implementation, verification, merge, and redeployment. The confirmed lifecycle correction
+and bounded grouped-worklist design are in construction; concrete grouped-page navigation details
+and live acceptance await fresh authentication. Prior Unit 010 completion is preserved and does
+not prove full grouped traversal.
 
 ## Caller inventory outcomes amendment
 

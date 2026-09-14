@@ -3,12 +3,22 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-08T21:59:19Z
+updated: 2026-09-13T16:10:04Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
 
 ## Unit Decomposition
+
+### 011-grouped-trip-discovery
+
+- Purpose: Cover grouped trips/reservations/details with code-owned evidence, preserve strict
+  eligibility/current-stay distinctions, and qualify the actual caller through exact-image release.
+- Assigned requirements: FR-28, FR-29, FR-30. Stories: US-187 through US-191. Bolts074–076
+  construction complete; the corrected price submission contract awaits new-image qualification.
+- Dependencies: Units 004, 007, and 010; existing normal-coordinator replay and browser lease.
+- Actual caller 22 qualified both grouped coverage and authenticated mobile pricing. The final
+  reviewed image still requires Dev/Staging qualification and authorized production promotion.
 
 ### 010-caller-inventory-outcomes
 
@@ -97,6 +107,7 @@ updated: 2026-09-08T21:59:19Z
 | FR-23 | `008-connect-refresh-status` |
 | FR-24 | `009-price-rejection-diagnostics` |
 | FR-25, FR-26, FR-27 | `010-caller-inventory-outcomes` |
+| FR-28, FR-29, FR-30 | `011-grouped-trip-discovery` |
 
 Each functional requirement is assigned exactly once. Cross-unit constraints remain traced through
 dependencies and story acceptance criteria.
@@ -153,3 +164,6 @@ flowchart LR
     without absence authority, simplify Telegram outcomes, and qualify caller-specific paths.
 19. Bolt 055: legacy price-selector retirement, blocked until Browser Use price promotion and the
     30-day rollback window pass.
+
+20. Bolt 074: evidence-grounded grouped-trip/reservation/detail discovery, strict fact eligibility and
+    current/upcoming reporting, actual-caller coverage acceptance, and exact-image release checks.

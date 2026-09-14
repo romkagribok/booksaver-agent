@@ -64,22 +64,22 @@ and merge. It does not authorize silent consent, personal-key use by Browser Use
 
 | Artifact | Status | File |
 |----------|--------|------|
-| Requirements | Amended | `requirements.md` (FR-1 through FR-27) |
+| Requirements | Amended | `requirements.md` (FR-1 through FR-30) |
 | System Context | Amended | `system-context.md` |
 | Architecture Decisions | Accepted | `architecture-decisions.md`, ADR-036 through ADR-046 |
-| Units | Amended | `units.md` and ten unit briefs |
-| Stories | Amended | 34 story files (including US-184 through US-186) |
-| Bolt Plan | Amended | 19 bolts including 073, with 052 live-gated and 055 blocked |
+| Units | Amended | `units.md` and eleven unit briefs |
+| Stories | Amended | 37 story files (including US-187 through US-189) |
+| Bolt Plan | Amended | 20 bolts including planned 074, with 052 live-gated and 055 blocked |
 
 ## Summary
 
 | Metric | Count |
 |--------|-------|
-| Functional Requirements | 27 |
+| Functional Requirements | 30 |
 | Non-Functional Requirements | 7 |
-| Units | 10 |
-| Stories | 34 |
-| Bolts Planned | 19 (including 073; 052 live-gated and 055 blocked) |
+| Units | 11 |
+| Stories | 37 |
+| Bolts Planned | 20 (including 074; 052 live-gated and 055 blocked) |
 
 ## Decision Log
 
@@ -151,3 +151,48 @@ Live acceptance for affected callers is pending; the father's complete repair is
 US-184 through US-186, Unit 010, and Bolt 073 completed construction after both isolated caller
 replays and the final 1839-test/Ruff/mypy117 gate passed. Restored service health passed. Final-head
 review and release remain pending; no merge, deployment, or end-to-end price acceptance is claimed.
+
+## 2026-09-13T16:10:04Z - Grouped-trip discovery inception scaffold
+
+Registry inspection allocates Unit 011 / Bolt 074 / US-187 through US-189. FR-28 through FR-30
+cover grouped reservation/detail discovery with code-owned coverage, strict eligibility and
+current/upcoming reporting, and actual-caller/exact-image qualification. Intent totals are now
+11 units, 37 stories, and 20 bolts; the global index has 189 stories. Prior records are retained.
+
+The user explicitly authorized the end-to-end AI-DLC fix, verify/repair loop, merge, and redeployment.
+This standing instruction covers routine checkpoints, while final-head Bugbot and exact-image
+verification remain required. Unit 010's accepted partial positives did not establish full grouped
+traversal for the father. Concrete main-investigation findings must precede final domain/technical
+design and implementation; this scaffold marks the new bolt planned and stories ready only.
+
+## 2026-09-13T16:10:42Z - First-time lifecycle finding and live prerequisite
+
+Reviewer evidence identifies first-time identities left at UNKNOWN lifecycle while saved matches
+supply upcoming, with no optional lifecycle fact route. US-188 now explicitly requires valid-new
+identity lifecycle, persistence, display, and eligibility parity; US-189 fixtures trace that whole
+path. Accepted counts alone cannot establish success. Recent father runs accepted one or two
+records with zero eligibility. Final technical design remains pending.
+
+All inspected caller logins are expired (father: approximately 2026-09-12T05:07:00Z (reported to minute precision)); reconnect has been requested.
+Local work remains authorized and independent of that prerequisite. Actual-caller live acceptance
+cannot complete until refreshed authentication and new evidence are available.
+
+## 2026-09-13T16:12:37Z - Grouped discovery construction entry
+
+Domain model and technical design now define explicit first-time lifecycle facts, validated
+persistence/display/eligibility parity, and a bounded code-owned grouped worklist within the existing
+Browser Use host/lease/guards. Coverage audit remains separate from INCOMPLETE inventory authority.
+Known non-hotels may be skipped; unknown type/detail work remains unresolved. Existing ADRs cover
+the contract. Bolt 074 and its stories are in progress under the user's explicit end-to-end approval.
+Concrete grouped-page navigation shape and final caller acceptance still require refreshed login;
+this construction entry does not fabricate them or alter prior Bolt 073 evidence.
+
+## 2026-09-13T20:35:00Z - Fresh-caller evidence refines current-stay handling
+
+Fresh authentication at 19:22 UTC lifted the earlier login prerequisite. Isolated candidate 16
+finished the bounded browser scan in 139,974 ms and passed six positives through validation, but
+an unchanged saved stay's upcoming-to-current lifecycle progression caused atomic persistence
+rollback. US-188 and ADR-048 now require narrowly date-corroborated forward lifecycle progress,
+preserving all financial facts and rejecting remaining conflicts. This implements the already
+approved accurate current-stay behavior; no generic conflict skipping or absence authority is added.
+Construction and actual-caller persistence/eligibility acceptance remain in progress.
