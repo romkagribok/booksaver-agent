@@ -64,3 +64,12 @@
 Reopened scoped Construction after image B Park Inn timed out. Existing terminal vocabulary is
 not advertised to the model, and cancellation skips diagnostics. Fix these explicit contract
 gaps and requalify; do not attribute the timeout before observed action evidence.
+
+## 2026-09-14T20:41:49Z — Operations complete
+
+PR51 merged as `933735541e16457ad614daa9c76be24a3af253e4` after successful current-head
+Cursor Bugbot and merge gate. Images A/B were rejected after staged failures; image C passed
+Development and three consecutive caller price checks, then was promoted with a protected backup
+and retained rollback image. Normal production inventory accepted six observations, two eligible
+future stays, and zero unresolved groups. Health, advancing heartbeat, SQLite/FKs, logs, ports and
+cleanup passed. See `deployment/verification-grouped-6c94033.md` for exact evidence and limits.
