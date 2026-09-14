@@ -14,7 +14,8 @@ updated: 2026-09-13T16:10:04Z
 
 - Purpose: Cover grouped trips/reservations/details with code-owned evidence, preserve strict
   eligibility/current-stay distinctions, and qualify the actual caller through exact-image release.
-- Assigned requirements: FR-28, FR-29, FR-30. Stories: US-187 through US-189. Bolt 074 construction complete; Operations gates pending.
+- Assigned requirements: FR-28, FR-29, FR-30. Stories: US-187 through US-190. Bolts074–075
+  construction complete; replacement-image Operations qualification remains pending.
 - Dependencies: Units 004, 007, and 010; existing normal-coordinator replay and browser lease.
 - Actual caller 22 qualified both grouped coverage and authenticated mobile pricing. The final
   reviewed image still requires Dev/Staging qualification and authorized production promotion.

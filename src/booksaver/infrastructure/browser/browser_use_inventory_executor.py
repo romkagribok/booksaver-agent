@@ -1679,6 +1679,19 @@ class LocalBrowserUseInventoryRuntime:
                                request.execution_id,
                                json.dumps(result.diagnostic(), sort_keys=True))
         if not result.reservations:
+            if (
+                result.trip_groups > 0
+                and result.trips_visited == result.trip_groups
+                and result.verified_trip_counts == result.trip_groups
+                and result.unresolved == 0
+                and result.details_observed == 0
+                and result.root_detail_count == 0
+                and result.inactive_skipped + result.nonhotel_skipped > 0
+            ):
+                # Only fully visited groups with positively classified inactive/non-hotel cards
+                # qualify. Unknown or failed active detail reads cannot establish emptiness.
+                # EMPTY_UPCOMING remains informational: no absence authority or session export.
+                return BrowserUseRuntimeResult(InventoryExecutionStatus.EMPTY_UPCOMING)
             return BrowserUseRuntimeResult(InventoryExecutionStatus.PROVIDER_FAILURE)
         # All positives still pass the established mapper and application validator. No
         # absence authority is created, including when all observed links were processed.

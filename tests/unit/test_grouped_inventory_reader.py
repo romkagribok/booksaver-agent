@@ -359,7 +359,85 @@ def test_unknown_card_status_still_requires_detail_inspection(monkeypatch):
     worker, result = harness(monkeypatch, browser)
     assert asyncio.run(worker.run())
     assert result.details_observed == len(result.reservations) == 1
+    # The unknown target remains inspected after the bounded readiness wait; its label cannot
+    # corroborate the parent count or turn coverage into a completed claim.
+    assert result.unresolved == 1
+
+
+def test_aliases_do_not_end_wait_before_late_status_cards_render(monkeypatch):
+    browser = Browser()
+    browser.pages[ROOT] = snapshot(ROOT, [(TRIPS[0], "Trip\n3 bookings")])
+    late = browser.pages[TRIPS[0]]
+    early = snapshot(TRIPS[0], [
+        (DETAILS[0], "First Hotel\nConfirmed"),
+        (DETAILS[3], "Manage first booking"),
+        (DETAILS[4], "Manage reservation"),
+    ])
+    browser.pages[TRIPS[0]] = early
+    worker, result = harness(monkeypatch, browser)
+    group_reads = 0
+    destinations = []
+    navigate = browser.navigate
+
+    async def delayed(session):
+        nonlocal group_reads
+        if session.url == TRIPS[0]:
+            group_reads += 1
+            if group_reads >= 5:
+                browser.pages[TRIPS[0]] = late
+        return browser.pages[session.url]
+
+    async def observe_navigation(link):
+        destinations.append(link.target_url)
+        await navigate(link)
+
+    monkeypatch.setattr(reader, "read_inventory_snapshot", delayed)
+    worker.navigate = observe_navigation
+    assert asyncio.run(worker.run())
+    assert group_reads >= 5
+    assert result.details_observed == len(result.reservations) == 3
     assert result.unresolved == 0
+    assert all(detail in destinations for detail in DETAILS[:3])
+    assert all(alias not in destinations for alias in DETAILS[3:5])
+
+
+@pytest.mark.parametrize("expected,status_count", [(3, 1), (2, 3)])
+def test_persistent_status_count_mismatch_waits_then_inspects_unknown_targets(
+    monkeypatch, caplog, expected, status_count,
+):
+    browser = Browser()
+    browser.pages[ROOT] = snapshot(ROOT, [(TRIPS[0], f"Trip\n{expected} bookings")])
+    browser.pages[TRIPS[0]] = snapshot(TRIPS[0], [
+        (url, "Hotel\nConfirmed" if index < status_count else "Unknown accommodation")
+        for index, url in enumerate(DETAILS[:3])
+    ])
+    worker, result = harness(monkeypatch, browser)
+    sleeps = 0
+
+    async def count_wait(*args):
+        nonlocal sleeps
+        sleeps += 1
+
+    monkeypatch.setattr(reader.asyncio, "sleep", count_wait)
+    assert asyncio.run(worker.run())
+    assert sleeps >= 20
+    assert result.details_observed == len(result.reservations) == 3
+    assert result.unresolved == 1
+    assert "step=trip_card_count count=1" in caplog.text
+    assert result.auxiliary_links_skipped == 0
+    assert result.verified_trip_counts == 0
+
+
+def test_status_card_count_is_unique_and_not_hidden_by_longer_manage_alias():
+    page = snapshot(TRIPS[0], [
+        (DETAILS[0], "Hotel\nConfirmed"),
+        (DETAILS[0], "A much longer management link without a status label"),
+        (DETAILS[0].replace("confirmation.en-us", "confirmation"), "Hotel\nConfirmed"),
+    ])
+    cards = reader.GroupedInventoryReader.targets(page, "reservation_detail", status_only=True)
+    assert len(cards) == 1
+    assert cards[0].text == "Hotel\nConfirmed"
+    assert reader.GroupedInventoryReader.reservation_targets(page, 1) == cards
 
 
 def test_confirmed_car_booking_route_accounts_for_trip_without_navigation(monkeypatch):
@@ -478,3 +556,116 @@ def test_partial_step_diagnostic_contains_no_booking_or_url(monkeypatch, caplog)
     assert "step=trip_navigation count=1" in caplog.text
     assert "booking.com" not in caplog.text
     assert "auth_key" not in caplog.text
+
+
+def test_root_detail_count_is_unknown_until_a_qualified_root_is_read(monkeypatch):
+    browser = Browser()
+    browser.url = TRIPS[0]
+    worker, result = harness(monkeypatch, browser)
+    assert result.root_detail_count is None
+    assert not asyncio.run(worker.run())
+    assert result.root_detail_count is None
+    assert result.verified_trip_counts == 0
+
+
+def test_initial_root_direct_details_are_recorded_even_when_group_scan_succeeds(monkeypatch):
+    browser = Browser()
+    root = browser.pages[ROOT]
+    browser.pages[ROOT] = replace(root, links=root.links + (
+        reader.RenderedLink(DETAILS[0], "Direct booking\nConfirmed"),
+        reader.RenderedLink(DETAILS[0], "Manage direct booking"),
+    ))
+    worker, result = harness(monkeypatch, browser)
+    assert asyncio.run(worker.run())
+    assert result.root_detail_count == 1
+    assert result.verified_trip_counts == 0  # Neither parent supplied an explicit count.
+    assert len(result.reservations) == 6
+
+
+def test_inactive_only_groups_have_explicit_verified_counts_without_detail_navigation(monkeypatch):
+    browser = Browser()
+    browser.pages[ROOT] = snapshot(ROOT, [(url, "Trip\n3 bookings") for url in TRIPS])
+    for trip in TRIPS:
+        group = browser.pages[trip]
+        browser.pages[trip] = replace(group, links=tuple(
+            replace(link, text="Hotel\nCompleted") for link in group.links
+        ))
+    worker, result = harness(monkeypatch, browser)
+    assert asyncio.run(worker.run())
+    assert result.root_detail_count == 0
+    assert result.verified_trip_counts == result.trip_groups == result.trips_visited == 2
+    assert result.inactive_skipped == 6
+    assert result.details_observed == result.unresolved == 0
+    assert result.reservations == []
+    assert browser.actions == 4
+    assert result.diagnostic()["verified_trip_counts"] == 2
+    assert result.diagnostic()["root_detail_count"] == 0
+
+
+@pytest.mark.parametrize("expected,verified,unresolved", [(1, 1, 0), (2, 0, 2), (None, 0, 1)])
+def test_car_only_group_requires_exact_explicit_count_to_avoid_unresolved_empty_trip(
+    monkeypatch, expected, verified, unresolved,
+):
+    browser = Browser()
+    browser.pages[ROOT] = replace(browser.pages[ROOT], links=(
+        reader.RenderedLink(TRIPS[0], "Trip", booking_count=expected),
+    ))
+    browser.pages[TRIPS[0]] = snapshot(TRIPS[0], [
+        ("https://cars.booking.com/my-booking/123456789?preflang=en", "Confirmed"),
+    ])
+    worker, result = harness(monkeypatch, browser)
+    assert asyncio.run(worker.run())
+    assert result.root_detail_count == 0
+    assert result.verified_trip_counts == verified
+    assert result.nonhotel_skipped == 1
+    assert result.unresolved == unresolved
+    assert result.reservations == []
+    assert browser.actions == 2
+
+
+@pytest.mark.parametrize("active", ["Confirmed", "Upcoming", "In progress"])
+@pytest.mark.parametrize("inactive", ["Completed", "Cancelled"])
+def test_conflicting_active_inactive_card_is_inspected_and_cannot_establish_empty(
+    monkeypatch, caplog, active, inactive,
+):
+    browser = Browser()
+    browser.pages[ROOT] = snapshot(ROOT, [(TRIPS[0], "Trip\n1 booking")])
+    browser.pages[TRIPS[0]] = snapshot(TRIPS[0], [
+        (DETAILS[0], f"Hotel\n{active}\n{inactive}"),
+    ])
+    worker, result = harness(monkeypatch, browser)
+    assert asyncio.run(worker.run())
+    assert result.inactive_skipped == 0
+    assert result.details_observed == len(result.reservations) == 1
+    assert result.verified_trip_counts == 1
+    assert result.unresolved == 1
+    assert "step=conflicting_card_status count=1" in caplog.text
+
+
+@pytest.mark.parametrize("expected", [None, 1])
+def test_unknown_empty_group_never_has_verified_count(monkeypatch, expected):
+    browser = Browser()
+    browser.pages[ROOT] = replace(browser.pages[ROOT], links=(
+        reader.RenderedLink(TRIPS[0], "Trip", booking_count=expected),
+    ))
+    browser.pages[TRIPS[0]] = snapshot(TRIPS[0])
+    worker, result = harness(monkeypatch, browser)
+    assert asyncio.run(worker.run())
+    assert result.verified_trip_counts == 0
+    assert result.unresolved > 0
+    assert result.reservations == []
+
+
+def test_active_status_on_canonical_alias_prevents_inactive_only_empty_evidence(monkeypatch):
+    browser = Browser()
+    browser.pages[ROOT] = snapshot(ROOT, [(TRIPS[0], "Trip\n1 booking")])
+    browser.pages[TRIPS[0]] = snapshot(TRIPS[0], [
+        (DETAILS[0], "Longer hotel card label\nCompleted"),
+        (DETAILS[0].replace("confirmation.en-us", "confirmation"), "Confirmed"),
+    ])
+    worker, result = harness(monkeypatch, browser)
+    assert asyncio.run(worker.run())
+    assert result.inactive_skipped == 0
+    assert result.details_observed == len(result.reservations) == 1
+    assert result.verified_trip_counts == 1
+    assert result.unresolved == 1

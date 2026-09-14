@@ -196,7 +196,9 @@ def test_parsed_positive_uses_mapper_and_preserves_original_price_session(monkey
     h.capture.assert_not_called()
 
 
-@pytest.mark.parametrize("kind", ["dialog", "tab", "violation", "timeout", "cost_limit"])
+@pytest.mark.parametrize("kind", [
+    "dialog", "tab", "violation", "timeout", "cost_limit", "action_limit",
+])
 @pytest.mark.parametrize("when", ["reader", "final_url_await", "authentication_await"])
 def test_post_await_safety_and_sticky_terminals_discard_buffered_positives(monkeypatch, kind, when):
     h = Harness(monkeypatch)
@@ -429,3 +431,95 @@ def test_history_return_cannot_reset_exhausted_allowance(monkeypatch):
     result = h.run()
     assert result.status is InventoryExecutionStatus.ACTION_LIMIT
     assert not h.session.back_events
+
+
+def inactive_only_plan(h, *, inactive=2, nonhotel=0, **overrides):
+    async def plan(reader):
+        reader.result.reservations.clear()
+        reader.result.trip_groups = 2
+        reader.result.trips_visited = 2
+        reader.result.verified_trip_counts = 2
+        reader.result.inactive_skipped = inactive
+        reader.result.nonhotel_skipped = nonhotel
+        reader.result.root_detail_count = 0
+        for field, value in overrides.items():
+            setattr(reader.result, field, value)
+    h.plan = plan
+
+
+@pytest.mark.parametrize("inactive,nonhotel", [(2, 0), (1, 1), (0, 2)])
+def test_proven_inactive_only_groups_return_informational_empty(monkeypatch, inactive, nonhotel):
+    h = Harness(monkeypatch)
+    inactive_only_plan(h, inactive=inactive, nonhotel=nonhotel)
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.EMPTY_UPCOMING
+    assert result.reservations == ()
+    assert result.scopes == ()
+    assert result.refreshed_session is None
+    h.auth.assert_awaited_once_with(h.request, h.session)
+    h.capture.assert_not_called()
+
+
+@pytest.mark.parametrize("changes", [
+    {"unresolved": 1}, {"details_observed": 1}, {"trips_visited": 1},
+    {"trips_visited": 3}, {"trip_groups": 0, "trips_visited": 0},
+    {"inactive_skipped": 0}, {"root_detail_count": 1},
+    {"root_detail_count": None}, {"verified_trip_counts": 0}, {"verified_trip_counts": 1},
+])
+def test_missing_or_active_grouped_evidence_never_claims_empty(monkeypatch, changes):
+    h = Harness(monkeypatch)
+    inactive_only_plan(h, **changes)
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.PROVIDER_FAILURE
+    assert result.reservations == ()
+    assert result.refreshed_session is None
+    h.capture.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["dialog", "tab", "violation", "timeout", "cost_limit"])
+def test_inactive_group_evidence_never_overrides_post_authentication_stop(monkeypatch, kind):
+    h = Harness(monkeypatch)
+    inactive_only_plan(h)
+
+    async def verify(request, session):
+        h.mutate(kind)
+
+    h.auth.side_effect = verify
+    result = h.run()
+    expected = (
+        InventoryExecutionStatus.UNSAFE_ACTION if kind in {"dialog", "tab", "violation"}
+        else InventoryExecutionStatus(kind)
+    )
+    assert result.status is expected
+    assert result.reservations == ()
+    h.capture.assert_not_called()
+
+
+@pytest.mark.parametrize("status", list(BrowserUseSessionStatus))
+def test_inactive_groups_require_final_authenticated_account(monkeypatch, status):
+    h = Harness(monkeypatch)
+    inactive_only_plan(h)
+    h.auth.return_value = status
+    result = h.run()
+    assert result.status.value == status.value
+    assert result.refreshed_session is None
+    h.capture.assert_not_called()
+
+
+@pytest.mark.parametrize("url,status", [
+    ("https://account.booking.com/sign-in", InventoryExecutionStatus.SIGNED_OUT),
+    ("https://outside.example/", InventoryExecutionStatus.UNSAFE_ACTION),
+])
+def test_inactive_groups_recheck_final_url_after_authentication(monkeypatch, url, status):
+    h = Harness(monkeypatch)
+    inactive_only_plan(h)
+
+    async def verify(request, session):
+        session.url = url
+
+    h.auth.side_effect = verify
+    result = h.run()
+    assert result.status is status
+    assert result.reservations == ()
+    assert result.refreshed_session is None
+    h.capture.assert_not_called()

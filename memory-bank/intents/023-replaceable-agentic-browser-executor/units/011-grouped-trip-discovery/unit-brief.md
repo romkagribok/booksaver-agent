@@ -64,10 +64,11 @@ Final-head review and exact-image Operations qualification/promotion remain pend
 
 ## Story Summary
 
-- Total stories: 3; all Must; all construction-complete; release gates remain pending.
+- Total stories: 4; all Must; US187–190 complete for construction.
 - US-187: Discover every grouped reservation and detail.
 - US-188: Preserve strict eligibility and distinguish current stays.
 - US-189: Qualify grouped discovery for the actual caller and final image.
+- US-190: Close grouped-discovery review edge cases.
 
 ## 2026-09-13T16:10:42Z - Authenticated acceptance prerequisite
 
@@ -84,3 +85,12 @@ and refundability. Known semantic matching still labeled them processed, causing
 skipped on retry. US-187 now requires shortcut candidacy only for already-eligible complete records,
 with all caller confirmation hints retained for identity matching; US-189 verifies retry progress
 and preservation of the eligible-owner path. Required facts and current-run receipts remain strict.
+
+## Review follow-up
+
+PR51's final review found delayed-card and inactive-only-group edge cases. Bolt075 and US190
+returned this unit to construction for those bounded corrections; Bolt074's successful historical
+caller evidence is preserved. Bolt075 and US190 completed through the official cascade at
+2026-09-14T19:41:31Z after the 2,609-test/83%-coverage gate. Operations remains blocked from
+promotion: initial image A failed staging, and the review-corrected replacement still requires
+final-head Bugbot and exact-image Dev/Staging verification. No production release has occurred.

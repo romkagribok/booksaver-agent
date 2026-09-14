@@ -124,7 +124,7 @@ def test_explicit_empty_account_does_not_report_failure_or_request_price_check()
         run_id="empty", completeness=InventoryCompleteness.INCOMPLETE,
         discovered=0, eligible=0, ineligible=0, upcoming_empty_observed=True,
     )))
-    assert "no upcoming reservations" in messages[-1]
+    assert "did not find upcoming hotel reservations in the trips we checked" in messages[-1]
     assert "check which Booking.com account" in messages[-1]
     assert "couldn't" not in messages[-1]
     assert "/checknow" not in messages[-1]

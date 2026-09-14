@@ -15,7 +15,7 @@ def refresh_failure_guidance(code: SynchronizationFailureCode | None) -> str:
 
 
 def empty_upcoming_message(*, has_saved: bool) -> str:
-    message = "Booking.com shows no upcoming reservations in your connected account. "
+    message = "We did not find upcoming hotel reservations in the trips we checked. "
     if has_saved:
         return message + "Your previously saved reservations are still here."
     return message + "If you expected a booking, check which Booking.com account you signed in to."

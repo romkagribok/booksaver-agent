@@ -25,6 +25,8 @@ from .inventory_link_resolution import (
 from .inventory_traversal import InventoryTraversal, inventory_page_kind
 
 logger = logging.getLogger(__name__)
+_ACTIVE_CARD_STATUSES = frozenset({"Confirmed", "Upcoming", "In progress"})
+_INACTIVE_CARD_STATUSES = frozenset({"Completed", "Canceled", "Cancelled"})
 
 
 def _car_booking_link(url: str) -> bool:
@@ -164,8 +166,10 @@ async def read_inventory_snapshot(session: Any) -> InventorySnapshot | None:
 @dataclass(slots=True)
 class GroupedInventoryRead:
     reservations: list[dict[str, str]] = field(default_factory=list, repr=False)
+    root_detail_count: int | None = None
     trip_groups: int = 0
     trips_visited: int = 0
+    verified_trip_counts: int = 0
     details_observed: int = 0
     inactive_skipped: int = 0
     nonhotel_skipped: int = 0
@@ -173,10 +177,12 @@ class GroupedInventoryRead:
     unresolved: int = 0
     desktop_view_used: bool = False
 
-    def diagnostic(self) -> dict[str, int | bool]:
+    def diagnostic(self) -> dict[str, int | bool | None]:
         return {
+            "root_detail_count": self.root_detail_count,
             "trip_groups": self.trip_groups,
             "trips_visited": self.trips_visited,
+            "verified_trip_counts": self.verified_trip_counts,
             "details_observed": self.details_observed,
             "inactive_skipped": self.inactive_skipped,
             "nonhotel_skipped": self.nonhotel_skipped,
@@ -308,10 +314,17 @@ class GroupedInventoryReader:
         return False
 
     @staticmethod
-    def targets(snapshot: InventorySnapshot, kind: str) -> list[RenderedLink]:
+    def targets(
+        snapshot: InventorySnapshot, kind: str, *, status_only: bool = False,
+    ) -> list[RenderedLink]:
         unique: dict[str, RenderedLink] = {}
         for link in snapshot.links:
             if inventory_page_kind(link.url) != kind or not link.text:
+                continue
+            if status_only and not (
+                {line.strip() for line in link.text.splitlines()}
+                & (_ACTIVE_CARD_STATUSES | _INACTIVE_CARD_STATUSES)
+            ):
                 continue
             key = InventoryTraversal._key(link.url)
             # The card carries status; a generic Manage alias carries less evidence.
@@ -325,9 +338,7 @@ class GroupedInventoryReader:
         cls, snapshot: InventorySnapshot, expected: int | None,
     ) -> list[RenderedLink]:
         links = cls.targets(snapshot, "reservation_detail")
-        cards = [link for link in links if
-                 {line.strip() for line in link.text.splitlines()}
-                 & {"Confirmed", "Completed", "Canceled", "Cancelled"}]
+        cards = cls.targets(snapshot, "reservation_detail", status_only=True)
         # A separate management link may carry another token for a listed reservation.
         # Only the observed group's exact booking count plus explicit card statuses can
         # qualify that distinction. Otherwise unknown targets still require inspection.
@@ -362,6 +373,7 @@ class GroupedInventoryReader:
         root = await self.snapshot()
         if root is None or inventory_page_kind(root.url) != "root":
             return False
+        self.result.root_detail_count = len(self.targets(root, "reservation_detail"))
         trips = self.targets(root, "trip")
         if not trips:
             return False
@@ -382,27 +394,32 @@ class GroupedInventoryReader:
             if expected_count is not None:
                 for _ in range(20):
                     if group is not None and len(
-                        self.reservation_targets(group, expected_count)
-                    ) + self.nonhotels(group) >= expected_count:
+                        self.targets(group, "reservation_detail", status_only=True)
+                    ) + self.nonhotels(group) == expected_count:
                         break
                     await asyncio.sleep(0.2)
                     group = await self.snapshot()
-                if group is not None and len(
-                    self.reservation_targets(group, expected_count)
-                ) + self.nonhotels(group) != expected_count:
-                    self.unresolved("trip_card_count")
             if group is None:
                 self.unresolved("trip_snapshot")
                 return True
+            nonhotel_count = self.nonhotels(group)
+            count_verified = expected_count is not None and (
+                len(self.targets(group, "reservation_detail", status_only=True)) + nonhotel_count
+                == expected_count
+            )
+            if count_verified:
+                self.result.verified_trip_counts += 1
+            elif expected_count is not None:
+                self.unresolved("trip_card_count")
             self.result.trips_visited += 1
             details = self.reservation_targets(group, expected_count)
             self.result.auxiliary_links_skipped += (
                 len(self.targets(group, "reservation_detail")) - len(details)
             )
-            if not details:
+            if not details and not (count_verified and nonhotel_count > 0):
                 self.unresolved("empty_trip")
             # Positive non-hotel classifications are counted without opening external links.
-            self.result.nonhotel_skipped += self.nonhotels(group)
+            self.result.nonhotel_skipped += nonhotel_count
             for detail in details:
                 key = InventoryTraversal._key(detail.url)
                 if key in seen:
@@ -411,10 +428,20 @@ class GroupedInventoryReader:
                 if len(seen) > 25:
                     self.unresolved("detail_limit")
                     return True
-                lines = {line.strip() for line in detail.text.splitlines()}
-                if lines & {"Completed", "Canceled", "Cancelled"}:
-                    self.result.inactive_skipped += 1
-                    continue
+                # Canonical aliases can carry different status labels. A longer inactive label
+                # must not hide an active status on another rendered link to the same booking.
+                lines = {
+                    line.strip()
+                    for alias in group.links
+                    if inventory_page_kind(alias.url) == "reservation_detail"
+                    and InventoryTraversal._key(alias.url) == key
+                    for line in alias.text.splitlines()
+                }
+                if lines & _INACTIVE_CARD_STATUSES:
+                    if not lines & _ACTIVE_CARD_STATUSES:
+                        self.result.inactive_skipped += 1
+                        continue
+                    self.unresolved("conflicting_card_status")
                 if not await self.follow(detail.url):
                     self.unresolved("detail_navigation")
                     return True
