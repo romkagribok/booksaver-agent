@@ -1,8 +1,8 @@
-"""Provider-neutral contracts for positive-only account-inventory execution.
+"""Provider-neutral inventory observations and separately code-owned reconciliation proofs.
 
 The executor is an untrusted perception/navigation capability.  Its observations may prove only
-positive reservation facts; they never declare monitoring eligibility or authorize an absence
-transition (ADR-039).
+positive reservation facts; they never declare monitoring eligibility. Only separately bound
+code-owned coverage can authorize scoped absence (ADR049); model claims cannot (ADR039).
 """
 
 from __future__ import annotations
@@ -90,6 +90,66 @@ class InventoryExecutionStatus(Enum):
     TIMEOUT = "timeout"
     PROVIDER_FAILURE = "provider_failure"
     VALIDATION_FAILURE = "validation_failure"
+
+
+class ActiveInventoryRootExhaustion(Enum):
+    VERIFIED_TOTAL = "verified_total"
+    VERIFIED_TERMINAL = "verified_terminal"
+    EXPLICIT_EMPTY = "explicit_empty"
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveInventoryCoverage:
+    """Code-owned proof, never model-submitted, of the complete selected Active view.
+
+    The adapter must establish root exhaustion, stable membership, exact group counts,
+    every active confirmation, no unresolved/truncated content, and final authentication
+    and safety before creating this proof. Visible links alone do not qualify.
+    """
+
+    owner_user_id: int
+    execution_id: str
+    session_lease_id: str = field(repr=False)
+    active_confirmation_ids: frozenset[str] = field(repr=False)
+    root_exhaustion: ActiveInventoryRootExhaustion
+
+    def __post_init__(self) -> None:
+        if type(self.owner_user_id) is not int or self.owner_user_id < 1:
+            raise ValueError("coverage owner must be positive")
+        _safe_id(self.execution_id, "execution_id")
+        _safe_id(self.session_lease_id, "session_lease_id")
+        if not isinstance(self.root_exhaustion, ActiveInventoryRootExhaustion):
+            raise TypeError("coverage requires a recognized root exhaustion proof")
+        if not isinstance(self.active_confirmation_ids, frozenset):
+            raise TypeError("coverage confirmation IDs must be immutable")
+        if len(self.active_confirmation_ids) > 25:
+            raise ValueError("coverage exceeds the bounded inventory limit")
+        for confirmation_id in self.active_confirmation_ids:
+            if _safe_id(confirmation_id, "confirmation_id") != confirmation_id:
+                raise ValueError("coverage confirmation IDs must be normalized")
+        if (
+            self.root_exhaustion is ActiveInventoryRootExhaustion.EXPLICIT_EMPTY
+            and self.active_confirmation_ids
+        ):
+            raise ValueError("explicit empty coverage cannot contain active confirmations")
+
+
+@dataclass(frozen=True, slots=True)
+class TrustedInventoryCancellation:
+    """Exact confirmation cancellation parsed by code in this caller's authenticated view."""
+
+    owner_user_id: int
+    execution_id: str
+    session_lease_id: str = field(repr=False)
+    confirmation_id: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.owner_user_id) is not int or self.owner_user_id < 1:
+            raise ValueError("cancellation owner must be positive")
+        _safe_id(self.execution_id, "execution_id")
+        _safe_id(self.session_lease_id, "session_lease_id")
+        if _safe_id(self.confirmation_id, "confirmation_id") != self.confirmation_id:
+            raise ValueError("cancellation confirmation must be normalized")
 
 
 def inventory_session_subject(owner_user_id: int) -> str:
@@ -277,6 +337,8 @@ class InventoryExecutionResult:
     latency_ms: int = 0
     fallback_used: bool = False
     safety_violations: frozenset[ExecutorSafetyViolation] = frozenset()
+    active_coverage: ActiveInventoryCoverage | None = None
+    trusted_cancellations: tuple[TrustedInventoryCancellation, ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.latency_ms, bool) or self.latency_ms < 0:
@@ -301,3 +363,18 @@ class InventoryExecutionResult:
             raise ValueError("only an observed execution can carry refresh eligibility")
         if self.safety_violations and self.status is not InventoryExecutionStatus.UNSAFE_ACTION:
             raise ValueError("safety violations require an unsafe-action terminal result")
+        if (self.active_coverage is not None or self.trusted_cancellations) and (
+            self.status is not InventoryExecutionStatus.OBSERVED
+        ):
+            raise ValueError("reconciliation proof requires an authenticated observed result")
+        if self.active_coverage is not None and not isinstance(
+            self.active_coverage, ActiveInventoryCoverage,
+        ):
+            raise TypeError("active coverage must be a code-owned typed proof")
+        if not isinstance(self.trusted_cancellations, tuple) or any(
+            not isinstance(item, TrustedInventoryCancellation)
+            for item in self.trusted_cancellations
+        ):
+            raise TypeError("cancellations must be immutable code-owned typed proofs")
+        if len(self.trusted_cancellations) > 25:
+            raise ValueError("cancellation proof exceeds the bounded inventory limit")

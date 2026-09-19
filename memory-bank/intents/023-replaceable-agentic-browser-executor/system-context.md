@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-13T16:10:04Z
+updated: 2026-09-19T22:04:01Z
 ---
 
 # System Context: Replaceable Agentic Browser Executor
@@ -185,3 +185,12 @@ facts. Final navigation/audit representation awaits the actual grouped-page diag
 Caller-specific qualification uses isolated normal-coordinator execution with production as a
 read-only source, notification suppression, and serialized browser admission. The reviewed final
 source and exact staged/promoted image must be identified independently from historical probes.
+
+## Trusted current-list reconciliation follow-up
+
+Unit012 adds a BookSaver-owned coverage-proof boundary between rendered inventory and
+reconciliation. Existing external actors/services are unchanged. Caller/run/session-bound recognized
+current-list evidence may authorize covered active-row retirement only after trusted validation;
+model observations and incomplete evidence remain positive-only. Retain local history, current-run
+price receipts and per-user isolation. Exact cancellation and replacement identities remain separate.
+See Bolt077/ADR049; the proof contract is accepted, while actual DOM/session qualification remains pending.

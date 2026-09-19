@@ -71,3 +71,49 @@ def test_hidden_trip_count_does_not_override_visible_evidence(page: Page):
     page.set_content('<a href="https://secure.booking.com/mytrips.html?trip_id=1">'
                      '<span>4 bookings</span><span hidden>5 bookings</span></a>')
     assert json.loads(page.evaluate(_READ))['links'][0]['booking_count'] == 4
+
+
+def coverage_dom(*, size=2, position=2, selected='true', extra=''):
+    return f'''
+    <button role="tab" aria-selected="{selected}" aria-controls="active-panel">Active</button>
+    <div id="active-panel"><div role="list">
+      <div role="listitem" aria-setsize="{size}" aria-posinset="1">
+        <a href="https://secure.booking.com/mytrips.html?trip_id=1">One</a></div>
+      <div role="listitem" aria-setsize="{size}" aria-posinset="{position}">
+        <a href="https://secure.booking.com/mytrips.html?trip_id=2">Two</a></div>
+    </div>{extra}</div>'''
+
+
+def test_accessible_total_is_positive_root_coverage_evidence(page: Page):
+    page.set_content(coverage_dom())
+    assert json.loads(page.evaluate(_READ))['activeRootTotal'] == 2
+
+
+@pytest.mark.parametrize('kwargs', [
+    {'size': 3}, {'position': 1}, {'selected': 'false'},
+    {'extra': '<button>Load more</button>'},
+    {'extra': '<span role="progressbar">Loading</span>'},
+    {'extra': '<span aria-busy="true">Loading</span>'},
+])
+def test_incomplete_accessible_list_never_supplies_root_proof(page: Page, kwargs):
+    page.set_content(coverage_dom(**kwargs))
+    assert json.loads(page.evaluate(_READ))['activeRootTotal'] is None
+
+
+def test_empty_root_requires_selected_active_panel_and_explicit_empty_text(page: Page):
+    page.set_content('''
+    <button role="tab" aria-selected="true" aria-controls="panel">Active</button>
+    <div id="panel">You haven't started any trips yet.
+    Once you make a booking, it'll appear here.</div>''')
+    assert json.loads(page.evaluate(_READ))['activeRootTotal'] == 0
+    page.locator('button').evaluate("e => e.setAttribute('aria-selected','false')")
+    assert json.loads(page.evaluate(_READ))['activeRootTotal'] is None
+
+
+def test_cancellation_status_must_be_a_unique_rendered_heading(page: Page):
+    page.set_content('<p>Your booking is cancelled</p><p>Confirmation number: 123456</p>')
+    assert not json.loads(page.evaluate(_READ))['cancelledHeader']
+    page.set_content('<h1>Your booking is cancelled</h1><p>Confirmation number: 123456</p>')
+    assert json.loads(page.evaluate(_READ))['cancelledHeader']
+    page.set_content('<h1>Your booking is cancelled</h1><h2>Your stay is confirmed</h2>')
+    assert not json.loads(page.evaluate(_READ))['cancelledHeader']

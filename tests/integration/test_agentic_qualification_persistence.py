@@ -212,7 +212,19 @@ def test_three_consecutive_eligible_failures_auto_regress_during_rollback(
         assert qualifications.qualification_state().status is QualificationStatus.REGRESSED
 
 
-def test_false_manual_comparison_is_critical_and_auto_regresses(tmp_path: Path) -> None:
+def test_false_manual_comparison_is_critical_and_auto_regresses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # This scenario reviews an active canary. Keep its clock within the fixture window
+    # rather than letting the fixed August data age out as the real calendar advances.
+    class CanaryClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return (START + timedelta(days=16)).astimezone(tz)
+
+    monkeypatch.setattr(
+        "booksaver.infrastructure.persistence.sqlite_store.datetime", CanaryClock,
+    )
     with SqliteStore(tmp_path / "booksaver.db") as store:
         owner = SqliteUserRepository(store).get_owner()
         qualifications = SqliteAgenticQualificationRepository(store)

@@ -257,10 +257,21 @@ def register_readonly_commands(
             reservation
             for reservation in reservations
             if reservation.observation.lifecycle is ReservationLifecycle.UPCOMING
+            and EligibilityReason.NOT_OBSERVED not in reservation.eligibility.reasons
             and reservation.observation.check_in is not None
             and reservation.observation.check_in > today
         )
         report = completion.report if completion is not None else None
+
+        def is_unverified(reservation: AccountReservation) -> bool:
+            if completion is None or (report is not None and report.succeeded):
+                return False
+            return (
+                report is None
+                or report.completeness is InventoryCompleteness.FAILED
+                or reservation.last_sync_run_id != report.run_id
+            )
+
         if not reservations:
             if report is not None and report.upcoming_empty_observed:
                 return [empty_upcoming_message(has_saved=has_saved)]
@@ -304,17 +315,19 @@ def register_readonly_commands(
             )
         elif report.accepted_positive_observations:
             eligible = sum(
-                reservation.eligibility.is_eligible for reservation in reservations
+                reservation.eligibility.is_eligible and not is_unverified(reservation)
+                for reservation in reservations
             )
+            reservation_label = "reservation" if eligible == 1 else "reservations"
             header = (
                 "We updated the reservations we could find on Booking.com. "
-                "Other saved reservations are still here. "
-                f"We can check prices for {eligible} of {len(reservations)} reservations:"
+                "Saved reservations marked 'not verified' may have changed. "
+                f"We can check prices for {eligible} verified upcoming {reservation_label}:"
             )
         elif report.completeness is InventoryCompleteness.INCOMPLETE:
             header = (
                 "We couldn't finish updating your reservations from Booking.com. "
-                "Your saved reservations are still here. "
+                "Saved reservations marked 'not verified' may have changed. "
                 + refresh_failure_guidance(report.failure_code)
                 + "\nHere are the upcoming reservations we have saved:"
             )
@@ -339,7 +352,12 @@ def register_readonly_commands(
                 if item.booked_total is not None
                 else "total unavailable"
             )
-            if reservation.eligibility.is_eligible:
+            unverified = is_unverified(reservation)
+            if unverified:
+                eligibility = "Saved — not verified in this refresh."
+                if reservation.eligibility.is_eligible:
+                    eligibility += " Price checks need a fresh confirmation."
+            elif reservation.eligibility.is_eligible:
                 eligibility = "Price checks available"
             else:
                 reasons = ", ".join(

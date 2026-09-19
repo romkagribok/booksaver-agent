@@ -3,12 +3,20 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-13T16:10:04Z
+updated: 2026-09-19T22:04:01Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
 
 ## Unit Decomposition
+
+### 012-trusted-inventory-reconciliation
+
+- Purpose: Reconcile the covered current list from code-owned proof; retire absent active rows,
+  preserve incomplete unseen history explicitly, and distinguish cancellation/rebooking identities.
+- Assigned requirements: FR31–33; stories US192–194; Bolt077 implementation in progress.
+- Dependencies: completed Units004/010/011 and the existing coordinator, validator and SQLite boundary.
+
 
 ### 011-grouped-trip-discovery
 
@@ -108,6 +116,7 @@ updated: 2026-09-13T16:10:04Z
 | FR-24 | `009-price-rejection-diagnostics` |
 | FR-25, FR-26, FR-27 | `010-caller-inventory-outcomes` |
 | FR-28, FR-29, FR-30 | `011-grouped-trip-discovery` |
+| FR-31, FR-32, FR-33 | `012-trusted-inventory-reconciliation` |
 
 Each functional requirement is assigned exactly once. Cross-unit constraints remain traced through
 dependencies and story acceptance criteria.
@@ -167,3 +176,6 @@ flowchart LR
 
 20. Bolt 074: evidence-grounded grouped-trip/reservation/detail discovery, strict fact eligibility and
     current/upcoming reporting, actual-caller coverage acceptance, and exact-image release checks.
+
+21. Bolt077: trusted current-list proof, scoped absence retirement, identity-safe cancellation and
+    unverified saved-row presentation; mandatory caller/release qualification.

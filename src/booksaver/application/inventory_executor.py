@@ -1,4 +1,4 @@
-"""Application services for positive-only agentic account inventory (ADR-039)."""
+"""Validate inventory positives and separately bound reconciliation authority (ADRs 039, 049)."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from booksaver.domain.browser_executor import (
 )
 from booksaver.domain.inventory_executor import (
     REQUIRED_INVENTORY_SCOPES,
+    ActiveInventoryCoverage,
     InventoryExecutionLimits,
     InventoryExecutionRequest,
     InventoryExecutionResult,
@@ -34,6 +35,7 @@ from booksaver.domain.inventory_executor import (
     KnownInventoryReservation,
     ObservedInventoryScope,
     ObservedReservation,
+    TrustedInventoryCancellation,
     inventory_session_subject,
 )
 
@@ -57,6 +59,9 @@ class InventoryObservationValidation:
     failure: InventoryValidationFailure | None = None
     failure_code: SynchronizationFailureCode | None = None
     failure_detail: str | None = None
+    complete_active_inventory: bool = False
+    reconciliation_user_id: int | None = None
+    trusted_cancelled_confirmation_ids: frozenset[str] = field(default=frozenset(), repr=False)
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -72,6 +77,8 @@ class InventoryObservationValidation:
             raise ValueError("validation failure and synchronization failure code must agree")
         if self.failure is not None and self.observations:
             raise ValueError("failed validation cannot carry accepted observations")
+        if self.complete_active_inventory and (self.failure or self.rejected_reservation_count):
+            raise ValueError("complete active inventory cannot contain rejected observations")
 
     @property
     def accepted_positive_count(self) -> int:
@@ -84,18 +91,20 @@ class InventoryObservationValidation:
                 self.failure_code,
                 self.failure_detail or "Agentic inventory validation failed closed.",
             )
-        # ADR-039 is deliberately stronger than a model's account-completeness claim.  Returning
-        # INCOMPLETE lets the existing repository upsert positives while preserving every unseen
-        # reservation.
+        # Model traversal claims remain diagnostic. Only separately validated code-owned
+        # coverage authorizes absence, and only for the selected active lifecycle scope.
         return InventoryDiscoveryResult(
             observations=self.observations,
-            completeness=InventoryCompleteness.INCOMPLETE,
+            completeness=(
+                InventoryCompleteness.COMPLETE if self.complete_active_inventory
+                else InventoryCompleteness.INCOMPLETE
+            ),
             failure_code=(
                 SynchronizationFailureCode.EXTRACTION_AMBIGUOUS
                 if self.rejected_reservation_count
                 else None
             ),
-            failure_detail=(
+            failure_detail=None if self.complete_active_inventory else (
                 "Some visible reservations lacked complete stable positive evidence; "
                 "all unseen saved reservations were preserved."
                 if self.rejected_reservation_count
@@ -104,6 +113,12 @@ class InventoryObservationValidation:
                     "reservations were preserved by policy."
                 )
             ),
+            reconciliation_lifecycles=(
+                frozenset({ReservationLifecycle.UPCOMING, ReservationLifecycle.CURRENT})
+                if self.complete_active_inventory else None
+            ),
+            reconciliation_user_id=self.reconciliation_user_id,
+            trusted_cancelled_confirmation_ids=self.trusted_cancelled_confirmation_ids,
         )
 
 
@@ -174,6 +189,34 @@ class InventoryObservationValidator:
                 detail_count=detail_count,
             )
         observations = tuple(_to_reservation_observation(item, observed_at) for item in merged)
+        confirmation_ids = [item.confirmation_id for item in merged if item.confirmation_id]
+        unique_confirmations = len(confirmation_ids) == len(set(confirmation_ids))
+        cancelled_ids = frozenset(
+            item.confirmation_id for item in merged
+            if item.lifecycle is ReservationLifecycle.CANCELLED and item.confirmation_id
+        )
+        trusted_cancelled_ids = frozenset(
+            proof.confirmation_id for proof in result.trusted_cancellations
+            if unique_confirmations
+            and _proof_matches_request(proof, request, observed_at)
+            and proof.confirmation_id in cancelled_ids
+        )
+        active = tuple(item for item in merged if item.lifecycle in {
+            ReservationLifecycle.UPCOMING, ReservationLifecycle.CURRENT,
+        })
+        coverage = result.active_coverage
+        complete_active = bool(
+            coverage is not None
+            and _proof_matches_request(coverage, request, observed_at)
+            and rejected == 0
+            and unique_confirmations
+            and all(item.confirmation_id is not None for item in active)
+            and coverage.active_confirmation_ids == frozenset(
+                item.confirmation_id for item in active if item.confirmation_id
+            )
+            # Unknown lifecycle cannot silently disappear from active membership.
+            and all(item.lifecycle not in {None, ReservationLifecycle.UNKNOWN} for item in merged)
+        )
         return InventoryObservationValidation(
             observations=observations,
             rejected_reservation_count=rejected,
@@ -181,6 +224,11 @@ class InventoryObservationValidator:
             scope_count=scope_count,
             page_count=page_count,
             detail_count=detail_count,
+            complete_active_inventory=complete_active,
+            reconciliation_user_id=(
+                request.owner_user_id if complete_active or trusted_cancelled_ids else None
+            ),
+            trusted_cancelled_confirmation_ids=trusted_cancelled_ids,
         )
 
     @staticmethod
@@ -312,6 +360,19 @@ def _terminal_failure(
     return (
         SynchronizationFailureCode.NAVIGATION_FAILED,
         "Agentic Booking.com inventory execution was unavailable; last-safe state was preserved.",
+    )
+
+
+def _proof_matches_request(
+    proof: ActiveInventoryCoverage | TrustedInventoryCancellation,
+    request: InventoryExecutionRequest,
+    observed_at: datetime,
+) -> bool:
+    return (
+        proof.owner_user_id == request.owner_user_id
+        and proof.execution_id == request.execution_id
+        and proof.session_lease_id == request.session_lease.lease_id
+        and not request.session_lease.is_expired(observed_at)
     )
 
 

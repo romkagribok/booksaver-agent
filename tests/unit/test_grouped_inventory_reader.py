@@ -127,8 +127,9 @@ def test_explicit_inactive_skipped_unknown_status_still_inspected(monkeypatch):
     )
     worker, result = harness(monkeypatch, browser)
     assert asyncio.run(worker.run())
-    assert result.inactive_skipped == 2
-    assert result.details_observed == 4
+    assert result.inactive_skipped == 1
+    assert result.details_observed == 5
+    assert result.unresolved > 0
 
 
 def test_unparseable_detail_stays_unresolved_and_other_groups_continue(monkeypatch):
@@ -669,3 +670,89 @@ def test_active_status_on_canonical_alias_prevents_inactive_only_empty_evidence(
     assert result.details_observed == len(result.reservations) == 1
     assert result.verified_trip_counts == 1
     assert result.unresolved == 1
+
+
+def test_cancelled_card_is_opened_and_exact_confirmation_recorded(monkeypatch):
+    browser = Browser()
+    browser.pages[TRIPS[0]] = snapshot(TRIPS[0], [(DETAILS[0], 'Hotel\nCancelled')])
+    browser.pages[DETAILS[0]] = replace(snapshot(DETAILS[0], text=(
+        'Your booking is cancelled\nConfirmation number: 5527283413')), cancelled_header=True)
+    worker, result = harness(monkeypatch, browser)
+    assert asyncio.run(worker.run())
+    assert result.cancelled_confirmation_ids == {'5527283413'}
+    assert any(r['lifecycle'] == 'cancelled' for r in result.reservations)
+    assert not result.active_coverage_complete
+
+
+def qualified_browser(monkeypatch):
+    browser = Browser()
+    browser.pages[ROOT] = replace(
+        snapshot(ROOT, [(x, 'Trip', 3) for x in TRIPS]),
+        active_root_total=2, active_root_urls=tuple(TRIPS)
+    )
+    worker, result = harness(monkeypatch, browser)
+    def parse(*args, **kwargs):
+        identity = next(
+            str(i + 100000) for i, url in enumerate(DETAILS) if browser.url.startswith(url)
+        )
+        return {**header_facts(), 'confirmation_id': identity, 'lifecycle': 'upcoming'}
+    monkeypatch.setattr(reader, 'parse_confirmation_facts', parse)
+    return browser, worker, result
+
+
+def test_explicit_root_total_exact_groups_and_identities_qualify_coverage(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    assert asyncio.run(worker.run())
+    assert result.active_coverage_complete
+
+
+def test_stable_root_without_positive_total_is_not_complete(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    browser.pages[ROOT] = replace(browser.pages[ROOT], active_root_total=None)
+    assert asyncio.run(worker.run())
+    assert not result.active_coverage_complete
+
+
+def test_unknown_lifecycle_prevents_absence_authority(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    monkeypatch.setattr(reader, 'parse_confirmation_facts', lambda *a, **k: header_facts())
+    assert asyncio.run(worker.run())
+    assert not result.active_coverage_complete
+
+
+def test_group_count_mismatch_prevents_absence_authority(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    browser.pages[ROOT] = replace(
+        snapshot(ROOT, [(x, 'Trip', 4) for x in TRIPS]),
+        active_root_total=2, active_root_urls=tuple(TRIPS)
+    )
+    assert asyncio.run(worker.run())
+    assert not result.active_coverage_complete
+
+
+def test_root_count_cannot_substitute_a_trip_outside_the_active_list(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    browser.pages[ROOT] = replace(browser.pages[ROOT], active_root_urls=(
+        TRIPS[0], 'https://outside.example/mytrips.html?trip_id=9',
+    ))
+    assert asyncio.run(worker.run())
+    assert not result.active_coverage_complete
+
+
+def test_root_membership_changes_during_scan_block_retirement(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    original_back = worker.back
+    returns = 0
+    async def changed_back(target):
+        nonlocal returns
+        outcome = await original_back(target)
+        if target == ROOT:
+            returns += 1
+            if returns == 2:
+                browser.pages[ROOT] = replace(browser.pages[ROOT], active_root_urls=(
+                    TRIPS[0], ROOT + '?trip_id=new',
+                ))
+        return outcome
+    worker.back = changed_back
+    assert asyncio.run(worker.run())
+    assert not result.active_coverage_complete

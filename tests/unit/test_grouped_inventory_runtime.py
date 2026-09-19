@@ -523,3 +523,45 @@ def test_inactive_groups_recheck_final_url_after_authentication(monkeypatch, url
     assert result.reservations == ()
     assert result.refreshed_session is None
     h.capture.assert_not_called()
+
+
+def test_host_proof_is_bound_to_caller_execution_and_lease(monkeypatch):
+    h = Harness(monkeypatch)
+    async def plan(reader):
+        reader.result.active_coverage_complete = True
+        reader.result.trip_groups = 1
+    h.plan = plan
+    result = h.run()
+    proof = result.active_coverage
+    assert proof is not None
+    assert proof.owner_user_id == h.request.owner_user_id
+    assert proof.execution_id == h.request.execution_id
+    assert proof.session_lease_id == h.request.session_lease.lease_id
+    assert proof.active_confirmation_ids == frozenset({'1234567890'})
+    h.auth.assert_awaited_once()
+
+
+def test_code_proven_empty_list_reaches_authenticated_observed_result(monkeypatch):
+    h = Harness(monkeypatch)
+    async def plan(reader):
+        reader.result.reservations.clear()
+        reader.result.active_coverage_complete = True
+    h.plan = plan
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.OBSERVED
+    assert result.active_coverage.active_confirmation_ids == frozenset()
+    assert result.reservations == ()
+    assert result.scopes[0].explicit_empty
+
+
+def test_final_auth_failure_discards_absence_and_cancellation_authority(monkeypatch):
+    h = Harness(monkeypatch)
+    async def plan(reader):
+        reader.result.active_coverage_complete = True
+        reader.result.cancelled_confirmation_ids.add('1234567890')
+    h.plan = plan
+    h.auth.return_value = adapter.BrowserUseSessionStatus.SIGNED_OUT
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.SIGNED_OUT
+    assert result.active_coverage is None
+    assert not result.trusted_cancellations

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -322,6 +322,9 @@ class InventoryDiscoveryResult:
     llm_calls_used: int = 0
     terminal_diagnosis: TerminalBrowserDiagnosis | None = None
     assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...] = ()
+    reconciliation_lifecycles: frozenset[ReservationLifecycle] | None = None
+    reconciliation_user_id: int | None = None
+    trusted_cancelled_confirmation_ids: frozenset[str] = field(default=frozenset(), repr=False)
 
     def __post_init__(self) -> None:
         from .browser_resilience import validate_assisted_diagnoses
@@ -333,6 +336,32 @@ class InventoryDiscoveryResult:
             raise ValueError("Complete discovery cannot carry a failure code")
         if self.llm_calls_used < 0:
             raise ValueError("Inventory LLM call usage cannot be negative")
+        if self.reconciliation_lifecycles is not None:
+            if not isinstance(self.reconciliation_lifecycles, frozenset):
+                raise TypeError("reconciliation lifecycles must be immutable")
+            if self.reconciliation_lifecycles != frozenset({
+                ReservationLifecycle.UPCOMING, ReservationLifecycle.CURRENT,
+            }):
+                raise ValueError("scoped reconciliation must cover only active lifecycles")
+            if self.completeness is not InventoryCompleteness.COMPLETE:
+                raise ValueError("scoped absence requires complete inventory")
+        if self.reconciliation_lifecycles is not None or self.trusted_cancelled_confirmation_ids:
+            if (type(self.reconciliation_user_id) is not int
+                or self.reconciliation_user_id < 1):
+                raise ValueError("trusted reconciliation requires a caller binding")
+        if not isinstance(self.trusted_cancelled_confirmation_ids, frozenset):
+            raise TypeError("trusted cancelled confirmations must be immutable")
+        if len(self.trusted_cancelled_confirmation_ids) > 25 or any(
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value)
+            for value in self.trusted_cancelled_confirmation_ids
+        ):
+            raise ValueError("trusted cancelled confirmations must be bounded normalized IDs")
+        if (
+            self.trusted_cancelled_confirmation_ids
+            and self.completeness is InventoryCompleteness.FAILED
+        ):
+            raise ValueError("failed inventory cannot authorize cancellations")
 
     @classmethod
     def failed(cls, code: SynchronizationFailureCode, detail: str) -> InventoryDiscoveryResult:
@@ -360,6 +389,7 @@ class AccountReservation:
     first_observed_at: datetime
     last_observed_at: datetime
     snapshot_revision: int
+    last_sync_run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

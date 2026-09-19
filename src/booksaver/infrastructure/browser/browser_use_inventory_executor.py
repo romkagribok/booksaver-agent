@@ -34,6 +34,8 @@ from booksaver.domain.browser_executor import (
     RedactedProvenance,
 )
 from booksaver.domain.inventory_executor import (
+    ActiveInventoryCoverage,
+    ActiveInventoryRootExhaustion,
     InventoryExecutionRequest,
     InventoryExecutionResult,
     InventoryExecutionStatus,
@@ -41,6 +43,7 @@ from booksaver.domain.inventory_executor import (
     KnownInventoryReservation,
     ObservedInventoryScope,
     ObservedReservation,
+    TrustedInventoryCancellation,
 )
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.model_policy import (
@@ -591,6 +594,8 @@ async def _current_visible_saved_reservation(
 @dataclass(frozen=True, slots=True)
 class BrowserUseRuntimeResult:
     status: InventoryExecutionStatus
+    active_coverage: ActiveInventoryCoverage | None = None
+    trusted_cancellations: tuple[TrustedInventoryCancellation, ...] = ()
     scopes: tuple[ObservedInventoryScope, ...] = ()
     reservations: tuple[ObservedReservation, ...] = ()
     refreshed_session: bytes | None = field(default=None, repr=False)
@@ -996,6 +1001,10 @@ class LocalBrowserUseInventoryRuntime:
                 )
                 return BrowserUseRuntimeResult(InventoryExecutionStatus.PROVIDER_FAILURE)
 
+        grouped = await self._read_grouped_inventory(request, session, meter)
+        if grouped is not None:
+            return grouped
+
         # Only a code-observed empty initial page may produce this informational result.
         # A model cannot report it, and it never authorizes removal of saved reservations.
         if (
@@ -1020,9 +1029,16 @@ class LocalBrowserUseInventoryRuntime:
                 return self._unsafe_result()
             return BrowserUseRuntimeResult(InventoryExecutionStatus.EMPTY_UPCOMING)
 
-        grouped = await self._read_grouped_inventory(request, session, meter)
-        if grouped is not None:
-            return grouped
+        # A passive read can lose its tab/source binding and return no evidence. Recheck
+        # the episode before falling through to model navigation after that failed read.
+        if self._state.terminal is not None:
+            return BrowserUseRuntimeResult(
+                self._state.terminal, safety_violations=frozenset(self._state.safety_violations),
+            )
+        if (self._host.dialog_rejected or self._state.safety_violations
+            or len(session.get_page_targets()) != 1
+            or not self._guard.observable_url(await session.get_current_page_url())):
+            return self._unsafe_result()
 
         tools: Any = Tools(
             exclude_actions=list(STOCK_ACTIONS), display_files_in_done_text=False
@@ -1678,7 +1694,7 @@ class LocalBrowserUseInventoryRuntime:
                 logger.warning("Browser Use grouped inventory execution_id=%s coverage=%s",
                                request.execution_id,
                                json.dumps(result.diagnostic(), sort_keys=True))
-        if not result.reservations:
+        if not result.reservations and not result.active_coverage_complete:
             if (
                 result.trip_groups > 0
                 and result.trips_visited == result.trip_groups
@@ -1697,7 +1713,11 @@ class LocalBrowserUseInventoryRuntime:
         # absence authority is created, including when all observed links were processed.
         try:
             payload = BrowserUseObservationPayload(
-                authenticated="true", scopes=[],
+                authenticated="true", scopes=([BrowserUseScopePayload(
+                    scope="upcoming", requested_scope_visible="true", explicit_empty="true",
+                    pagination_exhausted="true", pages_observed=1,
+                    visible_reservation_count=0, detail_count=0, completeness="complete",
+                )] if result.active_coverage_complete and not result.reservations else []),
                 reservations=[BrowserUseReservationPayload.model_validate(raw)
                               for raw in result.reservations],
             )
@@ -1709,6 +1729,25 @@ class LocalBrowserUseInventoryRuntime:
         return BrowserUseRuntimeResult(
             InventoryExecutionStatus.OBSERVED, scopes=scopes, reservations=reservations,
             refreshed_session=None,
+            active_coverage=(ActiveInventoryCoverage(
+                owner_user_id=request.owner_user_id,
+                execution_id=request.execution_id,
+                session_lease_id=request.session_lease.lease_id,
+                active_confirmation_ids=frozenset(
+                    raw["confirmation_id"] for raw in result.reservations
+                    if raw.get("lifecycle") in {"upcoming", "current"}
+                ),
+                root_exhaustion=(
+                    ActiveInventoryRootExhaustion.VERIFIED_TOTAL if result.trip_groups
+                    else ActiveInventoryRootExhaustion.EXPLICIT_EMPTY
+                ),
+            ) if result.active_coverage_complete else None),
+            trusted_cancellations=tuple(TrustedInventoryCancellation(
+                owner_user_id=request.owner_user_id,
+                execution_id=request.execution_id,
+                session_lease_id=request.session_lease.lease_id,
+                confirmation_id=confirmation,
+            ) for confirmation in sorted(result.cancelled_confirmation_ids)),
         )
 
     async def _page_readiness_diagnostic(
@@ -1883,6 +1922,8 @@ class BrowserUseInventoryBrowserExecutor:
             return InventoryExecutionResult(
                 InventoryExecutionStatus.OBSERVED,
                 authenticated=True,
+                active_coverage=result.active_coverage,
+                trusted_cancellations=result.trusted_cancellations,
                 scopes=result.scopes,
                 reservations=result.reservations,
                 provenance=RedactedProvenance(

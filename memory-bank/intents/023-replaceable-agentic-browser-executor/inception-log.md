@@ -196,3 +196,16 @@ rollback. US-188 and ADR-048 now require narrowly date-corroborated forward life
 preserving all financial facts and rejecting remaining conflicts. This implements the already
 approved accurate current-stay behavior; no generic conflict skipping or absence authority is added.
 Construction and actual-caller persistence/eligibility acceptance remain in progress.
+
+## 2026-09-19T22:04:01Z - Trusted current-list reconciliation follow-up
+
+Registry allocation: Unit012, Bolt077, US192–194, FR31–33, proposed ADR049. Requirements, context,
+unit/story/bolt plans and story index are aligned. The user explicitly approved this scope and the
+AI-DLC checkpoints through implementation, verification, merge and deployment; no routine duplicate
+approval is required. Prior construction/release evidence stays historical and is not reused as
+new absence-authority acceptance. The project remains in construction.
+
+Domain model is complete. Technical design/ADR acceptance remains with the main agent: current
+rendered snapshots lack a qualified root exhaustion proof. The implementation must establish that
+proof or remain positive-only; no model-completeness shortcut is authorized. Global stories now194,
+with187 complete; Intent023 has12units/42stories. No live success is claimed.
