@@ -498,4 +498,4 @@ Use this to find relevant prior decisions when working on related features.
 - **Summary**: Narrow accepted exception to ADR039/048: code-owned caller/run/session-bound current-list
   completeness permits atomic scoped retirement; incomplete/model-only evidence stays positive-only.
 - **Read when**: Changing inventory completeness, active-row absence, cancellation/rebooking identity,
-  or saved/unverified reservation presentation. Actual Booking.com DOM/session qualification remains pending.
+  or saved/unverified reservation presentation. Affected-caller cloned proof/reconciliation passed; exact-image release qualification remains pending.

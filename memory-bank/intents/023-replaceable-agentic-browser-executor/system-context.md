@@ -193,4 +193,4 @@ reconciliation. Existing external actors/services are unchanged. Caller/run/sess
 current-list evidence may authorize covered active-row retirement only after trusted validation;
 model observations and incomplete evidence remain positive-only. Retain local history, current-run
 price receipts and per-user isolation. Exact cancellation and replacement identities remain separate.
-See Bolt077/ADR049; the proof contract is accepted, while actual DOM/session qualification remains pending.
+See Bolt077/ADR049; the proof contract and affected-caller cloned reconciliation are qualified; exact-image release remains pending.

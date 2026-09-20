@@ -209,3 +209,10 @@ Domain model is complete. Technical design/ADR acceptance remains with the main 
 rendered snapshots lack a qualified root exhaustion proof. The implementation must establish that
 proof or remain positive-only; no model-completeness shortcut is authorized. Global stories now194,
 with187 complete; Intent023 has12units/42stories. No live success is claimed.
+
+## 2026-09-20T17:52:46Z — Unit012 construction handoff
+
+Bolt077/US192–194/Unit012 completed through the official cascade after accepted actual-caller clone
+reconciliation and final2803tests/Ruff/mypy123. Scoped proof correctly retired the old reservation
+while preserving its distinct eligible replacement. Exact-image Operations and current-head review/
+merge/promotion remain pending. Other unfinished units keep Intent023 in construction.
