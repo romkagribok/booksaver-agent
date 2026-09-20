@@ -89,3 +89,11 @@ final-head review/exact-image qualification are required. Bolt completion is pre
   **52.42 seconds**; Ruff/mypy123 clean. Qualification follow-up source is ready; the previously
   staged fe8ba21 image remains superseded/not promoted. New final-head review and replacement-image
   Development/Staging remain required. Bolt completion is unchanged; no cascade was rerun.
+
+## 2026-09-20T18:16:36Z — Operations handoff closed
+
+Reviewed source 153d432 passed replacement-image Dev/Staging and current-head review, merged as
+ef51bc8 at 2026-09-20T18:12:16Z, and exact cddc642 image production verification passed
+at 2026-09-20T18:15:28Z. Normal production reconciliation passed 38 assertions/0failures; old EUR104 retired,
+distinct EUR94 active/eligible, 658 other-caller rows unchanged, state checks clean. Unit012 Operations
+complete; native Telegram UI remains user-driven. See deployment/history and release 153d432.

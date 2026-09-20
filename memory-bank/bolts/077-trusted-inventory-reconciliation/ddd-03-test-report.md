@@ -113,3 +113,26 @@ Development/Staging and current-head successful Bugbot before merge/promotion.
 
 Bolt077's official construction completion remains recorded. This is qualification follow-up;
 no second cascade, current-candidate live pass or production completion is claimed.
+
+## Reviewed replacement image qualification
+
+Source 153d4320dd553e2d2c58d5231949697991009212 produced exact image `sha256:cddc642f8a3e6b1babaa070000c530027362de2933ab47575008fc7d5141155b`.
+All 123 installed modules, eight pins/`pip check`/CLI passed; Development passed in 2.72 seconds.
+Exact installed-image Staging passed 39 checks / 0 failures: COMPLETE / 4 discovered / 2 eligible, old absent/archived,
+separate replacement upcoming/active/eligible, 658 other-caller rows unchanged, integrity/FK violations 0 and
+read-only original source digest unchanged. Current-head Bugbot SUCCESS in 3m29s and merge gate passed
+(two resolved threads, zero unresolved). This replaces fe8ba21 qualification for release purposes.
+
+PR53 merge is requested but unconfirmed after GitHub 504/REST 405 “Merging already in progress”;
+latest read is OPEN/merged=false. No merged or production result is claimed. Record actual
+promotion and normal production acceptance separately after confirmed merge.
+
+## Production acceptance recorded
+
+PR53 merged at 2026-09-20T18:12:16Z as ef51bc8a5b4367d55e59af4644d1d3178db7d957, full tree
+identical to reviewed 153d432. The exact qualified cddc642 image was promoted and independent
+production verification passed at 2026-09-20T18:15:28Z. Normal caller refresh passed 38 assertions,
+COMPLETE / 4 discovered / 2 eligible, old EUR104 ABSENT/ineligible/archived with identity/total preserved, distinct EUR94 active/
+eligible, 658 other-caller rows unchanged and SQLite/FKs clean. No notifications were sent. Service,
+health, backup/rollback and monitoring evidence is in Unit012 deployment/history.md. Operations
+complete; native Telegram UI remains user-driven and is not claimed as tested.

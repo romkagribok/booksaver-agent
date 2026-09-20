@@ -86,3 +86,11 @@ EUR94 upcoming/eligible. Final source gate passed2803tests/Ruff/mypy123 and the 
 completed Bolt077/US192–194/Unit012. Earlier pending/failed replays above remain historical evidence.
 Exact installed-image qualification, current-head review, merge and production release are separate
 pending Operations gates; cloned acceptance does not claim native Telegram or production execution.
+
+## Operations verification
+
+Reviewed replacement 153d432 passed exact-image qualification and final-head review, merged as
+ef51bc8, and production reconciliation/health verification passed at 2026-09-20T18:15:28Z.
+The prior pending Operations statements above describe earlier checkpoints. Unit012 deployment
+history records normal production complete scope with 4 discovered / 2 eligible, old retirement, separate replacement and
+unchanged other callers. Native Telegram UI interaction remains user-driven.
