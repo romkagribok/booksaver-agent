@@ -541,6 +541,7 @@ def test_runtime_rechecks_safety_after_passive_observation_before_dispatch(
         SimpleNamespace(
             start=start,
             verify_authentication=verify,
+            verified_mobile_session=None,
             create_agent=create_agent,
             dialog_rejected=False,
         ),

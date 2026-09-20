@@ -194,6 +194,8 @@ class SystemRemoteBrowserRunner:
                             "-forever",
                             "-shared",
                             "-noxdamage",
+                            # Client keysyms carry case; remote lock state would invert it.
+                            "-skip_lockkeys",
                             "-quiet",
                         ]
                     )

@@ -133,3 +133,19 @@ def test_legacy_migration_is_owner_only_and_never_overwrites_existing(tmp_path) 
     service.migrate_legacy_owner(101, legacy)
     with pytest.raises(SessionTargetError, match="already has"):
         service.migrate_legacy_owner(101, legacy)
+
+
+def test_owner_migration_does_not_make_expired_legacy_bundle_ready_without_verification(tmp_path):
+    from booksaver.domain.session import SessionState
+    from booksaver.domain.value_objects import Platform
+
+    now = datetime.now(UTC)
+    users = Users([_user(1, 101, role=UserRole.OWNER)])
+    repo = _repo(tmp_path)
+    legacy = SessionState.new(Platform.BOOKING_COM, b"legacy", now - timedelta(days=2),
+                              expires_at=now - timedelta(days=1))
+    UserSessionService(users, repo).migrate_legacy_owner(101, legacy)
+    assert repo.resolve(1).unavailable_reason is SessionUnavailableReason.EXPIRED
+    candidate = repo.load_for_maintenance(1)
+    assert candidate is not None and candidate.metadata.continuity_version == 0
+    assert candidate.metadata.expires_at == legacy.expires_at

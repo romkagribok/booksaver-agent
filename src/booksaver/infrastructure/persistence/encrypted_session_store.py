@@ -5,14 +5,25 @@ import importlib
 import json
 import os
 import tempfile
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from booksaver.domain.errors import SecretKeyError, SessionRevokedError
 from booksaver.domain.session import SessionStatus
+from booksaver.domain.session_maintenance import (
+    RETRY_DELAYS,
+    UNCERTAINTY_NOTICE_AFTER,
+    SessionMaintenanceState,
+    SessionNotice,
+    SessionVerificationOutcome,
+    SessionVerificationResult,
+    as_utc,
+)
 from booksaver.domain.user_session import (
     SessionResolution,
     SessionUnavailableReason,
@@ -74,7 +85,7 @@ class EncryptedUserSessionRepository:
             return SessionResolution.unavailable(SessionUnavailableReason.MISSING)
         try:
             snapshot = self._load_snapshot(path, expected_owner=owner_user_id)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError, SecretKeyError):
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, SecretKeyError):
             return SessionResolution.unavailable(SessionUnavailableReason.INVALID)
 
         health = snapshot.metadata.health(now or datetime.now(UTC))
@@ -92,7 +103,7 @@ class EncryptedUserSessionRepository:
             return UserSessionStatusView(owner_user_id, UserSessionHealth.MISSING)
         try:
             snapshot = self._load_snapshot(path, expected_owner=owner_user_id)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError, SecretKeyError):
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, SecretKeyError):
             return UserSessionStatusView(owner_user_id, UserSessionHealth.INVALID)
         metadata = snapshot.metadata
         return UserSessionStatusView(
@@ -104,6 +115,105 @@ class EncryptedUserSessionRepository:
             expires_at=metadata.expires_at,
         )
 
+    def load_for_maintenance(self, owner_user_id: int) -> UserSessionSnapshot | None:
+        """Load ACTIVE material only for verification, including legacy aggregate expiry."""
+        with self._owner_lock(owner_user_id):
+            return self._active_snapshot_unlocked(owner_user_id)
+
+    def claim_maintenance(
+        self, owner_user_id: int, expected_revision: str, now: datetime,
+    ) -> UserSessionSnapshot | None:
+        at = as_utc(now)
+        with self._owner_lock(owner_user_id):
+            current = self._active_snapshot_unlocked(owner_user_id)
+            if (current is None or current.metadata.revision_id != expected_revision
+                or current.metadata.maintenance_due_at(at) > at):
+                return None
+            prior = current.metadata.maintenance
+            count = min(prior.consecutive_failures + 1, len(RETRY_DELAYS))
+            claimed = replace(current, metadata=replace(
+                current.metadata,
+                maintenance=SessionMaintenanceState(
+                    next_attempt_at=at + RETRY_DELAYS[count - 1],
+                    last_attempt_at=at,
+                    failure_started_at=prior.failure_started_at or at,
+                    consecutive_failures=count,
+                    attempt_id=str(uuid.uuid4()),
+                    notice_sent_at=prior.notice_sent_at,
+                ),
+            ))
+            self._save_unlocked(claimed)
+            return claimed
+
+    def complete_maintenance(
+        self, owner_user_id: int, expected_revision: str, attempt_id: str,
+        result: SessionVerificationResult, now: datetime,
+    ) -> UserSessionSnapshot | None:
+        at = as_utc(now)
+        with self._owner_lock(owner_user_id):
+            current = self._active_snapshot_unlocked(owner_user_id)
+            if (current is None or current.metadata.revision_id != expected_revision
+                or current.metadata.maintenance.attempt_id != attempt_id):
+                return None
+            if result.outcome is SessionVerificationOutcome.AUTHENTICATED:
+                assert result.cookies is not None and result.verified_at is not None
+                started = current.metadata.maintenance.last_attempt_at
+                if started is None or not started <= result.verified_at <= at:
+                    return None
+                updated = current.refreshed(result.cookies, validated_at=result.verified_at)
+            else:
+                status = (
+                    SessionStatus.REQUIRES_REAUTH if result.outcome in {
+                        SessionVerificationOutcome.SIGNED_OUT,
+                        SessionVerificationOutcome.INTERACTION_REQUIRED,
+                    } else current.metadata.status
+                )
+                updated = replace(current, metadata=replace(
+                    current.metadata, status=status,
+                    maintenance=replace(current.metadata.maintenance, attempt_id=None),
+                ))
+            self._save_unlocked(updated)
+            return updated
+
+    def claim_session_notice(
+        self, owner_user_id: int, expected_revision: str, now: datetime,
+    ) -> SessionNotice | None:
+        at = as_utc(now)
+        with self._owner_lock(owner_user_id):
+            current = self._snapshot_unlocked(owner_user_id)
+            if current is None or current.metadata.revision_id != expected_revision:
+                return None
+            state = current.metadata.maintenance
+            if state.notice_sent_at is not None:
+                return None
+            if current.metadata.status in {SessionStatus.REQUIRES_REAUTH, SessionStatus.EXPIRED}:
+                reason = SessionNotice.SIGNED_OUT
+            elif (current.metadata.status is SessionStatus.ACTIVE
+                and state.failure_started_at is not None
+                and at - state.failure_started_at >= UNCERTAINTY_NOTICE_AFTER):
+                reason = SessionNotice.UNVERIFIED
+            else:
+                return None
+            self._save_unlocked(replace(current, metadata=replace(
+                current.metadata, maintenance=replace(state, notice_sent_at=at),
+            )))
+            return reason
+
+    def _snapshot_unlocked(self, owner_user_id: int) -> UserSessionSnapshot | None:
+        path = self._path(owner_user_id)
+        if self._revocation_path(owner_user_id).exists() or not path.exists():
+            return None
+        try:
+            return self._load_snapshot(path, expected_owner=owner_user_id)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, SecretKeyError):
+            return None
+
+    def _active_snapshot_unlocked(self, owner_user_id: int) -> UserSessionSnapshot | None:
+        snapshot = self._snapshot_unlocked(owner_user_id)
+        if snapshot is None or snapshot.metadata.status is not SessionStatus.ACTIVE:
+            return None
+        return snapshot
+
     def compare_and_replace(
         self, owner_user_id: int, expected_revision: str, snapshot: UserSessionSnapshot
     ) -> bool:
@@ -112,7 +222,12 @@ class EncryptedUserSessionRepository:
         if snapshot.metadata.revision_id != expected_revision:
             return False
         with self._owner_lock(owner_user_id):
-            current = self._ready_snapshot_unlocked(owner_user_id)
+            current = (
+                self._active_snapshot_unlocked(owner_user_id)
+                if snapshot.metadata.continuity_version == 1
+                and snapshot.metadata.validated_at is not None
+                else self._ready_snapshot_unlocked(owner_user_id)
+            )
             if current is None or current.metadata.revision_id != expected_revision:
                 return False
             self._save_unlocked(snapshot)
@@ -123,18 +238,10 @@ class EncryptedUserSessionRepository:
             snapshot = self._ready_snapshot_unlocked(owner_user_id)
             if snapshot is None or snapshot.metadata.revision_id != expected_revision:
                 return False
-            updated = UserSessionSnapshot(
-                metadata=UserSessionMetadata(
-                    owner_user_id=owner_user_id,
-                    revision_id=expected_revision,
-                    platform=snapshot.metadata.platform,
-                    imported_at=snapshot.metadata.imported_at,
-                    expires_at=snapshot.metadata.expires_at,
-                    status=SessionStatus.REQUIRES_REAUTH,
-                    validated_at=snapshot.metadata.validated_at,
-                ),
-                cookies=snapshot.cookies,
-            )
+            updated = replace(snapshot, metadata=replace(
+                snapshot.metadata, status=SessionStatus.REQUIRES_REAUTH,
+                maintenance=replace(snapshot.metadata.maintenance, attempt_id=None),
+            ))
             self._save_unlocked(updated)
             return True
 
@@ -172,7 +279,7 @@ class EncryptedUserSessionRepository:
             return None
         try:
             snapshot = self._load_snapshot(path, expected_owner=owner_user_id)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError, SecretKeyError):
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, SecretKeyError):
             return None
         if snapshot.metadata.health(datetime.now(UTC)) is not UserSessionHealth.READY:
             return None
@@ -207,8 +314,14 @@ class EncryptedUserSessionRepository:
             os.close(fd)
 
     def _encrypt_snapshot(self, snapshot: UserSessionSnapshot) -> bytes:
+        maintenance = {
+            key: value.isoformat() if isinstance(value, datetime) else value
+            for key, value in asdict(snapshot.metadata.maintenance).items()
+        }
         payload = json.dumps(
-            {"cookies_b64": base64.b64encode(snapshot.cookies).decode("ascii")},
+            {"cookies_b64": base64.b64encode(snapshot.cookies).decode("ascii"),
+             "continuity_version": snapshot.metadata.continuity_version,
+             "maintenance": maintenance},
             separators=(",", ":"),
         )
         return self._key_store.encrypt(payload)
@@ -239,6 +352,18 @@ class EncryptedUserSessionRepository:
         plaintext = self._key_store.decrypt(raw["fernet_token"].encode("ascii"))
         secret: dict[str, Any] = json.loads(plaintext)
         cookies = base64.b64decode(secret["cookies_b64"], validate=True)
+        maintenance_raw = secret.get("maintenance", {})
+        if not isinstance(maintenance_raw, dict):
+            raise ValueError("Invalid encrypted session maintenance metadata")
+        timestamps = {"next_attempt_at", "last_attempt_at", "failure_started_at", "notice_sent_at"}
+        allowed = timestamps | {"attempt_id", "consecutive_failures"}
+        if not set(maintenance_raw) <= allowed:
+            raise ValueError("Unknown encrypted session maintenance metadata")
+        maintenance_values: dict[str, Any] = {
+            key: datetime.fromisoformat(value) if key in timestamps and value is not None else value
+            for key, value in maintenance_raw.items()
+        }
+        maintenance = SessionMaintenanceState(**maintenance_values)
         metadata = UserSessionMetadata(
             owner_user_id=expected_owner,
             revision_id=raw["revision_id"],
@@ -253,6 +378,8 @@ class EncryptedUserSessionRepository:
                 datetime.fromisoformat(raw["expires_at"]) if raw.get("expires_at") else None
             ),
             status=SessionStatus(raw["status"]),
+            continuity_version=secret.get("continuity_version", 0),
+            maintenance=maintenance,
         )
         return UserSessionSnapshot(metadata=metadata, cookies=cookies)
 

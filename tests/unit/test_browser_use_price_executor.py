@@ -562,7 +562,8 @@ def _local_price_episode(monkeypatch, tmp_path, plan):
     )
     monkeypatch.setattr(price_adapter, "browser_use_screenshot_available", screenshot)
     monkeypatch.setattr(runtime, "_host", SimpleNamespace(
-        start=start, verify_authentication=verify, create_agent=create_agent,
+        start=start, verify_authentication=verify, verified_mobile_session=b"mobile-snapshot",
+            create_agent=create_agent,
         dialog_rejected=False, blocked_network_requests=0, blocked_network_hosts=set(),
     ))
     return runtime, runtime.execute(request, api_key="secret key", budget=_budget(), meter=meter)
@@ -692,6 +693,7 @@ def test_complete_query_with_mixed_offers_keeps_only_valid_candidate(monkeypatch
     runtime, episode = _local_price_episode(monkeypatch, tmp_path, plan)
     result = asyncio.run(episode)
     assert result.status is PriceExecutionStatus.OBSERVED
+    assert result.refreshed_session == b"mobile-snapshot"
     observation = result.observation
     assert observation is not None
     assert observation.facts.completeness is EvidenceCompleteness.COMPLETE

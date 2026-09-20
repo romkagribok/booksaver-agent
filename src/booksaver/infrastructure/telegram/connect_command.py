@@ -165,6 +165,14 @@ class ReconnectNotifier:
         self._lock = threading.Lock()
 
     def notify(self, local_user_id: int) -> None:
+        self._notify(local_user_id,
+                     "Please sign in to Booking.com again so we can keep checking your prices.")
+
+    def notify_unverified(self, local_user_id: int) -> None:
+        self._notify(local_user_id, "We have not been able to verify your Booking.com login "
+                     "for two days. Please sign in again so we can keep checking your prices.")
+
+    def _notify(self, local_user_id: int, text: str) -> None:
         now = time.monotonic()
         with self._lock:
             last = self._sent_at.get(local_user_id)
@@ -183,7 +191,7 @@ class ReconnectNotifier:
                 return
             self._client.send_message(
                 chat_id,
-                "Please sign in to Booking.com again so we can keep checking your prices.",
+                text,
                 reply_markup={
                     "inline_keyboard": [
                         [{"text": "Reconnect Booking.com", "callback_data": "connect:start"}]

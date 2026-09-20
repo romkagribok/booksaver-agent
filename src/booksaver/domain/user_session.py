@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 
 from booksaver.domain.session import SessionStatus
+from booksaver.domain.session_maintenance import (
+    VERIFICATION_INTERVAL,
+    SessionMaintenanceState,
+    as_utc,
+)
 from booksaver.domain.value_objects import Platform
 
 
@@ -34,6 +39,15 @@ class UserSessionMetadata:
     expires_at: datetime | None
     status: SessionStatus = SessionStatus.ACTIVE
     validated_at: datetime | None = None
+    continuity_version: int = 0
+    maintenance: SessionMaintenanceState = field(default_factory=SessionMaintenanceState)
+
+    def __post_init__(self) -> None:
+        if type(self.continuity_version) is not int or self.continuity_version not in {0, 1}:
+            raise ValueError("Unknown session continuity policy")
+        for value in (self.imported_at, self.expires_at, self.validated_at):
+            if value is not None:
+                as_utc(value)
 
     @classmethod
     def imported(
@@ -58,9 +72,17 @@ class UserSessionMetadata:
             return UserSessionHealth.REAUTH_REQUIRED
         if self.status is SessionStatus.EXPIRED:
             return UserSessionHealth.EXPIRED
-        if self.expires_at is not None and (now or datetime.now(UTC)) >= self.expires_at:
+        if (self.continuity_version == 0 and self.expires_at is not None
+            and (now or datetime.now(UTC)) >= self.expires_at):
             return UserSessionHealth.EXPIRED
         return UserSessionHealth.READY
+
+    def maintenance_due_at(self, now: datetime) -> datetime:
+        if self.maintenance.next_attempt_at is not None:
+            return self.maintenance.next_attempt_at
+        if self.validated_at is not None and self.health(now) is UserSessionHealth.READY:
+            return self.validated_at + VERIFICATION_INTERVAL
+        return self.imported_at
 
 
 @dataclass(frozen=True)
@@ -75,13 +97,20 @@ class UserSessionSnapshot:
         validated_at: datetime,
         expires_at: datetime | None = None,
     ) -> UserSessionSnapshot:
+        verified = as_utc(validated_at)
         return replace(
             self,
             metadata=replace(
                 self.metadata,
                 status=SessionStatus.ACTIVE,
-                validated_at=validated_at,
-                expires_at=expires_at if expires_at is not None else self.metadata.expires_at,
+                validated_at=verified,
+                expires_at=expires_at,
+                continuity_version=1,
+                maintenance=SessionMaintenanceState(
+                    next_attempt_at=verified + VERIFICATION_INTERVAL,
+                    last_attempt_at=self.metadata.maintenance.last_attempt_at,
+                    notice_sent_at=self.metadata.maintenance.notice_sent_at,
+                ),
             ),
             cookies=cookies,
         )

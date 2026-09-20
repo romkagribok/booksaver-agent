@@ -38,6 +38,9 @@ button{min-width:44px;min-height:44px;margin:0;padding:8px 10px;border:1px solid
 button:disabled{opacity:.45}#keyboard{flex:1 0 auto}#cancel{background:#71383d;border-color:#a85a61}
 #capture{position:fixed;left:-10000px;bottom:0;width:2px;height:2px;opacity:.01;
  pointer-events:none;border:0;padding:0}
+#paste-panel{padding:8px 12px;background:#22384a;flex-shrink:0}
+#paste-value{width:100%;min-height:44px;margin:6px 0;font:inherit}
+#paste-panel[hidden]{display:none}
 body.keyboard-open #keyboard{background:#0878d1;border-color:#6cb9f1}
 body.keyboard-open #fullscreen{display:none}
 body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
@@ -51,10 +54,18 @@ body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
  <button id="fullscreen" type="button" hidden aria-pressed="false">Full screen</button>
 </div>
 <p id="size-hint" role="status" hidden></p>
-<p id="help">Tap a Booking.com field, then tap Keyboard. Use Next or Enter to continue.</p>
+<p id="help">Tap a Booking.com field, then tap Keyboard or Paste. Use Next or Enter to continue.</p>
 <div id="viewer"><div id="screen" aria-label="Remote Booking.com browser"></div></div>
+<div id="paste-panel" hidden>
+ <label for="paste-value">Paste English letters, numbers or symbols, then tap Insert.</label>
+ <input id="paste-value" type="password" autocomplete="off" autocapitalize="none"
+  autocorrect="off" spellcheck="false" aria-label="Text to paste into the remote field">
+ <button id="paste-insert" type="button" disabled>Insert</button>
+ <button id="paste-close" type="button">Close</button>
+</div>
 <div id="dock" aria-label="Remote browser controls">
  <button id="keyboard" type="button" disabled aria-pressed="false">Keyboard</button>
+ <button id="paste" type="button" disabled>Paste</button>
  <button id="next" type="button" disabled>Next</button>
  <button id="enter" type="button" disabled>Enter</button>
  <button id="help-button" type="button" aria-controls="help" aria-expanded="true">Help</button>
@@ -72,6 +83,11 @@ const screenNode=document.getElementById('screen');
 const dockNode=document.getElementById('dock');
 const captureNode=document.getElementById('capture');
 const keyboardButton=document.getElementById('keyboard');
+const pasteButton=document.getElementById('paste');
+const pastePanel=document.getElementById('paste-panel');
+const pasteValue=document.getElementById('paste-value');
+const pasteInsert=document.getElementById('paste-insert');
+const pasteClose=document.getElementById('paste-close');
 const nextButton=document.getElementById('next');
 const enterButton=document.getElementById('enter');
 const helpButton=document.getElementById('help-button');
@@ -107,6 +123,9 @@ let lastKeyboardInput=null;
 let lastRemoteTouchY=0;
 const defaultKeyboardInputLen=100;
 let fullscreenSupported=false;
+let inputGeneration=0;
+let pasteAttempt=null;
+const maxPasteCodepoints=1024;
 
 function updateFullscreen(){
  const active=Boolean(tg&&tg.isFullscreen);
@@ -159,6 +178,8 @@ function setControlsEnabled(enabled){
  keyboardButton.disabled=!enabled;
  nextButton.disabled=!enabled;
  enterButton.disabled=!enabled;
+ pasteButton.disabled=!enabled;
+ pasteInsert.disabled=!enabled;
 }
 function resetKeyboardInput(){
  captureNode.value=new Array(defaultKeyboardInputLen).join('_');
@@ -202,6 +223,7 @@ function setKeyboardOpen(open){
  }
 }
 function teardownInput(){
+ invalidatePaste();
  setControlsEnabled(false);
  document.body.classList.remove('keyboard-open');
  keyboardButton.textContent='Keyboard';
@@ -210,11 +232,153 @@ function teardownInput(){
  resetKeyboardInput();
  if(touchKeyboard){touchKeyboard.ungrab();touchKeyboard=null;}
 }
+function invalidatePaste(){
+ inputGeneration++;
+ if(pasteAttempt)pasteAttempt.characters=[];
+ pasteAttempt=null;
+ pasteValue.value='';
+ pastePanel.hidden=true;
+}
+function pasteReady(){
+ return rfb&&viewerAuthorized&&!terminalState&&!closeRequested&&!viewerError&&
+  !keyboardButton.disabled;
+}
+function ownsPaste(attempt){
+ return pasteReady()&&pasteAttempt===attempt&&rfb===attempt.connection&&
+  inputGeneration===attempt.generation;
+}
+function beginPaste(){
+ if(!pasteReady()||pasteAttempt)return null;
+ const attempt={connection:rfb,generation:inputGeneration,characters:[],offset:0};
+ pasteAttempt=attempt;
+ return attempt;
+}
+function finishPaste(attempt){
+ if(pasteAttempt!==attempt)return;
+ attempt.characters=[];
+ pasteAttempt=null;
+ pasteValue.value='';
+ resetKeyboardInput();
+}
+function pasteCharacters(text){
+ if(typeof text!=='string'||text.length>maxPasteCodepoints)return null;
+ const characters=Array.from(text);
+ if(!characters.length||characters.length>maxPasteCodepoints)return null;
+ if(characters.some(char=>{
+  const point=char.codePointAt(0);
+  return point<32||point>126;
+ }))return null;
+ return characters;
+}
+function pasteError(text){
+ if(typeof text==='string'&&text.length<=maxPasteCodepoints&&
+    Array.from(text).some(character=>character.codePointAt(0)>126))
+  return 'Paste supports English letters, numbers, spaces and punctuation only. '+
+   'Nothing was inserted.';
+ return 'Use 1–1,024 characters on one line. Nothing was inserted.';
+}
+function showPasteFallback(){
+ if(!pasteReady())return;
+ pastePanel.hidden=false;
+ pasteValue.focus({preventScroll:true});
+ setStatus('Paste into the box below, then tap Insert. Select the Booking.com field first.');
+}
+function insertPaste(attempt,text){
+ if(!ownsPaste(attempt))return;
+ attempt.characters=pasteCharacters(text);
+ const invalidMessage=attempt.characters?'':pasteError(text);
+ text='';
+ if(!attempt.characters){
+  finishPaste(attempt);
+  setStatus(invalidMessage);
+  return;
+ }
+ // blur clears noVNC's held-key bookkeeping without changing the remote field.
+ // Release both sides explicitly, including a modifier captured before this shortcut.
+ try{
+  attempt.connection.blur();
+  for(const [symbol,code] of [[0xffe3,'ControlLeft'],[0xffe4,'ControlRight'],
+      [0xffeb,'MetaLeft'],[0xffec,'MetaRight'],[0xffe7,'MetaLeft'],[0xffe8,'MetaRight'],
+      [0xffe1,'ShiftLeft'],[0xffe2,'ShiftRight'],[0xffe9,'AltLeft'],[0xffea,'AltRight']]){
+   if(!ownsPaste(attempt))return;
+   attempt.connection.sendKey(symbol,code,false);
+  }
+ }catch(_){finishPaste(attempt);setStatus('Could not insert text. Try Paste again.');return;}
+ const sendChunk=()=>{
+  if(!ownsPaste(attempt))return;
+  try{
+   const end=Math.min(attempt.offset+32,attempt.characters.length);
+   while(attempt.offset<end){
+    if(!ownsPaste(attempt))return;
+    const character=attempt.characters[attempt.offset++];
+    attempt.connection.sendKey(keysyms.lookup(character.codePointAt(0)));
+   }
+   if(attempt.offset<attempt.characters.length){setTimeout(sendChunk,0);return;}
+   finishPaste(attempt);
+   pastePanel.hidden=true;
+   attempt.connection.focus();
+   setStatus('Text sent to the selected field.');
+  }catch(_){finishPaste(attempt);setStatus('Could not insert text. Try Paste again.');}
+ };
+ sendChunk();
+}
+async function readPaste(event){
+ if(!event.isTrusted)return;
+ const attempt=beginPaste();
+ if(!attempt)return;
+ try{
+  if(!navigator.clipboard||typeof navigator.clipboard.readText!=='function')throw new Error();
+  let text=await navigator.clipboard.readText();
+  if(ownsPaste(attempt))insertPaste(attempt,text);
+  text='';
+ }catch(_){
+  if(!ownsPaste(attempt))return;
+  finishPaste(attempt);
+  showPasteFallback();
+ }
+}
+function remoteInputTarget(target){
+ return target===captureNode||viewerNode.contains(target);
+}
+window.addEventListener('keydown',event=>{
+ if(pasteAttempt&&remoteInputTarget(event.target)){
+  event.preventDefault();event.stopImmediatePropagation();return;
+ }
+ if(!(event.ctrlKey||event.metaKey)||event.altKey||event.key.toLowerCase()!=='v'||
+    !remoteInputTarget(event.target))return;
+ event.preventDefault();
+ event.stopImmediatePropagation();
+ if(!event.repeat)void readPaste(event);
+},true);
+// Keep the selected remote field stable while a read or queued insertion is pending.
+for(const kind of ['pointerdown','pointerup','pointermove','mousedown','mouseup',
+                   'mousemove','touchstart','touchmove','touchend','wheel']){
+ window.addEventListener(kind,event=>{
+  if(pasteAttempt&&remoteInputTarget(event.target)){
+   event.preventDefault();event.stopImmediatePropagation();
+  }
+ },{capture:true,passive:false});
+}
+window.addEventListener('paste',event=>{
+ if(!event.isTrusted||(!remoteInputTarget(event.target)&&event.target!==pasteValue))return;
+ event.preventDefault();
+ event.stopImmediatePropagation();
+ if(!pasteReady()||pasteAttempt)return;
+ let text=event.clipboardData&&event.clipboardData.getData('text/plain');
+ if(event.target===pasteValue){
+  if(pasteCharacters(text)){pasteValue.value=text;}
+  else{pasteValue.value='';setStatus(pasteError(text));}
+ }else{
+  const attempt=beginPaste();
+  if(attempt)insertPaste(attempt,text);
+ }
+ text='';
+},true);
 function sendShortcut(keysym,code){
- if(rfb&&!terminalState&&!keyboardButton.disabled)rfb.sendKey(keysym,code);
+ if(rfb&&!terminalState&&!keyboardButton.disabled&&!pasteAttempt)rfb.sendKey(keysym,code);
 }
 function keyInput(event){
- if(!rfb||terminalState||composing)return;
+ if(!rfb||terminalState||composing||pasteAttempt)return;
  const newValue=event.target.value;
  if(!lastKeyboardInput)resetKeyboardInput();
  const oldValue=lastKeyboardInput;
@@ -279,7 +443,10 @@ async function connectViewer(state){
   setStatus('Remote browser connected. Sign in with your Booking.com email and password.');
   setControlsEnabled(true);
   touchKeyboard=new modules.Keyboard(captureNode);
-  touchKeyboard.onkeyevent=(keysym,code,down)=>current.sendKey(keysym,code,down);
+  touchKeyboard.onkeyevent=(keysym,code,down)=>{
+   if(rfb===current&&!terminalState&&!closeRequested&&(!pasteAttempt||!down))
+    current.sendKey(keysym,code,down);
+  };
   touchKeyboard.grab();
  });
  current.addEventListener('securityfailure',()=>{
@@ -357,6 +524,7 @@ async function start(){
  await poll();
 }
 function cancelOnClose(event){
+ invalidatePaste();
  if(event&&event.persisted)return;
  if(!viewerAuthorized||terminalState||closeRequested)return;
  closeRequested=true;
@@ -368,6 +536,13 @@ function cancelOnClose(event){
 keyboardButton.addEventListener('click',()=>{
  setKeyboardOpen(!document.body.classList.contains('keyboard-open'));
 });
+pasteButton.addEventListener('click',event=>void readPaste(event));
+pasteInsert.addEventListener('click',event=>{
+ if(!event.isTrusted)return;
+ const attempt=beginPaste();
+ if(attempt)insertPaste(attempt,pasteValue.value);
+});
+pasteClose.addEventListener('click',()=>{invalidatePaste();if(pasteReady())rfb.focus();});
 fullscreenButton.addEventListener('click',toggleFullscreen);
 nextButton.addEventListener('click',()=>sendShortcut(KeyTable.XK_Tab,'Tab'));
 enterButton.addEventListener('click',()=>sendShortcut(KeyTable.XK_Return,'Enter'));

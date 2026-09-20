@@ -8,6 +8,10 @@ updated: 2026-09-06T20:44:13.000Z
 
 # Requirements: Device-Aware Remote Authentication Viewer
 
+## Subsequent decision
+
+ADR-051 (Intent025) narrowly amends this completed intent's clipboard exclusion: explicit user-triggered local-to-remote plain-text paste is permitted through the existing authenticated RFB keyboard channel. No clipboard polling, synchronization, writes, credential logging/storage or HTTP credential endpoint is introduced. The original implementation evidence below remains historical.
+
 ## Intent Overview
 
 Make the streamed Booking.com login practical and reassuring on phones, tablets, and desktops.

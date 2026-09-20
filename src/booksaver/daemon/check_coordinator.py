@@ -113,6 +113,16 @@ from booksaver.domain.schedule import (
     ScheduleSettings,
     SlotIdentity,
 )
+from booksaver.domain.session_maintenance import (
+    MAINTENANCE_TIMEOUT,
+    SessionMaintenanceCleanupError,
+    SessionMaintenanceRun,
+    SessionMaintenanceStatus,
+    SessionNotice,
+    SessionVerificationOutcome,
+    SessionVerificationResult,
+    as_utc,
+)
 from booksaver.domain.user_session import SessionUnavailableReason, UserSessionHealth
 from booksaver.infrastructure.browser.booking_account_inventory import (
     BookingComAccountInventorySource,
@@ -524,6 +534,9 @@ class CheckCoordinator:
         agentic_executor_factory: AgenticExecutorFactory | None = None,
         agentic_inventory_executor_factory: AgenticInventoryExecutorFactory | None = None,
         bookings_inventory_executor_factory: AgenticInventoryExecutorFactory | None = None,
+        session_verifier: Callable[[bytes, datetime], SessionVerificationResult] | None = None,
+        session_uncertain_notifier: AuthRequiredNotifier | None = None,
+        session_clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._config = config
         self._db_path = config.data_directory.path / "booksaver.db"
@@ -536,6 +549,10 @@ class CheckCoordinator:
             config.data_directory
         )
         self._auth_required_notifier = auth_required_notifier
+        self._session_uncertain_notifier = session_uncertain_notifier
+        self._session_verifier = session_verifier
+        self._session_clock = session_clock or (lambda: datetime.now(UTC))
+        self._maintenance_disabled_logged = False
         self._inventory_synchronizer = inventory_synchronizer
         self._incident_recorder_factory = incident_recorder_factory
         self._checks_today = checks_today or DailyCounter()
@@ -557,6 +574,123 @@ class CheckCoordinator:
 
     def set_auth_required_notifier(self, notifier: AuthRequiredNotifier | None) -> None:
         self._auth_required_notifier = notifier
+
+    def set_session_uncertain_notifier(self, notifier: AuthRequiredNotifier | None) -> None:
+        self._session_uncertain_notifier = notifier
+
+    def request_session_maintenance(
+        self, user_id: int, now: datetime | None = None,
+    ) -> SessionMaintenanceRun:
+        """Verify one exact admitted caller without reservation or model work."""
+        status = SessionMaintenanceStatus
+        if self._stop_event.is_set():
+            return SessionMaintenanceRun(status.STOPPING)
+        if not self._execution_gate.acquire(blocking=False):
+            return SessionMaintenanceRun(status.BUSY)
+        try:
+            if self._stop_event.is_set():
+                return SessionMaintenanceRun(status.STOPPING)
+            at = as_utc(now or self._session_clock())
+            verifier = self._session_verifier
+            if verifier is None:
+                from booksaver.infrastructure.browser.session_maintenance import (
+                    BrowserSessionMaintenance,
+                )
+                if not BrowserSessionMaintenance.is_supported():
+                    if not self._maintenance_disabled_logged:
+                        logger.warning(
+                            "Background session maintenance disabled: unsupported platform"
+                        )
+                        self._maintenance_disabled_logged = True
+                    return SessionMaintenanceRun(status.DISABLED)
+                verifier = BrowserSessionMaintenance(
+                    mobile_settings=self._config.mobile_web_settings,
+                ).verify
+            with SqliteStore(self._db_path) as store:
+                if not self._is_active_user(store, user_id):
+                    return SessionMaintenanceRun(status.UNAVAILABLE)
+                snapshot = self._session_repository.load_for_maintenance(user_id)
+                if snapshot is None:
+                    return SessionMaintenanceRun(status.UNAVAILABLE)
+                due = snapshot.metadata.maintenance_due_at(at)
+                if due > at:
+                    return SessionMaintenanceRun(status.NOT_DUE, due)
+                claimed = self._session_repository.claim_maintenance(
+                    user_id, snapshot.metadata.revision_id, at,
+                )
+                if claimed is None:
+                    return SessionMaintenanceRun(status.STALE)
+                deadline = at + MAINTENANCE_TIMEOUT
+                if self._stop_event.is_set() or not self._is_active_user(store, user_id):
+                    return SessionMaintenanceRun(status.STOPPING)
+                try:
+                    verification = verifier(claimed.cookies, deadline)
+                except SessionMaintenanceCleanupError:
+                    # The caller retains the browser gate until admission is stopped. A
+                    # lifecycle shutdown is mandatory if owned processes may still exist.
+                    self._stop_event.set()
+                    logger.error("Session maintenance cleanup unconfirmed; stopping daemon")
+                    return SessionMaintenanceRun(status.STOPPING)
+                except Exception:
+                    # No exception strings: browser failures can contain cookies or URLs.
+                    logger.warning("Session maintenance unavailable for user %s", user_id)
+                    verification = SessionVerificationResult(SessionVerificationOutcome.RETRY_LATER)
+                finished = as_utc(self._session_clock())
+                if finished > deadline:
+                    verification = SessionVerificationResult(SessionVerificationOutcome.RETRY_LATER)
+                if self._stop_event.is_set():
+                    return SessionMaintenanceRun(status.STOPPING)
+                # Serialize the final access decision against revoke/purge DB transactions.
+                # No browser work runs under this short write lock.
+                with store.conn:
+                    store.conn.execute("BEGIN IMMEDIATE")
+                    if not self._is_active_user(store, user_id):
+                        return SessionMaintenanceRun(status.UNAVAILABLE)
+                    attempt = claimed.metadata.maintenance.attempt_id
+                    assert attempt is not None
+                    updated = self._session_repository.complete_maintenance(
+                        user_id, claimed.metadata.revision_id, attempt, verification, finished,
+                    )
+                if updated is None:
+                    return SessionMaintenanceRun(status.STALE)
+                if verification.outcome is SessionVerificationOutcome.AUTHENTICATED:
+                    outcome = status.VERIFIED
+                elif verification.outcome is SessionVerificationOutcome.RETRY_LATER:
+                    outcome = status.RETRY_LATER
+                else:
+                    outcome = status.REAUTH_REQUIRED
+                self._notify_session_issue(user_id, updated.metadata.revision_id, finished)
+                return SessionMaintenanceRun(outcome, updated.metadata.maintenance.next_attempt_at)
+        finally:
+            self._execution_gate.release()
+
+    def run_session_maintenance(self) -> datetime | None:
+        """One due admitted user per scheduler tick; never depend on eligible bookings."""
+        if self._stop_event.is_set():
+            return None
+        now = as_utc(self._session_clock())
+        due_users: list[tuple[datetime, int]] = []
+        with SqliteStore(self._db_path) as store:
+            for user in SqliteUserRepository(store).list_active():
+                try:
+                    snapshot = self._session_repository.load_for_maintenance(user.user_id)
+                except Exception:
+                    # An unreadable caller cannot starve other admitted users.
+                    continue
+                if snapshot is not None:
+                    due_users.append((snapshot.metadata.maintenance_due_at(now), user.user_id))
+        if not due_users:
+            return None
+        due, user_id = min(due_users)
+        if due > now:
+            return due
+        result = self.request_session_maintenance(user_id, now)
+        if result.status in {SessionMaintenanceStatus.BUSY, SessionMaintenanceStatus.STOPPING,
+                             SessionMaintenanceStatus.DISABLED}:
+            return now + timedelta(seconds=60)
+        # Allow other due users at the next ordinary discovery tick, without a catch-up burst.
+        return min(result.next_attempt_at or now + timedelta(seconds=60),
+                   now + timedelta(seconds=60))
 
     @contextmanager
     def _adaptive_job_scope(
@@ -1558,7 +1692,7 @@ class CheckCoordinator:
                     and result.failure_reason.code is FailureCode.AUTH_REQUIRED
                 ):
                     try:
-                        self._auth_required_notifier(user_id)
+                        self._notify_auth_required(user_id)
                     except Exception:
                         logger.warning(
                             "Could not issue Booking.com reconnect notice for user %s",
@@ -1700,6 +1834,8 @@ class CheckCoordinator:
         resolution = provider.resolve(user_id)
         repository = SqliteAccountReservationRepository(store)
         if not resolution.is_ready or resolution.snapshot is None:
+            recoverable = (resolution.unavailable_reason is SessionUnavailableReason.EXPIRED
+                           and self._session_repository.load_for_maintenance(user_id) is not None)
             reason = (
                 resolution.unavailable_reason.value
                 if resolution.unavailable_reason is not None
@@ -1711,8 +1847,13 @@ class CheckCoordinator:
                 trigger=trigger,
                 session_revision=f"unavailable:{reason}",
                 result=InventoryDiscoveryResult.failed(
-                    SynchronizationFailureCode.AUTH_REQUIRED,
-                    f"Booking.com session is {reason}.",
+                    SynchronizationFailureCode.VERIFICATION_PENDING
+                    if recoverable
+                    else SynchronizationFailureCode.AUTH_REQUIRED,
+                    "We could not verify your saved Booking.com login yet. "
+                    "We will try again automatically."
+                    if recoverable
+                    else f"Booking.com session is {reason}.",
                 ),
                 observed_at=datetime.now(UTC),
             )
@@ -1980,6 +2121,8 @@ class CheckCoordinator:
         resolution = provider.resolve(user_id)
         repository = SqliteAccountReservationRepository(store)
         if not resolution.is_ready or resolution.snapshot is None:
+            recoverable = (resolution.unavailable_reason is SessionUnavailableReason.EXPIRED
+                           and self._session_repository.load_for_maintenance(user_id) is not None)
             reason = (
                 resolution.unavailable_reason.value
                 if resolution.unavailable_reason is not None
@@ -1991,8 +2134,13 @@ class CheckCoordinator:
                 trigger=trigger,
                 session_revision=f"unavailable:{reason}",
                 result=InventoryDiscoveryResult.failed(
-                    SynchronizationFailureCode.AUTH_REQUIRED,
-                    f"Booking.com session is {reason}.",
+                    SynchronizationFailureCode.VERIFICATION_PENDING
+                    if recoverable
+                    else SynchronizationFailureCode.AUTH_REQUIRED,
+                    "We could not verify your saved Booking.com login yet. "
+                    "We will try again automatically."
+                    if recoverable
+                    else f"Booking.com session is {reason}.",
                 ),
                 observed_at=datetime.now(UTC),
             )
@@ -2165,12 +2313,34 @@ class CheckCoordinator:
         return report
 
     def _notify_auth_required(self, user_id: int) -> None:
-        if self._auth_required_notifier is None:
-            return
         try:
-            self._auth_required_notifier(user_id)
+            status = self._session_repository.status(user_id)
+            if status.revision_id is not None:
+                self._notify_session_issue(user_id, status.revision_id, self._session_clock())
         except Exception:
             logger.warning("Could not issue Booking.com reconnect notice for user %s", user_id)
+
+    def _notify_session_issue(self, user_id: int, revision: str, now: datetime) -> None:
+        if self._auth_required_notifier is None and self._session_uncertain_notifier is None:
+            return
+        try:
+            with SqliteStore(self._db_path) as store:
+                with store.conn:
+                    store.conn.execute("BEGIN IMMEDIATE")
+                    if not self._is_active_user(store, user_id):
+                        return
+                    reason = self._session_repository.claim_session_notice(user_id, revision, now)
+            if reason is None:
+                return
+            current = self._session_repository.status(user_id)
+            if current.revision_id != revision:
+                return
+            notifier = (self._auth_required_notifier if reason is SessionNotice.SIGNED_OUT
+                        else self._session_uncertain_notifier)
+            if notifier is not None:
+                notifier(user_id)
+        except Exception:
+            logger.warning("Could not issue Booking.com session notice for user %s", user_id)
 
     def _run_booking(
         self, store: SqliteStore, browser: Any, user_id: int, booking: Booking
@@ -2183,8 +2353,12 @@ class CheckCoordinator:
         provider = AuthenticatedSessionProvider(users, self._session_repository)
         resolution = provider.resolve(user_id)
         if not resolution.is_ready or resolution.snapshot is None:
+            reason = resolution.unavailable_reason
+            if (reason is SessionUnavailableReason.EXPIRED
+                and self._session_repository.load_for_maintenance(user_id) is None):
+                reason = SessionUnavailableReason.REAUTH_REQUIRED
             result = self._session_unavailable_result(
-                users, user_id, booking, resolution.unavailable_reason
+                users, user_id, booking, reason
             )
             history.add(result)
             SqliteCheckTraceRepository(store).add(TraceRecorder(booking.booking_id).finish(result))
@@ -2451,6 +2625,15 @@ class CheckCoordinator:
         booking: Booking,
         reason: SessionUnavailableReason | None,
     ) -> CheckResult:
+        if reason is SessionUnavailableReason.EXPIRED:
+            return CheckResult.failure(
+                booking.booking_id, datetime.now(UTC),
+                FailureReason(
+                    code=FailureCode.OBSERVATION_UNAVAILABLE,
+                    detail="We could not verify your saved Booking.com login yet. "
+                           "We will try again automatically.",
+                ),
+            )
         user = users.get_by_id(user_id)
         target = (
             str(user.telegram_user_id)

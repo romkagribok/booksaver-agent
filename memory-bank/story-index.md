@@ -658,3 +658,20 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 All 194 stories (190 complete; remaining stories retain the statuses above)
 are assigned exactly once.
+
+## 025-session-continuity-and-paste
+
+### 001-session-continuity
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-195` | Renew server-verified sessions | Reliability | Complete | `001-session-continuity/stories/001-renew-server-verified-session.md` |
+| `US-196` | Schedule quiet background maintenance | Reliability | Complete | `001-session-continuity/stories/002-schedule-quiet-maintenance.md` |
+| `US-197` | Qualify legacy recovery and session races | Reliability | Complete | `001-session-continuity/stories/003-qualify-session-recovery.md` |
+
+### 002-remote-login-paste
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-198` | Paste on desktop and mobile | Reliability | Complete | `002-remote-login-paste/stories/001-paste-desktop-and-mobile.md` |
+| `US-199` | Guard and qualify clipboard input | Reliability | Complete | `002-remote-login-paste/stories/002-guard-and-qualify-paste.md` |

@@ -150,7 +150,12 @@ def test_bootstrap_exposes_safe_touch_keyboard_and_viewport_controls(tmp_path: P
     assert "KeyTable.XK_Tab" in body
     assert "KeyTable.XK_Return" in body
     assert "keysyms.lookup" in body
-    assert "clipboard" not in body.lower()
+    assert 'id="paste-value" type="password"' in body
+    assert "navigator.clipboard.readText()" in body
+    assert "clipboardPasteFrom" not in body
+    assert "clipboard.write" not in body
+    assert "localStorage" not in body
+    assert "sessionStorage" not in body
     assert "<textarea" not in body.lower()
 
 

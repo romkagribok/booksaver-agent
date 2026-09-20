@@ -730,6 +730,7 @@ def test_runner_uses_server_evidence_without_page_inspection_or_reload(
     width, height = login_device.display_size
     assert commands[0][:4] == ["Xvfb", ":99", "-screen", "0"]
     assert commands[0][4] == f"{width}x{height}x24"
+    assert "-skip_lockkeys" in next(command for command in commands if command[0] == "x11vnc")
     assert f"--window-size={width},{height}" in playwright.chromium.launch_options["args"]
     assert len(verifier_inputs) == 1
     assert verifier_inputs[0] == (browser, MobileWebSettings(), DESCRIPTOR, work)

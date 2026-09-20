@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol
 
 from booksaver.domain.session import SessionState
+from booksaver.domain.session_maintenance import SessionNotice, SessionVerificationResult
 from booksaver.domain.user import User, UserRole
 from booksaver.domain.user_session import (
     SessionResolution,
@@ -35,6 +36,17 @@ class UserSessionRepository(Protocol):
     ) -> bool: ...
     def mark_reauth_required(self, owner_user_id: int, expected_revision: str) -> bool: ...
     def delete(self, owner_user_id: int) -> bool: ...
+    def load_for_maintenance(self, owner_user_id: int) -> UserSessionSnapshot | None: ...
+    def claim_maintenance(
+        self, owner_user_id: int, expected_revision: str, now: datetime,
+    ) -> UserSessionSnapshot | None: ...
+    def complete_maintenance(
+        self, owner_user_id: int, expected_revision: str, attempt_id: str,
+        result: SessionVerificationResult, now: datetime,
+    ) -> UserSessionSnapshot | None: ...
+    def claim_session_notice(
+        self, owner_user_id: int, expected_revision: str, now: datetime,
+    ) -> SessionNotice | None: ...
 
 
 class SessionTargetError(ValueError):
@@ -78,7 +90,17 @@ class UserSessionService:
             raise SessionTargetError(
                 "The owner already has a per-user session; delete it explicitly before migration"
             )
-        snapshot = self._snapshot(user.user_id, legacy)
+        # Moving an old owner bundle is not server verification. Retain its old
+        # aggregate expiry until the verification-only maintenance path succeeds.
+        snapshot = UserSessionSnapshot(
+            metadata=UserSessionMetadata.imported(
+                owner_user_id=user.user_id,
+                platform=legacy.platform,
+                imported_at=legacy.authenticated_at,
+                expires_at=legacy.expires_at,
+            ),
+            cookies=legacy.cookies,
+        )
         self._sessions.save(snapshot)
         return UserSessionImportResult(
             owner_user_id=user.user_id,
@@ -98,12 +120,12 @@ class UserSessionService:
     @staticmethod
     def _snapshot(user_id: int, session: SessionState) -> UserSessionSnapshot:
         return UserSessionSnapshot(
-            metadata=UserSessionMetadata.imported(
+            metadata=replace(UserSessionMetadata.imported(
                 owner_user_id=user_id,
                 platform=session.platform,
                 imported_at=session.authenticated_at,
-                expires_at=session.expires_at,
-            ),
+                expires_at=None,
+            ), continuity_version=1),
             cookies=session.cookies,
         )
 
@@ -136,9 +158,12 @@ class AuthenticatedSessionProvider:
         expires_at: datetime | None = None,
     ) -> bool:
         resolved = self.resolve(owner_user_id)
-        if not resolved.is_ready or resolved.snapshot is None:
+        snapshot = resolved.snapshot
+        if snapshot is None and resolved.unavailable_reason is SessionUnavailableReason.EXPIRED:
+            snapshot = self._sessions.load_for_maintenance(owner_user_id)
+        if snapshot is None:
             return False
-        refreshed = resolved.snapshot.refreshed(
+        refreshed = snapshot.refreshed(
             cookies,
             validated_at=validated_at,
             expires_at=expires_at,

@@ -460,6 +460,7 @@ class LocalBrowserUsePriceRuntime:
                 if authentication_terminal is BrowserUseSessionStatus.SIGNED_OUT
                 else PriceExecutionStatus.PROVIDER_FAILURE
             )
+        self._price_state.refreshed_session = self._host.verified_mobile_session
 
         self._host.failure_stage = "price_navigation"
         meter.record_action()
@@ -905,9 +906,8 @@ class LocalBrowserUsePriceRuntime:
             viewport=viewport,
             file_system_dir=file_system_dir,
             deadline=request.limits.deadline,
-            # The required inventory phase immediately before price execution already performs
-            # code-owned session verification and refresh. Repeating that optional 35-second
-            # probe here can consume the shared deadline after valid price evidence is submitted.
+            # Initial authentication retained the exact verified mobile snapshot. Repeating
+            # the probe after submission would spend the shared deadline unnecessarily.
             register_done_callback=None,
         )
         actions = frozenset(tools.registry.registry.actions)
