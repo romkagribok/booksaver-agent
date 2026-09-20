@@ -109,8 +109,14 @@ _READ = """(() => {
          visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true')) {
      try {
        const cache = JSON.parse(stores[0].textContent);
-       const keys = Object.keys(cache).filter(k => k.startsWith('Trip:'));
-       if (keys.length <= 25) {
+       const queries = cache.ROOT_QUERY?.tripsQueries;
+       const pages = Object.entries(queries || {}).filter(([key]) => key !== '__typename');
+       const refs = pages.length === 1 ? pages[0][1]?.trips : null;
+       // Historical cache records do not belong to this Active query. Copy only its
+       // bounded references; the verifier independently validates scope and every ref.
+       if (Array.isArray(refs) && refs.length <= 25 && refs.every(ref =>
+           typeof ref?.__ref === 'string' && /^Trip:[0-9]{1,30}$/.test(ref.__ref))) {
+         const keys = refs.map(ref => ref.__ref);
          const store = {ROOT_QUERY: {
            __typename: cache.ROOT_QUERY?.__typename,
            tripsQueries: cache.ROOT_QUERY?.tripsQueries

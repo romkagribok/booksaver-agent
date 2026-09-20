@@ -47,7 +47,7 @@ def _first_active_page(key: str) -> int | None:
         or pagination["paginationToken"] is not None):
         return None
     rows = pagination["rowsPerPage"]
-    if type(rows) is not int or not 1 <= rows <= _MAX_TRIPS:
+    if type(rows) is not int or rows != 10:
         return None
     if "headerSize" in value:
         sizes = value["headerSize"]

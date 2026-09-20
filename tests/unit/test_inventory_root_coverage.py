@@ -60,6 +60,13 @@ def test_explicit_empty_cache_returns_empty_but_missing_cache_does_not():
     assert verified_active_trip_urls(value) is None
 
 
+@pytest.mark.parametrize("rows", [0, 1, 2, 9, 11, 25, 26, True, False, 10.0, "10", None])
+def test_only_observed_integer_ten_row_page_size_can_prove_coverage(rows):
+    value = evidence()
+    change_args(value, lambda args: args["pagination"].update(rowsPerPage=rows))
+    assert verified_active_trip_urls(value) is None
+
+
 @pytest.mark.parametrize("change", [
     lambda v: v.update(selected_active=False),
     lambda v: v.update(selected_active=1),

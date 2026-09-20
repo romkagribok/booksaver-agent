@@ -73,9 +73,9 @@ remained **UPCOMING**, eligible and attributed to this run. This is accepted aff
 reconciliation on the clone; production was untouched.
 
 A final same-page root guard and corresponding empty-case guard were added after live6. The prior
-full run passed **2,800 tests**, and the focused reader selection passed **77 tests**. The final
-release-quality suite including the latest three regressions passed **2,803 tests**, with **52 existing
-warnings**, in **51.16 seconds**. Ruff and mypy (**123 source modules**) passed. The final suite log
+full run passed **2,800 tests**, and the focused reader selection passed **77 tests**. The pre-review
+release-quality suite including those three regressions passed **2,803 tests**, with **52 existing
+warnings**, in **51.16 seconds**. Ruff and mypy (**123 source modules**) passed. That historical suite log
 is `/tmp/booksaver-reconciliation-release-quality.log`. These overlapping selections are not summed.
 
 Canonical equality uses the existing InventoryTraversal._key only: exact qualified trip path and
@@ -92,3 +92,24 @@ Final-head Bugbot, exact installed-image Development/Staging, merge, backup/roll
 and production verification remain pending. Exact-image staging must qualify the latest root/
 empty-case guards as well as the reconciliation assertions. Native Telegram interaction is not
 claimed by cloned coordinator evidence.
+
+## Post-review qualification follow-up
+
+Bugbot identified two medium issues, both corrected before promotion:
+
+- Enforce exactly **rowsPerPage10**, matching the accepted exhaustion contract, instead of accepting
+  arbitrary values from 1 through 25.
+- Collect only bounded Trip records referenced by the selected Active query, rather than all cache
+  Trip keys. Unreferenced historical records (fixtures with 30 and 150) do not block the otherwise
+  qualified Active scope. Extra or mismatched Active membership still fails the proof.
+
+Focused verification passed **69 parser tests** and **170 total targeted parser/DOM-reader tests**;
+these overlapping selections are not summed. The new full suite passed **2,818 tests**, **52 existing warnings**, in **52.42 seconds**;
+Ruff and mypy (**123 modules**) are clean. The log is
+`/tmp/booksaver-reconciliation-post-review-quality.log`; the earlier 2803-test result belongs to the
+previous candidate. Exact installed image fe8ba21 passed Development/Staging but was not promoted
+and is superseded by these source fixes. The replacement image needs fresh exact-source checks,
+Development/Staging and current-head successful Bugbot before merge/promotion.
+
+Bolt077's official construction completion remains recorded. This is qualification follow-up;
+no second cascade, current-candidate live pass or production completion is claimed.

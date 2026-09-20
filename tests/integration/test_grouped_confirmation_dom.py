@@ -119,7 +119,8 @@ def test_cancellation_status_must_be_a_unique_rendered_heading(page: Page):
     assert not json.loads(page.evaluate(_READ))['cancelledHeader']
 
 
-def active_cache_markup(*, token=None, extra_script=False, busy=False):
+def active_cache_markup(*, token=None, extra_script=False, busy=False, extra_trips=0,
+                        missing_active=False):
     query = 'getTrips(' + json.dumps({'input': {
         'stages': ['CURRENT', 'UPCOMING'],
         'pagination': {'paginationToken': None, 'rowsPerPage': 10},
@@ -132,6 +133,9 @@ def active_cache_markup(*, token=None, extra_script=False, busy=False):
         },
     }}, 'Trip:100': {'__typename': 'Trip', 'id': '100', 'numberOfReservations': 2,
                     'numberOfNonCancelledReservations': 2, 'canceled': False}}
+    store.update({f'Trip:{1000 + i}': {'unreferenced': True} for i in range(extra_trips)})
+    if missing_active:
+        del store['Trip:100']
     script = ('<script type="application/json" data-capla-store-data="apollo" '
               'data-capla-namespace="b-trips-frontend-trip-xp-mfeGfJLPGNT">'
               + json.dumps(store) + '</script>')
@@ -161,3 +165,21 @@ def test_pending_or_ambiguous_page_cache_never_grants_retirement(page: Page, kwa
     page.set_content(active_cache_markup(**kwargs))
     evidence = json.loads(page.evaluate(_READ))['activeRootEvidence']
     assert verified_active_trip_urls(evidence) is None
+
+
+@pytest.mark.parametrize('extra_trips', [30, 150])
+def test_unreferenced_historical_cache_records_do_not_limit_active_coverage(
+    page: Page, extra_trips,
+):
+    from booksaver.infrastructure.browser.inventory_root_coverage import verified_active_trip_urls
+    page.set_content(active_cache_markup(extra_trips=extra_trips))
+    evidence = json.loads(page.evaluate(_READ))['activeRootEvidence']
+    assert set(evidence['store']) == {'ROOT_QUERY', 'Trip:100'}
+    assert verified_active_trip_urls(evidence) == (
+        'https://secure.booking.com/mytrips.html?trip_id=100',
+    )
+
+
+def test_unreferenced_history_cannot_replace_missing_active_reference(page: Page):
+    page.set_content(active_cache_markup(extra_trips=30, missing_active=True))
+    assert json.loads(page.evaluate(_READ))['activeRootEvidence'] is None

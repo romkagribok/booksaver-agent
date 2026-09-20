@@ -75,3 +75,17 @@ Ran `node .specsmd/aidlc/scripts/bolt-complete.cjs 077-trusted-inventory-reconci
 The script marked Bolt077 complete, all three US192–194 stories complete/implemented, and Unit012
 complete. Intent023 remains construction because two other units are incomplete. Story index is
 aligned at194stories/190complete. No staged/merged/deployed result is claimed.
+
+## 2026-09-20T18:03:08Z — Bugbot qualification corrections
+
+Two medium review findings corrected: exact rowsPerPage10 replaces 1..25 acceptance, and the
+bounded collector copies only selected Active-query-referenced Trip records, excluding unrelated
+historical cache records. 69 parser tests and 170 total targeted parser/DOM-reader tests passed.
+Full post-review suite pending; 2803 remains the prior candidate gate. Image fe8ba21 passed exact
+Development/Staging but was never promoted and is superseded. A replacement image and fresh
+final-head review/exact-image qualification are required. Bolt completion is preserved; no cascade.
+
+- **2026-09-20T18:03:58Z**: Post-review source gate verified: **2,818 passed**, **52 existing warnings**,
+  **52.42 seconds**; Ruff/mypy123 clean. Qualification follow-up source is ready; the previously
+  staged fe8ba21 image remains superseded/not promoted. New final-head review and replacement-image
+  Development/Staging remain required. Bolt completion is unchanged; no cascade was rerun.
