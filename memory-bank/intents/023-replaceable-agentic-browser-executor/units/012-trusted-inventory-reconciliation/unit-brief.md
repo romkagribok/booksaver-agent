@@ -1,9 +1,9 @@
 ---
 unit: 012-trusted-inventory-reconciliation
 intent: 023-replaceable-agentic-browser-executor
-status: in-progress
+status: complete
 default_bolt_type: ddd-construction-bolt
-created: 2026-09-19T22:04:01Z
+created: "2026-09-19T22:04:01Z"
 ---
 
 # Trusted Inventory Reconciliation
@@ -34,9 +34,11 @@ Dependencies: completed Units004,010,011; existing current-list synchronization 
 
 ## Story summary
 
-Three Must stories, US192–194, assigned only to Bolt077. Construction is in progress. The domain
-model, technical proof contract and ADR049 are accepted; implementation is in progress.
-No runtime completion, live acceptance, merge or deployment is claimed by this setup.
+Three Must stories, US192–194, assigned only to Bolt077. Construction acceptance passed: the
+actual-caller clone retired the old reservation and preserved its separate eligible replacement;
+final quality passed 2,803 tests, Ruff and mypy123. The official cascade records completion.
+Actual-caller clone evidence does not claim production mutation, native Telegram acceptance,
+exact-image staging, merge or deployment; those release gates remain pending.
 
 ## Exit criteria
 

@@ -2,11 +2,11 @@
 id: 002-distinguish-cancellation-and-unverified-records
 unit: 012-trusted-inventory-reconciliation
 intent: 023-replaceable-agentic-browser-executor
-status: in-progress
+status: complete
 priority: must
-created: 2026-09-19T22:04:01Z
+created: "2026-09-19T22:04:01Z"
 assigned_bolt: 077-trusted-inventory-reconciliation
-implemented: false
+implemented: true
 ---
 
 # US-193: Distinguish cancellations, replacements and unverified records

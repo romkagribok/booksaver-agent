@@ -676,10 +676,10 @@ def test_cancelled_card_is_opened_and_exact_confirmation_recorded(monkeypatch):
     browser = Browser()
     browser.pages[TRIPS[0]] = snapshot(TRIPS[0], [(DETAILS[0], 'Hotel\nCancelled')])
     browser.pages[DETAILS[0]] = replace(snapshot(DETAILS[0], text=(
-        'Your booking is cancelled\nConfirmation number: 5527283413')), cancelled_header=True)
+        'Your booking is cancelled\nConfirmation number: 1234500001')), cancelled_header=True)
     worker, result = harness(monkeypatch, browser)
     assert asyncio.run(worker.run())
-    assert result.cancelled_confirmation_ids == {'5527283413'}
+    assert result.cancelled_confirmation_ids == {'1234500001'}
     assert any(r['lifecycle'] == 'cancelled' for r in result.reservations)
     assert not result.active_coverage_complete
 
@@ -755,4 +755,128 @@ def test_root_membership_changes_during_scan_block_retirement(monkeypatch):
         return outcome
     worker.back = changed_back
     assert asyncio.run(worker.run())
+    assert not result.active_coverage_complete
+
+
+@pytest.mark.parametrize('recovered', [True, False])
+def test_restored_root_reloads_once_and_requires_fresh_scope(monkeypatch, recovered):
+    browser, worker, result = qualified_browser(monkeypatch)
+    original = browser.pages[ROOT]
+    original_back = worker.back
+    calls = []
+
+    async def torn_down_back(target):
+        outcome = await original_back(target)
+        if target == ROOT:
+            browser.pages[ROOT] = replace(original, active_root_total=None, active_root_urls=())
+        return outcome
+
+    async def refresh(target):
+        calls.append(target)
+        if recovered:
+            browser.pages[ROOT] = original
+        return True
+
+    worker.back = torn_down_back
+    worker.refresh_root = refresh
+    assert asyncio.run(worker.run())
+    assert calls == [ROOT]
+    assert result.active_coverage_complete is recovered
+
+
+def test_root_scope_that_settles_does_not_need_navigation(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    original = browser.pages[ROOT]
+    reads = 0
+
+    async def read(session):
+        nonlocal reads
+        reads += 1
+        return replace(original, active_root_total=None) if reads < 3 else original
+
+    async def forbidden_refresh(target):
+        raise AssertionError('Settled proof needs no reload')
+
+    monkeypatch.setattr(reader, 'read_inventory_snapshot', read)
+    worker.refresh_root = forbidden_refresh
+    assert asyncio.run(worker.final_root_snapshot(original)) == original
+    assert reads == 3
+
+
+@pytest.mark.parametrize('change', ['unproven_initial', 'membership', 'url', 'known_count'])
+def test_refresh_does_not_erase_conflicting_or_missing_initial_evidence(monkeypatch, change):
+    browser, worker, result = qualified_browser(monkeypatch)
+    original = browser.pages[ROOT]
+    current = replace(original, active_root_total=None)
+    if change == 'unproven_initial':
+        original = current
+    elif change == 'membership':
+        current = replace(current, links=current.links[:1])
+    elif change == 'url':
+        current = replace(current, url=TRIPS[0])
+    else:
+        current = replace(current, active_root_total=3)
+    browser.pages[ROOT] = current
+
+    async def forbidden_refresh(target):
+        raise AssertionError('Changed evidence must remain incomplete')
+
+    worker.refresh_root = forbidden_refresh
+    assert asyncio.run(worker.final_root_snapshot(original)) == current
+
+
+def test_root_refresh_failure_preserves_incomplete_evidence(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    original = browser.pages[ROOT]
+    current = replace(original, active_root_total=None)
+    browser.pages[ROOT] = current
+    calls = []
+
+    async def refresh(target):
+        calls.append(target)
+        return False
+
+    worker.refresh_root = refresh
+    assert asyncio.run(worker.final_root_snapshot(original)) == current
+    assert calls == [ROOT]
+
+
+def test_fresh_root_tracking_parameters_do_not_change_trip_identity(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+    original_back = worker.back
+
+    async def changed_tracking(target):
+        outcome = await original_back(target)
+        if target == ROOT:
+            browser.pages[ROOT] = replace(browser.pages[ROOT], active_root_urls=tuple(
+                url + '&aid=123&label=fresh' for url in reversed(TRIPS)))
+        return outcome
+
+    worker.back = changed_tracking
+    assert asyncio.run(worker.run())
+    assert result.active_coverage_complete
+
+
+def test_final_proof_on_a_different_page_cannot_retire_reservations(monkeypatch):
+    browser, worker, result = qualified_browser(monkeypatch)
+
+    async def substituted_root(root):
+        return replace(root, url=TRIPS[0])
+
+    worker.final_root_snapshot = substituted_root
+    assert asyncio.run(worker.run())
+    assert not result.active_coverage_complete
+
+
+def test_empty_final_proof_must_still_belong_to_root(monkeypatch):
+    browser = Browser()
+    worker, result = harness(monkeypatch, browser)
+    empty = replace(snapshot(ROOT), active_root_total=0)
+    values = iter([empty, replace(empty, url=TRIPS[0])])
+
+    async def read(session):
+        return next(values)
+
+    monkeypatch.setattr(reader, 'read_inventory_snapshot', read)
+    assert not asyncio.run(worker.run())
     assert not result.active_coverage_complete

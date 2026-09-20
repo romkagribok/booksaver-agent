@@ -117,3 +117,47 @@ def test_cancellation_status_must_be_a_unique_rendered_heading(page: Page):
     assert json.loads(page.evaluate(_READ))['cancelledHeader']
     page.set_content('<h1>Your booking is cancelled</h1><h2>Your stay is confirmed</h2>')
     assert not json.loads(page.evaluate(_READ))['cancelledHeader']
+
+
+def active_cache_markup(*, token=None, extra_script=False, busy=False):
+    query = 'getTrips(' + json.dumps({'input': {
+        'stages': ['CURRENT', 'UPCOMING'],
+        'pagination': {'paginationToken': None, 'rowsPerPage': 10},
+    }}) + ')'
+    store = {'ROOT_QUERY': {'__typename': 'Query', 'tripsQueries': {
+        '__typename': 'TripsQueries', query: {
+            '__typename': 'GetTripsList', 'trips': [{'__ref': 'Trip:100'}],
+            'backfillStatus': None,
+            'nextPageData': {'__typename': 'PaginationData', 'paginationToken': token},
+        },
+    }}, 'Trip:100': {'__typename': 'Trip', 'id': '100', 'numberOfReservations': 2,
+                    'numberOfNonCancelledReservations': 2, 'canceled': False}}
+    script = ('<script type="application/json" data-capla-store-data="apollo" '
+              'data-capla-namespace="b-trips-frontend-trip-xp-mfeGfJLPGNT">'
+              + json.dumps(store) + '</script>')
+    return ('''<div id="mytrips-mfe">
+      <button role="tab" aria-selected="true" aria-controls="active">Active</button>
+      <div role="tabpanel" id="active"><a
+        href="https://secure.booking.com/mytrips.html?trip_id=100">
+        <span>Trip</span><span>2 bookings</span></a>'''
+            + ('<div aria-busy="true"></div>' if busy else '')
+            + '</div></div>' + script + (script if extra_script else ''))
+
+
+def test_actual_page_cache_contract_binds_exhaustion_to_rendered_active_trips(page: Page):
+    from booksaver.infrastructure.browser.inventory_root_coverage import verified_active_trip_urls
+    page.set_content(active_cache_markup())
+    evidence = json.loads(page.evaluate(_READ))['activeRootEvidence']
+    assert verified_active_trip_urls(evidence) == (
+        'https://secure.booking.com/mytrips.html?trip_id=100',
+    )
+
+
+@pytest.mark.parametrize('kwargs', [
+    {'token': 'another-page'}, {'extra_script': True}, {'busy': True},
+])
+def test_pending_or_ambiguous_page_cache_never_grants_retirement(page: Page, kwargs):
+    from booksaver.infrastructure.browser.inventory_root_coverage import verified_active_trip_urls
+    page.set_content(active_cache_markup(**kwargs))
+    evidence = json.loads(page.evaluate(_READ))['activeRootEvidence']
+    assert verified_active_trip_urls(evidence) is None

@@ -767,6 +767,7 @@ def test_done_false_keeps_accepted_identity_without_overriding_code_terminal(
     class _Session:
         cdp_url = None
         current_url = _BROWSER_USE_INVENTORY_ENTRY_URL
+        agent_focus_target_id = "current-target"
 
         async def navigate_to(self, _url: str, **_kwargs: Any) -> None:
             pass

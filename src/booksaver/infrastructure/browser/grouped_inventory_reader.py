@@ -26,6 +26,7 @@ from .inventory_link_resolution import (
     resolve_rendered_confirmation_view,
     resolve_rendered_inventory_link,
 )
+from .inventory_root_coverage import verified_active_trip_urls
 from .inventory_traversal import InventoryTraversal, inventory_page_kind
 
 logger = logging.getLogger(__name__)
@@ -84,15 +85,49 @@ _READ = """(() => {
    new URL(a.href).pathname.startsWith('/hotel/') && a.innerText.trim() &&
    follows(confirmed, a) && follows(a, checkin))
    .map(a=>({url:a.href,text:a.innerText.trim()})) : [];
- // Only an explicit accessible total proves root exhaustion. Stable links, page bottom,
- // and missing Next controls alone never establish completeness.
+ // Explicit accessible totals or a qualified terminal page cache prove root exhaustion.
+ // Stable links, page bottom, and missing Next controls alone never establish completeness.
  let activeRootTotal = null;
  let activeRootUrls = [];
+ let activeRootEvidence = null;
  const activeTabs = Array.from(document.querySelectorAll('[role="tab"][aria-selected="true"]'))
    .filter(e => visible(e) && e.textContent.trim() === 'Active');
  if (activeTabs.length === 1) {
    const panel = document.getElementById(activeTabs[0].getAttribute('aria-controls') || '');
    const lists = panel ? Array.from(panel.querySelectorAll('[role="list"]')).filter(visible) : [];
+   // Booking.com's page-owned Active query supplies an explicit terminal token. Read only
+   // this bounded inventory cache; never send script data to the model or execute it.
+   const stores = Array.from(document.querySelectorAll(
+     'script[type="application/json"][data-capla-store-data="apollo"]')).filter(e =>
+       /^b-trips-frontend-trip-xp-mfe[A-Za-z0-9]+$/.test(
+         e.getAttribute('data-capla-namespace') || ''));
+   if (panel && visible(panel) && panel.getAttribute('role') === 'tabpanel' &&
+       document.querySelectorAll('#mytrips-mfe').length === 1 && stores.length === 1 &&
+       stores[0].textContent.length <= 500000 &&
+       !panel.querySelector('[aria-busy="true"],[role="progressbar"]') &&
+       !Array.from(panel.querySelectorAll('button,a[rel="next"]')).some(e =>
+         visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true')) {
+     try {
+       const cache = JSON.parse(stores[0].textContent);
+       const keys = Object.keys(cache).filter(k => k.startsWith('Trip:'));
+       if (keys.length <= 25) {
+         const store = {ROOT_QUERY: {
+           __typename: cache.ROOT_QUERY?.__typename,
+           tripsQueries: cache.ROOT_QUERY?.tripsQueries
+         }};
+         for (const key of keys) {
+           const trip = cache[key];
+           store[key] = {__typename:trip.__typename,id:trip.id,
+             numberOfReservations:trip.numberOfReservations,
+             numberOfNonCancelledReservations:trip.numberOfNonCancelledReservations,
+             canceled:trip.canceled};
+         }
+         activeRootEvidence = {selected_active:true,store,
+           links:Array.from(panel.querySelectorAll('a[href]')).filter(visible).map(a =>
+             ({url:a.href,booking_count:bookingCount(a)}))};
+       }
+     } catch (_) { /* Unsupported cache leaves coverage incomplete. */ }
+   }
    const emptyText = panel ? panel.innerText.replaceAll('’', "'")
      .replace(/\\s+/g, ' ').toLowerCase() : '';
    if (panel && visible(panel) &&
@@ -120,7 +155,7 @@ _READ = """(() => {
    }
  }
  return JSON.stringify({url:location.href,text:text.slice(0,60001),
-   activeRootTotal,activeRootUrls,cancelledHeader,
+   activeRootTotal,activeRootUrls,activeRootEvidence,cancelledHeader,
    links:links.slice(0,251),hotels:hotels.slice(0,11)});
 })()"""
 
@@ -141,6 +176,7 @@ class InventorySnapshot:
     active_root_total: int | None = field(default=None, repr=False)
     cancelled_header: bool = field(default=False, repr=False)
     active_root_urls: tuple[str, ...] = field(default=(), repr=False)
+    root_exhaustion: str = field(default="verified_total", repr=False)
 
 
 async def read_inventory_snapshot(session: Any) -> InventorySnapshot | None:
@@ -210,6 +246,16 @@ async def read_inventory_snapshot(session: Any) -> InventorySnapshot | None:
             if (not isinstance(root_urls, list) or len(root_urls) > 25
                 or any(not isinstance(url, str) or len(url) > 4_000 for url in root_urls)):
                 return None
+            exhaustion = "verified_total"
+            verified_urls = verified_active_trip_urls(value.get("activeRootEvidence"))
+            if verified_urls is not None:
+                # The rendered explicit empty state remains required for zero-trip authority.
+                if verified_urls or total == 0:
+                    if total is not None and (total != len(verified_urls)
+                            or set(root_urls) != set(verified_urls)):
+                        return None
+                    total, root_urls = len(verified_urls), list(verified_urls)
+                    exhaustion = "verified_terminal"
             return InventorySnapshot(
                 source,
                 body,
@@ -218,6 +264,7 @@ async def read_inventory_snapshot(session: Any) -> InventorySnapshot | None:
                 total,
                 cancelled_header,
                 tuple(root_urls),
+                exhaustion,
             )
     except Exception:
         return None
@@ -228,6 +275,7 @@ class GroupedInventoryRead:
     reservations: list[dict[str, str]] = field(default_factory=list, repr=False)
     cancelled_confirmation_ids: set[str] = field(default_factory=set, repr=False)
     active_coverage_complete: bool = False
+    root_exhaustion: str = "verified_total"
     root_detail_count: int | None = None
     trip_groups: int = 0
     trips_visited: int = 0
@@ -269,6 +317,7 @@ class GroupedInventoryReader:
         check: Callable[[], Awaitable[None]],
         observed_at: datetime,
         result: GroupedInventoryRead,
+        refresh_root: Callable[[str], Awaitable[bool]] | None = None,
     ) -> None:
         self.session = session
         self.navigate = navigate
@@ -276,6 +325,7 @@ class GroupedInventoryReader:
         self.check = check
         self.observed_at = observed_at
         self.result = result
+        self.refresh_root = refresh_root
         self.last_snapshot: InventorySnapshot | None = None
 
     async def snapshot(self) -> InventorySnapshot | None:
@@ -450,6 +500,7 @@ class GroupedInventoryReader:
         root = await self.snapshot()
         if root is None or inventory_page_kind(root.url) != "root":
             return False
+        self.result.root_exhaustion = root.root_exhaustion
         self.result.root_detail_count = len(self.targets(root, "reservation_detail"))
         trips = self.targets(root, "trip")
         if not trips:
@@ -457,7 +508,8 @@ class GroupedInventoryReader:
                 await asyncio.sleep(0.4)
                 final = await self.snapshot()
                 self.result.active_coverage_complete = bool(
-                    final is not None and final.active_root_total == 0
+                    final is not None and self.same_page(final.url, root.url)
+                    and final.active_root_total == 0
                     and self.membership(final) == self.membership(root)
                 )
                 return self.result.active_coverage_complete
@@ -579,7 +631,7 @@ class GroupedInventoryReader:
             if not await self.return_to(root.url):
                 self.unresolved("root_return")
                 return True
-        final_root = await self.snapshot()
+        final_root = await self.final_root_snapshot(root)
         self.result.active_coverage_complete = bool(
             root.active_root_total == len(trips)
             and len(root.active_root_urls) == len(trips)
@@ -587,8 +639,12 @@ class GroupedInventoryReader:
             and {InventoryTraversal._key(url) for url in root.active_root_urls}
                 == {InventoryTraversal._key(trip.url) for trip in trips}
             and final_root is not None
+            and self.same_page(final_root.url, root.url)
             and final_root.active_root_total == root.active_root_total
-            and final_root.active_root_urls == root.active_root_urls
+            and len(final_root.active_root_urls) == len(root.active_root_urls)
+            and {InventoryTraversal._key(url) for url in final_root.active_root_urls}
+                == {InventoryTraversal._key(url) for url in root.active_root_urls}
+            and final_root.root_exhaustion == root.root_exhaustion
             and self.membership(final_root) == self.membership(root)
             and self.result.root_detail_count == 0
             and self.result.verified_trip_counts == len(trips)
@@ -601,6 +657,38 @@ class GroupedInventoryReader:
                 == len(self.result.reservations)
         )
         return True
+
+    async def final_root_snapshot(self, root: InventorySnapshot) -> InventorySnapshot | None:
+        """Re-prove scope after history restoration; never reuse an earlier proof."""
+        final = await self.snapshot()
+        if root.active_root_total is None or self.refresh_root is None:
+            return final
+
+        def missing_scope(value: InventorySnapshot | None) -> bool:
+            return bool(value is not None and value.url == root.url
+                        and value.active_root_total is None
+                        and self.membership(value) == self.membership(root))
+
+        # Booking.com's restored cards may precede its Active-tab semantics. Permit
+        # a short guarded settle, then one metered fresh GET of that same root.
+        for _ in range(3):
+            if not missing_scope(final):
+                return final
+            await asyncio.sleep(0.4)
+            final = await self.snapshot()
+        if not missing_scope(final):
+            return final
+        await self.check()
+        if not await self.refresh_root(root.url):
+            return final
+        await self.check()
+        for _ in range(20):
+            await asyncio.sleep(0.2)
+            final = await self.snapshot()
+            if final is not None and final.url == root.url:
+                if final.active_root_total is not None:
+                    return final
+        return final
 
     @staticmethod
     def membership(snapshot: InventorySnapshot) -> frozenset[tuple[str, str, int | None]]:

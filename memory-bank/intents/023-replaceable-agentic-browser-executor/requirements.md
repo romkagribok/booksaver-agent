@@ -18,6 +18,10 @@ FR-31 / US-192: On a complete current-list refresh proven by BookSaver-owned cal
 coverage, retire absent saved UPCOMING/CURRENT reservations from active monitoring while preserving
 history. Incomplete/unsupported/model-only evidence remains positive-only. Never infer root exhaustion
 from lack of a next link or equate traversal counts with account completeness.
+Qualified root proof may use either exact accessible list positions/total or the bounded observed
+page-cache exhaustion contract with exact rendered Active-panel trip membership/counts. Page-cache
+scope and terminal pagination must be explicit; it is read from the loaded page without API calls,
+embedded-script execution or model authority. Missing or contradictory evidence remains incomplete.
 
 FR-32 / US-193: Distinguish exact cancellation from absence retirement and replacement confirmations.
 Make preserved unseen rows explicitly saved/unverified after an incomplete refresh; do not present

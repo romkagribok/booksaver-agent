@@ -546,17 +546,17 @@ def test_explicit_cancelled_confirmation_has_identity_without_financial_guesses(
     from booksaver.infrastructure.browser.inventory_confirmation_facts import (
         parse_cancelled_confirmation,
     )
-    result = parse_cancelled_confirmation(heading + '\nConfirmation number: 5527283413')
+    result = parse_cancelled_confirmation(heading + '\nConfirmation number: 1234500001')
     assert result is not None
-    assert result['confirmation_id'] == '5527283413'
+    assert result['confirmation_id'] == '1234500001'
     assert result['lifecycle'] == 'cancelled'
     assert result['booked_total'] == 'unknown'
 
 @pytest.mark.parametrize('text', [
-    'Free cancellation\nConfirmation number: 5527283413',
-    'Your booking is cancelled\nYour stay is confirmed\nConfirmation number: 5527283413',
-    'Your booking is cancelled\nConfirmation number: 5527283413\nConfirmation number: 6865979704',
-    'If your booking is cancelled you may receive a refund\nConfirmation number: 5527283413',
+    'Free cancellation\nConfirmation number: 1234500001',
+    'Your booking is cancelled\nYour stay is confirmed\nConfirmation number: 1234500001',
+    'Your booking is cancelled\nConfirmation number: 1234500001\nConfirmation number: 1234500002',
+    'If your booking is cancelled you may receive a refund\nConfirmation number: 1234500001',
     'Your booking is cancelled',
 ])
 def test_cancellation_requires_unambiguous_positive_identity_and_status(text):
@@ -574,5 +574,5 @@ def test_cancellation_contradictions_are_case_insensitive(confirmed):
         parse_cancelled_confirmation,
     )
     assert parse_cancelled_confirmation(
-        f'Your booking is cancelled\n{confirmed}\nConfirmation number: 5527283413'
+        f'Your booking is cancelled\n{confirmed}\nConfirmation number: 1234500001'
     ) is None
