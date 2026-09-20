@@ -14,7 +14,7 @@ updated: 2026-09-19T22:04:01Z
 
 - Purpose: Reconcile the covered current list from code-owned proof; retire absent active rows,
   preserve incomplete unseen history explicitly, and distinguish cancellation/rebooking identities.
-- Assigned requirements: FR31–33; stories US192–194; Bolt077 construction complete; Operations pending.
+- Assigned requirements: FR31–33; stories US192–194; Bolt077 construction complete; Operations verified on reviewed 153d432.
 - Dependencies: completed Units004/010/011 and the existing coordinator, validator and SQLite boundary.
 
 

@@ -37,8 +37,10 @@ Dependencies: completed Units004,010,011; existing current-list synchronization 
 Three Must stories, US192–194, assigned only to Bolt077. Construction acceptance passed: the
 actual-caller clone retired the old reservation and preserved its separate eligible replacement;
 final quality passed 2,803 tests, Ruff and mypy123. The official cascade records completion.
-Actual-caller clone evidence does not claim production mutation, native Telegram acceptance,
-exact-image staging, merge or deployment; those release gates remain pending.
+Reviewed source 153d432 passed exact-image Staging, merged as ef51bc8, and was promoted with
+independent verification at 2026-09-20T18:15:28Z. Normal production inventory passed 38 assertions,
+retiring old EUR104 while preserving distinct eligible EUR94 and 658 other-caller rows. Operations complete;
+native Telegram UI interaction remains user-driven. See deployment/history.md.
 
 ## Exit criteria
 

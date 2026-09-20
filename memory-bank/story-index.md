@@ -652,7 +652,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 12 | 42 | In construction (Bolt077 construction complete; Unit012 Operations pending; bolts073–076 complete; price qualification bolt052 active, bolt055 blocked) |
+| `023-replaceable-agentic-browser-executor` | 12 | 42 | In construction (Bolt077 and Unit012 Operations complete; bolts073–076 complete; price qualification bolt052 active, bolt055 blocked) |
 
 | `024-repository-streamlining` | 3 | 6 | Complete locally (bolts 070–072) |
 

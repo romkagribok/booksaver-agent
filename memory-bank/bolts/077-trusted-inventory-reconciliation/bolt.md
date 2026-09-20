@@ -50,4 +50,6 @@ exception to ADR039; no model completion claim receives absence authority.
 Technical design and ADR049 are accepted under the explicit scoped approval. Actual-caller live6
 passed complete clone reconciliation (four discovered/two eligible; old EUR104 absent and distinct
 EUR94 replacement active). Production remains untouched. The final quality gate includes follow-up
-same-page root/empty guards; final 2,803-test gate and Ruff/mypy123 passed. Construction acceptance completed through the official cascade. Exact-image Operations qualification, final-head review and release remain pending.
+same-page root/empty guards; final 2,803-test gate and Ruff/mypy123 passed. Construction acceptance completed through the official cascade. Reviewed replacement 153d432 passed the 2,818-test follow-up and exact-image Operations. PR53
+merged as ef51bc8 and production verification passed at 2026-09-20T18:15:28Z; see Unit012 release
+evidence. Native Telegram UI remains user-driven.
