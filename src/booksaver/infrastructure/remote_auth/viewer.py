@@ -536,7 +536,13 @@ function cancelOnClose(event){
 keyboardButton.addEventListener('click',()=>{
  setKeyboardOpen(!document.body.classList.contains('keyboard-open'));
 });
-pasteButton.addEventListener('click',event=>void readPaste(event));
+pasteButton.addEventListener('click',event=>{
+ if(!pastePanel.hidden){
+  if(!pasteAttempt)showPasteFallback();
+  return;
+ }
+ void readPaste(event);
+});
 pasteInsert.addEventListener('click',event=>{
  if(!event.isTrusted)return;
  const attempt=beginPaste();

@@ -911,3 +911,29 @@ def test_pending_paste_blocks_field_changes_and_untrusted_paste(
     desktop_page.evaluate("window.__resolvePaste('once')")
     desktop_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
     assert _literal_keys(desktop_page) == [ord(char) for char in "once"]
+
+
+def test_repeated_paste_preserves_fallback_buffer_until_explicit_insert(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    _, url = viewer_server
+    _paste_viewer(
+        browser_page,
+        url,
+        "window.__reads=0;Object.defineProperty(navigator,'clipboard',{value:{"
+        "readText:async()=>{window.__reads++;throw Error('denied')}}});",
+    )
+    browser_page.locator("#paste").click()
+    browser_page.locator("#paste-value").fill("  synthetic@example.test  ")
+    browser_page.locator("#paste").click()
+    browser_page.locator("#paste").click()
+    assert browser_page.evaluate("window.__reads") == 1
+    assert browser_page.locator("#paste-value").input_value() == "  synthetic@example.test  "
+    assert browser_page.locator("#paste-value").evaluate("node=>node===document.activeElement")
+    assert browser_page.evaluate("window.__rfbInstances[0].keys") == []
+    browser_page.locator("#paste-insert").click()
+    browser_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
+    assert _literal_keys(browser_page) == [ord(char) for char in "  synthetic@example.test  "]
+    assert browser_page.evaluate("window.__reads") == 1
+    assert browser_page.locator("#paste-value").input_value() == ""
+    assert browser_page.locator("#paste-panel").is_hidden()
