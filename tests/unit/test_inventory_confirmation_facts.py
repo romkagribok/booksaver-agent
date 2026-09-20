@@ -538,3 +538,41 @@ def test_optional_notice_does_not_waive_price_math_or_party_evidence(change):
     facts = _parse(_ADDITIONAL_BODY.replace(*change) + "\n" + _SPECIAL_REQUESTS_NOTICE)
     assert facts is not None
     assert facts["booked_total"] == facts["all_in"] == "unknown"
+
+@pytest.mark.parametrize('heading', [
+    'Your booking is cancelled', 'Your reservation has been canceled.', 'Your stay is cancelled!',
+])
+def test_explicit_cancelled_confirmation_has_identity_without_financial_guesses(heading):
+    from booksaver.infrastructure.browser.inventory_confirmation_facts import (
+        parse_cancelled_confirmation,
+    )
+    result = parse_cancelled_confirmation(heading + '\nConfirmation number: 1234500001')
+    assert result is not None
+    assert result['confirmation_id'] == '1234500001'
+    assert result['lifecycle'] == 'cancelled'
+    assert result['booked_total'] == 'unknown'
+
+@pytest.mark.parametrize('text', [
+    'Free cancellation\nConfirmation number: 1234500001',
+    'Your booking is cancelled\nYour stay is confirmed\nConfirmation number: 1234500001',
+    'Your booking is cancelled\nConfirmation number: 1234500001\nConfirmation number: 1234500002',
+    'If your booking is cancelled you may receive a refund\nConfirmation number: 1234500001',
+    'Your booking is cancelled',
+])
+def test_cancellation_requires_unambiguous_positive_identity_and_status(text):
+    from booksaver.infrastructure.browser.inventory_confirmation_facts import (
+        parse_cancelled_confirmation,
+    )
+    assert parse_cancelled_confirmation(text) is None
+
+
+@pytest.mark.parametrize('confirmed', [
+    'your stay is confirmed', 'YOUR BOOKING IS CONFIRMED', 'Confirmed!', 'UPCOMING',
+])
+def test_cancellation_contradictions_are_case_insensitive(confirmed):
+    from booksaver.infrastructure.browser.inventory_confirmation_facts import (
+        parse_cancelled_confirmation,
+    )
+    assert parse_cancelled_confirmation(
+        f'Your booking is cancelled\n{confirmed}\nConfirmation number: 1234500001'
+    ) is None

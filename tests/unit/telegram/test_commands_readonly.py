@@ -35,6 +35,7 @@ from booksaver.domain.value_objects import (
     ConfirmationId,
     DataDirectory,
     Money,
+    Occupancy,
     Platform,
     ProductType,
     Property,
@@ -555,9 +556,97 @@ def test_bookings_reports_accepted_positive_only_refresh_as_success(
 
     text = "\n".join(message for _chat_id, message in sent)
     assert "We updated the reservations we could find" in text
-    assert "Other saved reservations are still here" in text
+    assert "Saved reservations marked 'not verified' may have changed" in text
     assert "couldn't finish updating" not in text
     assert "refresh failed" not in text
+
+
+@pytest.mark.parametrize("saved_run", [None, "earlier-sync"])
+def test_partial_refresh_distinguishes_verified_rows_from_saved_unseen_rows(
+    tmp_path: Path, saved_run: str | None,
+) -> None:
+    db_path = tmp_path / "booksaver.db"
+    user_id = _register_caller(db_path, telegram_id=1)
+    _sync_observations(
+        db_path,
+        user_id,
+        tuple(
+            replace(_observation(_booking(key)), occupancy=Occupancy(adults=2))
+            for key in ("fresh", "saved")
+        ),
+    )
+    with SqliteStore(db_path) as store:
+        reservations = tuple(
+            replace(
+                row,
+                last_sync_run_id=(
+                    "current-sync"
+                    if row.observation.confirmation_id == "CONF-fresh"
+                    else saved_run
+                ),
+            )
+            for row in SqliteAccountReservationRepository(store).list_for_user(user_id)
+        )
+    report = SynchronizationReport(
+        run_id="current-sync",
+        completeness=InventoryCompleteness.INCOMPLETE,
+        discovered=1,
+        eligible=1,
+        ineligible=0,
+    )
+    router = CommandRouter()
+    sent: list[str] = []
+
+    class Coordinator:
+        def request_inventory(self, _user_id, callback):
+            callback(InventoryCompletion(report, reservations))
+            return ImmediateAdmission.ACCEPTED
+
+    register_readonly_commands(
+        router, lambda _chat_id, text: sent.append(text), db_path, Scheduler(),
+        check_coordinator=Coordinator(),  # type: ignore[arg-type]
+    )
+    router.dispatch(_cmd("/bookings"))
+    text = "\n".join(sent)
+    assert "prices for 1 verified upcoming reservation:" in text
+    assert "up to date" not in text
+    entries = text.split("\n\n")
+    fresh = next(entry for entry in entries if "Confirmation: CONF-fresh" in entry)
+    saved = next(entry for entry in entries if "Confirmation: CONF-saved" in entry)
+    assert "Price checks available" in fresh
+    assert "not verified" not in fresh
+    assert "Saved — not verified in this refresh" in saved
+    assert "Price checks need a fresh confirmation" in saved
+    assert "Price checks available" not in saved
+
+
+@pytest.mark.parametrize("keep_fresh", [False, True])
+def test_bookings_omits_reservations_retired_by_complete_refresh(
+    tmp_path: Path, keep_fresh: bool,
+) -> None:
+    db_path, router, sent, _scheduler = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    fresh = _observation(_booking("fresh"))
+    _sync_observations(db_path, user_id, (fresh, _observation(_booking("removed"))))
+    with SqliteStore(db_path) as store:
+        repository = SqliteAccountReservationRepository(store)
+        repository.reconcile(
+            user_id=user_id,
+            run_id="complete-current",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="test-session",
+            result=InventoryDiscoveryResult(
+                (fresh,) if keep_fresh else (), InventoryCompleteness.COMPLETE,
+            ),
+            observed_at=datetime.now(UTC),
+        )
+        assert len(repository.list_for_user(user_id)) == 2
+    router.dispatch(_cmd("/bookings"))
+    text = "\n".join(message for _chat_id, message in sent)
+    assert ("CONF-fresh" in text) is keep_fresh
+    assert "CONF-removed" not in text
+    if not keep_fresh:
+        assert "No future reservations found" in text
 
 
 @pytest.mark.parametrize(
@@ -742,6 +831,8 @@ def test_bookings_failure_shows_plain_guidance_without_internal_details(
     if has_saved_reservations:
         assert "previously saved upcoming reservations" in text
         assert "CONF-" in text
+        assert "Saved — not verified in this refresh" in text
+        assert "Price checks available" not in text
     assert "No future reservations found" not in text
 
 

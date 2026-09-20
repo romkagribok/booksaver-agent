@@ -976,6 +976,11 @@ class SqliteAccountReservationRepository:
         )
         conn.execute("BEGIN IMMEDIATE")
         try:
+            if (
+                result.reconciliation_user_id is not None
+                and result.reconciliation_user_id != user_id
+            ):
+                raise sqlite3.IntegrityError("Inventory reconciliation caller binding differs")
             owner = conn.execute(
                 "SELECT access_state FROM users WHERE user_id = ?", (user_id,)
             ).fetchone()
@@ -1014,6 +1019,9 @@ class SqliteAccountReservationRepository:
                         observation=observation,
                         decision=decision,
                         observed_at=observed_at,
+                        trusted_cancellation=(
+                            observation.confirmation_id in result.trusted_cancelled_confirmation_ids
+                        ),
                     )
                 # Agentic positives may intentionally carry only enough semantic evidence to
                 # identify a saved row.  The safe merge above restores established facts and can
@@ -1038,7 +1046,10 @@ class SqliteAccountReservationRepository:
                     (report.eligible, report.ineligible, run_id, user_id),
                 )
                 if result.completeness is InventoryCompleteness.COMPLETE:
-                    self._mark_unseen_absent(conn, user_id, run_id, observed_at)
+                    self._mark_unseen_absent(
+                        conn, user_id, run_id, observed_at,
+                        lifecycles=result.reconciliation_lifecycles,
+                    )
             conn.commit()
         except sqlite3.IntegrityError:
             conn.rollback()
@@ -1242,6 +1253,7 @@ class SqliteAccountReservationRepository:
         observation: ReservationObservation,
         decision: EligibilityDecision,
         observed_at: datetime,
+        trusted_cancellation: bool = False,
     ) -> None:
         fingerprint = remote_key_hash(user_id, observation.remote_id)
         existing = conn.execute(
@@ -1265,6 +1277,7 @@ class SqliteAccountReservationRepository:
         if existing is not None and observation.extraction_method == "agentic_inventory":
             if self._agentic_observation_conflicts(
                 existing, observation, observed_at=observed_at,
+                trusted_cancellation=trusted_cancellation,
             ):
                 raise sqlite3.IntegrityError(
                     "Agentic inventory conflicts with last-safe reservation facts"
@@ -1273,6 +1286,7 @@ class SqliteAccountReservationRepository:
                 existing,
                 observation,
                 observed_at=observed_at,
+                trusted_cancellation=trusted_cancellation,
             )
             observed_date = (
                 observed_at.astimezone(UTC).date()
@@ -1387,7 +1401,7 @@ class SqliteAccountReservationRepository:
         *,
         observed_at: datetime,
     ) -> bool:
-        """Allow only forward stay progress proven by unchanged identity/dates and host UTC time."""
+        """Allow dated progress or reappearance with unchanged identity and host UTC time."""
         if (
             not observation.confirmation_id
             or observation.confirmation_id != existing["confirmation_id"]
@@ -1403,13 +1417,28 @@ class SqliteAccountReservationRepository:
             (ReservationLifecycle.UPCOMING.value, ReservationLifecycle.CURRENT),
             (ReservationLifecycle.UPCOMING.value, ReservationLifecycle.COMPLETED),
             (ReservationLifecycle.CURRENT.value, ReservationLifecycle.COMPLETED),
+            (ReservationLifecycle.ABSENT.value, ReservationLifecycle.UPCOMING),
+            (ReservationLifecycle.ABSENT.value, ReservationLifecycle.CURRENT),
         }
         if transition not in allowed:
             return False
         today = observed_at.astimezone(UTC).date()
+        if observation.lifecycle is ReservationLifecycle.UPCOMING:
+            return today < observation.check_in
         if observation.lifecycle is ReservationLifecycle.CURRENT:
             return observation.check_in <= today < observation.check_out
         return observation.check_out <= today
+
+    @staticmethod
+    def _trusted_cancellation_matches(
+        existing: sqlite3.Row, observation: ReservationObservation, trusted_cancellation: bool,
+    ) -> bool:
+        return (
+            trusted_cancellation
+            and observation.lifecycle is ReservationLifecycle.CANCELLED
+            and observation.confirmation_id is not None
+            and observation.confirmation_id == existing["confirmation_id"]
+        )
 
     @classmethod
     def _agentic_observation_conflicts(
@@ -1418,6 +1447,7 @@ class SqliteAccountReservationRepository:
         observation: ReservationObservation,
         *,
         observed_at: datetime,
+        trusted_cancellation: bool = False,
     ) -> bool:
         """Reject explicit model facts that disagree with persisted last-safe authority."""
 
@@ -1467,6 +1497,9 @@ class SqliteAccountReservationRepository:
             and not cls._agentic_lifecycle_progresses(
                 existing, observation, observed_at=observed_at,
             )
+            and not cls._trusted_cancellation_matches(
+                existing, observation, trusted_cancellation,
+            )
         ):
             return True
         if observation.booked_total is not None:
@@ -1492,6 +1525,7 @@ class SqliteAccountReservationRepository:
         observation: ReservationObservation,
         *,
         observed_at: datetime,
+        trusted_cancellation: bool = False,
     ) -> ReservationObservation:
         """Preserve established facts except for separately proven forward lifecycle progress."""
         stored_total = (
@@ -1519,6 +1553,7 @@ class SqliteAccountReservationRepository:
             observation.lifecycle
             if stored_lifecycle is ReservationLifecycle.UNKNOWN
             or cls._agentic_lifecycle_progresses(existing, observation, observed_at=observed_at)
+            or cls._trusted_cancellation_matches(existing, observation, trusted_cancellation)
             else stored_lifecycle
         )
         return replace(
@@ -1709,13 +1744,22 @@ class SqliteAccountReservationRepository:
         user_id: int,
         run_id: str,
         observed_at: datetime,
+        *,
+        lifecycles: frozenset[ReservationLifecycle] | None = None,
     ) -> None:
+        lifecycle_filter = ""
+        parameters: tuple[object, ...] = (user_id, run_id)
+        if lifecycles is not None:
+            lifecycle_values = tuple(sorted(lifecycle.value for lifecycle in lifecycles))
+            placeholders = ",".join("?" for _ in lifecycle_values)
+            lifecycle_filter = f" AND remote_lifecycle IN ({placeholders})"
+            parameters += lifecycle_values
         rows = conn.execute(
             "SELECT account_reservation_id, monitoring_booking_id "
             "FROM account_reservations "
             "WHERE user_id = ? AND last_sync_run_id != ? "
-            "AND remote_lifecycle != 'absent'",
-            (user_id, run_id),
+            "AND remote_lifecycle != 'absent'" + lifecycle_filter,
+            parameters,
         ).fetchall()
         for row in rows:
             if row["monitoring_booking_id"]:
@@ -1776,6 +1820,7 @@ class SqliteAccountReservationRepository:
             first_observed_at=datetime.fromisoformat(row["first_observed_at"]),
             last_observed_at=datetime.fromisoformat(row["last_observed_at"]),
             snapshot_revision=row["snapshot_revision"],
+            last_sync_run_id=row["last_sync_run_id"],
         )
 
 

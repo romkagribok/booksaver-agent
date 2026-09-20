@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-09-14T18:58:48Z
-total_decisions: 48
+last_updated: 2026-09-19T22:04:01Z
+total_decisions: 49
 ---
 
 # Decision Index
@@ -489,3 +489,13 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/074-grouped-trip-discovery/adr-048-bounded-grouped-inventory-details.md`
 - **Summary**: Guarded grouped-trip worklist and ephemeral desktop confirmation facts; preserve mobile price sessions, inventory action cap40, independent price cap15, shared spending/actions and bounded 180-second phases within combined 360-second operations.
 - **Read when**: Changing grouped inventory navigation, confirmation view/session export, or inventory and price action/time budgets.
+
+### ADR-049: Trusted current-list reconciliation
+- **Status**: accepted
+- **Date**: 2026-09-19
+- **Bolt**: 077-trusted-inventory-reconciliation
+- **Path**: `bolts/077-trusted-inventory-reconciliation/adr-049-trusted-current-list-reconciliation.md`
+- **Summary**: Narrow accepted exception to ADR039/048: code-owned caller/run/session-bound current-list
+  completeness permits atomic scoped retirement; incomplete/model-only evidence stays positive-only.
+- **Read when**: Changing inventory completeness, active-row absence, cancellation/rebooking identity,
+  or saved/unverified reservation presentation. Affected-caller cloned proof/reconciliation passed; exact-image release qualification remains pending.

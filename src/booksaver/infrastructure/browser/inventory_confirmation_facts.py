@@ -417,3 +417,36 @@ def parse_confirmation_facts(
     payload.update(_cancellation_facts(lines, observed_at))
     payload.update(_price_facts(lines, guests, nights))
     return payload
+
+
+def parse_cancelled_confirmation(body_text: str) -> dict[str, str] | None:
+    """Read a unique confirmation and explicit cancellation, never absence or policy text."""
+    if not 0 < len(body_text) <= _MAX_TEXT:
+        return None
+    lines = [" ".join(line.split()) for line in body_text.replace("’", "'").splitlines()]
+    lines = [line for line in lines if line]
+    if len(lines) > _MAX_LINES or any(len(line) > 8_000 for line in lines):
+        return None
+    cancelled = re.compile(
+        r"your (?:stay|booking|reservation) (?:is|has been) cancel(?:led|ed)[.!]?", re.I
+    )
+    if sum(bool(cancelled.fullmatch(line)) for line in lines) != 1:
+        return None
+    if any(line.casefold().rstrip(".!") in {
+        "your stay is confirmed", "your booking is confirmed", "your reservation is confirmed",
+        "confirmed", "upcoming", "in progress",
+    } for line in lines):
+        return None
+    confirmation = _confirmation_value(lines)
+    if confirmation is None or re.fullmatch(r"[0-9][0-9 .]{4,28}[0-9]", confirmation) is None:
+        return None
+    confirmation = confirmation.replace(" ", "").replace(".", "")
+    if not 6 <= len(confirmation) <= 20:
+        return None
+    payload = dict.fromkeys(_UNKNOWN_FACTS, "unknown")
+    payload.update({
+        "remote_id": confirmation, "confirmation_id": confirmation,
+        "scope": "cancelled", "lifecycle": "cancelled",
+        "identity_evidence": "complete", "completeness": "incomplete",
+    })
+    return payload

@@ -445,6 +445,7 @@ def test_runtime_rechecks_safety_after_passive_observation_before_dispatch(
     class Session:
         cdp_url = None
         current_url = ENTRY_URL
+        agent_focus_target_id = "current-target"
         targets = 1
 
         async def navigate_to(self, _url: str, **_kwargs: Any) -> None:

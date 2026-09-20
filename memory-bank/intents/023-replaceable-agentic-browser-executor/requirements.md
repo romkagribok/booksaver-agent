@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-09-13T16:10:04Z
+updated: 2026-09-19T22:04:01Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -11,6 +11,29 @@ checkpoint_4_approved: 2026-08-16T19:18:41Z
 ---
 
 # Requirements: Replaceable Agentic Browser Executor
+
+## Trusted current-list reconciliation amendment
+
+FR-31 / US-192: On a complete current-list refresh proven by BookSaver-owned caller/run/session-bound
+coverage, retire absent saved UPCOMING/CURRENT reservations from active monitoring while preserving
+history. Incomplete/unsupported/model-only evidence remains positive-only. Never infer root exhaustion
+from lack of a next link or equate traversal counts with account completeness.
+Qualified root proof may use either exact accessible list positions/total or the bounded observed
+page-cache exhaustion contract with exact rendered Active-panel trip membership/counts. Page-cache
+scope and terminal pagination must be explicit; it is read from the loaded page without API calls,
+embedded-script execution or model authority. Missing or contradictory evidence remains incomplete.
+
+FR-32 / US-193: Distinguish exact cancellation from absence retirement and replacement confirmations.
+Make preserved unseen rows explicitly saved/unverified after an incomplete refresh; do not present
+stale records as verified current reservations or merge a rebooking by property/date similarity.
+
+FR-33 / US-194: Qualify proof construction, atomic caller-scoped reconciliation and presentation with
+negative fixtures, affected-caller replay and full quality gates, then final-head review, exact-image
+staging, backup/rollback and production verification. Existing privacy, limits and price gates apply.
+
+Unit012 / Bolt077 owns this separately approved follow-up. ADR049 accepts the narrow exception to
+ADR039/048; prior positive-only requirements remain the default wherever this trusted proof is absent.
+The user explicitly approved scoped AI-DLC checkpoints through verified merge/deployment.
 
 ## Grouped-trip discovery amendment
 

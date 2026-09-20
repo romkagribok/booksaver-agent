@@ -51,6 +51,7 @@ class Session:
         self.url_reads = 0
         self.on_url_read = lambda count: None
         self.on_back = lambda: None
+        self.on_navigate = lambda: None
         self.navigations = []
         self.back_events = []
         self.event_bus = SimpleNamespace(dispatch=self.dispatch)
@@ -81,6 +82,7 @@ class Session:
                 async def complete():
                     if navigating:
                         session.url = event.url
+                        session.on_navigate()
                     else:
                         session.url = ROOT
                         session.on_back()
@@ -433,6 +435,145 @@ def test_history_return_cannot_reset_exhausted_allowance(monkeypatch):
     assert not h.session.back_events
 
 
+def test_root_refresh_is_one_metered_same_tab_get_and_retains_price_session(monkeypatch):
+    h = Harness(monkeypatch)
+    h.session.url = ROOT + "?aid=123&label=synthetic"
+    expected = h.session.url
+
+    async def plan(reader):
+        assert await reader.refresh_root(expected)
+
+    h.plan = plan
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.OBSERVED
+    assert h.session.navigations == [(expected, False)]
+    assert h.session.back_events == []
+    assert h.meter.snapshot().total_actions == 1
+    assert h.meter.snapshot().model_calls == 0
+    h.auth.assert_awaited_once()
+    h.capture.assert_not_called()
+
+
+@pytest.mark.parametrize("expected,current", [
+    (ROOT, ROOT + "?aid=123"),
+    (DETAIL, ROOT),
+    (ROOT, DETAIL),
+    (ROOT + "?action=cancel", ROOT),
+    (ROOT + "?tab=past", ROOT + "?tab=past"),
+    (ROOT + "?arbitrary=1", ROOT + "?arbitrary=1"),
+])
+def test_refresh_never_uses_unobserved_or_unsupported_destination(monkeypatch, expected, current):
+    h = Harness(monkeypatch)
+    h.session.url = current
+
+    async def plan(reader):
+        assert not await reader.refresh_root(expected)
+
+    h.plan = plan
+    h.run()
+    assert h.session.navigations == []
+    assert h.meter.snapshot().total_actions == 0
+
+
+@pytest.mark.parametrize("kind", ["dialog", "tab", "focus", "violation", "timeout", "cost_limit"])
+@pytest.mark.parametrize("read", [1, 2])
+def test_refresh_source_await_races_stop_before_dispatch(monkeypatch, kind, read):
+    h = Harness(monkeypatch)
+    h.session.on_url_read = lambda count: h.mutate(kind) if count == read else None
+
+    async def plan(reader):
+        await reader.refresh_root(ROOT)
+
+    h.plan = plan
+    result = h.run()
+    assert result.status is not InventoryExecutionStatus.OBSERVED
+    assert result.reservations == ()
+    assert h.session.navigations == []
+    assert h.meter.snapshot().total_actions == 0
+
+
+@pytest.mark.parametrize("kind", ["dialog", "tab", "focus", "violation", "timeout", "cost_limit"])
+@pytest.mark.parametrize("when", ["event", "final_url"])
+def test_refresh_rechecks_final_safety_and_focus(monkeypatch, kind, when):
+    h = Harness(monkeypatch)
+    if when == "event":
+        h.session.on_navigate = lambda: h.mutate(kind)
+    else:
+        h.session.on_url_read = lambda count: h.mutate(kind) if count == 4 else None
+
+    async def plan(reader):
+        await reader.refresh_root(ROOT)
+
+    h.plan = plan
+    result = h.run()
+    assert result.status is not InventoryExecutionStatus.OBSERVED
+    assert result.reservations == ()
+    assert h.session.navigations == [(ROOT, False)]
+    assert h.meter.snapshot().total_actions == 1
+
+
+@pytest.mark.parametrize("read", [2, 4])
+@pytest.mark.parametrize("destination,status", [
+    ("https://example.com/", InventoryExecutionStatus.UNSAFE_ACTION),
+    (ROOT + "?aid=cancel", InventoryExecutionStatus.UNSAFE_ACTION),
+    ("https://account.booking.com/sign-in", InventoryExecutionStatus.SIGNED_OUT),
+])
+def test_refresh_url_races_cannot_bypass_navigation_guard(monkeypatch, read, destination, status):
+    h = Harness(monkeypatch)
+
+    def change(count):
+        if count == read:
+            h.session.url = destination
+
+    h.session.on_url_read = change
+
+    async def plan(reader):
+        await reader.refresh_root(ROOT)
+
+    h.plan = plan
+    result = h.run()
+    assert result.status is status
+    assert result.reservations == ()
+    assert h.meter.snapshot().total_actions == (0 if read == 2 else 1)
+
+
+def test_refresh_does_not_reset_shared_action_budget(monkeypatch):
+    h = Harness(monkeypatch, action_limit=1)
+    h.meter.record_action()
+
+    async def plan(reader):
+        await reader.refresh_root(ROOT)
+
+    h.plan = plan
+    assert h.run().status is InventoryExecutionStatus.ACTION_LIMIT
+    assert h.session.navigations == []
+    assert h.meter.snapshot().total_actions == 1
+
+
+def test_refresh_expired_deadline_prevents_get(monkeypatch):
+    h = Harness(monkeypatch, expired=True)
+
+    async def plan(reader):
+        await reader.refresh_root(ROOT)
+
+    h.plan = plan
+    assert h.run().status is InventoryExecutionStatus.TIMEOUT
+    assert h.session.navigations == []
+    assert h.meter.snapshot().total_actions == 0
+
+
+def test_refresh_safe_redirect_cannot_supply_root_proof(monkeypatch):
+    h = Harness(monkeypatch)
+    h.session.on_navigate = lambda: setattr(h.session, "url", ROOT + "?trip_id=11")
+
+    async def plan(reader):
+        assert not await reader.refresh_root(ROOT)
+
+    h.plan = plan
+    assert h.run().status is InventoryExecutionStatus.OBSERVED
+    assert h.meter.snapshot().total_actions == 1
+
+
 def inactive_only_plan(h, *, inactive=2, nonhotel=0, **overrides):
     async def plan(reader):
         reader.result.reservations.clear()
@@ -523,3 +664,45 @@ def test_inactive_groups_recheck_final_url_after_authentication(monkeypatch, url
     assert result.reservations == ()
     assert result.refreshed_session is None
     h.capture.assert_not_called()
+
+
+def test_host_proof_is_bound_to_caller_execution_and_lease(monkeypatch):
+    h = Harness(monkeypatch)
+    async def plan(reader):
+        reader.result.active_coverage_complete = True
+        reader.result.trip_groups = 1
+    h.plan = plan
+    result = h.run()
+    proof = result.active_coverage
+    assert proof is not None
+    assert proof.owner_user_id == h.request.owner_user_id
+    assert proof.execution_id == h.request.execution_id
+    assert proof.session_lease_id == h.request.session_lease.lease_id
+    assert proof.active_confirmation_ids == frozenset({'1234567890'})
+    h.auth.assert_awaited_once()
+
+
+def test_code_proven_empty_list_reaches_authenticated_observed_result(monkeypatch):
+    h = Harness(monkeypatch)
+    async def plan(reader):
+        reader.result.reservations.clear()
+        reader.result.active_coverage_complete = True
+    h.plan = plan
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.OBSERVED
+    assert result.active_coverage.active_confirmation_ids == frozenset()
+    assert result.reservations == ()
+    assert result.scopes[0].explicit_empty
+
+
+def test_final_auth_failure_discards_absence_and_cancellation_authority(monkeypatch):
+    h = Harness(monkeypatch)
+    async def plan(reader):
+        reader.result.active_coverage_complete = True
+        reader.result.cancelled_confirmation_ids.add('1234567890')
+    h.plan = plan
+    h.auth.return_value = adapter.BrowserUseSessionStatus.SIGNED_OUT
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.SIGNED_OUT
+    assert result.active_coverage is None
+    assert not result.trusted_cancellations
