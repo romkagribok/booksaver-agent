@@ -25,3 +25,12 @@ probe is `/tmp/booksaver-continuity-release/paste_stage_probe.py`; it derives th
 runner argv and changes only isolated display/port. Full integrated gate and final-image release
 qualification remain parent-owned. Full Unicode and native physical Telegram acceptance are not
 claimed. No production changes or Git mutations were performed by this worker.
+
+2026-09-22T01:58:55Z: Production defect from user feedback on mobile Telegram: Booking.com's verification-code
+page uses six single-character boxes that advance focus asynchronously after each input, and the
+viewer sent pasted characters in a synchronous burst, so only one character landed in the first
+box. Reproduced in the packaged noVNC/x11vnc/Chromium stack with a synthetic six-box auto-advance
+form (shortcut and Insert paths both left one character). Fix: one keystroke per timer tick with a
+50 ms gap (`pasteKeyIntervalMs`), unchanged validation, ownership and teardown guards. Regression
+test asserts paced delivery and exact order. Release qualification and promotion follow the
+existing Operations path; native Telegram acceptance remains user-driven.

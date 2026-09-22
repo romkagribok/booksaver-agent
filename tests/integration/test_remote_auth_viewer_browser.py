@@ -847,6 +847,35 @@ def test_chunked_paste_stops_on_disconnect_without_replay(
     assert _literal_keys(desktop_page, 1) == []
 
 
+def test_paste_keystrokes_are_paced_for_asynchronous_focus_advance(
+    viewer_server: tuple[_ViewerServer, str], desktop_page: Page
+) -> None:
+    """A six-box code entry moves focus after each input; keys must not arrive in a burst."""
+    _, url = viewer_server
+    _paste_viewer(
+        desktop_page,
+        url,
+        "Object.defineProperty(navigator,'clipboard',{value:{readText:async()=>'482913'}});",
+    )
+    desktop_page.evaluate("""() => {
+      const connection=window.__rfbInstances[0], send=connection.sendKey.bind(connection);
+      window.__literalAt=[];
+      connection.sendKey=(...args)=>{
+        if(args.length===1)window.__literalAt.push(performance.now());
+        send(...args);
+      };
+    }""")
+    desktop_page.locator("#paste").click()
+    desktop_page.wait_for_function("window.__literalAt.length>=1")
+    # The remaining characters wait for the pacing timer instead of being sent synchronously.
+    assert len(_literal_keys(desktop_page)) < 6
+    desktop_page.wait_for_function("window.__literalAt.length===6")
+    assert _literal_keys(desktop_page) == [ord(c) for c in "482913"]
+    gaps = desktop_page.evaluate("window.__literalAt.slice(1).map((t,i)=>t-window.__literalAt[i])")
+    assert min(gaps) >= 40
+    assert desktop_page.locator("#paste-value").input_value() == ""
+
+
 @pytest.mark.parametrize(
     "text,valid", [("  test@example.test  ", True), ("first\nsecond", False), ("prefixé", False)]
 )

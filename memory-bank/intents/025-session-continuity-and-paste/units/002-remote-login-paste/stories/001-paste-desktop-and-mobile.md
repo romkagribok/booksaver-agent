@@ -20,3 +20,6 @@ The complete acceptance contract is Intent025 requirements; this story does not 
 Measured limitation: full Unicode paste is unavailable on the packaged stack. The release
 qualifies the core verification-code/ASCII email/password flow; unsupported text is never partly
 inserted or silently altered. This limitation is disclosed, not marked as full-Unicode success.
+
+Follow-up (2026-09-22): pasted characters are paced at 50 ms so pages that advance focus after each
+input, such as six-box verification codes, receive every character in order.
