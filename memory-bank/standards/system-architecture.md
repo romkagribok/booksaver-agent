@@ -98,3 +98,20 @@ flowchart TB
 3. Booking.com Price Monitor
 4. Savings Detection & Notifications
 5. Extensibility (future only)
+
+## Session continuity and explicit paste (ADRs 050–051)
+
+Session freshness is distinct from Booking.com's server authentication. Daily renewal runs through
+the existing daemon scheduler and sole coordinator/browser gate, uses no model calls and has a
+bounded protected-resource verification contract. An ephemeral supervised Linux worker provides
+confirmed browser cleanup before the same gate is released (ADR050); unsupported platforms disable
+background maintenance without false login failures. Persist only positively verified mobile-context
+cookies and durable per-user retry state in the encrypted vault. Incidental cookie expiry is not
+proof of sign-out. Legacy ACTIVE local-expired bundles can enter a verification-only recovery path;
+normal checks remain blocked until proof. Explicit reauthentication/revocation/purge, caller identity
+and revision races remain fail-closed. Temporary failure does not become a false logout.
+
+The remote viewer supports one-way, explicit user paste through the RFB keyboard path. Local text
+is transient and cleared; clipboard polling/synchronization/writes and credential HTTP endpoints
+remain prohibited. Bind async clipboard results to the exact live connection and discard on
+teardown or replacement. Native Telegram acceptance is distinct from automated stack qualification.

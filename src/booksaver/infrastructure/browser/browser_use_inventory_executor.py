@@ -949,6 +949,9 @@ class LocalBrowserUseInventoryRuntime:
                 ),
             }[authentication_terminal]
             return BrowserUseRuntimeResult(status)
+        # Keep the code-verified mobile snapshot before grouped inventory can change
+        # Booking's device preference. Only successful guarded observations export it.
+        self._state.refreshed_session = self._host.verified_mobile_session
 
         self._host.failure_stage = "inventory_navigation"
         meter.record_action()
@@ -1488,12 +1491,6 @@ class LocalBrowserUseInventoryRuntime:
         model_cls = budgeted_model_type(ChatAnthropic, _PROMPT_VERSION)
         model = model_cls(api_key=api_key, budget=budget, meter=meter)
 
-        async def verify_refresh(_history: Any) -> None:
-            if session.cdp_url is not None:
-                refreshed = await self._host.capture_verified_session(request, session)
-                if self._state.observation is not None and refreshed is not None:
-                    self._state.refreshed_session = refreshed
-
         task = _inventory_agent_task(request)
         agent_run_id = f"booksaver-{uuid.uuid4().hex}"
         agent = self._host.create_agent(
@@ -1506,7 +1503,7 @@ class LocalBrowserUseInventoryRuntime:
             viewport=viewport,
             file_system_dir=file_system_dir,
             deadline=request.limits.deadline,
-            register_done_callback=verify_refresh,
+            register_done_callback=None,
         )
         actions = frozenset(tools.registry.registry.actions)
         if actions != _EXPECTED_ACTIONS:
@@ -1776,11 +1773,10 @@ class LocalBrowserUseInventoryRuntime:
             scopes, reservations = _map_browser_use_observation(payload)
         except (TypeError, ValueError):
             return BrowserUseRuntimeResult(InventoryExecutionStatus.VALIDATION_FAILURE)
-        # Inventory's desktop preference never replaces the original mobile price session.
-        # Do not export any cookie snapshot from this episode, even after returning to mobile.
+        # Export only the verified bytes retained before the desktop preference switch.
         return BrowserUseRuntimeResult(
             InventoryExecutionStatus.OBSERVED, scopes=scopes, reservations=reservations,
-            refreshed_session=None,
+            refreshed_session=self._state.refreshed_session,
             active_coverage=(ActiveInventoryCoverage(
                 owner_user_id=request.owner_user_id,
                 execution_id=request.execution_id,

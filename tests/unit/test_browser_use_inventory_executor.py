@@ -49,6 +49,10 @@ from booksaver.domain.model_policy import (
     ReservationStatus,
     UsdAmount,
 )
+from booksaver.domain.session_maintenance import (
+    SessionVerificationOutcome,
+    SessionVerificationResult,
+)
 from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     _BROWSER_USE_INVENTORY_ENTRY_URL,
     _EXPECTED_ACTIONS,
@@ -109,53 +113,6 @@ def _png_data(*, foreground: int | None = None) -> str:
 
 def _inventory_model_type(base: type[Any]) -> type[Any]:
     return budgeted_model_type(base, "browser-use-inventory-v1")
-
-
-@pytest.mark.parametrize("status", [200, 202])
-def test_settled_protected_account_navigation_is_authentication_evidence(
-    status: int,
-) -> None:
-    assert runtime_adapter._authenticated_account_navigation(
-        status=status,
-        content_type="text/html; charset=utf-8",
-        final_url="https://secure.booking.com/myaccount.html",
-        rendered_html=b"<html><body></body></html>",
-    )
-
-
-@pytest.mark.parametrize(
-    ("final_url", "rendered_html", "reason"),
-    [
-        (
-            "https://account.booking.com/sign-in?op_token=x",
-            b"<html></html>",
-            "destination",
-        ),
-        (
-            "https://secure.booking.com/myaccount.html?next=x",
-            b"<html></html>",
-            "destination",
-        ),
-        (
-            "https://secure.booking.com/myaccount.html",
-            b"<html>Verify you are human</html>",
-            "challenge",
-        ),
-    ],
-)
-def test_signed_out_or_challenged_account_navigation_is_rejected(
-    final_url: str,
-    rendered_html: bytes,
-    reason: str,
-) -> None:
-    evidence = {
-        "status": 202,
-        "content_type": "text/html",
-        "final_url": final_url,
-        "rendered_html": rendered_html,
-    }
-    assert not runtime_adapter._authenticated_account_navigation(**evidence)
-    assert runtime_adapter._account_navigation_rejection_reason(**evidence) == reason
 
 
 class _Ledger:
@@ -833,7 +790,8 @@ def test_done_false_keeps_accepted_identity_without_overriding_code_terminal(
     monkeypatch.setattr(
         runtime, "_host",
         SimpleNamespace(
-            start=start, verify_authentication=verify, create_agent=create_agent,
+            start=start, verify_authentication=verify, verified_mobile_session=b"mobile-snapshot",
+            create_agent=create_agent,
             dialog_rejected=False,
         ),
     )
@@ -986,7 +944,8 @@ def test_explicit_empty_initial_page_is_code_observed_after_authentication_and_s
     runtime = LocalBrowserUseInventoryRuntime()
     monkeypatch.setattr(inventory_adapter, "budgeted_model_type", unexpected_model)
     monkeypatch.setattr(runtime, "_host", SimpleNamespace(
-        start=start, verify_authentication=verify, create_agent=unexpected_model,
+        start=start, verify_authentication=verify, verified_mobile_session=b"mobile-snapshot",
+            create_agent=unexpected_model,
         dialog_rejected=False,
     ))
     request = _request(InMemorySessionLeaseBroker())
@@ -1745,8 +1704,10 @@ def test_initial_authentication_is_code_verified_before_agent_execution(
     request = _request(broker)
     host = BrowserUseSessionHost()
 
-    async def verified(_browser_session: object) -> bytes | None:
-        return b"verified-session"
+    async def verified(_browser_session: object) -> SessionVerificationResult:
+        return SessionVerificationResult(
+            SessionVerificationOutcome.AUTHENTICATED, b"verified-session", datetime.now(UTC),
+        )
 
     monkeypatch.setattr(host, "_verified_session_refresh", verified)
     terminal = asyncio.run(
@@ -1760,6 +1721,7 @@ def test_initial_authentication_is_code_verified_before_agent_execution(
     ("failure", "expected"),
     [
         ("signed_out", InventoryExecutionStatus.SIGNED_OUT),
+        ("retry", InventoryExecutionStatus.PROVIDER_FAILURE),
         ("provider", InventoryExecutionStatus.PROVIDER_FAILURE),
     ],
 )
@@ -1772,10 +1734,13 @@ def test_initial_authentication_failure_stops_before_agent(
     request = _request(broker)
     host = BrowserUseSessionHost()
 
-    async def fail(_browser_session: object) -> bytes | None:
+    async def fail(_browser_session: object) -> SessionVerificationResult:
         if failure == "provider":
             raise RuntimeError("content-bearing-probe-failure")
-        return None
+        return SessionVerificationResult(
+            SessionVerificationOutcome.SIGNED_OUT if failure == "signed_out"
+            else SessionVerificationOutcome.RETRY_LATER,
+        )
 
     monkeypatch.setattr(host, "_verified_session_refresh", fail)
     terminal = asyncio.run(host.verify_authentication(request, object()))
@@ -1801,7 +1766,7 @@ def test_post_agent_refresh_failure_preserves_verified_observation(
     )
     runtime._state.observation = observation  # noqa: SLF001 - callback contract test
 
-    async def fail(_browser_session: object) -> bytes | None:
+    async def fail(_browser_session: object) -> SessionVerificationResult:
         raise TimeoutError("content-bearing-refresh-timeout")
 
     monkeypatch.setattr(runtime._host, "_verified_session_refresh", fail)  # noqa: SLF001

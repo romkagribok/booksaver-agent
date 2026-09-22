@@ -426,6 +426,9 @@ def cmd_run(args: argparse.Namespace) -> int:
             on_connected=_synchronize_after_connect,
         )
         coordinator.set_auth_required_notifier(remote_auth_runtime.reconnect_notifier.notify)
+        coordinator.set_session_uncertain_notifier(
+            remote_auth_runtime.reconnect_notifier.notify_unverified,
+        )
 
     @contextmanager
     def _schedule_repository() -> Iterator[SqliteScheduledCheckSlotRepository]:
@@ -444,6 +447,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         stop_event=sched.stop_event,
     )
     sched.register("booking_com_check", schedule_dispatcher.run_once)
+    sched.register("booking_com_session_maintenance", coordinator.run_session_maintenance)
 
     bot_runner = None
     if cfg.telegram_bot_settings.enabled:

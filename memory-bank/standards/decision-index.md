@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-09-19T22:04:01Z
-total_decisions: 49
+last_updated: 2026-09-20T20:07:43Z
+total_decisions: 51
 ---
 
 # Decision Index
@@ -499,3 +499,17 @@ Use this to find relevant prior decisions when working on related features.
   completeness permits atomic scoped retirement; incomplete/model-only evidence stays positive-only.
 - **Read when**: Changing inventory completeness, active-row absence, cancellation/rebooking identity,
   or saved/unverified reservation presentation. Affected-caller clone and exact-image production reconciliation passed; see Unit012 release evidence.
+
+### ADR-050: Server-verified session continuity
+- **Status**: accepted
+- **Bolt**: 078-session-continuity
+- **Path**: `bolts/078-session-continuity/adr-050-server-verified-session-continuity.md`
+- **Summary**: Replace aggregate cookie expiry with bounded server-verified renewal, encrypted maintenance backoff and guarded legacy recovery.
+- **Read when**: Changing session freshness, background renewal, signed-out classification or revision races.
+
+### ADR-051: Explicit user paste into remote login
+- **Status**: accepted
+- **Bolt**: 079-remote-login-paste
+- **Path**: `bolts/079-remote-login-paste/adr-051-explicit-user-paste.md`
+- **Summary**: Permit explicit one-way local paste through the existing RFB input channel with transient text and teardown guards.
+- **Read when**: Changing remote login keyboard, clipboard, mobile input or credential handling.

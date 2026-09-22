@@ -210,3 +210,22 @@ def test_reconnect_notifier_scopes_delivery_and_applies_cooldown(tmp_path: Path)
     assert markup == {
         "inline_keyboard": [[{"text": "Reconnect Booking.com", "callback_data": "connect:start"}]]
     }
+
+
+def test_unverified_notice_explains_uncertainty_without_claiming_signout(tmp_path: Path) -> None:
+    db_path = tmp_path / "booksaver.db"
+    with SqliteStore(db_path) as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(222, UserRole.USER)
+    client = FakeClient()
+    notifier = ReconnectNotifier(
+        db_path,
+        client,  # type: ignore[arg-type]
+        TelegramBotSettings(enabled=True, owner_chat_id=111, access_mode="invite"),
+    )
+    notifier.notify_unverified(user.user_id)
+    assert len(client.sent) == 1
+    chat_id, text, markup = client.sent[0]
+    assert chat_id == 222
+    assert "verify" in text and "two days" in text
+    assert "expired" not in text and "signed out" not in text
+    assert markup["inline_keyboard"][0][0]["callback_data"] == "connect:start"

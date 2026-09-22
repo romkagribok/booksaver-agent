@@ -23,6 +23,8 @@ export default class RFB extends EventTarget {
     setTimeout(() => this.dispatchEvent(new Event('connect')), 0);
   }
   sendKey(...args) { this.keys.push(args); }
+  blur() { this.blurs = (this.blurs || 0) + 1; }
+  focus() { this.focuses = (this.focuses || 0) + 1; }
   disconnect() {
     this.disconnected = true;
     this.dispatchEvent(new CustomEvent('disconnect', {detail: {clean: true}}));
@@ -529,9 +531,10 @@ def test_touch_fullscreen_choice_and_safe_areas(
             }"""
         )
         browser_page.wait_for_function("document.body.clientHeight === window.innerHeight")
-        assert browser_page.locator("body").evaluate(
-            "element => getComputedStyle(element).paddingTop"
-        ) == "70px"
+        assert (
+            browser_page.locator("body").evaluate("element => getComputedStyle(element).paddingTop")
+            == "70px"
+        )
         assert browser_page.locator("#dock").evaluate(
             "element => getComputedStyle(element).paddingBottom"
         ) in {"32px", "29px"}  # Compact landscape dock uses 4px instead of 7px.
@@ -551,9 +554,10 @@ def test_touch_fullscreen_choice_and_safe_areas(
           window.__telegramEvent('contentSafeAreaChanged');
         }"""
     )
-    assert browser_page.locator("body").evaluate(
-        "element => getComputedStyle(element).paddingTop"
-    ) == "0px"
+    assert (
+        browser_page.locator("body").evaluate("element => getComputedStyle(element).paddingTop")
+        == "0px"
+    )
     assert server.exchanges == 1
     assert server.cancellations == 0
     assert browser_page.evaluate("window.__rfbInstances.length") == 1
@@ -696,3 +700,240 @@ def test_touch_desktop_keyboard_uses_landscape_stream_geometry(
         box = browser_page.locator(selector).bounding_box()
         assert box is not None and box["y"] + box["height"] <= 360
     assert server.exchange_payloads[0]["login_device"] == "desktop"
+
+
+def _paste_viewer(page: Page, url: str, clipboard_script: str) -> None:
+    page.add_init_script(clipboard_script)
+    page.goto(url)
+    page.wait_for_function("!document.getElementById('paste').disabled")
+
+
+def _literal_keys(page: Page, instance: int = 0) -> list[int]:
+    return page.evaluate(
+        "i => window.__rfbInstances[i].keys.filter(k => k.length === 1).map(k => k[0])",
+        instance,
+    )
+
+
+@pytest.mark.parametrize("shortcut", ["Control+v", "Meta+v"])
+def test_paste_shortcut_preserves_printable_ascii_once_and_releases_modifiers(
+    viewer_server: tuple[_ViewerServer, str], desktop_page: Page, shortcut: str
+) -> None:
+    server, url = viewer_server
+    text = " " + "".join(chr(point) for point in range(32, 127)) + " "
+    _paste_viewer(
+        desktop_page,
+        url,
+        "window.__reads=0; Object.defineProperty(navigator,'clipboard',{value:{"
+        f"readText:async()=>{{window.__reads++;return {json.dumps(text)};}}}}}});",
+    )
+    desktop_page.locator("#screen").evaluate("node=>{node.tabIndex=0;node.focus()}")
+    desktop_page.keyboard.press(shortcut)
+    desktop_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
+    assert _literal_keys(desktop_page) == [ord(char) for char in text]
+    assert desktop_page.evaluate("window.__reads") == 1
+    keys = desktop_page.evaluate("window.__rfbInstances[0].keys")
+    assert all(key[2] is False for key in keys[:10])
+    assert desktop_page.evaluate("window.__rfbInstances[0].blurs") == 1
+    assert desktop_page.locator("#paste-value").input_value() == ""
+    assert server.exchanges == 1
+    assert len(server.exchange_payloads[0]) == 3
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "line\nline",
+        "tab\tfield",
+        "\x00",
+        "\x7f",
+        "a" * 1025,
+        "\ud800",
+        "prefixé",
+        "prefix例",
+        "prefix🔐",
+        "prefixe\u0301",
+    ],
+)
+def test_paste_invalid_text_sends_nothing(
+    viewer_server: tuple[_ViewerServer, str], desktop_page: Page, value: str
+) -> None:
+    _, url = viewer_server
+    _paste_viewer(
+        desktop_page,
+        url,
+        "Object.defineProperty(navigator,'clipboard',{value:{readText:async()=>"
+        + json.dumps(value)
+        + "}});",
+    )
+    desktop_page.locator("#paste").click()
+    assert desktop_page.locator("#status").inner_text().endswith("Nothing was inserted.")
+    assert desktop_page.evaluate("window.__rfbInstances[0].keys") == []
+
+
+@pytest.mark.parametrize("mode", ["denied", "missing"])
+def test_native_masked_fallback_requires_insert_and_clears(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page, mode: str
+) -> None:
+    _, url = viewer_server
+    clipboard = "undefined" if mode == "missing" else "{readText:async()=>{throw Error('denied')}}"
+    _paste_viewer(
+        browser_page, url, f"Object.defineProperty(navigator,'clipboard',{{value:{clipboard}}});"
+    )
+    browser_page.locator("#paste").click()
+    browser_page.locator("#paste-value").fill("  synthetic@example.test  ")
+    assert _literal_keys(browser_page) == []
+    browser_page.locator("#paste-insert").click()
+    browser_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
+    assert _literal_keys(browser_page) == [ord(char) for char in "  synthetic@example.test  "]
+    assert browser_page.locator("#paste-value").input_value() == ""
+    assert browser_page.locator("#paste-panel").is_hidden()
+
+
+@pytest.mark.parametrize("ending", ["cancel", "finalizing", "disconnect", "pagehide"])
+def test_delayed_clipboard_read_is_discarded_after_teardown(
+    viewer_server: tuple[_ViewerServer, str], desktop_page: Page, ending: str
+) -> None:
+    server, url = viewer_server
+    _paste_viewer(
+        desktop_page,
+        url,
+        "window.__reads=0;Object.defineProperty(navigator,'clipboard',{value:{"
+        "readText:()=>{window.__reads++;return new Promise(r=>window.__resolvePaste=r)}}});",
+    )
+    desktop_page.locator("#paste").click()
+    desktop_page.locator("#paste").click()
+    assert desktop_page.evaluate("window.__reads") == 1
+    if ending == "cancel":
+        desktop_page.locator("#cancel").click()
+    elif ending == "finalizing":
+        server.session_status = "finalizing"
+        desktop_page.wait_for_function("document.getElementById('paste').disabled")
+    elif ending == "disconnect":
+        desktop_page.evaluate("window.__rfbInstances[0].forceDirtyDisconnect()")
+        desktop_page.wait_for_function("window.__rfbInstances.length === 2")
+        desktop_page.wait_for_function("!document.getElementById('paste').disabled")
+    else:
+        desktop_page.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+    desktop_page.evaluate("window.__resolvePaste('must never be sent')")
+    desktop_page.wait_for_timeout(50)
+    assert _literal_keys(desktop_page) == []
+    if ending == "disconnect":
+        assert _literal_keys(desktop_page, 1) == []
+    assert desktop_page.locator("#paste-value").input_value() == ""
+
+
+def test_chunked_paste_stops_on_disconnect_without_replay(
+    viewer_server: tuple[_ViewerServer, str], desktop_page: Page
+) -> None:
+    _, url = viewer_server
+    _paste_viewer(
+        desktop_page,
+        url,
+        "Object.defineProperty(navigator,'clipboard',{value:{"
+        "readText:async()=> 'x'.repeat(100)}});",
+    )
+    desktop_page.evaluate("""() => {
+      const connection=window.__rfbInstances[0], send=connection.sendKey.bind(connection);
+      connection.sendKey=(...args)=>{
+        send(...args);
+        if(args.length===1 && connection.keys.filter(k=>k.length===1).length===33)
+          connection.forceDirtyDisconnect();
+      };
+    }""")
+    desktop_page.locator("#paste").click()
+    desktop_page.wait_for_function("window.__rfbInstances.length===2")
+    assert _literal_keys(desktop_page) == [ord("x")] * 33
+    assert _literal_keys(desktop_page, 1) == []
+
+
+@pytest.mark.parametrize(
+    "text,valid", [("  test@example.test  ", True), ("first\nsecond", False), ("prefixé", False)]
+)
+def test_browser_native_paste_into_fallback_preserves_raw_validation(
+    viewer_server: tuple[_ViewerServer, str], desktop_page: Page, text: str, valid: bool
+) -> None:
+    """Browser-generated paste event with synthetic clipboard, not a physical OS test."""
+    _, url = viewer_server
+    desktop_page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    desktop_page.goto(url)
+    desktop_page.wait_for_function("!document.getElementById('paste').disabled")
+    desktop_page.evaluate("text=>navigator.clipboard.writeText(text)", text)
+    # Preserve native Clipboard API write/browser paste, deny only viewer readText.
+    desktop_page.evaluate("() => {navigator.clipboard.readText=async()=>{throw Error('denied')}}")
+    desktop_page.locator("#paste").click()
+    desktop_page.locator("#paste-value").press("ControlOrMeta+v")
+    if valid:
+        desktop_page.wait_for_function("document.getElementById('paste-value').value.length > 0")
+        assert desktop_page.locator("#paste-value").input_value() == text
+        assert _literal_keys(desktop_page) == []
+        desktop_page.locator("#paste-insert").click()
+        desktop_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
+        assert _literal_keys(desktop_page) == [ord(char) for char in text]
+    else:
+        desktop_page.wait_for_function(
+            "document.getElementById('status').textContent.includes('Nothing was inserted')"
+        )
+        assert desktop_page.locator("#paste-value").input_value() == ""
+        assert desktop_page.evaluate("window.__rfbInstances[0].keys") == []
+
+
+def test_pending_paste_blocks_field_changes_and_untrusted_paste(
+    viewer_server: tuple[_ViewerServer, str], desktop_page: Page
+) -> None:
+    _, url = viewer_server
+    _paste_viewer(
+        desktop_page,
+        url,
+        "Object.defineProperty(navigator,'clipboard',{value:{"
+        "readText:()=>new Promise(r=>window.__resolvePaste=r)}});",
+    )
+    desktop_page.locator("#screen").evaluate("""node=>{
+      node.tabIndex=0;
+      window.__pointerDelivered=0;window.__keysDelivered=0;window.__keyups=0;
+      node.addEventListener('pointerdown',()=>window.__pointerDelivered++);
+      node.addEventListener('keydown',()=>window.__keysDelivered++);
+      node.addEventListener('keyup',()=>window.__keyups++);
+      const data=new DataTransfer();data.setData('text/plain','untrusted');
+      node.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,clipboardData:data}));
+    }""")
+    assert _literal_keys(desktop_page) == []
+    desktop_page.locator("#paste").click()
+    desktop_page.locator("#next").click()
+    desktop_page.locator("#enter").click()
+    desktop_page.locator("#screen").focus()
+    desktop_page.keyboard.press("Tab")
+    desktop_page.locator("#screen").dispatch_event("pointerdown")
+    assert desktop_page.evaluate("window.__pointerDelivered") == 0
+    assert desktop_page.evaluate("window.__keysDelivered") == 0
+    assert desktop_page.evaluate("window.__keyups") == 1
+    assert desktop_page.evaluate("window.__rfbInstances[0].keys") == []
+    desktop_page.evaluate("window.__resolvePaste('once')")
+    desktop_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
+    assert _literal_keys(desktop_page) == [ord(char) for char in "once"]
+
+
+def test_repeated_paste_preserves_fallback_buffer_until_explicit_insert(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    _, url = viewer_server
+    _paste_viewer(
+        browser_page,
+        url,
+        "window.__reads=0;Object.defineProperty(navigator,'clipboard',{value:{"
+        "readText:async()=>{window.__reads++;throw Error('denied')}}});",
+    )
+    browser_page.locator("#paste").click()
+    browser_page.locator("#paste-value").fill("  synthetic@example.test  ")
+    browser_page.locator("#paste").click()
+    browser_page.locator("#paste").click()
+    assert browser_page.evaluate("window.__reads") == 1
+    assert browser_page.locator("#paste-value").input_value() == "  synthetic@example.test  "
+    assert browser_page.locator("#paste-value").evaluate("node=>node===document.activeElement")
+    assert browser_page.evaluate("window.__rfbInstances[0].keys") == []
+    browser_page.locator("#paste-insert").click()
+    browser_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
+    assert _literal_keys(browser_page) == [ord(char) for char in "  synthetic@example.test  "]
+    assert browser_page.evaluate("window.__reads") == 1
+    assert browser_page.locator("#paste-value").input_value() == ""
+    assert browser_page.locator("#paste-panel").is_hidden()

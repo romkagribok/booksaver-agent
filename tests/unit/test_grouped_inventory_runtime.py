@@ -198,6 +198,21 @@ def test_parsed_positive_uses_mapper_and_preserves_original_price_session(monkey
     h.capture.assert_not_called()
 
 
+def test_grouped_final_authentication_cannot_replace_initial_mobile_snapshot(monkeypatch):
+    h = Harness(monkeypatch)
+    h.runtime._state.refreshed_session = b"verified-initial-mobile"
+
+    async def final_authentication(*args):
+        h.host.verified_mobile_session = b"desktop-mutated-cookies"
+        return None
+
+    h.auth.side_effect = final_authentication
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.OBSERVED
+    assert result.refreshed_session == b"verified-initial-mobile"
+    h.capture.assert_not_called()
+
+
 @pytest.mark.parametrize("kind", [
     "dialog", "tab", "violation", "timeout", "cost_limit", "action_limit",
 ])

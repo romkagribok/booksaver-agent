@@ -42,7 +42,15 @@ from booksaver.domain.model_policy import (
     ModelStopReason,
     TokenEnvelope,
 )
+from booksaver.domain.session_maintenance import (
+    SessionVerificationOutcome,
+    SessionVerificationResult,
+)
 from booksaver.infrastructure.browser.agentic_executor import CodeOwnedSessionBootstrap
+from booksaver.infrastructure.browser.session_maintenance import (
+    unexpired_cookie_material,
+    verify_saved_snapshot,
+)
 from booksaver.infrastructure.remote_auth.network_session import ACCOUNT_PROBE_URL
 
 logger = logging.getLogger(__name__)
@@ -78,63 +86,6 @@ STOCK_ACTIONS = (
     "wait",
 )
 _ACCOUNT_AUTH_SETTLE_MILLISECONDS = (5_000, 3_000)
-_ACCOUNT_AUTH_STATUSES = frozenset({200, 202})
-_ACCOUNT_AUTH_CHALLENGE_MARKERS = (
-    b"cf-chl-",
-    b"verify you are human",
-    b"unusual traffic",
-    b"px-captcha",
-    b"challenge-platform",
-)
-
-
-def _authenticated_account_navigation(
-    *, status: int, content_type: str, final_url: str, rendered_html: bytes
-) -> bool:
-    try:
-        parsed = urlsplit(final_url)
-    except ValueError:
-        return False
-    normalized_type = content_type.split(";", 1)[0].strip().casefold()
-    bounded_html = rendered_html[:2_000_000].lower()
-    return (
-        status in _ACCOUNT_AUTH_STATUSES
-        and normalized_type == "text/html"
-        and parsed.scheme == "https"
-        and parsed.hostname == "secure.booking.com"
-        and parsed.path == "/myaccount.html"
-        and not parsed.query
-        and not parsed.fragment
-        and not any(marker in bounded_html for marker in _ACCOUNT_AUTH_CHALLENGE_MARKERS)
-    )
-
-
-def _account_navigation_rejection_reason(
-    *, status: int, content_type: str, final_url: str, rendered_html: bytes
-) -> str:
-    if status not in _ACCOUNT_AUTH_STATUSES:
-        return "status"
-    if content_type.split(";", 1)[0].strip().casefold() != "text/html":
-        return "content_type"
-    try:
-        parsed = urlsplit(final_url)
-    except ValueError:
-        return "destination"
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname != "secure.booking.com"
-        or parsed.path != "/myaccount.html"
-        or parsed.query
-        or parsed.fragment
-    ):
-        return "destination"
-    if any(
-        marker in rendered_html[:2_000_000].lower()
-        for marker in _ACCOUNT_AUTH_CHALLENGE_MARKERS
-    ):
-        return "challenge"
-    return "unknown"
-
 _UNSAFE_WATCHDOG_PREFIXES = (
     "DownloadsWatchdog.",
     "StorageStateWatchdog.",
@@ -1095,6 +1046,7 @@ class BrowserUseSessionHost:
         self._blocked_network_requests = 0
         self._blocked_network_hosts: set[str] = set()
         self._dialog_rejected = False
+        self.verified_mobile_session: bytes | None = None
         self.failure_stage = "environment_prepare"
 
     @property
@@ -1110,7 +1062,7 @@ class BrowserUseSessionHost:
         return frozenset(self._blocked_network_hosts)
 
     def restore_session(self, data: bytes) -> None:
-        self._bootstrap.restore_session(data)
+        self._bootstrap.restore_session(unexpired_cookie_material(data))
 
     async def start(self) -> BrowserUseSession:
         self.failure_stage = "environment_prepare"
@@ -1281,7 +1233,15 @@ class BrowserUseSessionHost:
             return BrowserUseSessionStatus.TIMEOUT
         except Exception:
             return BrowserUseSessionStatus.PROVIDER_FAILURE
-        return None if verified is not None else BrowserUseSessionStatus.SIGNED_OUT
+        if verified.outcome is SessionVerificationOutcome.AUTHENTICATED:
+            if self.verified_mobile_session is None:
+                self.verified_mobile_session = verified.cookies
+            return None
+        return (
+            BrowserUseSessionStatus.SIGNED_OUT
+            if verified.outcome is SessionVerificationOutcome.SIGNED_OUT
+            else BrowserUseSessionStatus.PROVIDER_FAILURE
+        )
 
     async def capture_verified_session(
         self,
@@ -1292,10 +1252,11 @@ class BrowserUseSessionHost:
         if remaining <= 0:
             return None
         try:
-            return await asyncio.wait_for(
+            verified = await asyncio.wait_for(
                 self._verified_session_refresh(browser_session),
                 timeout=min(remaining, 35.0),
             )
+            return verified.cookies
         except Exception:
             return None
 
@@ -1426,50 +1387,20 @@ class BrowserUseSessionHost:
     async def _verified_session_refresh(
         self,
         browser_session: Any,
-    ) -> bytes | None:
+    ) -> SessionVerificationResult:
         from playwright.async_api import async_playwright
 
         playwright = await async_playwright().start()
         try:
             browser = await playwright.chromium.connect_over_cdp(browser_session.cdp_url)
             if len(browser.contexts) != 1:
-                return None
+                return SessionVerificationResult(SessionVerificationOutcome.RETRY_LATER)
             context = browser.contexts[0]
             if len(context.pages) != 1:
-                return None
-            for ordinal, settle_milliseconds in enumerate(
-                _ACCOUNT_AUTH_SETTLE_MILLISECONDS,
-                start=1,
-            ):
+                return SessionVerificationResult(SessionVerificationOutcome.RETRY_LATER)
+            for settle_milliseconds in _ACCOUNT_AUTH_SETTLE_MILLISECONDS:
                 await browser_session.navigate_to(ACCOUNT_PROBE_URL, new_tab=False)
                 await asyncio.sleep(settle_milliseconds / 1_000)
-                response = await context.request.get(
-                    ACCOUNT_PROBE_URL,
-                    max_redirects=0,
-                    fail_on_status_code=False,
-                    timeout=15_000,
-                )
-                page = context.pages[0]
-                rendered_html = (await page.content()).encode("utf-8", errors="ignore")
-                content_type = response.headers.get("content-type", "")
-                if not _authenticated_account_navigation(
-                    status=response.status,
-                    content_type=content_type,
-                    final_url=await browser_session.get_current_page_url(),
-                    rendered_html=rendered_html,
-                ):
-                    logger.warning(
-                        "Browser Use authentication rejected ordinal=%s reason=%s status=%s",
-                        ordinal,
-                        _account_navigation_rejection_reason(
-                            status=response.status,
-                            content_type=content_type,
-                            final_url=await browser_session.get_current_page_url(),
-                            rendered_html=rendered_html,
-                        ),
-                        response.status,
-                    )
-                    return None
             serialized = json.dumps(
                 await context.cookies(),
                 ensure_ascii=True,
@@ -1477,7 +1408,12 @@ class BrowserUseSessionHost:
                 sort_keys=True,
             ).encode("utf-8")
             CodeOwnedSessionBootstrap._decode_cookies(serialized)
-            return serialized
+            descriptor = playwright.devices[self._mobile_settings.profile.playwright_device_name]
+            options = self._mobile_settings.context_options(descriptor)
+            options.update(accept_downloads=False, service_workers="block")
+            return await verify_saved_snapshot(
+                browser, options, serialized, time.monotonic() + 27.0,
+            )
         finally:
             await playwright.stop()
 
@@ -1548,6 +1484,7 @@ class BrowserUseSessionHost:
         return agent
 
     async def close(self) -> None:
+        self.verified_mobile_session = None
         if self._network_tasks:
             await asyncio.gather(*tuple(self._network_tasks), return_exceptions=True)
             self._network_tasks.clear()

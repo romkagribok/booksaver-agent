@@ -55,3 +55,12 @@ exact-pinned `browser-use` plus its explicit `pydantic-settings` compatibility d
 optional Docker remote-auth profile also uses distribution packages Xvfb/x11vnc/websockify/noVNC
 and a Caddy image. Add a dependency only when stdlib cannot satisfy the need and record the decision
 as an ADR (ADR-003).
+
+## Session continuity runtime (ADR-050)
+
+The qualified Linux deployment performs read-only session maintenance through the existing daemon
+scheduler and browser gate. One ephemeral Python worker uses private socket transport, Linux
+child-subreaper ownership and pidfd/start-time-bound signals so detached browser descendants are
+confirmed stopped before the gate is released. It is not a second scheduler or persistent service.
+Unsupported host platforms disable this background adapter without recording authentication
+failures or reconnect nudges; existing foreground browser paths continue. No new package is added.
