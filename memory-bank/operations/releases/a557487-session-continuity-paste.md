@@ -36,3 +36,14 @@ measured packaged-stack limitation, not a passed test.
 
 Native Telegram paste acceptance and the first production renewal remain user-observed. Evidence:
 `/opt/booksaver-releases/continuity-20260920/` (build/dev/stage/promotion logs).
+
+## Hotfix paste-7995864 (2026-09-22)
+
+Mobile feedback showed six-box verification codes received only one pasted character. PR #57 paces
+keystrokes at 50 ms and re-checks ownership after each send. Image
+`sha256:81bceb3e7d61749414f3f2d10119162714f01d3c42e7536f2bdd6afdfb5a50e8` (built on
+`continuity-a557487`) passed installed-source, smoke, supervisor cleanup, 27 paste checks and the
+new six-box probe, merged as `2d57401` and was promoted at 2026-09-22T02:37Z with backup
+`/opt/booksaver-backups/paste-7995864-20260922` and rollback tag `rollback-pre-paste-7995864`.
+Production healthy afterwards. Superseded VPS images were pruned with the user's approval (disk
+96% → 24%); the current and rollback images and all backups were retained.
