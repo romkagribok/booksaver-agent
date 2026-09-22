@@ -1,9 +1,9 @@
 ---
 intent: 025-session-continuity-and-paste
-phase: construction
+phase: operations
 status: complete
 created: "2026-09-20T19:54:17Z"
-updated: "2026-09-20T19:54:17Z"
+updated: "2026-09-22T01:42:44Z"
 ---
 
 # Session continuity and remote login paste
@@ -90,3 +90,9 @@ delivers the requested verification-code/email/ordinary-password paste without a
 endpoint or remote clipboard retention: unsupported characters are rejected before any text is
 inserted, with a clear error. This is a fail-closed compatibility limit, not a passed Unicode test.
 The user is informed in progress and final handoff; native Telegram physical input remains separate.
+
+## Release
+
+Released to production on 2026-09-22 as image `continuity-a557487` (merge `8956f4d`). See
+`memory-bank/operations/releases/a557487-session-continuity-paste.md`. Live daily renewal and native
+Telegram paste are to be confirmed from production behaviour and user feedback.

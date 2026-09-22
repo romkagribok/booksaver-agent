@@ -1,0 +1,38 @@
+---
+version: continuity-a557487
+commit: a557487c0976725a651a1cf3f858a46b18f36a33
+created: "2026-09-22T01:42:44Z"
+status: complete
+---
+
+# Session continuity and remote login paste — released and verified
+
+Saved Booking.com logins are now renewed by quiet daily server-verified maintenance instead of
+expiring at an incidental cookie deadline, with durable 15m/1h/6h/24h backoff, guarded recovery of
+legacy locally-expired bundles, once-per-revision reconnect notices and a 48-hour "could not verify"
+notice. Remote `/connect` login bridges explicit Cmd/Ctrl+V and a masked native paste field into the
+selected field over the existing RFB keyboard channel; printable ASCII only, unsupported characters
+rejected before insertion, no automatic submission, no clipboard retention. Full Unicode paste is a
+measured packaged-stack limitation, not a passed test.
+
+## Artifact and verification
+
+- Source `a557487c0976725a651a1cf3f858a46b18f36a33` (PR #55); merge `8956f4d5a01eb025c38b94b0059c282f49e325bc`
+  at 2026-09-22T01:40:43Z.
+- Image `booksaver-agent:continuity-a557487` = `sha256:cb35711dc21eadba038f4f6fbcb82ef4b79bb4fffd76ce5d27389e93212c2700`,
+  built 2026-09-22T00:09:38Z from the unchanged-dependency base `sha256:cddc642f…`; installed source
+  fingerprint equals the Git tree; 125 modules and eight pins matched; `pip check` clean.
+- Quality: 2,952 tests, one Linux-only skip, Ruff/mypy125, AI-DLC validator clean. Pre-release review
+  found and fixed two reconnect-notice defects (Bolt 078 test report). Bugbot passed on the final head.
+- Dev on the exact image: smoke, three Linux supervisor cleanup cases, 27 packaged paste checks.
+- Staging: the identical verification code passed a 32-check read-only production-clone replay on
+  candidate 53d021c on 2026-09-20; the final-image replay on 2026-09-22 could not obtain live proof
+  because Booking.com's edge returned the empty-202 pending tuple for the VPS IP (fail-closed
+  retry-later). The user accepted release on the earlier replay plus Dev evidence.
+- Production: promoted 2026-09-22T01:41Z with verified backup
+  `/opt/booksaver-backups/continuity-a557487-20260922` and rollback tag
+  `booksaver-agent:rollback-pre-continuity-a557487`; healthy, zero restarts, OOM false, clean startup,
+  only Caddy 80/443 published, no orphan browser processes, schema 18 quick_check ok.
+
+Native Telegram paste acceptance and the first production renewal remain user-observed. Evidence:
+`/opt/booksaver-releases/continuity-20260920/` (build/dev/stage/promotion logs).
