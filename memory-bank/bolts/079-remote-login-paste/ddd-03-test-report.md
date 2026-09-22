@@ -90,3 +90,16 @@ dialog/tab/navigation rejection assertions, and the 73-test traversal selection 
 final full run. Exact combined-image Dev/Staging, current-head Bugbot and production remain separate
 Operations gates. Unicode paste is an explicit unsupported-character rejection, not full-Unicode
 acceptance; no physical Telegram test is claimed. User approved scoped completion through release.
+
+## 2026-09-22T01:58:55Z — paced keystrokes for auto-advancing code boxes
+
+User feedback on mobile Telegram: pasting a six-digit Booking.com verification code inserted a
+single character into the first box. The packaged-stack probe was extended with a synthetic form of
+six `maxlength=1` inputs that keep the last character and move focus in a zero-delay timeout after
+each input, mirroring framework-controlled code entry. Against the released image both the Ctrl+V
+path and the masked Insert path produced `"4"` for code `482913`, reproducing the defect. The
+viewer now sends one character per 50 ms tick; the browser suite gained a pacing regression (six
+literal keys, gaps of at least 40 ms, exact order, cleared buffer). The existing mid-sequence
+disconnect, denied-clipboard, native-paste and teardown tests still pass (10 targeted, then the
+102-test viewer/gateway/runner selection). Exact-image probe results for the fix are recorded in
+the unit deployment history.

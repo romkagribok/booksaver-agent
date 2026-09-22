@@ -126,6 +126,7 @@ let fullscreenSupported=false;
 let inputGeneration=0;
 let pasteAttempt=null;
 const maxPasteCodepoints=1024;
+const pasteKeyIntervalMs=50;
 
 function updateFullscreen(){
  const active=Boolean(tg&&tg.isFullscreen);
@@ -304,16 +305,16 @@ function insertPaste(attempt,text){
    attempt.connection.sendKey(symbol,code,false);
   }
  }catch(_){finishPaste(attempt);setStatus('Could not insert text. Try Paste again.');return;}
+ // One character per tick, paced so a page that moves focus asynchronously after each
+ // input (for example a six-box verification code) advances before the next key arrives.
  const sendChunk=()=>{
   if(!ownsPaste(attempt))return;
   try{
-   const end=Math.min(attempt.offset+32,attempt.characters.length);
-   while(attempt.offset<end){
-    if(!ownsPaste(attempt))return;
-    const character=attempt.characters[attempt.offset++];
-    attempt.connection.sendKey(keysyms.lookup(character.codePointAt(0)));
-   }
-   if(attempt.offset<attempt.characters.length){setTimeout(sendChunk,0);return;}
+   const character=attempt.characters[attempt.offset++];
+   attempt.connection.sendKey(keysyms.lookup(character.codePointAt(0)));
+   // A disconnect or cancel raised by the send itself must not report success.
+   if(!ownsPaste(attempt))return;
+   if(attempt.offset<attempt.characters.length){setTimeout(sendChunk,pasteKeyIntervalMs);return;}
    finishPaste(attempt);
    pastePanel.hidden=true;
    attempt.connection.focus();
