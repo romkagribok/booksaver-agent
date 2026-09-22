@@ -1,7 +1,7 @@
 ---
-version: continuity-a557487
+version: paste-7995864
 created: "2026-09-20T20:31:21Z"
-updated: "2026-09-22T01:42:44Z"
+updated: "2026-09-22T02:38:03Z"
 status: complete
 ---
 
@@ -73,3 +73,29 @@ Daemon started **2026-09-22T01:41:23Z**; the script reported healthy at **2026-0
 with internal health, SQLite integrity/FKs, public health and an unchanged Caddy container.
 Log: `promotion-a557487.log`. Rollback: retag `latest` to the rollback image and recreate; no
 data restore is implied by an image rollback.
+
+## Hotfix paste-7995864 — paced keystrokes for auto-advancing code boxes
+
+User feedback on mobile Telegram: a six-digit Booking.com verification code pasted as a single
+character into the first box. Reproduced on the released image with a synthetic six-box
+auto-advance probe (`otp_paste_probe.py`: shortcut and Insert both yielded `"4"`). PR #57
+(head `799586405b72833ac424539dc47eaa9181aafa4a`) paces one keystroke per 50 ms and re-checks
+paste ownership after each send (Bugbot finding, resolved with a regression). Full suite 2,953+
+tests, Ruff, mypy125; Bugbot passed on the final head; merge gate passed with one resolved thread.
+
+Image `booksaver-agent:paste-7995864` = `sha256:81bceb3e7d61749414f3f2d10119162714f01d3c42e7536f2bdd6afdfb5a50e8`,
+built 2026-09-22T02:34:16Z on base `continuity-a557487`; installed-source fingerprint equals the Git
+tree; 125 modules and eight pins matched; `pip check` clean. Dev (`dev-7995864.log`): smoke 2.67 s,
+three Linux supervisor cleanup cases, **27 packaged paste checks**, and the six-box probe now
+delivers `482913` on both the shortcut and Insert paths with zero submissions. Staging replay of
+session verification was not repeated: the change is viewer-only and Booking.com's edge remained
+in the pending state the user asked not to probe further.
+
+Merged **2026-09-22** as `2d574010250899033e0c22d55284dfe6629a48cf`; `promote-7995864.sh` backed up to
+`/opt/booksaver-backups/paste-7995864-20260922` (0700/0600, archive SHA-256
+`cd2011c720e25440737f6db9acfaa497e5b077ec530d5aeced5869cb17421130`, verified), passed pre-promotion
+SQLite checks, tagged `booksaver-agent:rollback-pre-paste-7995864` (`sha256:cb35711d…`), and
+recreated only BookSaver. Daemon started **2026-09-22T02:37:08Z**; healthy at **02:37:19Z**.
+Post-promotion: running/healthy, 0 restarts, OOM false, heartbeat 6 s, clean startup log, no host
+ports for 8080/5900/6080, no orphan browser processes, config unchanged. Disk after the authorized
+image prune: 24% used. Native Telegram acceptance of the paced paste remains user-driven.
