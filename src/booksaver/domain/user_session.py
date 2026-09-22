@@ -106,10 +106,11 @@ class UserSessionSnapshot:
                 validated_at=verified,
                 expires_at=expires_at,
                 continuity_version=1,
+                # Fresh server proof closes any earlier notice. A later confirmed
+                # sign-out on this revision is a new event and gets its own notice.
                 maintenance=SessionMaintenanceState(
                     next_attempt_at=verified + VERIFICATION_INTERVAL,
                     last_attempt_at=self.metadata.maintenance.last_attempt_at,
-                    notice_sent_at=self.metadata.maintenance.notice_sent_at,
                 ),
             ),
             cookies=cookies,

@@ -47,3 +47,21 @@ dialog/tab/navigation rejection assertions, and the 73-test traversal selection 
 final full run. Exact combined-image Dev/Staging, current-head Bugbot and production remain separate
 Operations gates. Unicode paste is an explicit unsupported-character rejection, not full-Unicode
 acceptance; no physical Telegram test is claimed. User approved scoped completion through release.
+
+## 2026-09-22T00:08:33Z — pre-release review corrections
+
+An independent pre-release source review of the combined branch confirmed two notice defects.
+First, a verified renewal carried `notice_sent_at` forward, so a session that had received the
+48-hour unverified notice and later recovered could be signed out by Booking.com without any
+reconnect request on that revision. A fresh server proof now clears the notice claim, so a later
+confirmed sign-out produces exactly one notice. Second, the check-time reconnect prompt required a
+session revision, silently dropping users whose bundle is missing or undecryptable; those users
+again receive the direct reconnect prompt under the notifier's existing 24-hour cooldown.
+
+Two regressions cover unverified-notice → renewal → sign-out (one notice each) and missing or
+corrupt bundles. Deliberate design points were reviewed and left unchanged: unconfirmed owned
+worker cleanup stops the daemon by approved design, and the uncertainty notice is evaluated on
+the first completion at or after 48 hours of failure, which the retry ladder places at roughly
+55 hours. Full gate after the fix: **2,952 tests passed**, one Linux-only skip, Ruff and mypy
+(125 modules) clean, AI-DLC validator zero inconsistencies. Exact-image Dev/Staging and
+promotion for the corrected head remain Operations gates.

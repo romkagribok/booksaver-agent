@@ -2,7 +2,7 @@
 unit: 001-session-continuity
 intent: 025-session-continuity-and-paste
 created: "2026-09-20T20:04:41Z"
-last_updated: "2026-09-20T20:19:17Z"
+last_updated: "2026-09-22T00:08:33Z"
 ---
 
 # Session continuity construction log
@@ -21,3 +21,10 @@ refinements preserve server proof, caller isolation and the sole-browser admissi
 Local evidence is recorded in Bolt 078's test report. Root owns combined final validation,
 exact-image Linux and live-caller qualification, review, and authorized release. No implementation
 track committed or changed production state.
+
+## 2026-09-22T00:08:33Z — review corrections before release
+
+Pre-release review found that renewal preserved the once-per-revision notice claim and that
+missing/undecryptable bundles no longer prompted reconnect. Both were fixed with regressions
+(see Bolt 078 test report). The previously built continuity-2632af8 image is superseded and was
+not promoted; a new candidate image must be built and qualified from the corrected head.

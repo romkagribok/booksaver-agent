@@ -2317,6 +2317,10 @@ class CheckCoordinator:
             status = self._session_repository.status(user_id)
             if status.revision_id is not None:
                 self._notify_session_issue(user_id, status.revision_id, self._session_clock())
+            elif self._auth_required_notifier is not None:
+                # Missing or undecryptable bundles have no revision to claim a
+                # once-per-revision notice against; the notifier's own cooldown applies.
+                self._auth_required_notifier(user_id)
         except Exception:
             logger.warning("Could not issue Booking.com reconnect notice for user %s", user_id)
 

@@ -248,16 +248,41 @@ def test_foreground_renewal_prevents_daily_duplicate_and_invalidates_old_claim(t
     assert calls == []
 
 
-def test_same_revision_success_keeps_notice_claim_but_clears_failure_state(tmp_path):
-    c, repo, caller, _owner, _clock, _calls, _notices, _uncertain = harness(tmp_path)
+def test_verified_renewal_clears_notice_so_a_later_signout_is_reported_once(tmp_path):
+    c, repo, caller, _owner, clock, _calls, notices, uncertain = harness(tmp_path)
     snapshot = repo.load_for_maintenance(caller)
-    updated = snapshot.refreshed(b"success", validated_at=NOW)
-    updated = replace(updated, metadata=replace(updated.metadata,
-                      maintenance=replace(updated.metadata.maintenance, notice_sent_at=NOW)))
-    repo.save(updated)
-    renewed = updated.refreshed(b"again", validated_at=NOW + timedelta(days=1))
-    assert renewed.metadata.maintenance.notice_sent_at == NOW
+    revision = snapshot.metadata.revision_id
+    stalled = replace(snapshot, metadata=replace(snapshot.metadata, maintenance=replace(
+        snapshot.metadata.maintenance, failure_started_at=NOW - timedelta(hours=49),
+    )))
+    repo.save(stalled)
+    c._notify_auth_required(caller)
+    assert uncertain == [caller] and notices == []
+    c._notify_auth_required(caller)
+    assert uncertain == [caller]
+    renewed = repo.load_for_maintenance(caller).refreshed(b"renewed", validated_at=NOW)
+    assert renewed.metadata.maintenance.notice_sent_at is None
     assert renewed.metadata.maintenance.failure_started_at is None
+    assert repo.compare_and_replace(caller, revision, renewed)
+    assert repo.mark_reauth_required(caller, revision)
+    clock[0] = NOW + timedelta(days=3)
+    c._notify_auth_required(caller)
+    c._notify_auth_required(caller)
+    assert notices == [caller] and uncertain == [caller]
+
+
+@pytest.mark.parametrize("state", ["missing", "invalid"])
+def test_missing_or_undecryptable_bundle_still_prompts_reconnect(tmp_path, state):
+    c, repo, caller, owner, _clock, _calls, notices, uncertain = harness(tmp_path)
+    if state == "missing":
+        assert repo.delete(caller)
+    else:
+        path = repo._path(caller)
+        path.write_bytes(b"not-an-encrypted-bundle")
+    assert repo.status(caller).revision_id is None
+    c._notify_auth_required(caller)
+    assert notices == [caller] and uncertain == []
+    assert repo.load_for_maintenance(owner) is not None
 
 
 @pytest.mark.parametrize("agentic", [False, True])
