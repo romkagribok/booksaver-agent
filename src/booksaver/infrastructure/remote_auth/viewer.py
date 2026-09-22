@@ -312,6 +312,8 @@ function insertPaste(attempt,text){
   try{
    const character=attempt.characters[attempt.offset++];
    attempt.connection.sendKey(keysyms.lookup(character.codePointAt(0)));
+   // A disconnect or cancel raised by the send itself must not report success.
+   if(!ownsPaste(attempt))return;
    if(attempt.offset<attempt.characters.length){setTimeout(sendChunk,pasteKeyIntervalMs);return;}
    finishPaste(attempt);
    pastePanel.hidden=true;
