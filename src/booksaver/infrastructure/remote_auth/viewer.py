@@ -425,9 +425,12 @@ function keyInput(event){
    break;
   }
  }
+ // A suggested one-time code, clipboard chip or autofill arrives as one multi-character
+ // input. Some hosts replace the whole field, discarding the placeholder buffer; that is
+ // not a deletion, so a bulk arrival never sends backspaces derived from the placeholder.
+ if(inputs>=2)backspaces=0;
  for(let i=0;i<backspaces;i++)rfb.sendKey(KeyTable.XK_BackSpace,'Backspace');
- // A suggested one-time code or clipboard chip arrives as one multi-character input.
- // Pace it like a paste so auto-advancing fields keep up, and keep the keyboard open.
+ // Pace a bulk arrival like a paste so auto-advancing fields keep up; keep the keyboard open.
  const inserted=inputs>0?newValue.slice(newLen-inputs,newLen):'';
  const paced=inputs>=2&&pasteCharacters(inserted)?beginPaste():null;
  if(paced)paced.restoreFocus=false;

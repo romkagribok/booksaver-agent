@@ -976,6 +976,40 @@ def test_keyboard_suggestion_into_capture_is_paced_and_keeps_keyboard_open(
     assert _literal_keys(browser_page)[-1] == ord("Z")
 
 
+def test_autofill_that_replaces_the_capture_field_sends_no_placeholder_backspaces(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    """iOS AutoFill replaces the whole field; the vanished placeholder is not a deletion."""
+    _, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    browser_page.locator("#keyboard").click()
+    assert browser_page.evaluate("document.activeElement.id") == "capture"
+    browser_page.locator("#capture").evaluate("""element => {
+      element.value = '482913';
+      element.setSelectionRange(6, 6);
+      element.dispatchEvent(new InputEvent('input', {bubbles: true,
+        inputType: 'insertReplacementText', data: '482913'}));
+    }""")
+    browser_page.wait_for_function(
+        "window.__rfbInstances[0].keys.filter(k => k.length === 1).length === 6"
+    )
+    keys = browser_page.evaluate("window.__rfbInstances[0].keys")
+    assert [k[0] for k in keys if len(k) == 1] == [ord(c) for c in "482913"]
+    assert not any(len(k) > 1 and k[1] == "Backspace" for k in keys)
+    assert browser_page.evaluate("document.activeElement.id") == "capture"
+    # A genuine single deletion of the placeholder still relays one Backspace.
+    browser_page.locator("#capture").evaluate("""element => {
+      element.value = element.value.slice(0, -1);
+      element.setSelectionRange(element.value.length, element.value.length);
+      element.dispatchEvent(new InputEvent('input', {bubbles: true,
+        inputType: 'deleteContentBackward'}));
+    }""")
+    browser_page.wait_for_timeout(50)
+    keys = browser_page.evaluate("window.__rfbInstances[0].keys")
+    assert sum(1 for k in keys if len(k) > 1 and k[1] == "Backspace") == 1
+
+
 def test_unsupported_keyboard_suggestion_keeps_the_immediate_path(
     viewer_server: tuple[_ViewerServer, str], browser_page: Page
 ) -> None:

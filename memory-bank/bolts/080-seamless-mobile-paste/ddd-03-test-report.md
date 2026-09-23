@@ -25,3 +25,14 @@ and the six-box auto-advance probe on all four paths: Ctrl/Cmd+V `482913`, maske
 keyboard suggestion into the capture field with the keyboard still open, and native paste into the
 box, with zero form submissions. Synthetic input only; physical Telegram is not claimed. The
 release image will be rebuilt from the reviewed commit and re-probed before promotion.
+
+## 2026-09-23T00:41:10Z — review correction: replacement autofill
+
+Cursor Bugbot (high severity, valid): hosts such as iOS AutoFill replace the whole capture field,
+so the diff against the placeholder buffer would relay up to 99 backspaces to the remote form
+before the paced code, wiping digits the user had already entered. A bulk arrival (two or more
+characters in one input) now never sends placeholder-derived backspaces; single deletions still
+relay one Backspace. Browser regression simulates an `insertReplacementText` replacement and a
+following `deleteContentBackward`; the six-box packaged probe gained a replacement case with two
+pre-typed digits that must survive, and its synthetic form now clears the previous box on
+Backspace like real widgets.
