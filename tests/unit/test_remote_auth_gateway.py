@@ -23,6 +23,7 @@ class StubManager:
         self.viewer_token = "viewer-secret"
         self.user_id = 123
         self.cancelled: list[str] = []
+        self.detached: list[str] = []
         self.exchanges: list[tuple[str, int, LoginDevice]] = []
 
     def expected_telegram_user(self, token: str) -> int:
@@ -50,6 +51,10 @@ class StubManager:
             websocket_token="websocket-secret",
             message="Ready",
         )
+
+    def detach(self, token: str) -> bool:
+        self.detached.append(token)
+        return True
 
     def cancel(self, token: str) -> bool:
         assert token == self.viewer_token
@@ -162,15 +167,21 @@ def test_bootstrap_exposes_safe_touch_keyboard_and_viewport_controls(tmp_path: P
     assert "<textarea" not in body.lower()
 
 
-def test_bootstrap_cancels_on_pagehide_but_not_visibility_change(tmp_path: Path) -> None:
+def test_bootstrap_detaches_on_pagehide_and_resumes_on_return(tmp_path: Path) -> None:
     app, _manager, _verifier = _app(tmp_path)
     body = app.handle("GET", "/connect/launch-secret", {}).body.decode()
 
-    assert "window.addEventListener('pagehide',cancelOnClose)" in body
+    # Leaving the page detaches (grace period); only the Cancel button cancels.
+    assert "window.addEventListener('pagehide',detachOnClose)" in body
+    assert "fetch('/api/connect/detach'" in body
+    assert "'pagehide',cancelOnClose" not in body
     assert "event&&event.persisted" in body
     assert "keepalive:true" in body
-    assert "visibilitychange" not in body
+    assert "window.addEventListener('pageshow',resumeOnReturn)" in body
+    assert "document.addEventListener('visibilitychange',resumeOnReturn)" in body
     assert "viewerAuthorized||terminalState||closeRequested" in body
+    # A reloaded page resumes its viewer session before spending the launch link.
+    assert "await jsonRequest('/api/connect/session');resumed=true" in body
     assert "state.status==='finalizing'" in body
     assert "cancelButton.disabled=true" in body
     assert "typeof tg.close==='function'" in body
@@ -216,6 +227,19 @@ def test_exchange_requires_exact_origin_and_sets_hardened_cookie(tmp_path: Path)
     assert "HttpOnly" in cookie
     assert "SameSite=Strict" in cookie
     assert "Max-Age" not in cookie
+
+
+def test_detach_requires_same_origin_and_cookie(tmp_path: Path) -> None:
+    app, manager, _verifier = _app(tmp_path)
+    assert app.handle("POST", "/api/connect/detach", {}).status == 401
+    headers = {"origin": "https://connect.example.test"}
+    assert app.handle("POST", "/api/connect/detach", headers).status == 401
+    headers["cookie"] = "booksaver_auth=viewer-secret"
+    response = app.handle("POST", "/api/connect/detach", headers)
+    assert response.status == 200
+    assert json.loads(response.body) == {"status": "detached"}
+    assert manager.detached == ["viewer-secret"]
+    assert "viewer-secret" not in response.body.decode()
 
 
 def test_viewer_and_cancel_require_cookie_and_never_echo_it(tmp_path: Path) -> None:

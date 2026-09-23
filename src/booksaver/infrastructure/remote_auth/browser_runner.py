@@ -152,7 +152,7 @@ class SystemRemoteBrowserRunner:
         try:
             if work.cancel_event.is_set() or daemon_stop_event.is_set():
                 return _RemoteBrowserExecution(RemoteBrowserResult(RemoteAuthStatus.CANCELLED))
-            if datetime.now(UTC) >= work.expires_at:
+            if work.expired(datetime.now(UTC)):
                 return _RemoteBrowserExecution(RemoteBrowserResult(RemoteAuthStatus.EXPIRED))
             width, height = work.login_device.display_size
             self._require_tools()
@@ -257,7 +257,7 @@ class SystemRemoteBrowserRunner:
                         return _RemoteBrowserExecution(
                             RemoteBrowserResult(RemoteAuthStatus.CANCELLED)
                         )
-                    if datetime.now(UTC) >= work.expires_at:
+                    if work.expired(datetime.now(UTC)):
                         return _RemoteBrowserExecution(
                             RemoteBrowserResult(RemoteAuthStatus.EXPIRED)
                         )

@@ -170,7 +170,8 @@ def test_reconnect_callback_is_acknowledged_and_replaces_prompt() -> None:
         8,
         "Tap the button below to sign in with your Booking.com email and password. "
         "Google, Apple, and other sign-in services aren't supported here. "
-        "The link expires soon. Never send your password in this chat.",
+        "You can leave to fetch a verification code and reopen this link within a few "
+        "minutes. Never send your password in this chat.",
     )
 
 
