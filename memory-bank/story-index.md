@@ -688,3 +688,4 @@ are assigned exactly once.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-202` | Full-width login stream on phones | Usability | Complete | `004-full-width-stream/stories/001-full-width-login-stream.md` |
+| `US-203` | Touch presentation without a cursor, tablet-sized | Usability | Complete | `004-full-width-stream/stories/002-touch-presentation.md` |

@@ -157,9 +157,12 @@ def test_remote_browser_context_policy_covers_popups_and_downloads() -> None:
         (None, (480, 960)),
         ({"width": 390, "height": 585}, (480, 720)),
         ({"width": 390, "height": 780}, (480, 960)),
-        ({"width": 1000, "height": 300}, (480, 640)),
+        ({"width": 1000, "height": 300}, (1000, 640)),
         ({"width": 300, "height": 1000}, (480, 1200)),
         ({"width": "390", "height": "590"}, (480, 726)),
+        ({"width": 1000, "height": 1300}, (1000, 1200)),
+        ({"width": 1180, "height": 700}, (1024, 640)),
+        ({"width": 820, "height": 1000}, (820, 1000)),
         ({"width": 10, "height": 590}, (480, 960)),
         ({"width": None, "height": 590}, (480, 960)),
         ("390x590", (480, 960)),
@@ -751,7 +754,10 @@ def test_runner_uses_server_evidence_without_page_inspection_or_reload(
     width, height = login_device.display_size
     assert commands[0][:4] == ["Xvfb", ":99", "-screen", "0"]
     assert commands[0][4] == f"{width}x{height}x24"
-    assert "-skip_lockkeys" in next(command for command in commands if command[0] == "x11vnc")
+    vnc = next(command for command in commands if command[0] == "x11vnc")
+    assert "-skip_lockkeys" in vnc
+    # Touch viewers stream no pointer; desktop keeps the arrow.
+    assert ("-nocursor" in vnc) is (login_device is LoginDevice.MOBILE)
     assert f"--window-size={width},{height}" in playwright.chromium.launch_options["args"]
     assert len(verifier_inputs) == 1
     assert verifier_inputs[0] == (browser, MobileWebSettings(), DESCRIPTOR, work)

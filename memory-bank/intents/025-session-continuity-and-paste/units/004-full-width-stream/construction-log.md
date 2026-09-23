@@ -2,7 +2,7 @@
 unit: 004-full-width-stream
 intent: 025-session-continuity-and-paste
 created: "2026-09-23T15:43:35Z"
-last_updated: "2026-09-23T16:06:21Z"
+last_updated: "2026-09-23T16:38:10Z"
 ---
 
 # Full-width stream construction log
@@ -19,3 +19,6 @@ Full-gate, review and release evidence follow.
 
 2026-09-23T16:06:21Z: Bugbot review found the resumed viewer lacked the negotiated aspect; fixed by carrying
 the framebuffer in the viewer state (Bolt 082 test report).
+
+2026-09-23T16:38:10Z: US-203 approved (cursor off for touch, tablet-sized framebuffer). Bolt 083 modelled and
+designed in its bolt file, implemented in the runner and domain with unit and probe coverage.

@@ -1114,7 +1114,7 @@ def test_first_exchange_negotiates_the_framebuffer_from_the_viewer_area() -> Non
     token = launch.url.rsplit("/", 1)[-1]
     manager.exchange(token, 123, viewer_area={"width": 390, "height": 585})
     call = runner.wait_for_call(0)
-    assert call.work.display_size == (480, 720)
+    assert call.work.display_size == (480, 720)  # phone: 480 wide, 585/390 aspect
     assert call.work.framebuffer == (480, 720)
     # Reopening from a differently sized viewer never resizes the running browser, and the
     # viewer state tells the new viewer the negotiated size.

@@ -181,9 +181,7 @@ class SystemRemoteBrowserRunner:
                     )
                 )
                 self._wait_started(processes[-1])
-                processes.append(
-                    self._spawn(
-                        [
+                vnc_command = [
                             "x11vnc",
                             "-display",
                             self._settings.display,
@@ -198,8 +196,10 @@ class SystemRemoteBrowserRunner:
                             "-skip_lockkeys",
                             "-quiet",
                         ]
-                    )
-                )
+                if work.login_device is LoginDevice.MOBILE:
+                    # Touch viewers have no pointer to show; the emulated arrow only confuses.
+                    vnc_command.append("-nocursor")
+                processes.append(self._spawn(vnc_command))
                 self._wait_started(processes[-1])
                 processes.append(
                     self._spawn(
