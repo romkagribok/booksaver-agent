@@ -82,3 +82,10 @@ No cursor for touch logins and tablet-sized framebuffers (US-203, Bolt 083). Ima
 `sha256:e1e0965fe0de55efcf344e44e88a054032e926fa9834f1c7f8557c52a3e69f7f` merged as `9936499`,
 promoted 2026-09-23T16:44Z with backup `/opt/booksaver-backups/touch-c8b2aa6-20260923` and
 rollback tag `rollback-pre-touch-c8b2aa6`. Production healthy afterwards.
+
+## Release nohelp-9491bcd (2026-09-23)
+
+Help control removed from the streamed login (user feedback; US-202 amended). Image
+`sha256:8315daba34c3d1742abfde5115d0ac14f03d369fb228d6adbc61d70bfe0126c3` merged as `5e1d018`,
+promoted 2026-09-23T19:50Z with backup `/opt/booksaver-backups/nohelp-9491bcd-20260923` and
+rollback tag `rollback-pre-nohelp-9491bcd`. Production healthy afterwards.
