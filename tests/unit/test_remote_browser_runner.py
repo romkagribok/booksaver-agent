@@ -151,6 +151,27 @@ def test_remote_browser_context_policy_covers_popups_and_downloads() -> None:
     assert cancelled == [True]
 
 
+@pytest.mark.parametrize(
+    "area,expected",
+    [
+        (None, (480, 960)),
+        ({"width": 390, "height": 585}, (480, 720)),
+        ({"width": 390, "height": 780}, (480, 960)),
+        ({"width": 1000, "height": 300}, (480, 640)),
+        ({"width": 300, "height": 1000}, (480, 1200)),
+        ({"width": "390", "height": "590"}, (480, 726)),
+        ({"width": 10, "height": 590}, (480, 960)),
+        ({"width": None, "height": 590}, (480, 960)),
+        ("390x590", (480, 960)),
+    ],
+)
+def test_mobile_framebuffer_follows_the_viewer_aspect_within_bounds(
+    area: object, expected: tuple[int, int]
+) -> None:
+    assert LoginDevice.MOBILE.framebuffer_for(area) == expected
+    assert LoginDevice.DESKTOP.framebuffer_for(area) == (1280, 800)
+
+
 def test_remote_browser_uses_chrome_free_kiosk_presentation() -> None:
     args = SystemRemoteBrowserRunner._chromium_args()  # noqa: SLF001
 
@@ -739,13 +760,12 @@ def test_runner_uses_server_evidence_without_page_inspection_or_reload(
         assert browser.context_options[0]["has_touch"] is False
         assert "user_agent" not in browser.context_options[0]
         assert browser.context_options[0]["no_viewport"] is True
-        assert context.cdp.calls == [
-            ("Browser.getWindowForTarget", None),
-            ("Browser.setWindowBounds", {"windowId": 7, "bounds": {"windowState": "fullscreen"}}),
-        ]
-        assert context.cdp.detached
-    else:
-        assert context.cdp.calls == []
+    # Every device streams a fullscreen window: no tab strip or address bar on phones either.
+    assert context.cdp.calls == [
+        ("Browser.getWindowForTarget", None),
+        ("Browser.setWindowBounds", {"windowId": 7, "bounds": {"windowState": "fullscreen"}}),
+    ]
+    assert context.cdp.detached
     assert result.status is RemoteAuthStatus.SUCCEEDED
     assert result.cookies_json == '{"state":"authenticated"}'
     assert ready == [True]
@@ -823,7 +843,16 @@ def test_login_context_uses_server_owned_profile_and_configured_locale(
     assert len(browser.context_options) == 1
     options = browser.context_options[0]
     if login_device is LoginDevice.MOBILE:
-        assert options == settings.context_options(DESCRIPTOR)
+        expected = settings.context_options(DESCRIPTOR)
+        # The page viewport equals the framebuffer so the stream has no dead margin.
+        expected.update(
+            viewport={"width": 480, "height": 960}, screen={"width": 480, "height": 960}
+        )
+        assert options == expected
+        runner._new_login_context(browser, DESCRIPTOR, login_device, (480, 720))  # noqa: SLF001
+        assert browser.context_options[1]["viewport"] == {"width": 480, "height": 720}
+        assert browser.context_options[1]["screen"] == {"width": 480, "height": 720}
+        assert browser.context_options[1]["user_agent"] == expected["user_agent"]
     else:
         assert options == {
             "no_viewport": True,

@@ -123,3 +123,14 @@ Telegram paste are to be confirmed from production behaviour and user feedback.
    minutes from creation. A reloaded page resumes its existing viewer session before spending
    the link. The single browser gate, credential-blind gateway, replay protection of signed
    launch data and all capture rules are unchanged.
+
+## Amendment 2026-09-23: full-width streamed login on phones
+
+9. **Full-width stream (approved 2026-09-23T15:43:35Z).** On phones the streamed Booking.com page must use the
+   full width of the Mini App and be readable: the remote Chromium window is fullscreen inside
+   its framebuffer for mobile logins too (no tab strip or address bar) and the page fills the
+   whole 480x960 framebuffer; the viewer scales the stream to the full width and scrolls it
+   vertically instead of letterboxing it; the status line, help and controls take one compact
+   row each, with help collapsed behind a header button. Desktop logins keep fit-to-screen.
+   The server-owned Android profile, user agent, touch emulation and every capture rule are
+   unchanged; only the emulated viewport size equals the framebuffer.

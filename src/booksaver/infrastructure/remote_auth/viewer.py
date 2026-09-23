@@ -22,17 +22,25 @@ _VIEWER_DOCUMENT = """<!doctype html>
 body{height:var(--app-height);display:flex;flex-direction:column;background:#101820;color:#fff;
  padding:var(--safe-top) var(--safe-right) 0 var(--safe-left);
  font:15px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-#header{display:flex;align-items:center;flex-shrink:0;background:#182633}
-#status{padding:8px 12px;background:#182633;line-height:1.3;min-height:38px}
-#status{flex:1;min-width:0}#fullscreen{flex-shrink:0;margin:4px 8px 4px 0}
+#header{display:flex;align-items:center;gap:6px;flex-shrink:0;background:#182633;
+ padding-right:8px}
+#status{padding:6px 12px;background:#182633;line-height:1.25;min-height:32px;font-size:14px}
+#status{flex:1;min-width:0}#fullscreen,#help-button{flex-shrink:0;margin:4px 0}
+#help-button{min-width:40px;padding:6px 8px}
 #size-hint{margin:0;padding:5px 12px;background:#22384a;font-size:13px;flex-shrink:0}
 #help{margin:0;padding:7px 12px;background:#22384a;color:#e6f2fa;font-size:13px}
 #viewer{flex:1;min-height:0;position:relative;overflow:auto;background:#000;overscroll-behavior:none}
 #screen{width:100%;height:100%;min-height:100%;touch-action:none}
-body.keyboard-open #screen{height:auto;min-height:max(100%,200vw)}
+/* The remote framebuffer is sized to this viewer's aspect at exchange, so the fitted stream
+   has no letterbox bars. While the keyboard is open the area shrinks; keep the stream at full
+   width and let the viewer scroll to the touched field. */
+body.keyboard-open #screen{height:auto;min-height:max(100%,calc(100vw * var(--stream-aspect,2)))}
 body.desktop-login.keyboard-open #screen{min-height:max(100%,62.5vw)}
 #dock{display:flex;flex-shrink:0;flex-wrap:wrap;gap:6px;
  padding:7px 8px calc(7px + var(--safe-bottom));background:#182633}
+body.touch-first #dock{flex-wrap:nowrap;gap:5px;padding-left:6px;padding-right:6px}
+body.touch-first #dock button{flex:1 1 auto;min-width:0;padding:8px 4px;font-size:14px;
+ white-space:nowrap}
 button{min-width:44px;min-height:44px;margin:0;padding:8px 10px;border:1px solid #58728a;
  border-radius:8px;background:#26455f;color:#fff;font:inherit;font-weight:600}
 button:disabled{opacity:.45}#keyboard{flex:1 0 auto}#cancel{background:#71383d;border-color:#a85a61}
@@ -44,6 +52,7 @@ button:disabled{opacity:.45}#keyboard{flex:1 0 auto}#cancel{background:#71383d;b
 body.keyboard-open #keyboard{background:#0878d1;border-color:#6cb9f1}
 body.keyboard-open #fullscreen{display:none}
 body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
+#help[hidden]{display:none}
 @media (orientation:landscape) and (max-height:520px){
  #status{padding:5px 10px;min-height:30px;font-size:13px}#help{padding:4px 10px}
  #dock{padding-top:4px;padding-bottom:calc(4px + var(--safe-bottom))}
@@ -51,11 +60,15 @@ body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
 </style></head><body>
 <div id="header">
  <div id="status" role="status" aria-live="polite">Authorizing this connection…</div>
+ <button id="help-button" type="button" aria-controls="help" aria-expanded="false"
+  aria-label="Help">?</button>
  <button id="fullscreen" type="button" hidden aria-pressed="false">Full screen</button>
 </div>
 <p id="size-hint" role="status" hidden></p>
-<p id="help">Tap a Booking.com field, then tap Keyboard or Paste. A code suggested above the
- keyboard is typed for you. Use Next or Enter to continue.</p>
+<p id="help" hidden>Tap a Booking.com field, then tap Keyboard or Paste. A code suggested above
+ the keyboard is typed for you. Scroll the page by dragging the grey edge or with two fingers.
+ Google, Apple and other external sign-in providers are disabled. Use Next or Enter to
+ continue; this window closes after authentication.</p>
 <div id="viewer"><div id="screen" aria-label="Remote Booking.com browser"></div></div>
 <div id="paste-panel" hidden>
  <label for="paste-value">Paste here; it goes straight to the selected Booking.com field.</label>
@@ -69,7 +82,6 @@ body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
  <button id="paste" type="button" disabled>Paste</button>
  <button id="next" type="button" disabled>Next</button>
  <button id="enter" type="button" disabled>Enter</button>
- <button id="help-button" type="button" aria-controls="help" aria-expanded="true">Help</button>
  <button id="cancel" type="button">Cancel</button>
 </div>
 <input id="capture" type="password" inputmode="text" autocomplete="one-time-code"
@@ -120,6 +132,16 @@ let reconnectAttempted=false;
 let reconnectExhausted=false;
 let connectedAt=0;
 const stableConnectionMs=5000;
+function viewerArea(){
+ // Presentation hint only: the remote framebuffer adopts this aspect so the fitted stream
+ // fills the area. Never identity evidence.
+ const width=Math.round(viewerNode.clientWidth),height=Math.round(viewerNode.clientHeight);
+ if(width>=200&&height>=200){
+  document.documentElement.style.setProperty('--stream-aspect',String(height/width));
+  return {width,height};
+ }
+ return null;
+}
 let rfbConnecting=false;
 let pollTimer=null;
 let composing=false;
@@ -578,7 +600,8 @@ async function start(){
  if(!resumed){
   await jsonRequest('/api/connect/exchange',{method:'POST',
    headers:{'Content-Type':'application/json'},
-   body:JSON.stringify({launch_token:launchToken,init_data:tg.initData,login_device:loginDevice})});
+   body:JSON.stringify({launch_token:launchToken,init_data:tg.initData,login_device:loginDevice,
+    viewer_area:viewerArea()})});
  }
  viewerAuthorized=true;
  await poll();

@@ -15,3 +15,8 @@ remain excluded.
 
 User reported that leaving Telegram to fetch a verification code ends the login. Requirement 8,
 unit 003 and story US-201 added; user asked to proceed through merge and redeploy.
+
+## 2026-09-23T15:43:35Z
+
+User reported the phone stream is small and letterboxed. Requirement 9, unit 004 and story
+US-202 added; user asked to proceed in the same manner as US-201.

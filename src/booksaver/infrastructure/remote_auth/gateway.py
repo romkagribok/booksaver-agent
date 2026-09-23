@@ -111,6 +111,7 @@ class RemoteAuthHttpApp:
             grant = self._manager.exchange(
                 launch_token, identity.telegram_user_id,
                 login_device=LoginDevice.from_hint(data.get("login_device")),
+                viewer_area=data.get("viewer_area"),
             )
         except (
             KeyError,

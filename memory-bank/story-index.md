@@ -682,3 +682,9 @@ are assigned exactly once.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-201` | Resume /connect after leaving for a code | Reliability | Complete | `003-remote-login-resume/stories/001-resume-connect-after-leaving.md` |
+
+### 004-full-width-stream
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-202` | Full-width login stream on phones | Usability | Complete | `004-full-width-stream/stories/001-full-width-login-stream.md` |

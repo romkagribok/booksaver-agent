@@ -192,8 +192,7 @@ def test_manager_binds_launch_to_user_reopens_for_owner_and_captures_once() -> N
     assert state.status is RemoteAuthStatus.CONNECTED
     assert state.websocket_path == "/websockify"
     assert state.websocket_token
-    assert "Booking.com email and password" in state.message
-    assert "Google, Apple, and other external providers are disabled" in state.message
+    assert state.message == "Sign in with your Booking.com email and password."
 
     with pytest.raises(RemoteAuthBusy):
         manager.create(456, 456)
@@ -1104,6 +1103,22 @@ def test_detached_viewer_keeps_login_alive_within_grace_and_reattaches() -> None
     assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.CONNECTED
     assert not call.work.cancel_event.is_set()
     assert messages == []
+    manager.stop_all()
+
+
+def test_first_exchange_negotiates_the_framebuffer_from_the_viewer_area() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, _current = _clocked_manager(runner, messages)
+    launch = manager.create(123, 123)
+    token = launch.url.rsplit("/", 1)[-1]
+    manager.exchange(token, 123, viewer_area={"width": 390, "height": 585})
+    call = runner.wait_for_call(0)
+    assert call.work.display_size == (480, 720)
+    assert call.work.framebuffer == (480, 720)
+    # Reopening from a differently sized viewer never resizes the running browser.
+    manager.exchange(token, 123, viewer_area={"width": 1000, "height": 300})
+    assert call.work.framebuffer == (480, 720)
     manager.stop_all()
 
 
