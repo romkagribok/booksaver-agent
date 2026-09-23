@@ -36,3 +36,9 @@ relay one Backspace. Browser regression simulates an `insertReplacementText` rep
 following `deleteContentBackward`; the six-box packaged probe gained a replacement case with two
 pre-typed digits that must survive, and its synthetic form now clears the previous box on
 Backspace like real widgets.
+
+## 2026-09-23T00:46:55Z — release evidence
+
+Exact image `seamless-f2bb781` passed all dev probes (see unit 002 deployment history) and was
+promoted to production at 2026-09-23T00:45Z with verified backup and rollback tag. Bugbot passed
+on the final head. Native device acceptance remains user-driven.

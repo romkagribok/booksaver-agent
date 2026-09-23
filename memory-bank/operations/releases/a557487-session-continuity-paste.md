@@ -47,3 +47,12 @@ new six-box probe, merged as `2d57401` and was promoted at 2026-09-22T02:37Z wit
 `/opt/booksaver-backups/paste-7995864-20260922` and rollback tag `rollback-pre-paste-7995864`.
 Production healthy afterwards. Superseded VPS images were pruned with the user's approval (disk
 96% → 24%); the current and rollback images and all backups were retained.
+
+## Release seamless-f2bb781 (2026-09-23)
+
+Seamless mobile paste (US-200, Bolt 080, ADR-052): layered explicit clipboard sources behind one
+tap, immediate paced delivery of bulk arrivals without Insert, one-time-code hints, and no
+placeholder backspaces on replacement autofill. Image
+`sha256:c57ca9803e3b5a754ec6f6ae1a8f41636ffd6fa6990852ece5f66b7af9762987` merged as `4986db1`, promoted
+2026-09-23T00:45Z with backup `/opt/booksaver-backups/seamless-f2bb781-20260923` and rollback tag
+`rollback-pre-seamless-f2bb781`. Production healthy afterwards.
