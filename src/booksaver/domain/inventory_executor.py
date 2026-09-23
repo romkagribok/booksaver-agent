@@ -246,6 +246,9 @@ class ObservedReservation:
     refund_deadline: date | None = None
     occupancy: Occupancy | None = None
     completeness: EvidenceCompleteness = EvidenceCompleteness.INCOMPLETE
+    # Set only by code-owned readers that took the name and URL from one verified page anchor.
+    # Provider-submitted facts never set it, so they cannot rename a saved property.
+    property_anchor_verified: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(

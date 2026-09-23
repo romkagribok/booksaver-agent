@@ -1462,10 +1462,11 @@ class SqliteAccountReservationRepository:
         """Name the explicit model facts that disagree with persisted last-safe authority.
 
         Identity, stay, room, occupancy, money, and refundability facts are authoritative once
-        saved. The property name and reference also drive price checks, so they may change only
-        when a recognized Booking hotel URL proves the observation names the same hotel: Booking
-        renames properties and renders one hotel URL with or without a locale suffix or on
-        either host. Any other difference fails closed.
+        saved. The property name and reference also drive price checks. A reference may differ
+        only as another rendering of the same recognized Booking hotel URL (locale suffix or
+        host); the stored reference is kept. A new name is accepted only when that URL proof
+        holds and a code-owned reader took the name and URL from one verified page anchor, so
+        provider output cannot rename a saved hotel. Any other difference fails closed.
         """
 
         def _different(column: str, observed: object | None) -> bool:
@@ -1490,7 +1491,9 @@ class SqliteAccountReservationRepository:
         same_hotel = cls._same_recognized_hotel(existing["property_ref"], observation.property_ref)
         if _different("property_ref", observation.property_ref) and not same_hotel:
             conflicts.append("property_ref")
-        if _different("property_name", observation.property_name) and not same_hotel:
+        if _different("property_name", observation.property_name) and not (
+            same_hotel and observation.property_anchor_verified
+        ):
             conflicts.append("property_name")
         if (
             observation.lifecycle is not ReservationLifecycle.UNKNOWN
@@ -1576,18 +1579,16 @@ class SqliteAccountReservationRepository:
             observation,
             lifecycle=lifecycle,
             confirmation_id=existing["confirmation_id"] or observation.confirmation_id,
-            # Name and URL follow the live page only when its URL proves the same hotel; the
-            # conflict check has already rejected every other difference.
+            # A renamed hotel follows the live page only under URL proof and a code-owned anchor;
+            # the conflict check has already rejected every other name difference. The stored
+            # reference is kept so price validation keeps comparing against the same host.
             property_name=(
                 observation.property_name
-                if same_hotel and observation.property_name
+                if same_hotel and observation.property_anchor_verified
+                and observation.property_name
                 else existing["property_name"] or observation.property_name
             ),
-            property_ref=(
-                observation.property_ref
-                if same_hotel
-                else existing["property_ref"] or observation.property_ref
-            ),
+            property_ref=existing["property_ref"] or observation.property_ref,
             check_in=(
                 date.fromisoformat(existing["check_in"])
                 if existing["check_in"]

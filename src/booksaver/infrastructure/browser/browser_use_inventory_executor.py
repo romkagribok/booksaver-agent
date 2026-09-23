@@ -15,7 +15,7 @@ import time
 import unicodedata
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import Any, Protocol, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -1771,6 +1771,14 @@ class LocalBrowserUseInventoryRuntime:
                               for raw in result.reservations],
             )
             scopes, reservations = _map_browser_use_observation(payload)
+            # The grouped reader takes name and URL only from the single confirmation-header
+            # anchor (inventory_confirmation_facts), never from provider output.
+            reservations = tuple(
+                replace(item, property_anchor_verified=True)
+                if item.property_name is not None and item.property_reference is not None
+                else item
+                for item in reservations
+            )
         except (TypeError, ValueError):
             return BrowserUseRuntimeResult(InventoryExecutionStatus.VALIDATION_FAILURE)
         # Export only the verified bytes retained before the desktop preference switch.

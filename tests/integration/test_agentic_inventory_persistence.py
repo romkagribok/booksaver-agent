@@ -350,7 +350,7 @@ def test_conflicting_agentic_positive_fails_closed_without_overwriting_safe_stat
 def test_agentic_refresh_accepts_renamed_property_and_locale_variant_reference(
     tmp_path: Path, stored_ref: str, observed_ref: str,
 ) -> None:
-    """An inventory refresh keeps booked facts but follows Booking's live name and hotel URL."""
+    """An anchored refresh keeps booked facts and the stored URL but follows a renamed hotel."""
     with SqliteStore(tmp_path / "booksaver.db") as store:
         owner = SqliteUserRepository(store).get_owner()
         repo = SqliteAccountReservationRepository(store)
@@ -373,6 +373,7 @@ def test_agentic_refresh_accepts_renamed_property_and_locale_variant_reference(
             booked_total=None,
             refund_deadline=None,
             extraction_method="agentic_inventory",
+            property_anchor_verified=True,
         )
 
         report = repo.reconcile(
@@ -395,11 +396,11 @@ def test_agentic_refresh_accepts_renamed_property_and_locale_variant_reference(
         assert after.account_reservation_id == before.account_reservation_id
         assert after.monitoring_booking_id == before.monitoring_booking_id
         assert after.observation.property_name == "Hotel Example by Marriott"
-        assert after.observation.property_ref == observed_ref
+        assert after.observation.property_ref == stored_ref
         assert after.observation.booked_total == original.booked_total
         assert after.observation.refund_deadline == original.refund_deadline
         assert after.last_sync_run_id == report.run_id
-        assert tuple(projection) == ("Hotel Example by Marriott", observed_ref)
+        assert tuple(projection) == ("Hotel Example by Marriott", stored_ref)
 
 
 def test_agentic_lifecycle_conflict_cannot_requalify_a_saved_projection(
@@ -567,6 +568,7 @@ def test_empty_raw_terminal_cannot_mask_failed_validation_on_reload(tmp_path):
 _STORED_URL = "https://www.booking.com/hotel/us/hotel-example.html"
 
 
+@pytest.mark.parametrize("anchored", [False, True])
 @pytest.mark.parametrize(
     "stored_ref, observed_name, observed_ref",
     [
@@ -585,7 +587,7 @@ _STORED_URL = "https://www.booking.com/hotel/us/hotel-example.html"
     ],
 )
 def test_agentic_refresh_rejects_unproven_property_change(
-    tmp_path: Path, stored_ref: str, observed_name: str, observed_ref: str | None,
+    tmp_path: Path, stored_ref: str, observed_name: str, observed_ref: str | None, anchored: bool,
 ) -> None:
     """Name and URL feed price checks, so only a URL-proven same hotel may change them."""
     with SqliteStore(tmp_path / "booksaver.db") as store:
@@ -608,6 +610,7 @@ def test_agentic_refresh_rejects_unproven_property_change(
             property_name=observed_name,
             property_ref=observed_ref,
             extraction_method="agentic_inventory",
+            property_anchor_verified=anchored,
         )
 
         report = repo.reconcile(
@@ -621,3 +624,76 @@ def test_agentic_refresh_rejects_unproven_property_change(
 
         assert report.failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT
         assert repo.list_for_user(owner.user_id) == before
+
+
+def test_provider_submitted_rename_is_rejected_even_with_matching_url(tmp_path: Path) -> None:
+    """Only a code-owned anchor ties a new name to the URL; provider output cannot rename."""
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+        original = replace(_reservation(), property_ref=_STORED_URL)
+        repo.reconcile(
+            user_id=owner.user_id,
+            run_id="seed-provider-rename",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((original,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW,
+        )
+        before = repo.list_for_user(owner.user_id)
+        renamed = replace(
+            original,
+            remote_id=original.confirmation_id or "",
+            observed_at=NOW + timedelta(minutes=1),
+            property_name="Other Hotel",
+            property_ref="https://www.booking.com/hotel/us/hotel-example.en-us.html",
+            extraction_method="agentic_inventory",
+        )
+
+        report = repo.reconcile(
+            user_id=owner.user_id,
+            run_id="agentic-provider-rename",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((renamed,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW + timedelta(minutes=1),
+        )
+
+        assert report.failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT
+        assert repo.list_for_user(owner.user_id) == before
+
+
+def test_locale_variant_without_rename_needs_no_anchor(tmp_path: Path) -> None:
+    """The motivating legacy-URL refresh succeeds from any agentic source when names agree."""
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+        original = replace(_reservation(), property_ref=_STORED_URL)
+        repo.reconcile(
+            user_id=owner.user_id,
+            run_id="seed-locale-only",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((original,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW,
+        )
+        refreshed = replace(
+            original,
+            remote_id=original.confirmation_id or "",
+            observed_at=NOW + timedelta(minutes=1),
+            property_ref="https://secure.booking.com/hotel/us/hotel-example.en-us.html",
+            extraction_method="agentic_inventory",
+        )
+
+        report = repo.reconcile(
+            user_id=owner.user_id,
+            run_id="agentic-locale-only",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((refreshed,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW + timedelta(minutes=1),
+        )
+
+        assert report.failure_code is None
+        assert report.eligible == 1
+        assert repo.list_for_user(owner.user_id)[0].observation.property_ref == _STORED_URL

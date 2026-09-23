@@ -531,6 +531,9 @@ def _merge_compatible(
         occupancy=occupancy,
         all_in=all_in,
         refundability=refundability,
+        property_anchor_verified=(
+            left.property_anchor_verified and right.property_anchor_verified
+        ),
         completeness=(
             EvidenceCompleteness.COMPLETE
             if left.completeness is right.completeness is EvidenceCompleteness.COMPLETE
@@ -593,4 +596,5 @@ def _to_reservation_observation(
         occupancy=observed.occupancy,
         source_url="",
         extraction_method="agentic_inventory",
+        property_anchor_verified=observed.property_anchor_verified,
     )

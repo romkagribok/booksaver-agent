@@ -183,6 +183,9 @@ def test_parsed_positive_uses_mapper_and_preserves_original_price_session(monkey
     reservation = result.reservations[0]
     assert reservation.remote_id == "1234567890"
     assert reservation.property_name == "Synthetic Hotel"
+    # Name and URL came from the reader's single confirmation-header anchor.
+    assert reservation.property_reference is not None
+    assert reservation.property_anchor_verified is True
     assert reservation.lifecycle.value == "upcoming"
     assert reservation.completeness is EvidenceCompleteness.INCOMPLETE
     assert len(result.scopes) == 1

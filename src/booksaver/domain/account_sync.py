@@ -302,6 +302,8 @@ class ReservationObservation:
     occupancy: Occupancy | None = None
     source_url: str = ""
     extraction_method: str = "dom"
+    # True only when a code-owned reader took name and URL from one verified page anchor.
+    property_anchor_verified: bool = False
 
     def __post_init__(self) -> None:
         if not self.remote_id.strip():
