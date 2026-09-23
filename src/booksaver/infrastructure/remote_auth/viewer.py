@@ -54,11 +54,12 @@ body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
  <button id="fullscreen" type="button" hidden aria-pressed="false">Full screen</button>
 </div>
 <p id="size-hint" role="status" hidden></p>
-<p id="help">Tap a Booking.com field, then tap Keyboard or Paste. Use Next or Enter to continue.</p>
+<p id="help">Tap a Booking.com field, then tap Keyboard or Paste. A code suggested above the
+ keyboard is typed for you. Use Next or Enter to continue.</p>
 <div id="viewer"><div id="screen" aria-label="Remote Booking.com browser"></div></div>
 <div id="paste-panel" hidden>
- <label for="paste-value">Paste English letters, numbers or symbols, then tap Insert.</label>
- <input id="paste-value" type="password" autocomplete="off" autocapitalize="none"
+ <label for="paste-value">Paste here; it goes straight to the selected Booking.com field.</label>
+ <input id="paste-value" type="password" autocomplete="one-time-code" autocapitalize="none"
   autocorrect="off" spellcheck="false" aria-label="Text to paste into the remote field">
  <button id="paste-insert" type="button" disabled>Insert</button>
  <button id="paste-close" type="button">Close</button>
@@ -71,7 +72,8 @@ body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
  <button id="help-button" type="button" aria-controls="help" aria-expanded="true">Help</button>
  <button id="cancel" type="button">Cancel</button>
 </div>
-<input id="capture" type="password" inputmode="text" autocomplete="off" autocapitalize="none"
+<input id="capture" type="password" inputmode="text" autocomplete="one-time-code"
+ autocapitalize="none"
  autocorrect="off" spellcheck="false" tabindex="-1" aria-label="Remote browser keyboard input">
 <script nonce="__NONCE__">
 const launchToken=__LAUNCH_TOKEN__;
@@ -127,6 +129,8 @@ let inputGeneration=0;
 let pasteAttempt=null;
 const maxPasteCodepoints=1024;
 const pasteKeyIntervalMs=50;
+const hostClipboardTimeoutMs=800;
+let pasteValueLength=0;
 
 function updateFullscreen(){
  const active=Boolean(tg&&tg.isFullscreen);
@@ -238,6 +242,7 @@ function invalidatePaste(){
  if(pasteAttempt)pasteAttempt.characters=[];
  pasteAttempt=null;
  pasteValue.value='';
+ pasteValueLength=0;
  pastePanel.hidden=true;
 }
 function pasteReady(){
@@ -259,6 +264,7 @@ function finishPaste(attempt){
  attempt.characters=[];
  pasteAttempt=null;
  pasteValue.value='';
+ pasteValueLength=0;
  resetKeyboardInput();
 }
 function pasteCharacters(text){
@@ -282,7 +288,14 @@ function showPasteFallback(){
  if(!pasteReady())return;
  pastePanel.hidden=false;
  pasteValue.focus({preventScroll:true});
- setStatus('Paste into the box below, then tap Insert. Select the Booking.com field first.');
+ setStatus(touchFirst?
+  'Long-press the box and choose Paste, or tap a code suggested above the keyboard. '+
+  'It is sent right away.':
+  'Paste into the box with Ctrl+V or Cmd+V. It is sent right away.');
+}
+function insertFromPanel(text){
+ const attempt=beginPaste();
+ if(attempt)insertPaste(attempt,text);
 }
 function insertPaste(attempt,text){
  if(!ownsPaste(attempt))return;
@@ -317,26 +330,41 @@ function insertPaste(attempt,text){
    if(attempt.offset<attempt.characters.length){setTimeout(sendChunk,pasteKeyIntervalMs);return;}
    finishPaste(attempt);
    pastePanel.hidden=true;
-   attempt.connection.focus();
+   if(attempt.restoreFocus!==false)attempt.connection.focus();
    setStatus('Text sent to the selected field.');
   }catch(_){finishPaste(attempt);setStatus('Could not insert text. Try Paste again.');}
  };
  sendChunk();
 }
+function readHostClipboard(){
+ // Telegram's Mini App clipboard read. It answers null when the host does not permit it,
+ // and a silent host is treated the same after a short wait.
+ return new Promise(resolve=>{
+  let settled=false;
+  const settle=value=>{if(!settled){settled=true;resolve(typeof value==='string'?value:null);}};
+  try{
+   if(!tg||typeof tg.readTextFromClipboard!=='function'||
+      typeof tg.isVersionAtLeast!=='function'||!tg.isVersionAtLeast('6.4')){settle(null);return;}
+   setTimeout(()=>settle(null),hostClipboardTimeoutMs);
+   tg.readTextFromClipboard(settle);
+  }catch(_){settle(null);}
+ });
+}
 async function readPaste(event){
  if(!event.isTrusted)return;
  const attempt=beginPaste();
  if(!attempt)return;
+ let text=null;
  try{
-  if(!navigator.clipboard||typeof navigator.clipboard.readText!=='function')throw new Error();
-  let text=await navigator.clipboard.readText();
-  if(ownsPaste(attempt))insertPaste(attempt,text);
-  text='';
- }catch(_){
-  if(!ownsPaste(attempt))return;
-  finishPaste(attempt);
-  showPasteFallback();
- }
+  if(navigator.clipboard&&typeof navigator.clipboard.readText==='function')
+   text=await navigator.clipboard.readText();
+ }catch(_){text=null;}
+ if(!ownsPaste(attempt))return;
+ if(typeof text!=='string')text=await readHostClipboard();
+ if(!ownsPaste(attempt))return;
+ if(typeof text==='string'){insertPaste(attempt,text);text='';return;}
+ finishPaste(attempt);
+ showPasteFallback();
 }
 function remoteInputTarget(target){
  return target===captureNode||viewerNode.contains(target);
@@ -367,8 +395,9 @@ window.addEventListener('paste',event=>{
  if(!pasteReady()||pasteAttempt)return;
  let text=event.clipboardData&&event.clipboardData.getData('text/plain');
  if(event.target===pasteValue){
-  if(pasteCharacters(text)){pasteValue.value=text;}
-  else{pasteValue.value='';setStatus(pasteError(text));}
+  pasteValue.value='';
+  pasteValueLength=0;
+  insertFromPanel(text);
  }else{
   const attempt=beginPaste();
   if(attempt)insertPaste(attempt,text);
@@ -396,9 +425,18 @@ function keyInput(event){
    break;
   }
  }
+ // A suggested one-time code, clipboard chip or autofill arrives as one multi-character
+ // input. Some hosts replace the whole field, discarding the placeholder buffer; that is
+ // not a deletion, so a bulk arrival never sends backspaces derived from the placeholder.
+ if(inputs>=2)backspaces=0;
  for(let i=0;i<backspaces;i++)rfb.sendKey(KeyTable.XK_BackSpace,'Backspace');
- for(let i=newLen-inputs;i<newLen;i++)rfb.sendKey(keysyms.lookup(newValue.charCodeAt(i)));
+ // Pace a bulk arrival like a paste so auto-advancing fields keep up; keep the keyboard open.
+ const inserted=inputs>0?newValue.slice(newLen-inputs,newLen):'';
+ const paced=inputs>=2&&pasteCharacters(inserted)?beginPaste():null;
+ if(paced)paced.restoreFocus=false;
+ else for(let i=newLen-inputs;i<newLen;i++)rfb.sendKey(keysyms.lookup(newValue.charCodeAt(i)));
  resetKeyboardInput();
+ if(paced)insertPaste(paced,inserted);
  if(newLen<1){
   event.target.blur();
   setTimeout(()=>event.target.focus({preventScroll:true}),0);
@@ -546,8 +584,19 @@ pasteButton.addEventListener('click',event=>{
 });
 pasteInsert.addEventListener('click',event=>{
  if(!event.isTrusted)return;
- const attempt=beginPaste();
- if(attempt)insertPaste(attempt,pasteValue.value);
+ insertFromPanel(pasteValue.value);
+});
+pasteValue.addEventListener('input',event=>{
+ const value=pasteValue.value;
+ const added=value.length-pasteValueLength;
+ pasteValueLength=value.length;
+ const suggested=['insertFromPaste','insertReplacementText','insertFromDrop']
+  .includes(event.inputType);
+ if(!pasteAttempt&&(suggested||added>=2)&&pasteCharacters(value)){
+  pasteValue.value='';
+  pasteValueLength=0;
+  insertFromPanel(value);
+ }
 });
 pasteClose.addEventListener('click',()=>{invalidatePaste();if(pasteReady())rfb.focus();});
 fullscreenButton.addEventListener('click',toggleFullscreen);

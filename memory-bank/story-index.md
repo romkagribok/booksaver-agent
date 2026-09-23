@@ -675,3 +675,4 @@ are assigned exactly once.
 |-------|-------|-----|--------|------|
 | `US-198` | Paste on desktop and mobile | Reliability | Complete | `002-remote-login-paste/stories/001-paste-desktop-and-mobile.md` |
 | `US-199` | Guard and qualify clipboard input | Reliability | Complete | `002-remote-login-paste/stories/002-guard-and-qualify-paste.md` |
+| `US-200` | Seamless mobile paste | Reliability | Complete | `002-remote-login-paste/stories/003-seamless-mobile-paste.md` |

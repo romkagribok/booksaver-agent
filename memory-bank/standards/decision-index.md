@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-09-20T20:07:43Z
-total_decisions: 51
+total_decisions: 52
 ---
 
 # Decision Index
@@ -513,3 +513,10 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/079-remote-login-paste/adr-051-explicit-user-paste.md`
 - **Summary**: Permit explicit one-way local paste through the existing RFB input channel with transient text and teardown guards.
 - **Read when**: Changing remote login keyboard, clipboard, mobile input or credential handling.
+
+### ADR-052: Layered explicit paste sources
+- **Status**: accepted
+- **Bolt**: 080-seamless-mobile-paste
+- **Path**: `bolts/080-seamless-mobile-paste/adr-052-layered-explicit-paste-sources.md`
+- **Summary**: Behind one gesture try browser, host and box clipboard sources; send bulk arrivals immediately and paced; advertise one-time-code hints.
+- **Read when**: Changing remote login paste, keyboard suggestions, host clipboard integration or mobile input flow.

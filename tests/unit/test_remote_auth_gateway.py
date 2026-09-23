@@ -137,7 +137,10 @@ def test_bootstrap_exposes_safe_touch_keyboard_and_viewport_controls(tmp_path: P
     body = app.handle("GET", "/connect/launch-secret", {}).body.decode()
 
     assert 'id="capture" type="password"' in body
-    assert 'autocomplete="off"' in body
+    # Local fields never autofill saved passwords; they only advertise one-time-code hints so a
+    # phone keyboard may suggest a verification code from Messages, Mail or notifications.
+    assert 'autocomplete="off"' not in body
+    assert body.count('autocomplete="one-time-code"') == 2
     assert 'autocorrect="off"' in body
     assert 'id="keyboard"' in body
     assert 'id="next"' in body

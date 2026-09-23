@@ -96,3 +96,16 @@ The user is informed in progress and final handoff; native Telegram physical inp
 Released to production on 2026-09-22 as image `continuity-a557487` (merge `8956f4d`). See
 `memory-bank/operations/releases/a557487-session-continuity-paste.md`. Live daily renewal and native
 Telegram paste are to be confirmed from production behaviour and user feedback.
+
+## Amendment 2026-09-22: seamless mobile paste
+
+7. **Seamless paste (approved 2026-09-23T00:03:03Z).** After native acceptance showed the masked box plus Insert
+   to be clunky on mobile, the user asked for the most seamless paste possible. The Paste control
+   tries every explicit, user-gesture clipboard source in order: the browser clipboard read, then
+   Telegram's Mini App clipboard read (available only where the host permits it), then the masked
+   box. Any text that arrives in the box or in the keyboard capture field as one multi-character
+   input (a native paste, a suggested one-time code, a keyboard clipboard chip) is sent right away,
+   paced for auto-advancing fields, without an Insert tap; characters typed one at a time keep
+   Insert. Both local fields advertise `one-time-code` so phone keyboards may suggest codes from
+   Messages/Mail/notifications. Requirement 6 is unchanged: no background clipboard reads, no
+   Telegram messages carrying codes, no storage, no automatic submission, ASCII-only delivery.
