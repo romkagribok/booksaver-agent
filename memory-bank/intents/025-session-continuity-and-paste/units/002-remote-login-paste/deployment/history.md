@@ -1,7 +1,7 @@
 ---
-version: paste-7995864
+version: seamless-f2bb781
 created: "2026-09-20T20:31:21Z"
-updated: "2026-09-22T02:38:03Z"
+updated: "2026-09-23T00:46:55Z"
 status: complete
 ---
 
@@ -99,3 +99,32 @@ recreated only BookSaver. Daemon started **2026-09-22T02:37:08Z**; healthy at **
 Post-promotion: running/healthy, 0 restarts, OOM false, heartbeat 6 s, clean startup log, no host
 ports for 8080/5900/6080, no orphan browser processes, config unchanged. Disk after the authorized
 image prune: 24% used. Native Telegram acceptance of the paced paste remains user-driven.
+
+## Release seamless-f2bb781 — seamless mobile paste (US-200, Bolt 080)
+
+PR #59 (final head `f2bb781eed5b71ca976404a7c3eff46b24ec0be3`): behind one Paste tap the viewer
+tries the browser clipboard, then Telegram's Mini App clipboard read (bounded 800 ms), then the
+masked box; bulk arrivals in the box or the keyboard capture field (native paste, suggested
+one-time code, clipboard chip, autofill) are sent immediately and paced without Insert; both
+fields advertise `one-time-code`. Bugbot found that a whole-field autofill replacement would
+relay the placeholder buffer as backspaces; fixed so bulk arrivals never delete. Current-head
+Bugbot passed; merge gate passed with one resolved thread. Full suite, Ruff, mypy125, AI-DLC
+validator clean.
+
+Image `booksaver-agent:seamless-f2bb781` = `sha256:c57ca9803e3b5a754ec6f6ae1a8f41636ffd6fa6990852ece5f66b7af9762987`,
+built 2026-09-23T00:42:27Z on base `paste-7995864`; installed-source fingerprint equals the Git
+tree at f2bb781; 125 modules and eight pins matched; `pip check` clean. Dev (`dev-f2bb781.log`):
+smoke 2.68 s, three Linux supervisor cleanup cases, **31 packaged ASCII paste checks**, and the
+six-box probe passing shortcut, masked Insert, keyboard suggestion (keyboard stays open), native
+box paste, and whole-field replacement autofill with two pre-typed digits preserved (`774829`),
+zero submissions. Session-verification staging was not repeated (viewer-only change; user asked
+to stop probing Booking.com's edge).
+
+Merged **2026-09-23** as `4986db1c66f5271b5c008161b6537f439f375fcc`; `promote-f2bb781.sh` backed up
+to `/opt/booksaver-backups/seamless-f2bb781-20260923` (0700/0600, archive SHA-256
+`588a977b2a45c7ca43795399666e75bfa1ec84ab2068835aa2f9109dc7e40d35`, verified), passed
+pre-promotion SQLite checks, tagged `booksaver-agent:rollback-pre-seamless-f2bb781`
+(`sha256:81bceb3e…`), and recreated only BookSaver. Daemon started **2026-09-23T00:45:46Z**;
+healthy at **00:45:57Z**. Post-promotion: running/healthy, 0 restarts, OOM false, heartbeat 3 s,
+clean startup log, no host ports for 8080/5900/6080, no orphan browser processes, config
+unchanged, SQLite quick_check ok, disk 24%. Native Telegram acceptance is user-driven.
