@@ -379,8 +379,8 @@ def test_platform_fallbacks_and_bounded_rfb_reconnect(
     assert not desktop_page.locator("body").evaluate(
         "element => element.classList.contains('touch-first')"
     )
-    assert desktop_page.locator("#help").is_hidden()
-    assert desktop_page.locator("#help-button").is_hidden()
+    assert desktop_page.locator("#help").count() == 0
+    assert desktop_page.locator("#help-button").count() == 0
     assert desktop_page.locator("#keyboard").is_visible()
     assert desktop_page.evaluate("window.__rfbInstances[0].focusOnClick") is True
 
@@ -547,7 +547,7 @@ def test_fullscreen_compatibility_never_blocks_login(
     )
     if mode in {"throw", "unsupported"}:
         assert desktop_page.locator("#size-hint").is_visible()
-        assert "connected" in desktop_page.locator("#status").inner_text()
+        assert "connected" in desktop_page.locator("#status").inner_text().lower()
     if mode in {"missing", "old", "unsupported"}:
         assert desktop_page.locator("#fullscreen").is_hidden()
     # Resize/host events cannot cause an automatic retry or an authentication exchange.
@@ -1313,16 +1313,8 @@ def test_phone_layout_is_compact_and_negotiates_the_stream_aspect(
         "parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stream-aspect'))"
     )
     assert abs(aspect - area["height"] / area["width"]) < 0.01
-    # Help is collapsed behind the header control and expands on demand.
-    assert browser_page.locator("#help").is_hidden()
-    assert browser_page.locator("#help-button").evaluate(
-        "node => node.closest('#header') !== null"
-    )
-    browser_page.locator("#help-button").click()
-    assert browser_page.locator("#help").is_visible()
-    assert "Google, Apple" in browser_page.locator("#help").inner_text()
-    browser_page.locator("#help-button").click()
-    assert browser_page.locator("#help").is_hidden()
+    # No help control or paragraph clutters the page.
+    assert browser_page.locator("#help, #help-button").count() == 0
     # One-row dock including Cancel; single-line status.
     tops = browser_page.evaluate(
         "[...document.querySelectorAll('#dock button')].map(b => b.getBoundingClientRect().top)"

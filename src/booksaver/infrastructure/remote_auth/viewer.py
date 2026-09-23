@@ -24,11 +24,10 @@ body{height:var(--app-height);display:flex;flex-direction:column;background:#101
  font:15px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 #header{display:flex;align-items:center;gap:6px;flex-shrink:0;background:#182633;
  padding-right:8px}
-#status{padding:6px 12px;background:#182633;line-height:1.25;min-height:32px;font-size:14px}
-#status{flex:1;min-width:0}#fullscreen,#help-button{flex-shrink:0;margin:4px 0}
-#help-button{min-width:40px;padding:6px 8px}
+/* Two compact lines at most; the fixed height keeps the measured viewer area stable. */
+#status{padding:6px 12px;background:#182633;line-height:1.25;min-height:47px;font-size:14px}
+#status{flex:1;min-width:0}#fullscreen{flex-shrink:0;margin:4px 0}
 #size-hint{margin:0;padding:5px 12px;background:#22384a;font-size:13px;flex-shrink:0}
-#help{margin:0;padding:7px 12px;background:#22384a;color:#e6f2fa;font-size:13px}
 #viewer{flex:1;min-height:0;position:relative;overflow:auto;background:#000;overscroll-behavior:none}
 #screen{width:100%;height:100%;min-height:100%;touch-action:none}
 /* The remote framebuffer is sized to this viewer's aspect at exchange, so the fitted stream
@@ -51,24 +50,16 @@ button:disabled{opacity:.45}#keyboard{flex:1 0 auto}#cancel{background:#71383d;b
 #paste-panel[hidden]{display:none}
 body.keyboard-open #keyboard{background:#0878d1;border-color:#6cb9f1}
 body.keyboard-open #fullscreen{display:none}
-body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
-#help[hidden]{display:none}
 @media (orientation:landscape) and (max-height:520px){
- #status{padding:5px 10px;min-height:30px;font-size:13px}#help{padding:4px 10px}
+ #status{padding:5px 10px;min-height:30px;font-size:13px}
  #dock{padding-top:4px;padding-bottom:calc(4px + var(--safe-bottom))}
 }
 </style></head><body>
 <div id="header">
  <div id="status" role="status" aria-live="polite">Authorizing this connection…</div>
- <button id="help-button" type="button" aria-controls="help" aria-expanded="false"
-  aria-label="Help">?</button>
  <button id="fullscreen" type="button" hidden aria-pressed="false">Full screen</button>
 </div>
 <p id="size-hint" role="status" hidden></p>
-<p id="help" hidden>Tap a Booking.com field, then tap Keyboard or Paste. A code suggested above
- the keyboard is typed for you. Scroll the page by dragging the grey edge or with two fingers.
- Google, Apple and other external sign-in providers are disabled. Use Next or Enter to
- continue; this window closes after authentication.</p>
 <div id="viewer"><div id="screen" aria-label="Remote Booking.com browser"></div></div>
 <div id="paste-panel" hidden>
  <label for="paste-value">Paste here; it goes straight to the selected Booking.com field.</label>
@@ -91,7 +82,6 @@ body:not(.touch-first) #help,body:not(.touch-first) #help-button{display:none}
 const launchToken=__LAUNCH_TOKEN__;
 const terminalStatuses=new Set(['succeeded','failed','expired','cancelled']);
 const statusNode=document.getElementById('status');
-const helpNode=document.getElementById('help');
 const viewerNode=document.getElementById('viewer');
 const screenNode=document.getElementById('screen');
 const dockNode=document.getElementById('dock');
@@ -104,7 +94,6 @@ const pasteInsert=document.getElementById('paste-insert');
 const pasteClose=document.getElementById('paste-close');
 const nextButton=document.getElementById('next');
 const enterButton=document.getElementById('enter');
-const helpButton=document.getElementById('help-button');
 const cancelButton=document.getElementById('cancel');
 const fullscreenButton=document.getElementById('fullscreen');
 const sizeHintNode=document.getElementById('size-hint');
@@ -508,7 +497,7 @@ async function connectViewer(state){
   if(rfb!==current||terminalState)return;
   viewerError=false;
   connectedAt=Date.now();
-  setStatus('Remote browser connected. Sign in with your Booking.com email and password.');
+  setStatus('Connected. Sign in with your Booking.com email and password.');
   setControlsEnabled(true);
   touchKeyboard=new modules.Keyboard(captureNode);
   touchKeyboard.onkeyevent=(keysym,code,down)=>{
@@ -660,11 +649,6 @@ pasteClose.addEventListener('click',()=>{invalidatePaste();if(pasteReady())rfb.f
 fullscreenButton.addEventListener('click',toggleFullscreen);
 nextButton.addEventListener('click',()=>sendShortcut(KeyTable.XK_Tab,'Tab'));
 enterButton.addEventListener('click',()=>sendShortcut(KeyTable.XK_Return,'Enter'));
-helpButton.addEventListener('click',()=>{
- const hidden=helpNode.hidden;
- helpNode.hidden=!hidden;
- helpButton.setAttribute('aria-expanded',String(hidden));
-});
 cancelButton.addEventListener('click',async()=>{
  closeRequested=true;
  teardownInput();

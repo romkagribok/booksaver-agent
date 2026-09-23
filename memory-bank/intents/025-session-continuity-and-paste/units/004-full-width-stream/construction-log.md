@@ -2,7 +2,7 @@
 unit: 004-full-width-stream
 intent: 025-session-continuity-and-paste
 created: "2026-09-23T15:43:35Z"
-last_updated: "2026-09-23T16:38:10Z"
+last_updated: "2026-09-23T19:45:31Z"
 ---
 
 # Full-width stream construction log
@@ -22,3 +22,8 @@ the framebuffer in the viewer state (Bolt 082 test report).
 
 2026-09-23T16:38:10Z: US-203 approved (cursor off for touch, tablet-sized framebuffer). Bolt 083 modelled and
 designed in its bolt file, implemented in the runner and domain with unit and probe coverage.
+
+2026-09-23T19:45:31Z: User feedback after native use: the "?" help control and its paragraph clutter the page.
+Both removed (US-202 acceptance amended: no help control; the status line carries the
+instruction). The status keeps a fixed two-line height so the measured viewer area stays stable
+between exchange and connection; the connected message is shortened. Browser tests updated.

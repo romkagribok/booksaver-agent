@@ -20,6 +20,6 @@ so that signing in is not a squint through grey bars.
   framebuffer; no tab strip or address bar is streamed.
 - On touch phones the viewer scales the stream to the full width and scrolls it vertically;
   desktop logins keep fit-to-screen behaviour.
-- Status is one compact line, help is collapsed behind a header button, and the dock is a single
-  row including Cancel.
+- Status is at most two compact lines with a fixed height, there is no help control or
+  paragraph, and the dock is a single row including Cancel.
 - Existing keyboard, paste, resume and capture behaviour is unchanged.
