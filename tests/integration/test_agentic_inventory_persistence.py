@@ -6,6 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from _pytest.logging import LogCaptureFixture
 
 from booksaver.domain.account_sync import (
     InventoryCompleteness,
@@ -270,12 +271,14 @@ def test_agentic_confirmation_match_merges_legacy_internal_remote_identity(
 
 
 def test_conflicting_agentic_positive_fails_closed_without_overwriting_safe_state(
-    tmp_path: Path,
+    tmp_path: Path, caplog: LogCaptureFixture,
 ) -> None:
     with SqliteStore(tmp_path / "booksaver.db") as store:
         owner = SqliteUserRepository(store).get_owner()
         repo = SqliteAccountReservationRepository(store)
-        original = _reservation()
+        original = replace(
+            _reservation(), property_ref="https://www.booking.com/hotel/us/hotel-example.html",
+        )
         repo.reconcile(
             user_id=owner.user_id,
             run_id="seed-conflict-inventory",
@@ -291,13 +294,15 @@ def test_conflicting_agentic_positive_fails_closed_without_overwriting_safe_stat
         conflicting = replace(
             original,
             observed_at=NOW + timedelta(minutes=1),
-            property_name="Different Hotel",
+            property_ref="https://www.booking.com/hotel/us/different-hotel.en-us.html",
+            room_type="Different Room",
             extraction_method="agentic_inventory",
         )
 
-        report = repo.reconcile(
-            user_id=owner.user_id,
-            run_id="agentic-conflicting-positive",
+        with caplog.at_level("WARNING"):
+            report = repo.reconcile(
+                user_id=owner.user_id,
+                run_id="agentic-conflicting-positive",
             trigger=SynchronizationTrigger.BOOKINGS,
             session_revision="session-1",
             result=InventoryDiscoveryResult(
@@ -311,11 +316,87 @@ def test_conflicting_agentic_positive_fails_closed_without_overwriting_safe_stat
         assert report.completeness is InventoryCompleteness.FAILED
         assert report.failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT
         assert after.monitoring_booking_id == before.monitoring_booking_id
-        assert after.observation.property_name == original.property_name
+        assert after.observation.property_ref == original.property_ref
+        assert after.observation.room_type == original.room_type
         assert repo.positively_observed_booking_ids_for_run(
             user_id=owner.user_id,
             run_id=report.run_id,
         ) == ()
+        # The conflict names the disagreeing fields for operators without leaking content.
+        assert "agentic-conflicting-positive" in caplog.text
+        assert "property_ref" in caplog.text
+        assert "room_type" in caplog.text
+        assert "different-hotel" not in caplog.text
+        assert "6992391225" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "stored_ref, observed_ref",
+    [
+        (
+            "https://www.booking.com/hotel/us/hotel-example.html",
+            "https://www.booking.com/hotel/us/hotel-example.en-us.html",
+        ),
+        (
+            "https://www.booking.com/hotel/us/hotel-example.en-gb.html",
+            "https://www.booking.com/hotel/us/hotel-example.html",
+        ),
+        ("legacy-hotel-id-12345", "https://www.booking.com/hotel/us/hotel-example.en-us.html"),
+    ],
+)
+def test_agentic_refresh_accepts_renamed_property_and_locale_variant_reference(
+    tmp_path: Path, stored_ref: str, observed_ref: str,
+) -> None:
+    """An inventory refresh keeps booked facts but follows Booking's live name and hotel URL."""
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+        original = replace(_reservation(), property_ref=stored_ref)
+        repo.reconcile(
+            user_id=owner.user_id,
+            run_id="seed-legacy-reference",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((original,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW,
+        )
+        before = repo.list_for_user(owner.user_id)[0]
+        refreshed = replace(
+            original,
+            remote_id=original.confirmation_id or "",
+            observed_at=NOW + timedelta(minutes=1),
+            property_name="Hotel Example by Marriott",
+            property_ref=observed_ref,
+            booked_total=None,
+            refund_deadline=None,
+            extraction_method="agentic_inventory",
+        )
+
+        report = repo.reconcile(
+            user_id=owner.user_id,
+            run_id="agentic-locale-variant",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((refreshed,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW + timedelta(minutes=1),
+        )
+        after = repo.list_for_user(owner.user_id)[0]
+        projection = store.conn.execute(
+            "SELECT property_name, property_ref FROM bookings WHERE booking_id = ?",
+            (after.monitoring_booking_id,),
+        ).fetchone()
+
+        assert report.completeness is InventoryCompleteness.INCOMPLETE
+        assert report.failure_code is None
+        assert report.eligible == 1
+        assert after.account_reservation_id == before.account_reservation_id
+        assert after.monitoring_booking_id == before.monitoring_booking_id
+        assert after.observation.property_name == "Hotel Example by Marriott"
+        assert after.observation.property_ref == observed_ref
+        assert after.observation.booked_total == original.booked_total
+        assert after.observation.refund_deadline == original.refund_deadline
+        assert after.last_sync_run_id == report.run_id
+        assert tuple(projection) == ("Hotel Example by Marriott", observed_ref)
 
 
 def test_agentic_lifecycle_conflict_cannot_requalify_a_saved_projection(

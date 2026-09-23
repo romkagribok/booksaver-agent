@@ -776,6 +776,7 @@ def test_bookings_keeps_incomplete_warning_for_ambiguous_positive_run(
         (SynchronizationFailureCode.USER_KEY_INVALID, "/setkey"),
         (SynchronizationFailureCode.AUTH_REQUIRED, "/connect"),
         (SynchronizationFailureCode.NAVIGATION_FAILED, "/bookings"),
+        (SynchronizationFailureCode.PERSISTENCE_CONFLICT, "kept your saved copy"),
     ],
 )
 def test_bookings_failure_shows_plain_guidance_without_internal_details(
@@ -826,6 +827,8 @@ def test_bookings_failure_shows_plain_guidance_without_internal_details(
         assert "/deletekey" in text
     if failure_code is SynchronizationFailureCode.NAVIGATION_FAILED:
         assert "/connect" not in text
+    if failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT:
+        assert "again in a few minutes" not in text
     assert "INTERNAL DETAIL" not in text
     assert failure_code.value not in text
     if has_saved_reservations:

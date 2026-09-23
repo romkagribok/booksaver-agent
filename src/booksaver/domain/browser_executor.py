@@ -511,8 +511,12 @@ def _normalized_name(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
-def _english_booking_property_identity(url: str) -> tuple[str, str, str] | None:
-    """Recognize only Booking's observed English hotel filename representations."""
+def english_booking_property_identity(url: str) -> tuple[str, str, str] | None:
+    """Recognize only Booking's observed English hotel filename representations.
+
+    The same property is rendered as ``<slug>.html`` or ``<slug>.en-us.html`` depending on the
+    locale of the page that linked it; both name one hotel.
+    """
     if any(character.isspace() or ord(character) < 32 for character in url):
         return None
     try:
@@ -557,10 +561,10 @@ def _property_reference_matches(query: TrustedPriceQuery, facts: ObservedQueryFa
             and parsed_trusted.path.rstrip("/") == parsed_observed.path.rstrip("/")
         ):
             return True
-        trusted_identity = _english_booking_property_identity(trusted)
+        trusted_identity = english_booking_property_identity(trusted)
         return (
             trusted_identity is not None
-            and trusted_identity == _english_booking_property_identity(observed)
+            and trusted_identity == english_booking_property_identity(observed)
         )
     # The registration flow explicitly permits the property name as its reference. In that
     # representation the independently observed exact visible name is the available identity proof;
