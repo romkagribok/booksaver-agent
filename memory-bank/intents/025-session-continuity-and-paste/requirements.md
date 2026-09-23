@@ -109,3 +109,17 @@ Telegram paste are to be confirmed from production behaviour and user feedback.
    Insert. Both local fields advertise `one-time-code` so phone keyboards may suggest codes from
    Messages/Mail/notifications. Requirement 6 is unchanged: no background clipboard reads, no
    Telegram messages carrying codes, no storage, no automatic submission, ASCII-only delivery.
+
+## Amendment 2026-09-23: resumable remote login
+
+8. **Resumable `/connect` (approved 2026-09-23T14:41:37Z).** Leaving the login page to fetch a verification
+   code must not end the login. The launch link stays usable by its Telegram owner (fresh signed
+   launch data, same user ID) until the attempt ends; each reopening issues a new viewer session
+   and revokes the previous one, so exactly one viewer is valid at a time. Leaving the page
+   detaches rather than cancels: the remote browser and its Booking.com page stay alive for a
+   three-minute grace and resume on return; only the Cancel button, a new `/connect`, the
+   timeout or the grace elapsing end it, with a plain Telegram message in the last case. Viewer
+   activity slides the deadline forward by the configured session window, never past thirty
+   minutes from creation. A reloaded page resumes its existing viewer session before spending
+   the link. The single browser gate, credential-blind gateway, replay protection of signed
+   launch data and all capture rules are unchanged.

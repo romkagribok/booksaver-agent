@@ -118,6 +118,8 @@ let viewerAuthorized=false;
 let closeRequested=false;
 let reconnectAttempted=false;
 let reconnectExhausted=false;
+let connectedAt=0;
+const stableConnectionMs=5000;
 let rfbConnecting=false;
 let pollTimer=null;
 let composing=false;
@@ -479,6 +481,7 @@ async function connectViewer(state){
  current.addEventListener('connect',()=>{
   if(rfb!==current||terminalState)return;
   viewerError=false;
+  connectedAt=Date.now();
   setStatus('Remote browser connected. Sign in with your Booking.com email and password.');
   setControlsEnabled(true);
   touchKeyboard=new modules.Keyboard(captureNode);
@@ -500,7 +503,11 @@ async function connectViewer(state){
   teardownInput();
   rfb=null;
   if(terminalState)return;
-  if(event.detail&&event.detail.clean===false&&!reconnectAttempted){
+  // One automatic reconnect per drop of a stable connection; a flapping link stays bounded
+  // until the user returns to the page, which re-arms it.
+  const stable=connectedAt>0&&Date.now()-connectedAt>=stableConnectionMs;
+  connectedAt=0;
+  if(event.detail&&event.detail.clean===false&&(!reconnectAttempted||stable)){
    reconnectAttempted=true;
    setViewerError('Remote browser disconnected. Reconnecting once…');
    schedulePoll(750);
@@ -520,6 +527,10 @@ function schedulePoll(delay=1000){
   pollTimer=null;
   void poll();
  },delay);
+}
+function pollNow(){
+ if(pollTimer!==null){clearTimeout(pollTimer);pollTimer=null;}
+ schedulePoll(0);
 }
 async function poll(){
  try{
@@ -556,20 +567,38 @@ async function poll(){
 async function start(){
  if(!tg||!tg.initData)throw new Error(
   'Open this page from the button in your private Telegram chat.');
- await jsonRequest('/api/connect/exchange',{method:'POST',
-  headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({launch_token:launchToken,init_data:tg.initData,login_device:loginDevice})});
+ // A reloaded page may still hold a valid viewer session. The server resumes it only when
+ // the cookie names the live attempt behind this launch link; anything else exchanges anew.
+ let resumed=false;
+ try{
+  await jsonRequest('/api/connect/resume',{method:'POST',
+   headers:{'Content-Type':'application/json'},body:JSON.stringify({launch_token:launchToken})});
+  resumed=true;
+ }catch(_){}
+ if(!resumed){
+  await jsonRequest('/api/connect/exchange',{method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({launch_token:launchToken,init_data:tg.initData,login_device:loginDevice})});
+ }
  viewerAuthorized=true;
  await poll();
 }
-function cancelOnClose(event){
+function detachOnClose(event){
  invalidatePaste();
  if(event&&event.persisted)return;
  if(!viewerAuthorized||terminalState||closeRequested)return;
- closeRequested=true;
- void fetch('/api/connect/cancel',{
+ // Leaving the page is not Cancel: the login stays alive for a grace period so the user
+ // can fetch a verification code and come back. Explicit Cancel still ends it at once.
+ void fetch('/api/connect/detach',{
   method:'POST',credentials:'same-origin',keepalive:true
  }).catch(()=>{});
+}
+function resumeOnReturn(){
+ if(!viewerAuthorized||terminalState||closeRequested)return;
+ if(document.visibilityState==='hidden')return;
+ reconnectAttempted=false;
+ reconnectExhausted=false;
+ pollNow();
 }
 
 keyboardButton.addEventListener('click',()=>{
@@ -632,7 +661,9 @@ dockNode.addEventListener('mousedown',event=>{
  if(document.body.classList.contains('keyboard-open')&&
     event.target.id!=='cancel')event.preventDefault();
 },true);
-window.addEventListener('pagehide',cancelOnClose);
+window.addEventListener('pagehide',detachOnClose);
+window.addEventListener('pageshow',resumeOnReturn);
+document.addEventListener('visibilitychange',resumeOnReturn);
 window.addEventListener('resize',updateViewport);
 if(window.visualViewport)window.visualViewport.addEventListener('resize',updateViewport);
 if(tg&&tg.onEvent){

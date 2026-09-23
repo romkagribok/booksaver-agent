@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-09-20T20:07:43Z
-total_decisions: 52
+total_decisions: 53
 ---
 
 # Decision Index
@@ -520,3 +520,10 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/080-seamless-mobile-paste/adr-052-layered-explicit-paste-sources.md`
 - **Summary**: Behind one gesture try browser, host and box clipboard sources; send bulk arrivals immediately and paced; advertise one-time-code hints.
 - **Read when**: Changing remote login paste, keyboard suggestions, host clipboard integration or mobile input flow.
+
+### ADR-053: Resumable remote login attempts
+- **Status**: accepted
+- **Bolt**: 081-remote-login-resume
+- **Path**: `bolts/081-remote-login-resume/adr-053-resumable-remote-login.md`
+- **Summary**: Owner-reopenable launch link with one live viewer, detach grace instead of cancel on leaving, and activity-slid expiry under a fixed ceiling.
+- **Read when**: Changing remote login capability lifetimes, cancellation, the browser gate hold, or viewer reconnection.

@@ -54,6 +54,11 @@ class RemoteBrowserWork:
     expires_at: datetime
     cancel_event: threading.Event
     login_device: LoginDevice = LoginDevice.MOBILE
+    # Live deadline when the attempt's expiry slides with viewer activity.
+    deadline: Callable[[], datetime] | None = None
+
+    def expired(self, now: datetime) -> bool:
+        return now >= (self.deadline() if self.deadline is not None else self.expires_at)
 
 
 @dataclass(frozen=True)
@@ -96,6 +101,11 @@ SuccessfulConnection = Callable[[int], None]
 IncidentSink = Callable[[IncidentDraft], None]
 Clock = Callable[[], datetime]
 _FINALIZATION_RESULT_RETENTION = timedelta(seconds=30)
+# A viewer that left the page (app switch, Mini App reload) may come back within this grace
+# before the attempt is closed; the remote browser and its Booking.com page stay alive meanwhile.
+DETACH_GRACE = timedelta(seconds=180)
+# Viewer activity slides the deadline forward, never past this bound from attempt creation.
+ATTEMPT_LIFETIME_CEILING = timedelta(seconds=1800)
 
 
 class _FailureIncidentPolicy(Enum):
@@ -122,6 +132,8 @@ class _Attempt:
     worker: threading.Thread | None = None
     suppress_cancel_notification: bool = False
     failure_incident_policy: _FailureIncidentPolicy = _FailureIncidentPolicy.PUBLISH
+    detached_at: datetime | None = None
+    closed_after_detach: bool = False
 
 
 def _digest(token: str) -> bytes:
@@ -301,13 +313,20 @@ class RemoteAuthenticationManager:
             attempt = self._attempt_for_launch_locked(launch_token, now)
             if attempt.telegram_user_id != telegram_user_id:
                 raise RemoteAuthDenied("This connection link is not available.")
+            # The link stays usable by its owner until the attempt ends, so a Mini App that
+            # Telegram closed or reloaded can reopen the same login. Exactly one viewer
+            # capability is valid at a time: a new exchange revokes the previous one.
             viewer_token = secrets.token_urlsafe(32)
             viewer_digest = _digest(viewer_token)
+            if attempt.viewer_digest is not None:
+                self._viewer_index.pop(attempt.viewer_digest, None)
+            else:
+                # The browser is sized for the first device; later reopenings reuse it.
+                attempt.login_device = LoginDevice.from_hint(login_device)
             attempt.viewer_digest = viewer_digest
             self._viewer_index[viewer_digest] = attempt.attempt_id
-            self._launch_index.pop(attempt.launch_digest, None)
-            attempt.launch_digest = b""
-            attempt.login_device = LoginDevice.from_hint(login_device)
+            attempt.detached_at = None
+            self._extend_locked(attempt, now)
             attempt.viewer_ready.set()
             return ViewerGrant(viewer_token, attempt.expires_at)
 
@@ -315,6 +334,8 @@ class RemoteAuthenticationManager:
         now = self._clock()
         with self._lock:
             attempt = self._attempt_for_viewer_locked(session_token, now)
+            attempt.detached_at = None
+            self._extend_locked(attempt, now)
             websocket_token: str | None = None
             websocket_path: str | None = None
             if attempt.status in {RemoteAuthStatus.READY, RemoteAuthStatus.CONNECTED}:
@@ -338,6 +359,47 @@ class RemoteAuthenticationManager:
             attempt.status = RemoteAuthStatus.CANCELLED
             attempt.cancel_event.set()
             return True
+
+    def resume(self, session_token: str, launch_token: str) -> bool:
+        """Re-attach an existing viewer only for the live attempt this launch link names."""
+        now = self._clock()
+        with self._lock:
+            attempt = self._attempt_for_viewer_locked(session_token, now)
+            if (
+                attempt.status.is_terminal
+                or not attempt.launch_digest
+                or not hmac.compare_digest(attempt.launch_digest, _digest(launch_token))
+            ):
+                raise RemoteAuthDenied("This connection session is invalid or expired.")
+            attempt.detached_at = None
+            self._extend_locked(attempt, now)
+            return True
+
+    def detach(self, session_token: str) -> bool:
+        """The viewer left the page; keep the login alive for DETACH_GRACE unless it returns."""
+        now = self._clock()
+        with self._lock:
+            attempt = self._attempt_for_viewer_locked(session_token, now)
+            if attempt.status.is_terminal or attempt.status is RemoteAuthStatus.FINALIZING:
+                return False
+            if attempt.detached_at is None:
+                attempt.detached_at = now
+            return True
+
+    def _live_deadline(self, attempt: _Attempt) -> datetime:
+        """Read by the browser worker every second; it also runs the detach-grace sweep so a
+        login whose viewer left and never returned is closed without any further API call."""
+        with self._lock:
+            self._expire_locked(self._clock())
+            return attempt.expires_at
+
+    def _extend_locked(self, attempt: _Attempt, now: datetime) -> None:
+        """Viewer activity keeps a full session window ahead, bounded from creation."""
+        if attempt.status.is_terminal or attempt.status is RemoteAuthStatus.FINALIZING:
+            return
+        ceiling = attempt.created_at + ATTEMPT_LIFETIME_CEILING
+        candidate = now + timedelta(seconds=self._settings.session_timeout_seconds)
+        attempt.expires_at = max(attempt.expires_at, min(candidate, ceiling))
 
     def cancel_for_telegram_user(self, telegram_user_id: int) -> bool:
         """Cancel a user's active login without requiring its viewer capability.
@@ -399,6 +461,7 @@ class RemoteAuthenticationManager:
                 expires_at=attempt.expires_at,
                 cancel_event=attempt.cancel_event,
                 login_device=attempt.login_device,
+                deadline=lambda: self._live_deadline(attempt),
             )
 
         def _ready() -> None:
@@ -562,7 +625,14 @@ class RemoteAuthenticationManager:
             and not attempt.suppress_cancel_notification
             and not self._daemon_stop_event.is_set()
         ):
-            self._safe_notify(chat_id, "Booking.com connection cancelled.")
+            if attempt.closed_after_detach:
+                self._safe_notify(
+                    chat_id,
+                    "The Booking.com login window stayed closed for a few minutes, so the "
+                    "connection ended. Send /connect when you're ready to try again.",
+                )
+            else:
+                self._safe_notify(chat_id, "Booking.com connection cancelled.")
 
     def _attempt_for_launch_locked(self, token: str, now: datetime) -> _Attempt:
         self._expire_locked(now)
@@ -589,11 +659,18 @@ class RemoteAuthenticationManager:
     def _expire_locked(self, now: datetime) -> None:
         stale: list[str] = []
         for attempt_id, attempt in self._attempts.items():
+            live = (not attempt.status.is_terminal
+                    and attempt.status is not RemoteAuthStatus.FINALIZING)
             if (
-                not attempt.status.is_terminal
-                and attempt.status is not RemoteAuthStatus.FINALIZING
-                and now >= attempt.expires_at
+                live
+                and attempt.detached_at is not None
+                and now - attempt.detached_at >= DETACH_GRACE
             ):
+                attempt.status = RemoteAuthStatus.CANCELLED
+                attempt.closed_after_detach = True
+                attempt.cancel_event.set()
+                continue
+            if live and now >= attempt.expires_at:
                 attempt.status = RemoteAuthStatus.EXPIRED
                 attempt.cancel_event.set()
                 continue
@@ -635,6 +712,11 @@ class RemoteAuthenticationManager:
             return "Connected. You can return to Telegram."
         if attempt.status is RemoteAuthStatus.EXPIRED:
             return "This connection timed out. Return to Telegram and send /connect again."
+        if attempt.status is RemoteAuthStatus.CANCELLED and attempt.closed_after_detach:
+            return (
+                "This login window stayed closed for a few minutes, so the connection ended. "
+                "Return to Telegram and send /connect again."
+            )
         if attempt.status is RemoteAuthStatus.CANCELLED:
             return "This connection was cancelled."
         if attempt.failure is RemoteAuthFailure.CAPTURE_REJECTED:

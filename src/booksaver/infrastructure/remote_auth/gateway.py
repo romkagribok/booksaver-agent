@@ -72,6 +72,14 @@ class RemoteAuthHttpApp:
             if not self._same_origin(headers):
                 return self._denied()
             return self._cancel(headers)
+        if method == "POST" and route_path == "/api/connect/detach":
+            if not self._same_origin(headers):
+                return self._denied()
+            return self._detach(headers)
+        if method == "POST" and route_path == "/api/connect/resume":
+            if not self._same_origin(headers):
+                return self._denied()
+            return self._resume(headers, body)
         return self._not_found()
 
     def _bootstrap(self, launch_token: str) -> HttpResponse:
@@ -149,6 +157,29 @@ class RemoteAuthHttpApp:
         except RemoteAuthDenied:
             return self._denied()
         return self._json(HTTPStatus.OK, {"status": "cancelled"})
+
+    def _resume(self, headers: dict[str, str], body: bytes) -> HttpResponse:
+        token = self._cookie_token(headers)
+        if token is None or len(body) > _MAX_BODY_BYTES:
+            return self._denied()
+        try:
+            data: dict[str, Any] = json.loads(body.decode("utf-8"))
+            launch_token = str(data["launch_token"])
+            self._manager.resume(token, launch_token)
+        except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError,
+                RemoteAuthDenied):
+            return self._denied()
+        return self._json(HTTPStatus.OK, {"status": "resumed"})
+
+    def _detach(self, headers: dict[str, str]) -> HttpResponse:
+        token = self._cookie_token(headers)
+        if token is None:
+            return self._denied()
+        try:
+            self._manager.detach(token)
+        except RemoteAuthDenied:
+            return self._denied()
+        return self._json(HTTPStatus.OK, {"status": "detached"})
 
     def _static_novnc(self, relative: str) -> HttpResponse:
         root = self._settings.novnc_root.resolve()

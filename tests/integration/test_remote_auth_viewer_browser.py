@@ -135,6 +135,12 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             self._send(200, modules[self.path], "text/javascript")
             return
         if self.path == "/api/connect/session":
+            cookie = self.headers.get("Cookie", "")
+            if self.server.require_cookie and "booksaver_auth=" not in cookie:
+                self.server.session_denials += 1
+                self._send(401, '{"message":"This connection is invalid or expired."}',
+                           "application/json")
+                return
             payload = {
                 "status": self.server.session_status,
                 "message": "Ready" if self.server.session_status == "ready" else "Done",
@@ -152,11 +158,33 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         if self.path == "/api/connect/exchange":
             self.server.exchange_payloads.append(json.loads(body))
             self.server.exchanges += 1
-            self._send(200, '{"status":"authorized"}', "application/json")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Set-Cookie", "booksaver_auth=granted; Path=/; HttpOnly")
+            encoded = b'{"status":"authorized"}'
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
             return
         if self.path == "/api/connect/cancel":
             self.server.cancellations += 1
             self._send(200, '{"status":"cancelled"}', "application/json")
+            return
+        if self.path == "/api/connect/detach":
+            self.server.detachments += 1
+            self._send(200, '{"status":"detached"}', "application/json")
+            return
+        if self.path == "/api/connect/resume":
+            self.server.resume_attempts += 1
+            cookie = self.headers.get("Cookie", "")
+            payload = json.loads(body)
+            if (self.server.resume_denied or "booksaver_auth=" not in cookie
+                    or payload.get("launch_token") != "launch-token"):
+                self.server.session_denials += 1
+                self._send(401, '{"message":"This connection session is invalid or expired."}',
+                           "application/json")
+                return
+            self._send(200, '{"status":"resumed"}', "application/json")
             return
         self._send(404, "not found", "text/plain")
 
@@ -180,6 +208,11 @@ class _ViewerServer(ThreadingHTTPServer):
     exchanges: int
     exchange_payloads: list[dict[str, object]]
     cancellations: int
+    detachments: int
+    require_cookie: bool
+    session_denials: int
+    resume_attempts: int
+    resume_denied: bool
 
 
 @pytest.fixture
@@ -192,6 +225,11 @@ def viewer_server() -> Iterator[tuple[_ViewerServer, str]]:
     server.exchanges = 0
     server.exchange_payloads = []
     server.cancellations = 0
+    server.detachments = 0
+    server.require_cookie = True
+    server.session_denials = 0
+    server.resume_attempts = 0
+    server.resume_denied = False
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
@@ -360,7 +398,7 @@ def test_platform_fallbacks_and_bounded_rfb_reconnect(
     )
 
 
-def test_pagehide_cancels_best_effort_and_visibility_change_does_not(
+def test_pagehide_detaches_best_effort_and_visibility_change_does_not(
     viewer_server: tuple[_ViewerServer, str],
     browser_page: Page,
 ) -> None:
@@ -371,25 +409,25 @@ def test_pagehide_cancels_best_effort_and_visibility_change_does_not(
     browser_page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
     browser_page.wait_for_timeout(50)
     assert server.cancellations == 0
+    assert server.detachments == 0
 
     browser_page.evaluate(
         "window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: true}))"
     )
     browser_page.wait_for_timeout(50)
-    assert server.cancellations == 0
+    assert server.detachments == 0
 
     browser_page.evaluate(
         "window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: false}))"
     )
-    browser_page.wait_for_function(
-        "() => true",
-        timeout=100,
-    )
     for _ in range(20):
-        if server.cancellations:
+        if server.detachments:
             break
         browser_page.wait_for_timeout(25)
-    assert server.cancellations == 1
+    # Leaving the page never cancels; the login stays alive for the server-side grace.
+    assert server.detachments == 1
+    assert server.cancellations == 0
+    assert not browser_page.locator("#keyboard").is_disabled()
 
 
 def test_terminal_viewer_disables_input_and_does_not_cancel_on_close(
@@ -1141,3 +1179,105 @@ def test_repeated_paste_preserves_fallback_buffer_until_explicit_insert(
     assert browser_page.evaluate("window.__reads") == 1
     assert browser_page.locator("#paste-value").input_value() == ""
     assert browser_page.locator("#paste-panel").is_hidden()
+
+
+def test_leaving_the_page_detaches_instead_of_cancelling(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    server, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    browser_page.evaluate("window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+    browser_page.wait_for_function("true")
+    for _ in range(50):
+        if server.detachments:
+            break
+        browser_page.wait_for_timeout(20)
+    assert server.detachments == 1
+    assert server.cancellations == 0
+    # The Cancel button is still an immediate cancel.
+    browser_page.locator("#cancel").click()
+    for _ in range(50):
+        if server.cancellations:
+            break
+        browser_page.wait_for_timeout(20)
+    assert server.cancellations == 1
+
+
+def test_returning_to_the_page_polls_immediately_and_reconnects_again(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    _, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    # A stable connection (older than the stability window) re-arms one automatic reconnect.
+    browser_page.evaluate("window.__rfbInstances[0].forceDirtyDisconnect()")
+    browser_page.wait_for_function("window.__rfbInstances.length === 2")
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    browser_page.evaluate("connectedAt=Date.now()-stableConnectionMs")
+    browser_page.evaluate("window.__rfbInstances[1].forceDirtyDisconnect()")
+    browser_page.wait_for_function("window.__rfbInstances.length === 3")
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    # A flapping link (immediate second drop) is bounded until the user returns.
+    browser_page.evaluate("window.__rfbInstances[2].forceDirtyDisconnect()")
+    browser_page.wait_for_function(
+        "document.getElementById('status').textContent.includes('connection was lost')"
+    )
+    browser_page.wait_for_timeout(1500)
+    assert browser_page.evaluate("window.__rfbInstances.length") == 3
+    browser_page.evaluate("""() => {
+      Object.defineProperty(document, 'visibilityState',
+        {configurable: true, get: () => 'visible'});
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    browser_page.wait_for_function("window.__rfbInstances.length === 4")
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+
+
+def test_reloaded_page_resumes_its_viewer_session_without_a_new_exchange(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    server, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert (server.resume_attempts, server.session_denials, server.exchanges) == (1, 1, 1)
+    # Reload with the viewer cookie still present: the server confirms it belongs to this
+    # launch link's live attempt, so no second exchange is needed.
+    browser_page.reload()
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert (server.resume_attempts, server.session_denials, server.exchanges) == (2, 1, 1)
+
+
+def test_stale_cookie_from_another_attempt_never_resumes_a_new_launch(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    server, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert server.exchanges == 1
+    # The cookie is still present but the server no longer maps it to this launch.
+    server.resume_denied = True
+    browser_page.reload()
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert server.exchanges == 2
+    assert server.resume_attempts == 2
+
+
+def test_reconnect_that_never_connected_does_not_count_as_stable(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    _, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    browser_page.evaluate("connectedAt=Date.now()-stableConnectionMs")
+    browser_page.evaluate("window.__rfbInstances[0].forceDirtyDisconnect()")
+    browser_page.wait_for_function("window.__rfbInstances.length === 2")
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    # Simulate a reconnect that dropped before ever connecting: no stability credit.
+    browser_page.evaluate("connectedAt=0")
+    browser_page.evaluate("window.__rfbInstances[1].forceDirtyDisconnect()")
+    browser_page.wait_for_function(
+        "document.getElementById('status').textContent.includes('connection was lost')"
+    )
+    browser_page.wait_for_timeout(1500)
+    assert browser_page.evaluate("window.__rfbInstances.length") == 2

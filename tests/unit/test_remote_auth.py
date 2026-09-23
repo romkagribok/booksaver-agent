@@ -8,6 +8,8 @@ from typing import cast
 import pytest
 
 from booksaver.application.remote_auth import (
+    ATTEMPT_LIFETIME_CEILING,
+    DETACH_GRACE,
     RemoteAuthBusy,
     RemoteAuthDenied,
     RemoteAuthenticationManager,
@@ -157,7 +159,7 @@ def test_remote_auth_settings_require_safe_https_origin() -> None:
         _settings(listen_port=8080, websocket_port=8080)
 
 
-def test_manager_binds_single_use_launch_to_user_and_captures_once() -> None:
+def test_manager_binds_launch_to_user_reopens_for_owner_and_captures_once() -> None:
     runner = ControlledRunner(RemoteBrowserResult(RemoteAuthStatus.SUCCEEDED, cookies_json="[]"))
     captured: list[tuple[int, str]] = []
     messages: list[tuple[int, str]] = []
@@ -177,10 +179,15 @@ def test_manager_binds_single_use_launch_to_user_and_captures_once() -> None:
     with pytest.raises(RemoteAuthDenied):
         manager.exchange(token, 999)
 
-    grant = manager.exchange(token, 123)
+    first = manager.exchange(token, 123)
     assert runner.started.wait(1)
+    # The owner may reopen the link while the login is alive; the previous viewer
+    # capability is revoked and other users are still denied.
     with pytest.raises(RemoteAuthDenied):
-        manager.exchange(token, 123)
+        manager.exchange(token, 999)
+    grant = manager.exchange(token, 123)
+    with pytest.raises(RemoteAuthDenied):
+        manager.viewer_state(first.session_token)
     state = manager.viewer_state(grant.session_token)
     assert state.status is RemoteAuthStatus.CONNECTED
     assert state.websocket_path == "/websockify"
@@ -1058,8 +1065,156 @@ def test_device_is_bound_only_by_owner_exchange_and_cannot_be_replayed() -> None
     manager.exchange(token, 123, login_device=LoginDevice.DESKTOP)
     call = runner.wait_for_call(0)
     assert call.work.login_device is LoginDevice.DESKTOP
-    with pytest.raises(RemoteAuthDenied):
-        manager.exchange(token, 123, login_device=LoginDevice.MOBILE)
+    # Reopening does not resize the already-running browser or start a second one.
+    manager.exchange(token, 123, login_device=LoginDevice.MOBILE)
     assert call.work.login_device is LoginDevice.DESKTOP
     assert len(runner.calls) == 1
+    with pytest.raises(RemoteAuthDenied):
+        manager.exchange(token, 456, login_device=LoginDevice.MOBILE)
+    manager.stop_all()
+
+
+def _clocked_manager(runner: SequentialRunner, messages: list[str]) -> tuple[
+    RemoteAuthenticationManager, list[datetime]
+]:
+    current = [datetime(2026, 9, 23, 12, 0, tzinfo=UTC)]
+    manager = RemoteAuthenticationManager(
+        _settings(),
+        runner,
+        threading.Event(),
+        lambda _user_id, _raw: None,
+        lambda _chat_id, text: messages.append(text),
+        clock=lambda: current[0],
+    )
+    return manager, current
+
+
+def test_detached_viewer_keeps_login_alive_within_grace_and_reattaches() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, current = _clocked_manager(runner, messages)
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    call = runner.wait_for_call(0)
+    assert manager.detach(grant.session_token)
+    current[0] += DETACH_GRACE - timedelta(seconds=1)
+    # Returning within the grace period resumes the same attempt and clears the timer.
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.CONNECTED
+    current[0] += DETACH_GRACE - timedelta(seconds=1)
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.CONNECTED
+    assert not call.work.cancel_event.is_set()
+    assert messages == []
+    manager.stop_all()
+
+
+def test_resume_is_bound_to_the_launch_link_and_live_attempt() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, _current = _clocked_manager(runner, messages)
+    launch = manager.create(123, 123)
+    token = launch.url.rsplit("/", 1)[-1]
+    grant = manager.exchange(token, 123)
+    runner.wait_for_call(0)
+    assert manager.detach(grant.session_token)
+    assert manager.resume(grant.session_token, token)
+    with pytest.raises(RemoteAuthDenied):
+        manager.resume(grant.session_token, "some-other-launch")
+    with pytest.raises(RemoteAuthDenied):
+        manager.resume("unknown-viewer", token)
+    # A cookie from a finished attempt can never resume a later launch.
+    assert manager.cancel(grant.session_token)
+    with pytest.raises(RemoteAuthDenied):
+        manager.resume(grant.session_token, token)
+    manager.stop_all()
+
+
+def test_worker_deadline_reads_close_a_detached_login_without_api_calls() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, current = _clocked_manager(runner, messages)
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    call = runner.wait_for_call(0)
+    assert manager.detach(grant.session_token)
+    current[0] += DETACH_GRACE
+    # No viewer or gateway call happens; the browser worker's periodic deadline read is enough.
+    assert not call.work.expired(current[0])
+    assert call.work.cancel_event.is_set()
+    call.release.set()
+    for _ in range(100):
+        if messages:
+            break
+        threading.Event().wait(0.01)
+    assert messages and "stayed closed" in messages[0]
+    manager.stop_all()
+
+
+def test_detached_viewer_that_never_returns_is_closed_after_grace() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, current = _clocked_manager(runner, messages)
+    launch = manager.create(123, 123)
+    token = launch.url.rsplit("/", 1)[-1]
+    grant = manager.exchange(token, 123)
+    call = runner.wait_for_call(0)
+    assert manager.detach(grant.session_token)
+    assert manager.detach(grant.session_token)  # idempotent, keeps the first timestamp
+    current[0] += DETACH_GRACE
+    state = manager.viewer_state(grant.session_token)
+    assert state.status is RemoteAuthStatus.CANCELLED
+    assert "stayed closed" in state.message
+    assert call.work.cancel_event.is_set()
+    call.release.set()
+    for _ in range(100):
+        if messages:
+            break
+        threading.Event().wait(0.01)
+    assert messages == [
+        "The Booking.com login window stayed closed for a few minutes, so the connection "
+        "ended. Send /connect when you're ready to try again."
+    ]
+    with pytest.raises(RemoteAuthDenied):
+        manager.exchange(token, 123)
+    manager.stop_all()
+
+
+def test_explicit_cancel_still_ends_a_detached_login_immediately() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, _current = _clocked_manager(runner, messages)
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    call = runner.wait_for_call(0)
+    assert manager.detach(grant.session_token)
+    assert manager.cancel(grant.session_token)
+    assert call.work.cancel_event.is_set()
+    assert manager.viewer_state(grant.session_token).message == "This connection was cancelled."
+    assert not manager.detach(grant.session_token)
+    manager.stop_all()
+
+
+def test_viewer_activity_slides_expiry_up_to_the_lifetime_ceiling() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, current = _clocked_manager(runner, messages)
+    created = current[0]
+    launch = manager.create(123, 123)
+    assert launch.expires_at == created + timedelta(seconds=600)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    call = runner.wait_for_call(0)
+    # Ongoing activity keeps a full window ahead of the last poll.
+    current[0] = created + timedelta(minutes=9)
+    state = manager.viewer_state(grant.session_token)
+    assert state.status is RemoteAuthStatus.CONNECTED
+    assert state.expires_at == created + timedelta(minutes=19)
+    assert not call.work.expired(created + timedelta(minutes=15))
+    current[0] = created + timedelta(minutes=18)
+    assert manager.viewer_state(grant.session_token).expires_at == created + timedelta(minutes=28)
+    # The ceiling from creation still bounds the login.
+    current[0] = created + timedelta(minutes=27)
+    state = manager.viewer_state(grant.session_token)
+    assert state.expires_at == created + ATTEMPT_LIFETIME_CEILING
+    current[0] = created + ATTEMPT_LIFETIME_CEILING
+    assert manager.viewer_state(grant.session_token).status is RemoteAuthStatus.EXPIRED
+    assert call.work.expired(current[0])
     manager.stop_all()
