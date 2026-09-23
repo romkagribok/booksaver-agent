@@ -34,3 +34,8 @@ form (shortcut and Insert paths both left one character). Fix: one keystroke per
 50 ms gap (`pasteKeyIntervalMs`), unchanged validation, ownership and teardown guards. Regression
 test asserts paced delivery and exact order. Release qualification and promotion follow the
 existing Operations path; native Telegram acceptance remains user-driven.
+
+2026-09-23T00:03:03Z: Bolt 080 (US-200) modelled, designed and ADR-052 recorded before implementation. Paste now
+climbs browser → host → box; bulk arrivals in the box or the keyboard field send immediately and
+paced; `one-time-code` hints added. 72 viewer tests pass locally; packaged-stack and full-gate
+evidence pending; no commit or deployment yet (awaiting user review per working agreement).

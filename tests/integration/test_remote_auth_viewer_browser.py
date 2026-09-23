@@ -67,6 +67,15 @@ const app = {
   onEvent(name, callback) { (handlers[name] ||= []).push(callback); },
   close() { window.__telegramClosed = true; }
 };
+if (options.hostClipboard !== 'missing') {
+  window.__hostReads = 0;
+  app.isVersionAtLeast = app.isVersionAtLeast || (() => true);
+  app.readTextFromClipboard = (callback) => {
+    window.__hostReads++;
+    if (options.hostClipboard === 'silent') return;
+    setTimeout(() => callback(options.hostClipboard === 'null' ? null : options.hostClipboard), 0);
+  };
+}
 if (options.fullscreen !== 'missing') {
   app.isFullscreen = options.fullscreen === 'already';
   app.isVersionAtLeast = () => options.fullscreen !== 'old';
@@ -104,7 +113,11 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/telegram.js":
             options = json.dumps(
-                {"platform": self.server.platform, "fullscreen": self.server.fullscreen_mode}
+                {
+                    "platform": self.server.platform,
+                    "fullscreen": self.server.fullscreen_mode,
+                    "hostClipboard": self.server.host_clipboard,
+                }
             )
             self._send(
                 200,
@@ -162,6 +175,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
 class _ViewerServer(ThreadingHTTPServer):
     platform: str
     fullscreen_mode: str
+    host_clipboard: str
     session_status: str
     exchanges: int
     exchange_payloads: list[dict[str, object]]
@@ -173,6 +187,7 @@ def viewer_server() -> Iterator[tuple[_ViewerServer, str]]:
     server = _ViewerServer(("127.0.0.1", 0), _ViewerHandler)
     server.platform = "android"
     server.fullscreen_mode = "missing"
+    server.host_clipboard = "missing"
     server.session_status = "ready"
     server.exchanges = 0
     server.exchange_payloads = []
@@ -781,11 +796,23 @@ def test_native_masked_fallback_requires_insert_and_clears(
         browser_page, url, f"Object.defineProperty(navigator,'clipboard',{{value:{clipboard}}});"
     )
     browser_page.locator("#paste").click()
-    browser_page.locator("#paste-value").fill("  synthetic@example.test  ")
+    assert browser_page.locator("#paste-panel").is_visible()
+    assert browser_page.evaluate("document.activeElement.id") == "paste-value"
+    # Characters typed one at a time stay in the box until Insert.
+    browser_page.locator("#paste-value").type("ab")
+    browser_page.wait_for_timeout(50)
     assert _literal_keys(browser_page) == []
     browser_page.locator("#paste-insert").click()
     browser_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
-    assert _literal_keys(browser_page) == [ord(char) for char in "  synthetic@example.test  "]
+    assert _literal_keys(browser_page) == [ord("a"), ord("b")]
+    assert browser_page.locator("#paste-value").input_value() == ""
+    assert browser_page.locator("#paste-panel").is_hidden()
+    # A keyboard suggestion or clipboard chip arrives as one multi-character input and is
+    # sent immediately without Insert.
+    browser_page.locator("#paste").click()
+    browser_page.locator("#paste-value").fill("  synthetic@example.test  ")
+    browser_page.wait_for_function("window.__rfbInstances[0].focuses === 2")
+    assert _literal_keys(browser_page)[2:] == [ord(char) for char in "  synthetic@example.test  "]
     assert browser_page.locator("#paste-value").input_value() == ""
     assert browser_page.locator("#paste-panel").is_hidden()
 
@@ -874,6 +901,94 @@ def test_disconnect_during_final_paste_keystroke_is_not_reported_as_success(
     assert desktop_page.locator("#paste-value").input_value() == ""
 
 
+@pytest.mark.parametrize("host", ["482913", "null", "silent"])
+def test_host_clipboard_is_tried_before_the_fallback_box(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page, host: str
+) -> None:
+    """Telegram's Mini App clipboard read follows a denied browser read, then the box."""
+    server, url = viewer_server
+    server.host_clipboard = host
+    _paste_viewer(
+        browser_page,
+        url,
+        "Object.defineProperty(navigator,'clipboard',{value:{"
+        "readText:async()=>{throw Error('denied')}}});",
+    )
+    browser_page.locator("#paste").click()
+    if host == "482913":
+        browser_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
+        assert _literal_keys(browser_page) == [ord(c) for c in "482913"]
+        assert browser_page.locator("#paste-panel").is_hidden()
+    else:
+        browser_page.wait_for_function("!document.getElementById('paste-panel').hidden")
+        assert _literal_keys(browser_page) == []
+        assert browser_page.evaluate("document.activeElement.id") == "paste-value"
+    assert browser_page.evaluate("window.__hostReads") == 1
+
+
+def test_host_clipboard_is_skipped_when_the_host_is_too_old(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    server, url = viewer_server
+    server.host_clipboard = "482913"
+    server.fullscreen_mode = "old"  # isVersionAtLeast() answers false
+    _paste_viewer(
+        browser_page,
+        url,
+        "Object.defineProperty(navigator,'clipboard',{value:{"
+        "readText:async()=>{throw Error('denied')}}});",
+    )
+    browser_page.locator("#paste").click()
+    browser_page.wait_for_function("!document.getElementById('paste-panel').hidden")
+    assert browser_page.evaluate("window.__hostReads") == 0
+    assert _literal_keys(browser_page) == []
+
+
+def test_keyboard_suggestion_into_capture_is_paced_and_keeps_keyboard_open(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    """A one-time-code suggestion or clipboard chip arrives as one multi-character input."""
+    _, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert browser_page.locator("#capture").get_attribute("autocomplete") == "one-time-code"
+    browser_page.locator("#keyboard").click()
+    assert browser_page.evaluate("document.activeElement.id") == "capture"
+    browser_page.evaluate("""() => {
+      const connection=window.__rfbInstances[0], send=connection.sendKey.bind(connection);
+      window.__literalAt=[];
+      connection.sendKey=(...args)=>{
+        if(args.length===1)window.__literalAt.push(performance.now());
+        send(...args);
+      };
+    }""")
+    browser_page.keyboard.insert_text("482913")
+    browser_page.wait_for_function("window.__literalAt.length===6")
+    assert _literal_keys(browser_page) == [ord(c) for c in "482913"]
+    gaps = browser_page.evaluate("window.__literalAt.slice(1).map((t,i)=>t-window.__literalAt[i])")
+    assert min(gaps) >= 40
+    assert browser_page.evaluate("document.activeElement.id") == "capture"
+    assert browser_page.locator("#keyboard").get_attribute("aria-pressed") == "true"
+    assert browser_page.evaluate("window.__rfbInstances[0].focuses||0") == 0
+    # Ordinary single characters are still forwarded immediately afterwards.
+    browser_page.keyboard.insert_text("Z")
+    browser_page.wait_for_function("window.__literalAt.length===7")
+    assert _literal_keys(browser_page)[-1] == ord("Z")
+
+
+def test_unsupported_keyboard_suggestion_keeps_the_immediate_path(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    _, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    browser_page.locator("#keyboard").click()
+    browser_page.keyboard.insert_text("héé")
+    browser_page.wait_for_timeout(50)
+    assert _literal_keys(browser_page) == [ord("h"), ord("é"), ord("é")]
+    assert browser_page.evaluate("window.__rfbInstances[0].focuses||0") == 0
+
+
 def test_paste_keystrokes_are_paced_for_asynchronous_focus_advance(
     viewer_server: tuple[_ViewerServer, str], desktop_page: Page
 ) -> None:
@@ -920,12 +1035,11 @@ def test_browser_native_paste_into_fallback_preserves_raw_validation(
     desktop_page.locator("#paste").click()
     desktop_page.locator("#paste-value").press("ControlOrMeta+v")
     if valid:
-        desktop_page.wait_for_function("document.getElementById('paste-value').value.length > 0")
-        assert desktop_page.locator("#paste-value").input_value() == text
-        assert _literal_keys(desktop_page) == []
-        desktop_page.locator("#paste-insert").click()
+        # A native paste into the box is sent immediately; no Insert step.
         desktop_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
         assert _literal_keys(desktop_page) == [ord(char) for char in text]
+        assert desktop_page.locator("#paste-value").input_value() == ""
+        assert desktop_page.locator("#paste-panel").is_hidden()
     else:
         desktop_page.wait_for_function(
             "document.getElementById('status').textContent.includes('Nothing was inserted')"
@@ -980,16 +1094,16 @@ def test_repeated_paste_preserves_fallback_buffer_until_explicit_insert(
         "readText:async()=>{window.__reads++;throw Error('denied')}}});",
     )
     browser_page.locator("#paste").click()
-    browser_page.locator("#paste-value").fill("  synthetic@example.test  ")
+    browser_page.locator("#paste-value").type("ab")
     browser_page.locator("#paste").click()
     browser_page.locator("#paste").click()
     assert browser_page.evaluate("window.__reads") == 1
-    assert browser_page.locator("#paste-value").input_value() == "  synthetic@example.test  "
+    assert browser_page.locator("#paste-value").input_value() == "ab"
     assert browser_page.locator("#paste-value").evaluate("node=>node===document.activeElement")
     assert browser_page.evaluate("window.__rfbInstances[0].keys") == []
     browser_page.locator("#paste-insert").click()
     browser_page.wait_for_function("window.__rfbInstances[0].focuses === 1")
-    assert _literal_keys(browser_page) == [ord(char) for char in "  synthetic@example.test  "]
+    assert _literal_keys(browser_page) == [ord("a"), ord("b")]
     assert browser_page.evaluate("window.__reads") == 1
     assert browser_page.locator("#paste-value").input_value() == ""
     assert browser_page.locator("#paste-panel").is_hidden()
