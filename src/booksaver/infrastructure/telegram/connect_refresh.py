@@ -22,7 +22,7 @@ def start_post_connect_refresh(
     send(
         telegram_user_id,
         "Loading your reservations from Booking.com. "
-        "Please wait for the result before using /checknow.",
+        "I'll send the result here.",
     )
 
     def completed(completion: InventoryCompletion) -> None:

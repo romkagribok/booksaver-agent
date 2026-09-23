@@ -41,7 +41,7 @@ def test_fast_completion_is_after_progress_and_reports_success(completeness):
     coordinator.request_inventory.side_effect = immediate
     start_post_connect_refresh(42, coordinator, lambda user, text: messages.append((user, text)))
     assert len(messages) == 2
-    assert "wait for the result" in messages[0][1]
+    assert "Loading your reservations" in messages[0][1]
     assert "Found 1 reservation." in messages[1][1]
     assert "check prices for 1" in messages[1][1]
     assert "Send /checknow" in messages[1][1]
