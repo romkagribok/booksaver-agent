@@ -1,5 +1,5 @@
 ---
-version: fit-9a783f4
+version: touch-c8b2aa6
 created: "2026-09-23T16:13:15Z"
 status: complete
 ---
@@ -27,3 +27,25 @@ healthy at **16:12:34Z**. Post-promotion: running/healthy, 0 restarts, OOM false
 clean startup log, no host ports for 8080/5900/6080, no orphan browser processes, config
 unchanged, SQLite quick_check ok, public health 200, disk 25%. Rollback: retag `latest` to the
 rollback image and recreate; no data restore implied.
+
+## Release touch-c8b2aa6 — no cursor on touch, tablet-sized framebuffers (US-203, Bolt 083)
+
+PR #65 (head `c8b2aa6bd5c3b0be9014f9690148c0045143650f`): x11vnc runs with `-nocursor` for mobile
+logins; the mobile framebuffer width follows the touch viewer's width within 480–1024. Bugbot
+passed on the head; merge gate passed with zero threads. Full suite 2,990 passed, Ruff, mypy125.
+
+Image `booksaver-agent:touch-c8b2aa6` = `sha256:e1e0965fe0de55efcf344e44e88a054032e926fa9834f1c7f8557c52a3e69f7f`,
+built 2026-09-23T16:41:56Z on base `fit-9a783f4`; installed-source fingerprint equals the Git tree;
+125 modules and eight pins matched; `pip check` clean. Dev (`dev-c8b2aa6.log`): smoke 2.66 s,
+three supervisor cleanup cases, 31 paste checks, six-box probe on five paths, and the window-fit
+probe with the new tablet case: 1000×1200 fullscreen with the viewport equal to the framebuffer
+and a full-bleed page covering 99.99% of pixels, alongside the phone and desktop cases.
+
+Merged **2026-09-23** as `9936499e3c6c4a0747568f202d5a4712ce39eb90`; `promote-c8b2aa6.sh` backed up to
+`/opt/booksaver-backups/touch-c8b2aa6-20260923` (0700/0600, archive SHA-256
+`16297845b3e03e739ff613fdf44a8db86e485499574d59d4f5b8bf391fe04791`, verified), passed
+pre-promotion SQLite checks, tagged `booksaver-agent:rollback-pre-touch-c8b2aa6`
+(`sha256:eacb75e9…`), and recreated only BookSaver. Daemon started **2026-09-23T16:44:02Z**;
+healthy at **16:44:12Z**. Post-promotion: running/healthy, 0 restarts, OOM false, heartbeat 5 s,
+clean log, no host ports for 8080/5900/6080, no orphan browser processes, config unchanged,
+SQLite quick_check ok, public health 200, disk 25%.
