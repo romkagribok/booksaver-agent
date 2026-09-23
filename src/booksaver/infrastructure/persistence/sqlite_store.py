@@ -1462,9 +1462,10 @@ class SqliteAccountReservationRepository:
         """Name the explicit model facts that disagree with persisted last-safe authority.
 
         Identity, stay, room, occupancy, money, and refundability facts are authoritative once
-        saved. The property name and reference are descriptive: Booking renames properties and
-        renders the same hotel URL with or without a locale suffix, so only a reference that
-        provably names a different hotel is a conflict.
+        saved. The property name and reference also drive price checks, so they may change only
+        when a recognized Booking hotel URL proves the observation names the same hotel: Booking
+        renames properties and renders one hotel URL with or without a locale suffix or on
+        either host. Any other difference fails closed.
         """
 
         def _different(column: str, observed: object | None) -> bool:
@@ -1486,8 +1487,11 @@ class SqliteAccountReservationRepository:
             ("occ_rooms", observation.occupancy.rooms if observation.occupancy else None),
         )
         conflicts.extend(column for column, observed in checks if _different(column, observed))
-        if cls._property_reference_conflicts(existing["property_ref"], observation.property_ref):
+        same_hotel = cls._same_recognized_hotel(existing["property_ref"], observation.property_ref)
+        if _different("property_ref", observation.property_ref) and not same_hotel:
             conflicts.append("property_ref")
+        if _different("property_name", observation.property_name) and not same_hotel:
+            conflicts.append("property_name")
         if (
             observation.lifecycle is not ReservationLifecycle.UNKNOWN
             and existing["remote_lifecycle"] != ReservationLifecycle.UNKNOWN.value
@@ -1517,16 +1521,16 @@ class SqliteAccountReservationRepository:
         return tuple(conflicts)
 
     @staticmethod
-    def _property_reference_conflicts(stored: object | None, observed: str | None) -> bool:
-        """Only two recognized Booking hotel URLs naming different hotels conflict."""
-        if observed is None or stored is None or str(stored) == observed:
+    def _same_recognized_hotel(stored: object | None, observed: str | None) -> bool:
+        """Prove one hotel from two recognized Booking URLs, ignoring host and locale suffix."""
+        if stored is None or observed is None:
             return False
         stored_identity = english_booking_property_identity(str(stored))
         observed_identity = english_booking_property_identity(observed)
         return (
             stored_identity is not None
             and observed_identity is not None
-            and stored_identity != observed_identity
+            and stored_identity[1:] == observed_identity[1:]
         )
 
     @classmethod
@@ -1539,6 +1543,7 @@ class SqliteAccountReservationRepository:
         trusted_cancellation: bool = False,
     ) -> ReservationObservation:
         """Preserve established facts except for separately proven forward lifecycle progress."""
+        same_hotel = cls._same_recognized_hotel(existing["property_ref"], observation.property_ref)
         stored_total = (
             Money(
                 Decimal(str(existing["baseline_amount"])),
@@ -1571,9 +1576,18 @@ class SqliteAccountReservationRepository:
             observation,
             lifecycle=lifecycle,
             confirmation_id=existing["confirmation_id"] or observation.confirmation_id,
-            # Descriptive facts follow the live page; every other fact keeps stored authority.
-            property_name=observation.property_name or existing["property_name"],
-            property_ref=observation.property_ref or existing["property_ref"],
+            # Name and URL follow the live page only when its URL proves the same hotel; the
+            # conflict check has already rejected every other difference.
+            property_name=(
+                observation.property_name
+                if same_hotel and observation.property_name
+                else existing["property_name"] or observation.property_name
+            ),
+            property_ref=(
+                observation.property_ref
+                if same_hotel
+                else existing["property_ref"] or observation.property_ref
+            ),
             check_in=(
                 date.fromisoformat(existing["check_in"])
                 if existing["check_in"]

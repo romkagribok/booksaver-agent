@@ -209,7 +209,7 @@ def test_negative_authority_cannot_cross_caller_boundary(state, kind):
 
 
 @pytest.mark.parametrize("change", [
-    {"room_type": "Another Room"},
+    {"property_name": "Another Hotel"},
     {"booked_total": Money(Decimal("299"), "USD"), "all_in": AllInEvidence.EXPLICIT},
     {"confirmation_id": "different", "remote_id": "trip-123"},
 ])

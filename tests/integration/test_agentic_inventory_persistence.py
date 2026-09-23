@@ -341,7 +341,10 @@ def test_conflicting_agentic_positive_fails_closed_without_overwriting_safe_stat
             "https://www.booking.com/hotel/us/hotel-example.en-gb.html",
             "https://www.booking.com/hotel/us/hotel-example.html",
         ),
-        ("legacy-hotel-id-12345", "https://www.booking.com/hotel/us/hotel-example.en-us.html"),
+        (
+            "https://secure.booking.com/hotel/us/hotel-example.html",
+            "https://www.booking.com/hotel/us/hotel-example.en-us.html",
+        ),
     ],
 )
 def test_agentic_refresh_accepts_renamed_property_and_locale_variant_reference(
@@ -559,3 +562,62 @@ def test_empty_raw_terminal_cannot_mask_failed_validation_on_reload(tmp_path):
         report = repo.latest_run_for_user(owner.user_id)
         assert report is not None and not report.upcoming_empty_observed
         assert report.failure_code is SynchronizationFailureCode.NAVIGATION_FAILED
+
+
+_STORED_URL = "https://www.booking.com/hotel/us/hotel-example.html"
+
+
+@pytest.mark.parametrize(
+    "stored_ref, observed_name, observed_ref",
+    [
+        # A reference that is not a recognized English Booking hotel URL proves nothing.
+        (_STORED_URL, "Other Hotel", "https://www.booking.com/hotel/fr/other-hotel.fr.html"),
+        (_STORED_URL, "Other Hotel", "https://www.booking.com/hotel/us/other-hotel.html/"),
+        (_STORED_URL, "Other Hotel", "Other Hotel"),
+        # A rename without any URL cannot be tied to the saved hotel.
+        (_STORED_URL, "Other Hotel", None),
+        # A legacy non-URL reference is never replaced by an unproven model-reported URL.
+        (
+            "legacy-hotel-id-12345",
+            "Hotel Example",
+            "https://www.booking.com/hotel/us/hotel-example.en-us.html",
+        ),
+    ],
+)
+def test_agentic_refresh_rejects_unproven_property_change(
+    tmp_path: Path, stored_ref: str, observed_name: str, observed_ref: str | None,
+) -> None:
+    """Name and URL feed price checks, so only a URL-proven same hotel may change them."""
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+        original = replace(_reservation(), property_ref=stored_ref)
+        repo.reconcile(
+            user_id=owner.user_id,
+            run_id="seed-unproven-change",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((original,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW,
+        )
+        before = repo.list_for_user(owner.user_id)
+        changed = replace(
+            original,
+            remote_id=original.confirmation_id or "",
+            observed_at=NOW + timedelta(minutes=1),
+            property_name=observed_name,
+            property_ref=observed_ref,
+            extraction_method="agentic_inventory",
+        )
+
+        report = repo.reconcile(
+            user_id=owner.user_id,
+            run_id="agentic-unproven-change",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((changed,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW + timedelta(minutes=1),
+        )
+
+        assert report.failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT
+        assert repo.list_for_user(owner.user_id) == before
