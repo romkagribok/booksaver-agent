@@ -253,6 +253,8 @@ class ViewerState:
     websocket_path: str | None = None
     websocket_token: str | None = None
     message: str | None = None
+    # Negotiated framebuffer, so a resumed or reopened viewer can size its stream.
+    display_size: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)

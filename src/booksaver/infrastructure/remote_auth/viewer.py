@@ -132,12 +132,16 @@ let reconnectAttempted=false;
 let reconnectExhausted=false;
 let connectedAt=0;
 const stableConnectionMs=5000;
+function setStreamAspect(width,height){
+ if(width>0&&height>0)
+  document.documentElement.style.setProperty('--stream-aspect',String(height/width));
+}
 function viewerArea(){
  // Presentation hint only: the remote framebuffer adopts this aspect so the fitted stream
  // fills the area. Never identity evidence.
  const width=Math.round(viewerNode.clientWidth),height=Math.round(viewerNode.clientHeight);
  if(width>=200&&height>=200){
-  document.documentElement.style.setProperty('--stream-aspect',String(height/width));
+  setStreamAspect(width,height);
   return {width,height};
  }
  return null;
@@ -557,6 +561,8 @@ function pollNow(){
 async function poll(){
  try{
   const state=await jsonRequest('/api/connect/session');
+  // The server's negotiated framebuffer is authoritative, also after a resume or reopen.
+  if(Array.isArray(state.display_size))setStreamAspect(state.display_size[0],state.display_size[1]);
   terminalState=terminalStatuses.has(state.status);
   const finalizing=state.status==='finalizing';
   if(!viewerError||terminalState||finalizing)setStatus(state.message);

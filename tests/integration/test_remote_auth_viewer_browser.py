@@ -147,6 +147,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 "expires_at": "2026-07-27T00:00:00+00:00",
                 "websocket_path": "/websockify",
                 "websocket_token": "ws-token",
+                "display_size": self.server.display_size,
             }
             self._send(200, json.dumps(payload), "application/json")
             return
@@ -213,6 +214,7 @@ class _ViewerServer(ThreadingHTTPServer):
     session_denials: int
     resume_attempts: int
     resume_denied: bool
+    display_size: list[int] | None
 
 
 @pytest.fixture
@@ -230,6 +232,7 @@ def viewer_server() -> Iterator[tuple[_ViewerServer, str]]:
     server.session_denials = 0
     server.resume_attempts = 0
     server.resume_denied = False
+    server.display_size = None
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
@@ -1334,3 +1337,28 @@ def test_phone_layout_is_compact_and_negotiates_the_stream_aspect(
     width = browser_page.evaluate("document.querySelector('#viewer').clientWidth")
     height = browser_page.evaluate("document.querySelector('#screen').offsetHeight")
     assert abs(height - width * aspect) < 2
+
+
+def test_resumed_viewer_adopts_the_server_negotiated_stream_aspect(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    server, url = viewer_server
+    server.display_size = [480, 726]
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    # Reload resumes without an exchange, so the local measurement never runs; the session
+    # state still carries the negotiated framebuffer.
+    browser_page.reload()
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert server.exchanges == 1
+    aspect = browser_page.evaluate(
+        "parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stream-aspect'))"
+    )
+    assert abs(aspect - 726 / 480) < 0.001
+    browser_page.locator("#keyboard").click()
+    browser_page.wait_for_function("document.body.classList.contains('keyboard-open')")
+    width = browser_page.evaluate("document.querySelector('#viewer').clientWidth")
+    height = browser_page.evaluate("document.querySelector('#screen').offsetHeight")
+    assert abs(height - max(width * 726 / 480,
+                            browser_page.evaluate(
+                                "document.querySelector('#viewer').clientHeight"))) < 2

@@ -357,6 +357,7 @@ class RemoteAuthenticationManager:
                 websocket_path=websocket_path,
                 websocket_token=websocket_token,
                 message=self._viewer_message(attempt),
+                display_size=attempt.display_size,
             )
 
     def cancel(self, session_token: str) -> bool:

@@ -2,7 +2,7 @@
 unit: 004-full-width-stream
 intent: 025-session-continuity-and-paste
 created: "2026-09-23T15:43:35Z"
-last_updated: "2026-09-23T15:56:18Z"
+last_updated: "2026-09-23T16:06:21Z"
 ---
 
 # Full-width stream construction log
@@ -16,3 +16,6 @@ manager-message and viewer changes plus unit, browser and packaged-stack regress
 
 2026-09-23T15:56:18Z: Implementation complete with unit, browser and packaged evidence (Bolt 082 test report).
 Full-gate, review and release evidence follow.
+
+2026-09-23T16:06:21Z: Bugbot review found the resumed viewer lacked the negotiated aspect; fixed by carrying
+the framebuffer in the viewer state (Bolt 082 test report).

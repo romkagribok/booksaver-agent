@@ -146,6 +146,7 @@ class RemoteAuthHttpApp:
                 "expires_at": state.expires_at.isoformat(),
                 "websocket_path": state.websocket_path,
                 "websocket_token": state.websocket_token,
+                "display_size": list(state.display_size) if state.display_size else None,
             },
         )
 

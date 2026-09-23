@@ -56,6 +56,7 @@ class StubManager:
             websocket_path="/websockify",
             websocket_token="websocket-secret",
             message="Ready",
+            display_size=(480, 726),
         )
 
     def resume(self, token: str, launch_token: str) -> bool:
@@ -299,6 +300,7 @@ def test_viewer_and_cancel_require_cookie_and_never_echo_it(tmp_path: Path) -> N
     assert payload["status"] == "ready"
     assert payload["websocket_path"] == "/websockify"
     assert payload["websocket_token"] == "websocket-secret"
+    assert payload["display_size"] == [480, 726]
     assert b"viewer-secret" not in response.body
 
     assert app.handle("POST", "/api/connect/cancel", headers).status == 401

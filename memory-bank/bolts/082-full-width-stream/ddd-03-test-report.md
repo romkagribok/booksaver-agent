@@ -32,3 +32,11 @@ mobile 480×726 and 480×960 windows report fullscreen, page viewport equals the
 full-bleed page covers 99.97–99.98% of framebuffer pixels (no tab strip or address bar);
 desktop 1280×800 covers 99.79% with a one-pixel viewport tolerance, unchanged from before.
 Physical phone acceptance remains user-observed.
+
+## 2026-09-23T16:06:21Z — review correction (Cursor Bugbot, PR #63)
+
+Valid finding: a resumed viewer never measured its area, so the keyboard-open rule fell back to
+the default aspect. The viewer state now carries the negotiated framebuffer and the viewer sets
+`--stream-aspect` from it on every poll, so resume and reopen use the server's size. Regressions:
+manager/gateway expose `display_size`; browser reload adopts 726/480 and sizes the keyboard-open
+stream from it. 168 remote-auth tests pass.

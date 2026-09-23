@@ -1116,9 +1116,11 @@ def test_first_exchange_negotiates_the_framebuffer_from_the_viewer_area() -> Non
     call = runner.wait_for_call(0)
     assert call.work.display_size == (480, 720)
     assert call.work.framebuffer == (480, 720)
-    # Reopening from a differently sized viewer never resizes the running browser.
-    manager.exchange(token, 123, viewer_area={"width": 1000, "height": 300})
+    # Reopening from a differently sized viewer never resizes the running browser, and the
+    # viewer state tells the new viewer the negotiated size.
+    grant = manager.exchange(token, 123, viewer_area={"width": 1000, "height": 300})
     assert call.work.framebuffer == (480, 720)
+    assert manager.viewer_state(grant.session_token).display_size == (480, 720)
     manager.stop_all()
 
 
