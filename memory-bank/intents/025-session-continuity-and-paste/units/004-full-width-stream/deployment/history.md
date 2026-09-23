@@ -1,5 +1,5 @@
 ---
-version: touch-c8b2aa6
+version: nohelp-9491bcd
 created: "2026-09-23T16:13:15Z"
 status: complete
 ---
@@ -49,3 +49,26 @@ pre-promotion SQLite checks, tagged `booksaver-agent:rollback-pre-touch-c8b2aa6`
 healthy at **16:44:12Z**. Post-promotion: running/healthy, 0 restarts, OOM false, heartbeat 5 s,
 clean log, no host ports for 8080/5900/6080, no orphan browser processes, config unchanged,
 SQLite quick_check ok, public health 200, disk 25%.
+
+## Release nohelp-9491bcd — help control removed
+
+PR #67 (head `9491bcd6f60b26625343cebd15453828bb8082d8`): the "?" control and help paragraph are
+removed; the status keeps a fixed two-line height so the measured viewer area stays stable; the
+connected message is shortened. Bugbot passed; merge gate passed with zero threads. Full suite
+2,990 passed, Ruff, mypy125.
+
+Image `booksaver-agent:nohelp-9491bcd` = `sha256:8315daba34c3d1742abfde5115d0ac14f03d369fb228d6adbc61d70bfe0126c3`,
+built 2026-09-23T19:48:09Z on base `touch-c8b2aa6`; installed-source fingerprint equals the Git
+tree; 125 modules and eight pins matched; `pip check` clean. Dev (`dev-9491bcd.log`): all seven
+probes passed (smoke, three supervisor cases, 31 paste checks, six-box probe, window-fit probe
+with phone, tablet and desktop cases).
+
+Merged **2026-09-23** as `5e1d018affdd74ca4fd9540bc7fd07b29b8ba5a7`; `promote-9491bcd.sh` backed up
+to `/opt/booksaver-backups/nohelp-9491bcd-20260923` (archive SHA-256
+`58cdbd5eb3ee9753a6212e469d34bc1a4c4b3b0a0a47e4d3d42f1fb4db92caca`, verified), tagged
+`booksaver-agent:rollback-pre-nohelp-9491bcd` (`sha256:e1e0965f…`) and recreated only BookSaver.
+Daemon started **2026-09-23T19:50:32Z**; healthy at **19:50:42Z**. Post-promotion: running/healthy,
+0 restarts, OOM false, heartbeat 6 s, clean log, no private host ports, no orphan browser
+processes, config unchanged, SQLite quick_check ok, public health 200, disk 25%.
+Protected evidence: `build-9491bcd.log`, `dev-9491bcd.log` and `promotion-9491bcd.log` in
+`/opt/booksaver-releases/continuity-20260920/`.
