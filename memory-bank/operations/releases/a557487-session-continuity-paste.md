@@ -66,3 +66,12 @@ cookie resume, non-self-running grace, unearned stability credit); all fixed wit
 Image `sha256:369759b284c174e68faffef4653f13e8b807601c5bd514ffd52dc776e60a79ac` merged as `9239e72`,
 promoted 2026-09-23T15:03Z with backup `/opt/booksaver-backups/resume-9fd6192-20260923` and
 rollback tag `rollback-pre-resume-9fd6192`. Production healthy afterwards.
+
+## Release fit-9a783f4 (2026-09-23)
+
+Full-width streamed login on phones (US-202, Bolt 082, ADR-054): fullscreen remote window for
+every device, framebuffer aspect negotiated from the viewer area, compact chrome. Bugbot found
+that resumed viewers lacked the negotiated aspect; fixed by carrying the framebuffer in the viewer
+state. Image `sha256:eacb75e9fc2e1df7d02bead8114d968efce0e1480e5948758636cefe1bac82ca` merged as
+`2c87bf0`, promoted 2026-09-23T16:12Z with backup `/opt/booksaver-backups/fit-9a783f4-20260923`
+and rollback tag `rollback-pre-fit-9a783f4`. Production healthy afterwards.

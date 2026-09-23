@@ -40,3 +40,9 @@ the default aspect. The viewer state now carries the negotiated framebuffer and 
 `--stream-aspect` from it on every poll, so resume and reopen use the server's size. Regressions:
 manager/gateway expose `display_size`; browser reload adopts 726/480 and sizes the keyboard-open
 stream from it. 168 remote-auth tests pass.
+
+## 2026-09-23T16:13:15Z — release evidence
+
+Exact image `fit-9a783f4` passed all seven dev probes and was promoted to production at
+2026-09-23T16:12Z with verified backup and rollback tag; Bugbot passed on the final head.
+Physical phone acceptance remains user-observed.
