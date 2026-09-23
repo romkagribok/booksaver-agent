@@ -70,3 +70,5 @@ to `/opt/booksaver-backups/nohelp-9491bcd-20260923` (archive SHA-256
 Daemon started **2026-09-23T19:50:32Z**; healthy at **19:50:42Z**. Post-promotion: running/healthy,
 0 restarts, OOM false, heartbeat 6 s, clean log, no private host ports, no orphan browser
 processes, config unchanged, SQLite quick_check ok, public health 200, disk 25%.
+Protected evidence: `build-9491bcd.log`, `dev-9491bcd.log` and `promotion-9491bcd.log` in
+`/opt/booksaver-releases/continuity-20260920/`.
