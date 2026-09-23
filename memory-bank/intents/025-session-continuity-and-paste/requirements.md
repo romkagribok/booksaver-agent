@@ -134,3 +134,10 @@ Telegram paste are to be confirmed from production behaviour and user feedback.
    row each, with help collapsed behind a header button. Desktop logins keep fit-to-screen.
    The server-owned Android profile, user agent, touch emulation and every capture rule are
    unchanged; only the emulated viewport size equals the framebuffer.
+
+## Amendment 2026-09-23: touch presentation
+
+10. **Touch presentation (approved 2026-09-23T16:38:10Z).** Touch logins (phones and tablets) stream no pointer
+    cursor; desktop logins keep the arrow. A tablet's framebuffer follows its own viewer width
+    (bounded 480–1024) and aspect, so it renders at native scale rather than as an enlarged phone
+    page. Profile, capture and gesture forwarding are unchanged.
