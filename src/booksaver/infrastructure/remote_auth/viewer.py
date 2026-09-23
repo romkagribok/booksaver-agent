@@ -505,7 +505,8 @@ async function connectViewer(state){
   if(terminalState)return;
   // One automatic reconnect per drop of a stable connection; a flapping link stays bounded
   // until the user returns to the page, which re-arms it.
-  const stable=Date.now()-connectedAt>=stableConnectionMs;
+  const stable=connectedAt>0&&Date.now()-connectedAt>=stableConnectionMs;
+  connectedAt=0;
   if(event.detail&&event.detail.clean===false&&(!reconnectAttempted||stable)){
    reconnectAttempted=true;
    setViewerError('Remote browser disconnected. Reconnecting once…');
@@ -566,10 +567,14 @@ async function poll(){
 async function start(){
  if(!tg||!tg.initData)throw new Error(
   'Open this page from the button in your private Telegram chat.');
- // A reloaded page may still hold a valid viewer session: resume it before spending the
- // launch link, which the owner may reopen while the login is alive.
+ // A reloaded page may still hold a valid viewer session. The server resumes it only when
+ // the cookie names the live attempt behind this launch link; anything else exchanges anew.
  let resumed=false;
- try{await jsonRequest('/api/connect/session');resumed=true;}catch(_){}
+ try{
+  await jsonRequest('/api/connect/resume',{method:'POST',
+   headers:{'Content-Type':'application/json'},body:JSON.stringify({launch_token:launchToken})});
+  resumed=true;
+ }catch(_){}
  if(!resumed){
   await jsonRequest('/api/connect/exchange',{method:'POST',
    headers:{'Content-Type':'application/json'},

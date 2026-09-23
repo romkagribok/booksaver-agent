@@ -174,6 +174,18 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             self.server.detachments += 1
             self._send(200, '{"status":"detached"}', "application/json")
             return
+        if self.path == "/api/connect/resume":
+            self.server.resume_attempts += 1
+            cookie = self.headers.get("Cookie", "")
+            payload = json.loads(body)
+            if (self.server.resume_denied or "booksaver_auth=" not in cookie
+                    or payload.get("launch_token") != "launch-token"):
+                self.server.session_denials += 1
+                self._send(401, '{"message":"This connection session is invalid or expired."}',
+                           "application/json")
+                return
+            self._send(200, '{"status":"resumed"}', "application/json")
+            return
         self._send(404, "not found", "text/plain")
 
     def _send(self, status: int, body: str, content_type: str) -> None:
@@ -199,6 +211,8 @@ class _ViewerServer(ThreadingHTTPServer):
     detachments: int
     require_cookie: bool
     session_denials: int
+    resume_attempts: int
+    resume_denied: bool
 
 
 @pytest.fixture
@@ -214,6 +228,8 @@ def viewer_server() -> Iterator[tuple[_ViewerServer, str]]:
     server.detachments = 0
     server.require_cookie = True
     server.session_denials = 0
+    server.resume_attempts = 0
+    server.resume_denied = False
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
@@ -1224,10 +1240,44 @@ def test_reloaded_page_resumes_its_viewer_session_without_a_new_exchange(
     server, url = viewer_server
     browser_page.goto(url)
     browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
-    assert server.exchanges == 1
-    assert server.session_denials == 1
-    # Reload with the viewer cookie still present: no second exchange is needed.
+    assert (server.resume_attempts, server.session_denials, server.exchanges) == (1, 1, 1)
+    # Reload with the viewer cookie still present: the server confirms it belongs to this
+    # launch link's live attempt, so no second exchange is needed.
     browser_page.reload()
     browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert (server.resume_attempts, server.session_denials, server.exchanges) == (2, 1, 1)
+
+
+def test_stale_cookie_from_another_attempt_never_resumes_a_new_launch(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    server, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
     assert server.exchanges == 1
-    assert server.session_denials == 1
+    # The cookie is still present but the server no longer maps it to this launch.
+    server.resume_denied = True
+    browser_page.reload()
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert server.exchanges == 2
+    assert server.resume_attempts == 2
+
+
+def test_reconnect_that_never_connected_does_not_count_as_stable(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    _, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    browser_page.evaluate("connectedAt=Date.now()-stableConnectionMs")
+    browser_page.evaluate("window.__rfbInstances[0].forceDirtyDisconnect()")
+    browser_page.wait_for_function("window.__rfbInstances.length === 2")
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    # Simulate a reconnect that dropped before ever connecting: no stability credit.
+    browser_page.evaluate("connectedAt=0")
+    browser_page.evaluate("window.__rfbInstances[1].forceDirtyDisconnect()")
+    browser_page.wait_for_function(
+        "document.getElementById('status').textContent.includes('connection was lost')"
+    )
+    browser_page.wait_for_timeout(1500)
+    assert browser_page.evaluate("window.__rfbInstances.length") == 2

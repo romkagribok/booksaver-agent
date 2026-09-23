@@ -360,6 +360,21 @@ class RemoteAuthenticationManager:
             attempt.cancel_event.set()
             return True
 
+    def resume(self, session_token: str, launch_token: str) -> bool:
+        """Re-attach an existing viewer only for the live attempt this launch link names."""
+        now = self._clock()
+        with self._lock:
+            attempt = self._attempt_for_viewer_locked(session_token, now)
+            if (
+                attempt.status.is_terminal
+                or not attempt.launch_digest
+                or not hmac.compare_digest(attempt.launch_digest, _digest(launch_token))
+            ):
+                raise RemoteAuthDenied("This connection session is invalid or expired.")
+            attempt.detached_at = None
+            self._extend_locked(attempt, now)
+            return True
+
     def detach(self, session_token: str) -> bool:
         """The viewer left the page; keep the login alive for DETACH_GRACE unless it returns."""
         now = self._clock()
@@ -370,6 +385,13 @@ class RemoteAuthenticationManager:
             if attempt.detached_at is None:
                 attempt.detached_at = now
             return True
+
+    def _live_deadline(self, attempt: _Attempt) -> datetime:
+        """Read by the browser worker every second; it also runs the detach-grace sweep so a
+        login whose viewer left and never returned is closed without any further API call."""
+        with self._lock:
+            self._expire_locked(self._clock())
+            return attempt.expires_at
 
     def _extend_locked(self, attempt: _Attempt, now: datetime) -> None:
         """Viewer activity keeps a full session window ahead, bounded from creation."""
@@ -439,7 +461,7 @@ class RemoteAuthenticationManager:
                 expires_at=attempt.expires_at,
                 cancel_event=attempt.cancel_event,
                 login_device=attempt.login_device,
-                deadline=lambda: attempt.expires_at,
+                deadline=lambda: self._live_deadline(attempt),
             )
 
         def _ready() -> None:

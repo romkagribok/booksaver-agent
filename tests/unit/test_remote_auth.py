@@ -1107,6 +1107,48 @@ def test_detached_viewer_keeps_login_alive_within_grace_and_reattaches() -> None
     manager.stop_all()
 
 
+def test_resume_is_bound_to_the_launch_link_and_live_attempt() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, _current = _clocked_manager(runner, messages)
+    launch = manager.create(123, 123)
+    token = launch.url.rsplit("/", 1)[-1]
+    grant = manager.exchange(token, 123)
+    runner.wait_for_call(0)
+    assert manager.detach(grant.session_token)
+    assert manager.resume(grant.session_token, token)
+    with pytest.raises(RemoteAuthDenied):
+        manager.resume(grant.session_token, "some-other-launch")
+    with pytest.raises(RemoteAuthDenied):
+        manager.resume("unknown-viewer", token)
+    # A cookie from a finished attempt can never resume a later launch.
+    assert manager.cancel(grant.session_token)
+    with pytest.raises(RemoteAuthDenied):
+        manager.resume(grant.session_token, token)
+    manager.stop_all()
+
+
+def test_worker_deadline_reads_close_a_detached_login_without_api_calls() -> None:
+    runner = SequentialRunner()
+    messages: list[str] = []
+    manager, current = _clocked_manager(runner, messages)
+    launch = manager.create(123, 123)
+    grant = manager.exchange(launch.url.rsplit("/", 1)[-1], 123)
+    call = runner.wait_for_call(0)
+    assert manager.detach(grant.session_token)
+    current[0] += DETACH_GRACE
+    # No viewer or gateway call happens; the browser worker's periodic deadline read is enough.
+    assert not call.work.expired(current[0])
+    assert call.work.cancel_event.is_set()
+    call.release.set()
+    for _ in range(100):
+        if messages:
+            break
+        threading.Event().wait(0.01)
+    assert messages and "stayed closed" in messages[0]
+    manager.stop_all()
+
+
 def test_detached_viewer_that_never_returns_is_closed_after_grace() -> None:
     runner = SequentialRunner()
     messages: list[str] = []

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from booksaver.application.remote_auth import RemoteAuthDenied
 from booksaver.domain.remote_auth import (
     LoginDevice,
     RemoteAuthSettings,
@@ -24,6 +25,8 @@ class StubManager:
         self.user_id = 123
         self.cancelled: list[str] = []
         self.detached: list[str] = []
+        self.resumed: list[tuple[str, str]] = []
+        self.resume_denied = False
         self.exchanges: list[tuple[str, int, LoginDevice]] = []
 
     def expected_telegram_user(self, token: str) -> int:
@@ -51,6 +54,12 @@ class StubManager:
             websocket_token="websocket-secret",
             message="Ready",
         )
+
+    def resume(self, token: str, launch_token: str) -> bool:
+        if self.resume_denied:
+            raise RemoteAuthDenied("denied")
+        self.resumed.append((token, launch_token))
+        return True
 
     def detach(self, token: str) -> bool:
         self.detached.append(token)
@@ -181,7 +190,8 @@ def test_bootstrap_detaches_on_pagehide_and_resumes_on_return(tmp_path: Path) ->
     assert "document.addEventListener('visibilitychange',resumeOnReturn)" in body
     assert "viewerAuthorized||terminalState||closeRequested" in body
     # A reloaded page resumes its viewer session before spending the launch link.
-    assert "await jsonRequest('/api/connect/session');resumed=true" in body
+    assert "await jsonRequest('/api/connect/resume'" in body
+    assert "body:JSON.stringify({launch_token:launchToken})" in body
     assert "state.status==='finalizing'" in body
     assert "cancelButton.disabled=true" in body
     assert "typeof tg.close==='function'" in body
@@ -227,6 +237,24 @@ def test_exchange_requires_exact_origin_and_sets_hardened_cookie(tmp_path: Path)
     assert "HttpOnly" in cookie
     assert "SameSite=Strict" in cookie
     assert "Max-Age" not in cookie
+
+
+def test_resume_requires_same_origin_cookie_and_launch_token(tmp_path: Path) -> None:
+    app, manager, _verifier = _app(tmp_path)
+    body = json.dumps({"launch_token": "launch-secret"}).encode()
+    assert app.handle("POST", "/api/connect/resume", {}, body).status == 401
+    headers = {"origin": "https://connect.example.test"}
+    assert app.handle("POST", "/api/connect/resume", headers, body).status == 401
+    headers["cookie"] = "booksaver_auth=viewer-secret"
+    assert app.handle("POST", "/api/connect/resume", headers, b"{}").status == 401
+    manager.resume_denied = True
+    assert app.handle("POST", "/api/connect/resume", headers, body).status == 401
+    manager.resume_denied = False
+    response = app.handle("POST", "/api/connect/resume", headers, body)
+    assert response.status == 200
+    assert json.loads(response.body) == {"status": "resumed"}
+    assert manager.resumed == [("viewer-secret", "launch-secret")]
+    assert "viewer-secret" not in response.body.decode()
 
 
 def test_detach_requires_same_origin_and_cookie(tmp_path: Path) -> None:
