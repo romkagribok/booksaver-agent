@@ -635,6 +635,8 @@ def test_identity_and_optional_facts_merge_without_discarding_sparse_positive() 
     assert mapped[0].check_in == date(2026, 11, 24)
     assert mapped[0].booked_total is not None
     assert mapped[0].booked_total.amount == Decimal("301")
+    # Provider-submitted facts never carry the code-owned property anchor.
+    assert mapped[0].property_anchor_verified is False
 
 
 def test_optional_fact_failure_preserves_submitted_identity() -> None:

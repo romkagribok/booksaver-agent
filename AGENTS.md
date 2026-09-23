@@ -80,5 +80,9 @@ checkpoints and keep `memory-bank/story-index.md` consistent with story changes.
   `python3 scripts/bugbot_merge_gate.py PR_NUMBER`; address every unresolved Cursor thread with a
   tested fix or evidence-backed disposition, resolve it, and wait for a clean review of any pushed
   follow-up commit. A missing, stale, or unsuccessful Bugbot result is blocked, not a clean pass.
+  One owner-approved exception: when Cursor itself reports on the current head that Bugbot could
+  not run because the usage or spend limit was reached (the gate prints `waived`), skip Bugbot
+  and proceed to merge and deploy. Rely on the full quality gate plus an independent review
+  pass, and record the waiver in the release evidence.
 - Do not commit, push, merge, deploy, or change external state without the user's explicit approval.
 - Use Conventional Commits with a concise single-line subject when approval is given.

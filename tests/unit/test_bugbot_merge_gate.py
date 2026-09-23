@@ -47,6 +47,73 @@ def _check(
     }
 
 
+def _limit_comment(
+    created: str = "2026-09-23T22:02:07Z", author: str = "cursor[bot]",
+) -> dict[str, Any]:
+    return {
+        "author": {"login": author},
+        "body": "<h3>Bugbot couldn't run - usage limit reached</h3>\n\nCounted against usage.",
+        "createdAt": created,
+    }
+
+
+def _limited(
+    *,
+    comment: dict[str, Any] | None = None,
+    committed_at: str | None = "2026-09-23T22:00:00Z",
+    conclusion: str = "NEUTRAL",
+    threads: tuple[dict[str, Any], ...] = (),
+) -> GateData:
+    return GateData(
+        "OPEN", _HEAD, (), threads, (_check(conclusion=conclusion),),
+        (comment or _limit_comment(),), committed_at,
+    )
+
+
+def test_gate_waives_bugbot_when_cursor_reports_usage_limit_for_current_head() -> None:
+    summary = evaluate_gate(_limited(threads=(_thread(resolved=True),)))
+
+    assert summary.waived_for_usage_limit is True
+    assert summary.bugbot_checks_for_head == 0
+    assert summary.cursor_threads == 1
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        # The limit notice predates the current head, so it says nothing about this head.
+        _limited(comment=_limit_comment("2026-09-23T21:00:00Z")),
+        _limited(committed_at=None),
+        # Only Cursor may declare the limit, and only with its own wording.
+        _limited(comment=_limit_comment(author="someone")),
+        _limited(comment={**_limit_comment(), "body": "bugbot run"}),
+        # A failed or unfinished Bugbot run is not a usage-limit outage.
+        _limited(conclusion="FAILURE"),
+        GateData("OPEN", _HEAD, (), (), (_check(status="IN_PROGRESS", conclusion="NEUTRAL"),),
+                 (_limit_comment(),), "2026-09-23T22:00:00Z"),
+    ],
+)
+def test_gate_does_not_waive_without_a_current_cursor_usage_limit_notice(data: GateData) -> None:
+    with pytest.raises(GateRejected):
+        evaluate_gate(data)
+
+
+def test_waiver_still_requires_every_cursor_thread_resolved() -> None:
+    with pytest.raises(GateRejected):
+        evaluate_gate(_limited(threads=(_thread(resolved=False),)))
+
+
+def test_cli_reports_usage_limit_waiver(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "scripts.bugbot_merge_gate.fetch_gate_data", lambda _owner, _repo, _number: _limited(),
+    )
+
+    assert main(("23", "--repo", "example/project")) == 0
+    assert "Bugbot merge gate waived" in capsys.readouterr().out
+
+
 def test_gate_accepts_current_review_with_all_cursor_threads_resolved() -> None:
     result = evaluate_gate(
         GateData(
@@ -154,6 +221,14 @@ def test_fetch_gate_data_paginates_reviews_and_threads(
             pull_request = {
                 "reviewThreads": {"nodes": nodes, "pageInfo": page_info},
             }
+        elif "comments(first" in query:
+            nodes = [_limit_comment()]
+            page_info = (
+                {"hasNextPage": True, "endCursor": "comment-page-2"}
+                if cursor is None
+                else {"hasNextPage": False, "endCursor": None}
+            )
+            pull_request = {"comments": {"nodes": nodes, "pageInfo": page_info}}
         else:
             nodes = [_check()]
             page_info = (
@@ -167,6 +242,7 @@ def test_fetch_gate_data_paginates_reviews_and_threads(
                         {
                             "commit": {
                                 "oid": _HEAD,
+                                "committedDate": "2026-09-23T22:00:00Z",
                                 "statusCheckRollup": {
                                     "contexts": {"nodes": nodes, "pageInfo": page_info}
                                 },
@@ -184,4 +260,6 @@ def test_fetch_gate_data_paginates_reviews_and_threads(
     assert len(data.reviews) == 2
     assert len(data.threads) == 2
     assert len(data.checks) == 2
+    assert len(data.comments) == 2
+    assert data.head_committed_at == "2026-09-23T22:00:00Z"
     assert evaluate_gate(data).head_oid == _HEAD

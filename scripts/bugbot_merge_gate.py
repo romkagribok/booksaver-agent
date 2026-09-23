@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Fail closed unless Cursor Bugbot has cleared the current pull-request head."""
+"""Fail closed unless Cursor Bugbot has cleared the current pull-request head.
+
+One owner-approved exception: when Cursor itself reports that Bugbot could not run for the
+current head because the usage or spend limit was reached, the gate is waived (see AGENTS.md).
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 _BUGBOT_MARKER = "<!-- BUGBOT_REVIEW -->"
+_USAGE_LIMIT_NOTICE = re.compile(r"bugbot couldn't run.{0,40}usage limit reached", re.I | re.S)
 _PR_URL = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)/?")
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
@@ -61,6 +66,7 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
         nodes {
           commit {
             oid
+            committedDate
             statusCheckRollup {
               contexts(first: 100, after: $cursor) {
                 pageInfo { hasNextPage endCursor }
@@ -76,6 +82,23 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
               }
             }
           }
+        }
+      }
+    }
+  }
+}
+"""
+
+_COMMENTS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      comments(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          author { login }
+          body
+          createdAt
         }
       }
     }
@@ -101,6 +124,8 @@ class GateData:
     reviews: tuple[JsonObject, ...]
     threads: tuple[JsonObject, ...]
     checks: tuple[JsonObject, ...] = ()
+    comments: tuple[JsonObject, ...] = ()
+    head_committed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +134,7 @@ class GateSummary:
     bugbot_reviews_for_head: int
     bugbot_checks_for_head: int
     cursor_threads: int
+    waived_for_usage_limit: bool = False
 
 
 def _is_cursor(login: object) -> bool:
@@ -133,6 +159,29 @@ def _comment_authors(thread: JsonObject) -> tuple[str, ...]:
         if isinstance(login, str):
             authors.append(login)
     return tuple(authors)
+
+
+def _usage_limit_reached(data: GateData, head_checks: list[JsonObject]) -> bool:
+    """Cursor reported, after the current head was committed, that Bugbot hit its usage limit."""
+    if data.head_committed_at is None or not any(
+        check.get("status") == "COMPLETED" and check.get("conclusion") == "NEUTRAL"
+        for check in head_checks
+    ):
+        return False
+    for comment in data.comments:
+        author = comment.get("author")
+        login = author.get("login") if isinstance(author, dict) else None
+        body = comment.get("body")
+        created = comment.get("createdAt")
+        if (
+            _is_cursor(login)
+            and isinstance(body, str)
+            and isinstance(created, str)
+            and created >= data.head_committed_at
+            and _USAGE_LIMIT_NOTICE.search(body) is not None
+        ):
+            return True
+    return False
 
 
 def evaluate_gate(data: GateData) -> GateSummary:
@@ -169,17 +218,21 @@ def evaluate_gate(data: GateData) -> GateSummary:
         ):
             current_checks.append(check)
 
+    waived = False
     if not current_reviews and not current_checks:
         current_bugbot_checks = [
             check
             for check in data.checks
             if check.get("headOid") == data.head_oid and check.get("name") == "Cursor Bugbot"
         ]
-        if current_bugbot_checks:
+        if _usage_limit_reached(data, current_bugbot_checks):
+            waived = True
+        elif current_bugbot_checks:
             raise GateRejected("Bugbot check has not completed successfully for the current head")
-        if bugbot_reviews:
+        elif bugbot_reviews:
             raise GateRejected("Bugbot review is stale for the current pull-request head")
-        raise GateRejected("Bugbot has not completed a review for the pull request")
+        else:
+            raise GateRejected("Bugbot has not completed a review for the pull request")
 
     cursor_threads = [
         thread
@@ -195,6 +248,7 @@ def evaluate_gate(data: GateData) -> GateSummary:
         bugbot_reviews_for_head=len(current_reviews),
         bugbot_checks_for_head=len(current_checks),
         cursor_threads=len(cursor_threads),
+        waived_for_usage_limit=waived,
     )
 
 
@@ -297,8 +351,27 @@ def fetch_gate_data(owner: str, repo: str, number: int) -> GateData:
         if not isinstance(thread_cursor, str) or not thread_cursor:
             raise GitHubAccessError("pull request thread pagination is malformed")
 
+    comments: list[JsonObject] = []
+    comment_cursor: str | None = None
+    while True:
+        pull_request = _pull_request(_graphql(_COMMENTS_QUERY, owner, repo, number, comment_cursor))
+        connection = pull_request.get("comments")
+        if not isinstance(connection, dict):
+            raise GitHubAccessError("pull request comments are unavailable")
+        nodes = connection.get("nodes")
+        if not isinstance(nodes, list):
+            raise GitHubAccessError("pull request comments are malformed")
+        comments.extend(node for node in nodes if isinstance(node, dict))
+        page_info = connection.get("pageInfo")
+        if not isinstance(page_info, dict) or page_info.get("hasNextPage") is not True:
+            break
+        comment_cursor = page_info.get("endCursor")
+        if not isinstance(comment_cursor, str) or not comment_cursor:
+            raise GitHubAccessError("pull request comment pagination is malformed")
+
     checks: list[JsonObject] = []
     check_cursor: str | None = None
+    head_committed_at: str | None = None
     while True:
         pull_request = _pull_request(_graphql(_CHECKS_QUERY, owner, repo, number, check_cursor))
         commits = pull_request.get("commits")
@@ -309,6 +382,8 @@ def fetch_gate_data(owner: str, repo: str, number: int) -> GateData:
         commit_oid = commit.get("oid") if isinstance(commit, dict) else None
         if not isinstance(commit_oid, str) or commit_oid != head_oid:
             raise GitHubAccessError("pull request head checks do not match the current head")
+        committed_at = commit.get("committedDate") if isinstance(commit, dict) else None
+        head_committed_at = committed_at if isinstance(committed_at, str) else None
         rollup = commit.get("statusCheckRollup") if isinstance(commit, dict) else None
         if rollup is None:
             break
@@ -330,7 +405,10 @@ def fetch_gate_data(owner: str, repo: str, number: int) -> GateData:
 
     assert state is not None
     assert head_oid is not None
-    return GateData(state, head_oid, tuple(reviews), tuple(threads), tuple(checks))
+    return GateData(
+        state, head_oid, tuple(reviews), tuple(threads), tuple(checks),
+        tuple(comments), head_committed_at,
+    )
 
 
 def _current_repository() -> str:
@@ -382,6 +460,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Bugbot merge gate unavailable: {exc}", file=sys.stderr)
         return 4
 
+    if summary.waived_for_usage_limit:
+        print(
+            "Bugbot merge gate waived: Cursor reported its usage limit for "
+            f"PR #{number}, head {summary.head_oid[:12]}; the owner pre-approved merging "
+            f"without Bugbot (AGENTS.md). Resolved Cursor threads {summary.cursor_threads}."
+        )
+        return 0
     print(
         "Bugbot merge gate passed: "
         f"PR #{number}, head {summary.head_oid[:12]}, "

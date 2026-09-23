@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -41,6 +42,7 @@ from booksaver.domain.browser_executor import (
     BROWSER_USE_PRICE_POLICY_VERSION,
     QualificationState,
     QualificationStatus,
+    english_booking_property_identity,
 )
 from booksaver.domain.check_result import (
     CheckOutcome,
@@ -73,6 +75,8 @@ from booksaver.domain.value_objects import (
     RoomType,
     StayDates,
 )
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 18
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
@@ -1051,8 +1055,12 @@ class SqliteAccountReservationRepository:
                         lifecycles=result.reconciliation_lifecycles,
                     )
             conn.commit()
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as error:
             conn.rollback()
+            # Field names only: no reservation content reaches the ordinary logs.
+            logger.warning(
+                "Inventory persistence conflict run_id=%s user_id=%s: %s", run_id, user_id, error,
+            )
             failed = SynchronizationReport(
                 run_id=run_id,
                 completeness=InventoryCompleteness.FAILED,
@@ -1275,12 +1283,14 @@ class SqliteAccountReservationRepository:
                 (user_id, observation.confirmation_id),
             ).fetchone()
         if existing is not None and observation.extraction_method == "agentic_inventory":
-            if self._agentic_observation_conflicts(
+            conflicts = self._agentic_observation_conflicts(
                 existing, observation, observed_at=observed_at,
                 trusted_cancellation=trusted_cancellation,
-            ):
+            )
+            if conflicts:
                 raise sqlite3.IntegrityError(
-                    "Agentic inventory conflicts with last-safe reservation facts"
+                    "Agentic inventory conflicts with last-safe reservation facts: "
+                    + ", ".join(conflicts)
                 )
             observation = self._merge_agentic_existing_observation(
                 existing,
@@ -1448,48 +1458,43 @@ class SqliteAccountReservationRepository:
         *,
         observed_at: datetime,
         trusted_cancellation: bool = False,
-    ) -> bool:
-        """Reject explicit model facts that disagree with persisted last-safe authority."""
+    ) -> tuple[str, ...]:
+        """Name the explicit model facts that disagree with persisted last-safe authority.
+
+        Identity, stay, room, occupancy, money, and refundability facts are authoritative once
+        saved. The property name and reference also drive price checks. A reference may differ
+        only as another rendering of the same recognized Booking hotel URL (locale suffix or
+        host); the stored reference is kept. A new name is accepted only when that URL proof
+        holds and a code-owned reader took the name and URL from one verified page anchor, so
+        provider output cannot rename a saved hotel. Any other difference fails closed.
+        """
 
         def _different(column: str, observed: object | None) -> bool:
             stored = existing[column]
             return observed is not None and stored is not None and str(observed) != str(stored)
 
-        if any(
+        conflicts: list[str] = []
+        checks = (
+            ("confirmation_id", observation.confirmation_id),
+            ("check_in", observation.check_in.isoformat() if observation.check_in else None),
+            ("check_out", observation.check_out.isoformat() if observation.check_out else None),
+            ("room_type", observation.room_type),
             (
-                _different("confirmation_id", observation.confirmation_id),
-                _different("property_name", observation.property_name),
-                _different("property_ref", observation.property_ref),
-                _different(
-                    "check_in",
-                    observation.check_in.isoformat() if observation.check_in else None,
-                ),
-                _different(
-                    "check_out",
-                    observation.check_out.isoformat() if observation.check_out else None,
-                ),
-                _different("room_type", observation.room_type),
-                _different(
-                    "refund_deadline",
-                    observation.refund_deadline.isoformat()
-                    if observation.refund_deadline
-                    else None,
-                ),
-                _different(
-                    "occ_adults",
-                    observation.occupancy.adults if observation.occupancy else None,
-                ),
-                _different(
-                    "occ_children",
-                    observation.occupancy.children if observation.occupancy else None,
-                ),
-                _different(
-                    "occ_rooms",
-                    observation.occupancy.rooms if observation.occupancy else None,
-                ),
-            )
+                "refund_deadline",
+                observation.refund_deadline.isoformat() if observation.refund_deadline else None,
+            ),
+            ("occ_adults", observation.occupancy.adults if observation.occupancy else None),
+            ("occ_children", observation.occupancy.children if observation.occupancy else None),
+            ("occ_rooms", observation.occupancy.rooms if observation.occupancy else None),
+        )
+        conflicts.extend(column for column, observed in checks if _different(column, observed))
+        same_hotel = cls._same_recognized_hotel(existing["property_ref"], observation.property_ref)
+        if _different("property_ref", observation.property_ref) and not same_hotel:
+            conflicts.append("property_ref")
+        if _different("property_name", observation.property_name) and not (
+            same_hotel and observation.property_anchor_verified
         ):
-            return True
+            conflicts.append("property_name")
         if (
             observation.lifecycle is not ReservationLifecycle.UNKNOWN
             and existing["remote_lifecycle"] != ReservationLifecycle.UNKNOWN.value
@@ -1501,22 +1506,35 @@ class SqliteAccountReservationRepository:
                 existing, observation, trusted_cancellation,
             )
         ):
-            return True
+            conflicts.append("remote_lifecycle")
         if observation.booked_total is not None:
             stored_amount = existing["baseline_amount"]
             stored_currency = existing["baseline_currency"]
             if stored_amount is not None and Decimal(str(stored_amount)) != (
                 observation.booked_total.amount
             ):
-                return True
+                conflicts.append("baseline_amount")
             if stored_currency is not None and str(stored_currency) != (
                 observation.booked_total.currency
             ):
-                return True
+                conflicts.append("baseline_currency")
         if observation.refundable is not None and existing["refundable"] is not None:
             if bool(existing["refundable"]) is not observation.refundable:
-                return True
-        return False
+                conflicts.append("refundable")
+        return tuple(conflicts)
+
+    @staticmethod
+    def _same_recognized_hotel(stored: object | None, observed: str | None) -> bool:
+        """Prove one hotel from two recognized Booking URLs, ignoring host and locale suffix."""
+        if stored is None or observed is None:
+            return False
+        stored_identity = english_booking_property_identity(str(stored))
+        observed_identity = english_booking_property_identity(observed)
+        return (
+            stored_identity is not None
+            and observed_identity is not None
+            and stored_identity[1:] == observed_identity[1:]
+        )
 
     @classmethod
     def _merge_agentic_existing_observation(
@@ -1528,6 +1546,7 @@ class SqliteAccountReservationRepository:
         trusted_cancellation: bool = False,
     ) -> ReservationObservation:
         """Preserve established facts except for separately proven forward lifecycle progress."""
+        same_hotel = cls._same_recognized_hotel(existing["property_ref"], observation.property_ref)
         stored_total = (
             Money(
                 Decimal(str(existing["baseline_amount"])),
@@ -1560,7 +1579,15 @@ class SqliteAccountReservationRepository:
             observation,
             lifecycle=lifecycle,
             confirmation_id=existing["confirmation_id"] or observation.confirmation_id,
-            property_name=existing["property_name"] or observation.property_name,
+            # A renamed hotel follows the live page only under URL proof and a code-owned anchor;
+            # the conflict check has already rejected every other name difference. The stored
+            # reference is kept so price validation keeps comparing against the same host.
+            property_name=(
+                observation.property_name
+                if same_hotel and observation.property_anchor_verified
+                and observation.property_name
+                else existing["property_name"] or observation.property_name
+            ),
             property_ref=existing["property_ref"] or observation.property_ref,
             check_in=(
                 date.fromisoformat(existing["check_in"])

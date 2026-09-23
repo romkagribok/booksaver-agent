@@ -11,6 +11,11 @@ def refresh_failure_guidance(code: SynchronizationFailureCode | None) -> str:
             "Your personal AI key isn't working. Send /setkey to replace it, "
             "or /deletekey to use the bot's shared key."
         )
+    if code is SynchronizationFailureCode.PERSISTENCE_CONFLICT:
+        return (
+            "A reservation on Booking.com no longer matches what we have saved, "
+            "so we kept your saved copy. Retrying will not help until the owner reviews it."
+        )
     return "Try /bookings again in a few minutes."
 
 
