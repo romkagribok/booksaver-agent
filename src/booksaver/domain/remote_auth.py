@@ -25,6 +25,25 @@ class LoginDevice(StrEnum):
     def display_size(self) -> tuple[int, int]:
         return (1280, 800) if self is LoginDevice.DESKTOP else (480, 960)
 
+    def framebuffer_for(self, viewer_area: object) -> tuple[int, int]:
+        """Framebuffer whose aspect matches the phone's viewer area, so the fitted stream
+        has no letterbox bars. Width stays fixed per device; height is bounded. Any invalid
+        or absent hint yields the default size. This is presentation only, never identity."""
+        width, default_height = self.display_size
+        if self is LoginDevice.DESKTOP:
+            return width, default_height
+        if not isinstance(viewer_area, dict):
+            return width, default_height
+        try:
+            area_width = int(viewer_area.get("width"))  # type: ignore[arg-type]
+            area_height = int(viewer_area.get("height"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return width, default_height
+        if not (200 <= area_width <= 4000 and 200 <= area_height <= 4000):
+            return width, default_height
+        height = round(width * area_height / area_width)
+        return width, max(640, min(1200, height))
+
 
 class RemoteAuthStatus(Enum):
     STARTING = "starting"
@@ -234,6 +253,8 @@ class ViewerState:
     websocket_path: str | None = None
     websocket_token: str | None = None
     message: str | None = None
+    # Negotiated framebuffer, so a resumed or reopened viewer can size its stream.
+    display_size: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)

@@ -147,6 +147,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 "expires_at": "2026-07-27T00:00:00+00:00",
                 "websocket_path": "/websockify",
                 "websocket_token": "ws-token",
+                "display_size": self.server.display_size,
             }
             self._send(200, json.dumps(payload), "application/json")
             return
@@ -213,6 +214,7 @@ class _ViewerServer(ThreadingHTTPServer):
     session_denials: int
     resume_attempts: int
     resume_denied: bool
+    display_size: list[int] | None
 
 
 @pytest.fixture
@@ -230,6 +232,7 @@ def viewer_server() -> Iterator[tuple[_ViewerServer, str]]:
     server.session_denials = 0
     server.resume_attempts = 0
     server.resume_denied = False
+    server.display_size = None
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
@@ -705,9 +708,13 @@ def test_login_discovery_sends_only_device_class_and_remains_stable_on_resize(
         page = context.new_page()
         page.goto(url)
         page.wait_for_function("!document.querySelector('#keyboard').disabled")
-        assert server.exchange_payloads == [
-            {"launch_token": "launch-token", "init_data": "signed", "login_device": expected}
-        ]
+        payload = dict(server.exchange_payloads[0])
+        area = payload.pop("viewer_area")
+        assert payload == {
+            "launch_token": "launch-token", "init_data": "signed", "login_device": expected
+        }
+        # Only the viewer's size accompanies the device class; nothing identifying.
+        assert set(area) == {"width", "height"} and all(isinstance(v, int) for v in area.values())
         page.set_viewport_size({"width": 390, "height": 780})
         page.evaluate("window.__telegramEvent('viewportChanged')")
         assert server.exchanges == 1
@@ -748,7 +755,10 @@ def test_touch_desktop_keyboard_uses_landscape_stream_geometry(
     browser_page.wait_for_function("document.body.clientHeight === 360")
     screen = browser_page.locator("#screen").bounding_box()
     assert screen is not None
-    assert screen["height"] == pytest.approx(390 * 800 / 1280)
+    # Landscape stream geometry: never shorter than the fitted 1280x800 stream, and the
+    # compact chrome may leave the viewer taller than that.
+    viewer_height = browser_page.locator("#viewer").evaluate("element => element.clientHeight")
+    assert screen["height"] == pytest.approx(max(viewer_height, 390 * 800 / 1280))
     for selector in ["#keyboard", "#next", "#enter", "#cancel"]:
         box = browser_page.locator(selector).bounding_box()
         assert box is not None and box["y"] + box["height"] <= 360
@@ -790,7 +800,9 @@ def test_paste_shortcut_preserves_printable_ascii_once_and_releases_modifiers(
     assert desktop_page.evaluate("window.__rfbInstances[0].blurs") == 1
     assert desktop_page.locator("#paste-value").input_value() == ""
     assert server.exchanges == 1
-    assert len(server.exchange_payloads[0]) == 3
+    assert set(server.exchange_payloads[0]) == {
+        "launch_token", "init_data", "login_device", "viewer_area"
+    }
 
 
 @pytest.mark.parametrize(
@@ -1281,3 +1293,72 @@ def test_reconnect_that_never_connected_does_not_count_as_stable(
     )
     browser_page.wait_for_timeout(1500)
     assert browser_page.evaluate("window.__rfbInstances.length") == 2
+
+
+def test_phone_layout_is_compact_and_negotiates_the_stream_aspect(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    server, url = viewer_server
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    # The exchange carries the measured viewer area (presentation hint only).
+    area = server.exchange_payloads[0]["viewer_area"]
+    assert isinstance(area, dict)
+    assert area["width"] == browser_page.evaluate("document.querySelector('#viewer').clientWidth")
+    assert area["height"] == browser_page.evaluate(
+        "document.querySelector('#viewer').clientHeight"
+    )
+    assert area["height"] >= 500, "chrome must leave most of a 780px phone to the stream"
+    aspect = browser_page.evaluate(
+        "parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stream-aspect'))"
+    )
+    assert abs(aspect - area["height"] / area["width"]) < 0.01
+    # Help is collapsed behind the header control and expands on demand.
+    assert browser_page.locator("#help").is_hidden()
+    assert browser_page.locator("#help-button").evaluate(
+        "node => node.closest('#header') !== null"
+    )
+    browser_page.locator("#help-button").click()
+    assert browser_page.locator("#help").is_visible()
+    assert "Google, Apple" in browser_page.locator("#help").inner_text()
+    browser_page.locator("#help-button").click()
+    assert browser_page.locator("#help").is_hidden()
+    # One-row dock including Cancel; single-line status.
+    tops = browser_page.evaluate(
+        "[...document.querySelectorAll('#dock button')].map(b => b.getBoundingClientRect().top)"
+    )
+    assert len(tops) == 5 and max(tops) - min(tops) < 1
+    assert browser_page.evaluate(
+        "document.querySelector('#status').getBoundingClientRect().height"
+    ) <= 52  # at most two compact lines
+    # With the keyboard open the stream keeps full width and grows to the negotiated aspect.
+    browser_page.locator("#keyboard").click()
+    browser_page.wait_for_function("document.body.classList.contains('keyboard-open')")
+    width = browser_page.evaluate("document.querySelector('#viewer').clientWidth")
+    height = browser_page.evaluate("document.querySelector('#screen').offsetHeight")
+    assert abs(height - width * aspect) < 2
+
+
+def test_resumed_viewer_adopts_the_server_negotiated_stream_aspect(
+    viewer_server: tuple[_ViewerServer, str], browser_page: Page
+) -> None:
+    server, url = viewer_server
+    server.display_size = [480, 726]
+    browser_page.goto(url)
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    # Reload resumes without an exchange, so the local measurement never runs; the session
+    # state still carries the negotiated framebuffer.
+    browser_page.reload()
+    browser_page.wait_for_function("!document.querySelector('#keyboard').disabled")
+    assert server.exchanges == 1
+    aspect = browser_page.evaluate(
+        "parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stream-aspect'))"
+    )
+    assert abs(aspect - 726 / 480) < 0.001
+    browser_page.locator("#keyboard").click()
+    browser_page.wait_for_function("document.body.classList.contains('keyboard-open')")
+    width = browser_page.evaluate("document.querySelector('#viewer').clientWidth")
+    height = browser_page.evaluate("document.querySelector('#screen').offsetHeight")
+    assert abs(height - max(width * 726 / 480,
+                            browser_page.evaluate(
+                                "document.querySelector('#viewer').clientHeight"))) < 2

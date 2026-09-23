@@ -24,6 +24,7 @@ class StubManager:
         self.viewer_token = "viewer-secret"
         self.user_id = 123
         self.cancelled: list[str] = []
+        self.viewer_areas: list[object] = []
         self.detached: list[str] = []
         self.resumed: list[tuple[str, str]] = []
         self.resume_denied = False
@@ -36,10 +37,12 @@ class StubManager:
 
     def exchange(
         self, token: str, user_id: int, *, login_device: LoginDevice = LoginDevice.MOBILE,
+        viewer_area: object = None,
     ) -> ViewerGrant:
         assert token == self.launch_token
         assert user_id == self.user_id
         self.exchanges.append((token, user_id, login_device))
+        self.viewer_areas.append(viewer_area)
         return ViewerGrant(
             self.viewer_token,
             datetime.now(UTC) + timedelta(minutes=10),
@@ -53,6 +56,7 @@ class StubManager:
             websocket_path="/websockify",
             websocket_token="websocket-secret",
             message="Ready",
+            display_size=(480, 726),
         )
 
     def resume(self, token: str, launch_token: str) -> bool:
@@ -257,6 +261,22 @@ def test_resume_requires_same_origin_cookie_and_launch_token(tmp_path: Path) -> 
     assert "viewer-secret" not in response.body.decode()
 
 
+def test_exchange_forwards_the_viewer_area_hint_untrusted(tmp_path: Path) -> None:
+    app, manager, _verifier = _app(tmp_path)
+    headers = {"origin": "https://connect.example.test", "content-type": "application/json"}
+    body = json.dumps({
+        "launch_token": "launch-secret", "init_data": "signed-telegram-data",
+        "login_device": "mobile", "viewer_area": {"width": 390, "height": 590},
+    }).encode()
+    assert app.handle("POST", "/api/connect/exchange", headers, body).status == 200
+    assert manager.viewer_areas == [{"width": 390, "height": 590}]
+    body = json.dumps(
+        {"launch_token": "launch-secret", "init_data": "signed-telegram-data"}
+    ).encode()
+    assert app.handle("POST", "/api/connect/exchange", headers, body).status == 200
+    assert manager.viewer_areas[-1] is None
+
+
 def test_detach_requires_same_origin_and_cookie(tmp_path: Path) -> None:
     app, manager, _verifier = _app(tmp_path)
     assert app.handle("POST", "/api/connect/detach", {}).status == 401
@@ -280,6 +300,7 @@ def test_viewer_and_cancel_require_cookie_and_never_echo_it(tmp_path: Path) -> N
     assert payload["status"] == "ready"
     assert payload["websocket_path"] == "/websockify"
     assert payload["websocket_token"] == "websocket-secret"
+    assert payload["display_size"] == [480, 726]
     assert b"viewer-secret" not in response.body
 
     assert app.handle("POST", "/api/connect/cancel", headers).status == 401

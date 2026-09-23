@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-09-20T20:07:43Z
-total_decisions: 53
+total_decisions: 54
 ---
 
 # Decision Index
@@ -527,3 +527,10 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/081-remote-login-resume/adr-053-resumable-remote-login.md`
 - **Summary**: Owner-reopenable launch link with one live viewer, detach grace instead of cancel on leaving, and activity-slid expiry under a fixed ceiling.
 - **Read when**: Changing remote login capability lifetimes, cancellation, the browser gate hold, or viewer reconnection.
+
+### ADR-054: Full-framebuffer mobile login window
+- **Status**: accepted
+- **Bolt**: 082-full-width-stream
+- **Path**: `bolts/082-full-width-stream/adr-054-full-framebuffer-mobile-login.md`
+- **Summary**: Fullscreen the mobile remote window, size its emulated viewport to the framebuffer, and stream full-width with vertical scrolling on phones.
+- **Read when**: Changing remote login window geometry, device profiles for login, or the viewer's scaling and chrome.

@@ -111,6 +111,7 @@ class RemoteAuthHttpApp:
             grant = self._manager.exchange(
                 launch_token, identity.telegram_user_id,
                 login_device=LoginDevice.from_hint(data.get("login_device")),
+                viewer_area=data.get("viewer_area"),
             )
         except (
             KeyError,
@@ -145,6 +146,7 @@ class RemoteAuthHttpApp:
                 "expires_at": state.expires_at.isoformat(),
                 "websocket_path": state.websocket_path,
                 "websocket_token": state.websocket_token,
+                "display_size": list(state.display_size) if state.display_size else None,
             },
         )
 

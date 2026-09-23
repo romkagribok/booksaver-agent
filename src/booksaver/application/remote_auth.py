@@ -56,6 +56,12 @@ class RemoteBrowserWork:
     login_device: LoginDevice = LoginDevice.MOBILE
     # Live deadline when the attempt's expiry slides with viewer activity.
     deadline: Callable[[], datetime] | None = None
+    # Framebuffer negotiated from the first viewer's area; defaults to the device size.
+    display_size: tuple[int, int] | None = None
+
+    @property
+    def framebuffer(self) -> tuple[int, int]:
+        return self.display_size or self.login_device.display_size
 
     def expired(self, now: datetime) -> bool:
         return now >= (self.deadline() if self.deadline is not None else self.expires_at)
@@ -134,6 +140,7 @@ class _Attempt:
     failure_incident_policy: _FailureIncidentPolicy = _FailureIncidentPolicy.PUBLISH
     detached_at: datetime | None = None
     closed_after_detach: bool = False
+    display_size: tuple[int, int] | None = None
 
 
 def _digest(token: str) -> bytes:
@@ -307,6 +314,7 @@ class RemoteAuthenticationManager:
         launch_token: str,
         telegram_user_id: int,
         login_device: LoginDevice = LoginDevice.MOBILE,
+        viewer_area: object = None,
     ) -> ViewerGrant:
         now = self._clock()
         with self._lock:
@@ -321,8 +329,9 @@ class RemoteAuthenticationManager:
             if attempt.viewer_digest is not None:
                 self._viewer_index.pop(attempt.viewer_digest, None)
             else:
-                # The browser is sized for the first device; later reopenings reuse it.
+                # The browser is sized for the first viewer; later reopenings reuse it.
                 attempt.login_device = LoginDevice.from_hint(login_device)
+                attempt.display_size = attempt.login_device.framebuffer_for(viewer_area)
             attempt.viewer_digest = viewer_digest
             self._viewer_index[viewer_digest] = attempt.attempt_id
             attempt.detached_at = None
@@ -348,6 +357,7 @@ class RemoteAuthenticationManager:
                 websocket_path=websocket_path,
                 websocket_token=websocket_token,
                 message=self._viewer_message(attempt),
+                display_size=attempt.display_size,
             )
 
     def cancel(self, session_token: str) -> bool:
@@ -462,6 +472,7 @@ class RemoteAuthenticationManager:
                 cancel_event=attempt.cancel_event,
                 login_device=attempt.login_device,
                 deadline=lambda: self._live_deadline(attempt),
+                display_size=attempt.display_size,
             )
 
         def _ready() -> None:
@@ -701,11 +712,7 @@ class RemoteAuthenticationManager:
         if attempt.status is RemoteAuthStatus.STARTING:
             return "Starting the secure Booking.com browser…"
         if attempt.status in {RemoteAuthStatus.READY, RemoteAuthStatus.CONNECTED}:
-            return (
-                "Sign in below with your Booking.com email and password. Google, Apple, "
-                "and other external providers are disabled. This window closes after "
-                "authentication."
-            )
+            return "Sign in with your Booking.com email and password."
         if attempt.status is RemoteAuthStatus.FINALIZING:
             return "Authentication verified; saving the Booking.com session…"
         if attempt.status is RemoteAuthStatus.SUCCEEDED:

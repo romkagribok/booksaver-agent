@@ -154,7 +154,7 @@ class SystemRemoteBrowserRunner:
                 return _RemoteBrowserExecution(RemoteBrowserResult(RemoteAuthStatus.CANCELLED))
             if work.expired(datetime.now(UTC)):
                 return _RemoteBrowserExecution(RemoteBrowserResult(RemoteAuthStatus.EXPIRED))
-            width, height = work.login_device.display_size
+            width, height = work.framebuffer
             self._require_tools()
             with tempfile.TemporaryDirectory(prefix="booksaver-auth-") as temp_raw:
                 temp_dir = Path(temp_raw)
@@ -223,7 +223,7 @@ class SystemRemoteBrowserRunner:
                 browser = playwright.chromium.launch(
                     headless=False,
                     env=browser_env,
-                    args=self._chromium_args(work.login_device),
+                    args=self._chromium_args(work.framebuffer),
                 )
                 descriptor = playwright.devices[
                     self._mobile_settings.profile.playwright_device_name
@@ -242,7 +242,9 @@ class SystemRemoteBrowserRunner:
                 if baseline.outcome is not ServerSessionProbeOutcome.SIGNED_OUT:
                     return self._failed_server_execution(work, baseline)
 
-                context = self._new_login_context(browser, dict(descriptor), work.login_device)
+                context = self._new_login_context(
+                    browser, dict(descriptor), work.login_device, work.framebuffer,
+                )
                 context.set_default_timeout(5_000)
                 self._secure_context(context)
                 page = context.new_page()
@@ -529,10 +531,14 @@ class SystemRemoteBrowserRunner:
 
     def _new_login_context(
         self, browser: Any, descriptor: dict[str, Any], login_device: LoginDevice,
+        framebuffer: tuple[int, int] | None = None,
     ) -> Any:
+        width, height = framebuffer or login_device.display_size
         if login_device is LoginDevice.MOBILE:
+            # Same server-owned Android profile, but the page fills the whole streamed
+            # framebuffer instead of the descriptor's smaller viewport.
+            descriptor = dict(descriptor, viewport={"width": width, "height": height})
             return new_mobile_context(browser, self._mobile_settings, descriptor)
-        width, height = login_device.display_size
         return browser.new_context(
             # An emulated desktop viewport enlarges the native headed window
             # beyond Xvfb's framebuffer. Use its actual content area instead.
@@ -546,10 +552,10 @@ class SystemRemoteBrowserRunner:
 
     @staticmethod
     def _prepare_login_window(context: Any, page: Any, login_device: LoginDevice) -> None:
-        if login_device is not LoginDevice.DESKTOP:
-            return
-        # Playwright opens the context window in normal mode despite --kiosk.
-        # Enter fullscreen inside Xvfb; this does not change Telegram's window.
+        del login_device
+        # Playwright opens the context window in normal mode despite --kiosk, which would
+        # stream a tab strip and address bar. Enter fullscreen inside Xvfb for every device;
+        # this does not change Telegram's window.
         session = context.new_cdp_session(page)
         try:
             window = session.send("Browser.getWindowForTarget")
@@ -561,8 +567,8 @@ class SystemRemoteBrowserRunner:
             session.detach()
 
     @staticmethod
-    def _chromium_args(login_device: LoginDevice = LoginDevice.MOBILE) -> list[str]:
-        width, height = login_device.display_size
+    def _chromium_args(framebuffer: tuple[int, int] = LoginDevice.MOBILE.display_size) -> list[str]:
+        width, height = framebuffer
         return [
             "--kiosk",
             "--window-position=0,0",
