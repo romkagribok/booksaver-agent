@@ -56,3 +56,13 @@ placeholder backspaces on replacement autofill. Image
 `sha256:c57ca9803e3b5a754ec6f6ae1a8f41636ffd6fa6990852ece5f66b7af9762987` merged as `4986db1`, promoted
 2026-09-23T00:45Z with backup `/opt/booksaver-backups/seamless-f2bb781-20260923` and rollback tag
 `rollback-pre-seamless-f2bb781`. Production healthy afterwards.
+
+## Release resume-9fd6192 (2026-09-23)
+
+Resumable `/connect` (US-201, Bolt 081, ADR-053): owner-reopenable launch link with one live
+viewer, detach grace instead of cancel on leaving, activity-slid expiry under a 30-minute
+ceiling, server-verified resume on reload. Bugbot found three defects before release (unbound
+cookie resume, non-self-running grace, unearned stability credit); all fixed with regressions.
+Image `sha256:369759b284c174e68faffef4653f13e8b807601c5bd514ffd52dc776e60a79ac` merged as `9239e72`,
+promoted 2026-09-23T15:03Z with backup `/opt/booksaver-backups/resume-9fd6192-20260923` and
+rollback tag `rollback-pre-resume-9fd6192`. Production healthy afterwards.
