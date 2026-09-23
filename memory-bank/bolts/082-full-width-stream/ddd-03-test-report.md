@@ -46,3 +46,9 @@ stream from it. 168 remote-auth tests pass.
 Exact image `fit-9a783f4` passed all seven dev probes and was promoted to production at
 2026-09-23T16:12Z with verified backup and rollback tag; Bugbot passed on the final head.
 Physical phone acceptance remains user-observed.
+
+## 2026-09-23T19:45:31Z — follow-up: help control removed
+
+Per user feedback the "?" control and help paragraph were removed; the status height is fixed at
+two compact lines so the negotiated viewer area no longer drifts when the connected message
+wraps. Browser tests assert no help elements exist and the measured area equals the live area.
