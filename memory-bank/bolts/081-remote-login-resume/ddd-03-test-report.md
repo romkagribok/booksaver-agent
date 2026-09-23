@@ -31,3 +31,9 @@ an actual connection and resets on every drop. Regressions: manager resume bindi
 worker-driven closure, gateway resume route, browser reload resume, stale-cookie non-resume,
 and never-connected drop. Remaining bounded race: a session poll already in flight when the page
 hides can re-attach the attempt once; it then lives no longer than the pre-existing session window.
+
+## 2026-09-23T15:04:32Z — release evidence
+
+Exact image `resume-9fd6192` passed all dev probes and was promoted to production at
+2026-09-23T15:03Z with verified backup and rollback tag; Bugbot passed on the final head.
+Native device behaviour remains user-observed.
