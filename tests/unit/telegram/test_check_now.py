@@ -71,6 +71,20 @@ class FakeCoordinator:
         self.admission = admission
         self.requests: list[tuple[int, str]] = []
         self.completions: list[Any] = []
+        self.syncing: set[int] = set()
+        self.settled: list[Any] = []
+
+    def after_inventory_sync(self, user_id: int, on_settled: Any) -> bool:
+        if user_id not in self.syncing:
+            return False
+        self.settled.append(on_settled)
+        return True
+
+    def finish_sync(self, user_id: int) -> None:
+        self.syncing.discard(user_id)
+        for on_settled in self.settled:
+            on_settled()
+        self.settled.clear()
 
     def request_immediate(self, user_id: int, booking_id: str, callback: Any) -> Any:
         self.requests.append((user_id, booking_id))
@@ -177,6 +191,44 @@ def test_typed_unique_prefix_starts_background_request(tmp_path: Path) -> None:
     _add_user_booking(db_path, 101, booking)
 
     router.dispatch(IncomingCommand(101, 101, "/checknow", "11111111", "raw"))
+
+    assert coordinator.requests == [(101, booking.booking_id)]
+    assert "Checking Own Hotel now" in sent[-1][1]
+
+
+def test_picker_waits_for_in_flight_inventory_sync(tmp_path: Path) -> None:
+    coordinator = FakeCoordinator()
+    coordinator.syncing.add(101)
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+
+    router.dispatch(IncomingCommand(101, 101, "/checknow", "", "/checknow"))
+
+    assert "still loading" in sent[-1][1]
+    assert sent[-1][2] is None
+    # The post-connect sync saves the reservation, then the picker is sent.
+    _add_user_booking(
+        db_path, 101, _booking("11111111-1111-4111-8111-111111111111", "Fresh Hotel")
+    )
+    coordinator.finish_sync(101)
+
+    markup = sent[-1][2]
+    assert markup is not None and "Fresh Hotel" in str(markup)
+    assert coordinator.requests == []
+
+
+def test_selection_during_inventory_sync_starts_check_after_it(tmp_path: Path) -> None:
+    coordinator = FakeCoordinator()
+    coordinator.syncing.add(101)
+    db_path, _router, callbacks, client, sent = _setup(tmp_path, coordinator)
+    booking = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
+    _add_user_booking(db_path, 101, booking)
+
+    callbacks.dispatch(IncomingCallback(101, 101, "cb-1", 9, f"checknow:{booking.booking_id}"))
+
+    assert coordinator.requests == []
+    assert "still loading" in client.edits[-1]
+    assert "Own Hotel" in client.edits[-1]
+    coordinator.finish_sync(101)
 
     assert coordinator.requests == [(101, booking.booking_id)]
     assert "Checking Own Hotel now" in sent[-1][1]

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import threading
-from contextlib import AbstractContextManager
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -1269,6 +1270,68 @@ def test_bookings_request_discovers_and_projects_authenticated_inventory(
     assert coordinator.llm_calls_today == {}
 
 
+def test_bookings_during_post_connect_sync_joins_it_instead_of_busy(
+    tmp_path: Path,
+) -> None:
+    _add(tmp_path, 101)
+    _add(tmp_path, 202, count=0)
+    entered, release = threading.Event(), threading.Event()
+    calls: list[Any] = []
+
+    def blocking_sync(
+        store: SqliteStore, browser: Any, user_id: int, trigger: Any
+    ) -> SynchronizationReport:
+        calls.append(trigger)
+        entered.set()
+        release.wait(2)
+        return _complete_sync(store, browser, user_id, trigger)
+
+    coordinator = _build_coordinator(
+        _config(tmp_path),
+        browser_factory=lambda: nullcontext(object()),
+        inventory_synchronizer=blocking_sync,
+    )
+    connect_done, bookings_done = threading.Event(), threading.Event()
+    outcomes: list[str] = []
+
+    assert (
+        coordinator.request_inventory(
+            101,
+            lambda _c: (outcomes.append("connect"), connect_done.set()),
+            trigger=SynchronizationTrigger.CONNECT,
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert entered.wait(1)
+    assert (
+        coordinator.request_inventory(
+            101, lambda _c: (outcomes.append("bookings"), bookings_done.set())
+        )
+        is ImmediateAdmission.ACCEPTED
+    )
+    # A different user still cannot share the browser.
+    assert coordinator.request_inventory(202, lambda _c: None) is ImmediateAdmission.BUSY
+    settled = threading.Event()
+    assert coordinator.after_inventory_sync(101, settled.set)
+    assert not coordinator.after_inventory_sync(202, lambda: None)
+    assert not settled.is_set()
+    release.set()
+    assert connect_done.wait(1) and bookings_done.wait(1) and settled.wait(1)
+
+    assert sorted(outcomes) == ["bookings", "connect"]
+    assert calls == [SynchronizationTrigger.CONNECT]  # one browser run served both
+
+    # Once the joined run finishes, a fresh /bookings starts a new sync.
+    fresh = threading.Event()
+    assert (
+        coordinator.request_inventory(101, lambda _c: fresh.set())
+        is ImmediateAdmission.ACCEPTED
+    )
+    assert fresh.wait(1)
+    assert len(calls) == 2
+    assert not coordinator.after_inventory_sync(101, lambda: None)
+
+
 def test_incident_resolution_runs_only_after_inventory_browser_closes(
     tmp_path: Path,
 ) -> None:
@@ -1727,6 +1790,81 @@ def test_check_now_synchronizes_before_resolving_booking(tmp_path: Path) -> None
     assert completed.wait(1)
 
     assert events == [SynchronizationTrigger.CHECK_NOW.value, "price_check"]
+
+
+def test_check_now_reuses_inventory_synchronized_within_the_last_minute(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    fail_next: list[bool] = []
+
+    def synchronize(
+        store: SqliteStore, browser: Any, user_id: int, trigger: Any
+    ) -> SynchronizationReport:
+        events.append(trigger.value)
+        report = _complete_sync(store, browser, user_id, trigger)
+        if fail_next and fail_next.pop():
+            return replace(report, completeness=InventoryCompleteness.FAILED)
+        return report
+
+    coordinator = _build_coordinator(
+        _config(tmp_path, checks=10),
+        browser_factory=BrowserContext,
+        inventory_synchronizer=synchronize,
+    )
+    now = [1000.0]
+    coordinator._monotonic = lambda: now[0]
+    _user_id, bookings = _add(tmp_path, 101)
+
+    def fake_run(self: Any, store: Any, browser: Any, owner: int, booking: Any) -> CheckResult:
+        events.append("price_check")
+        return _failure(booking.booking_id)
+
+    coordinator._run_booking = MethodType(fake_run, coordinator)  # type: ignore[method-assign]
+
+    def run(request: Callable[[Callable[[Any], None]], Any]) -> None:
+        done = threading.Event()
+        assert request(lambda _outcome: done.set()) is ImmediateAdmission.ACCEPTED
+        assert done.wait(1)
+
+    def check_now() -> None:
+        run(lambda cb: coordinator.request_immediate(101, bookings[0].booking_id, cb))
+
+    run(lambda cb: coordinator.request_inventory(
+        101, cb, trigger=SynchronizationTrigger.CONNECT,
+    ))
+    now[0] += 59
+    check_now()  # the connect sync is fresh: straight to the price check
+    assert events == [SynchronizationTrigger.CONNECT.value, "price_check"]
+
+    now[0] += 2  # 61s after the only sync
+    check_now()
+    assert events[2:] == [SynchronizationTrigger.CHECK_NOW.value, "price_check"]
+
+    # A sync that raises also clears the earlier complete one.
+    raise_next = [True]
+    original = coordinator._synchronize_user_job_uncached
+
+    def raising(*args: Any) -> Any:
+        if raise_next and raise_next.pop():
+            raise RuntimeError("browser crashed")
+        return original(*args)
+
+    coordinator._synchronize_user_job_uncached = raising  # type: ignore[method-assign]
+    run(lambda cb: coordinator.request_inventory(101, cb))  # raises inside the worker
+    check_now()
+    assert events[4:] == [SynchronizationTrigger.CHECK_NOW.value, "price_check"]
+    del events[4:]
+
+    # A failed sync is never reused and clears the earlier complete one.
+    fail_next.append(True)
+    run(lambda cb: coordinator.request_inventory(101, cb))
+    check_now()
+    assert events[4:] == [
+        SynchronizationTrigger.BOOKINGS.value,
+        SynchronizationTrigger.CHECK_NOW.value,
+        "price_check",
+    ]
 
 
 def test_agentic_inventory_routes_owner_and_disclosed_invitee_without_legacy_browser(

@@ -101,6 +101,26 @@ def register_check_now_command(
         if coordinator is None:
             return "Immediate checks are unavailable until the daemon is restarted."
 
+        def _start_after_sync() -> None:
+            # The refreshed inventory may have dropped or changed this booking.
+            current = _resolve(telegram_user_id, booking.booking_id)
+            send(
+                chat_id,
+                _UNAVAILABLE if current is None
+                else _start(telegram_user_id, chat_id, current),
+                None,
+            )
+
+        if coordinator.after_inventory_sync(telegram_user_id, _start_after_sync):
+            return (
+                "Your reservations are still loading from Booking.com. "
+                f"I'll start checking {booking.property.name} as soon as that finishes."
+            )
+        return _start(telegram_user_id, chat_id, booking)
+
+    def _start(telegram_user_id: int, chat_id: int, booking: Booking) -> str:
+        assert coordinator is not None
+
         def _complete(completion: ImmediateCompletion) -> None:
             send(chat_id, _format_completion(completion), None)
 
@@ -150,6 +170,15 @@ def register_check_now_command(
             reply(cmd.chat_id, _UNAVAILABLE if booking is None else _request(
                 cmd.user_id, cmd.chat_id, booking
             ))
+            return
+        if coordinator is not None and coordinator.after_inventory_sync(
+            cmd.user_id, lambda: _send_picker(cmd.user_id, cmd.chat_id)
+        ):
+            reply(
+                cmd.chat_id,
+                "Your reservations are still loading from Booking.com. "
+                "I'll show them here to choose from as soon as they're ready.",
+            )
             return
         _send_picker(cmd.user_id, cmd.chat_id)
 

@@ -482,6 +482,10 @@ class AdaptiveBrowserJobAdmission:
             raise ValueError("adaptive browser-job admission requires context or stop")
 
 
+# A /checknow within this window of a complete inventory sync reuses it.
+_INVENTORY_REUSE_SECONDS = 60.0
+
+
 class ImmediateAdmission(Enum):
     ACCEPTED = "accepted"
     BUSY = "busy"
@@ -563,6 +567,15 @@ class CheckCoordinator:
         self._agentic_inventory_executor_factory = agentic_inventory_executor_factory
         self._bookings_inventory_executor_factory = bookings_inventory_executor_factory
         self._job_local = threading.local()
+        # Callers waiting on an in-flight inventory sync, keyed by Telegram user. A
+        # /bookings sent while that user's sync (e.g. post-connect) is running joins
+        # it instead of being refused as busy.
+        self._inventory_lock = threading.Lock()
+        self._inventory_waiters: dict[int, list[Callable[[InventoryCompletion], None]]] = {}
+        # Last complete inventory sync per internal user id, so a /checknow right
+        # after connect or /bookings does not re-sync a list that was just loaded.
+        self._recent_inventory: dict[int, tuple[float, SynchronizationReport, bool]] = {}
+        self._monotonic: Callable[[], float] = time.monotonic
 
     @property
     def checks_today(self) -> dict[int, int]:
@@ -1285,27 +1298,49 @@ class CheckCoordinator:
         """Synchronize one caller's complete account inventory in the background."""
         if self._stop_event.is_set():
             return ImmediateAdmission.STOPPING
-        if not self._execution_gate.acquire(blocking=False):
-            return ImmediateAdmission.BUSY
         callback = on_complete or (lambda _completion: None)
-        worker = threading.Thread(
-            target=self._run_inventory_worker,
-            args=(telegram_user_id, trigger, callback),
-            name=f"booksaver-inventory-{telegram_user_id}",
-            daemon=True,
-        )
-        try:
-            worker.start()
-        except Exception:
-            self._execution_gate.release()
-            raise
+        with self._inventory_lock:
+            waiters = self._inventory_waiters.get(telegram_user_id)
+            if waiters is not None:
+                waiters.append(callback)
+                return ImmediateAdmission.ACCEPTED
+            if not self._execution_gate.acquire(blocking=False):
+                return ImmediateAdmission.BUSY
+            worker = threading.Thread(
+                target=self._run_inventory_worker,
+                args=(telegram_user_id, trigger),
+                name=f"booksaver-inventory-{telegram_user_id}",
+                daemon=True,
+            )
+            # Start under the lock so nobody can join a run whose worker never starts.
+            try:
+                worker.start()
+            except Exception:
+                self._execution_gate.release()
+                raise
+            self._inventory_waiters[telegram_user_id] = [callback]
         return ImmediateAdmission.ACCEPTED
+
+    def after_inventory_sync(
+        self,
+        telegram_user_id: int,
+        on_settled: Callable[[], None],
+    ) -> bool:
+        """Run `on_settled` once this caller's in-flight inventory sync finishes.
+
+        Returns False (and never calls `on_settled`) when no sync is running for them.
+        """
+        with self._inventory_lock:
+            waiters = self._inventory_waiters.get(telegram_user_id)
+            if waiters is None:
+                return False
+            waiters.append(lambda _completion: on_settled())
+            return True
 
     def _run_inventory_worker(
         self,
         telegram_user_id: int,
         trigger: SynchronizationTrigger,
-        on_complete: Callable[[InventoryCompletion], None],
     ) -> None:
         completion = InventoryCompletion(None)
         try:
@@ -1370,7 +1405,11 @@ class CheckCoordinator:
                     exc_info=True,
                 )
         finally:
-            self._execution_gate.release()
+            # Detach waiters and release the gate atomically so a concurrent request
+            # either joins this run or starts a fresh one, never sees a spurious BUSY.
+            with self._inventory_lock:
+                callbacks = self._inventory_waiters.pop(telegram_user_id, [])
+                self._execution_gate.release()
             try:
                 with SqliteStore(self._db_path) as store:
                     current = SqliteUserRepository(store).get_by_telegram_id(telegram_user_id)
@@ -1383,13 +1422,14 @@ class CheckCoordinator:
                 )
             if not may_deliver:
                 return
-            try:
-                on_complete(completion)
-            except Exception:
-                logger.warning(
-                    "Inventory synchronization completion callback failed",
-                    exc_info=True,
-                )
+            for on_complete in callbacks:
+                try:
+                    on_complete(completion)
+                except Exception:
+                    logger.warning(
+                        "Inventory synchronization completion callback failed",
+                        exc_info=True,
+                    )
 
     def _run_immediate_worker(
         self,
@@ -1418,17 +1458,23 @@ class CheckCoordinator:
                     inventory_evidence = _SanitizedIncidentEvidence()
                     check_evidence = _SanitizedIncidentEvidence()
                     used_agentic_inventory = False
+                    reused_inventory = False
                     try:
                         try:
-                            (
-                                report,
-                                inventory_evidence,
-                                used_agentic_inventory,
-                            ) = self._synchronize_user_job(
-                                store,
-                                user.user_id,
-                                SynchronizationTrigger.CHECK_NOW,
-                            )
+                            recent = self._recent_complete_inventory(user.user_id)
+                            if recent is not None:
+                                report, used_agentic_inventory = recent
+                                reused_inventory = True
+                            else:
+                                (
+                                    report,
+                                    inventory_evidence,
+                                    used_agentic_inventory,
+                                ) = self._synchronize_user_job(
+                                    store,
+                                    user.user_id,
+                                    SynchronizationTrigger.CHECK_NOW,
+                                )
                         except Exception:
                             logger.exception(
                                 "Immediate inventory synchronization failed for user %s",
@@ -1525,7 +1571,8 @@ class CheckCoordinator:
                                 )
                                 SqliteCheckHistoryRepository(store).add(result)
                     finally:
-                        if not used_agentic_inventory:
+                        # A reused report already had its incidents recorded by its own run.
+                        if not used_agentic_inventory and not reused_inventory:
                             self._record_post_browser_incidents(
                                 user_id=user.user_id,
                                 adaptive_job=adaptive_job,
@@ -2085,6 +2132,37 @@ class CheckCoordinator:
         trigger: SynchronizationTrigger,
     ) -> tuple[SynchronizationReport, _SanitizedIncidentEvidence, bool]:
         """Run exactly one inventory capability without opening an unused legacy browser."""
+        try:
+            report, evidence, used_agentic = self._synchronize_user_job_uncached(
+                store, user_id, trigger,
+            )
+        except BaseException:
+            with self._inventory_lock:
+                self._recent_inventory.pop(user_id, None)
+            raise
+        with self._inventory_lock:
+            if report.succeeded:
+                self._recent_inventory[user_id] = (self._monotonic(), report, used_agentic)
+            else:
+                self._recent_inventory.pop(user_id, None)
+        return report, evidence, used_agentic
+
+    def _recent_complete_inventory(
+        self, user_id: int,
+    ) -> tuple[SynchronizationReport, bool] | None:
+        """Return a complete sync from the last minute, or None if a fresh one is needed."""
+        with self._inventory_lock:
+            recent = self._recent_inventory.get(user_id)
+        if recent is None or self._monotonic() - recent[0] >= _INVENTORY_REUSE_SECONDS:
+            return None
+        return recent[1], recent[2]
+
+    def _synchronize_user_job_uncached(
+        self,
+        store: SqliteStore,
+        user_id: int,
+        trigger: SynchronizationTrigger,
+    ) -> tuple[SynchronizationReport, _SanitizedIncidentEvidence, bool]:
         if self._uses_agentic_inventory(store, user_id):
             return (
                 self._synchronize_agentic_inventory(store, user_id, trigger),
