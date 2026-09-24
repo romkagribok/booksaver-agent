@@ -1808,7 +1808,7 @@ def test_check_now_reuses_inventory_synchronized_within_the_last_minute(
         return report
 
     coordinator = _build_coordinator(
-        _config(tmp_path),
+        _config(tmp_path, checks=10),
         browser_factory=BrowserContext,
         inventory_synchronizer=synchronize,
     )
@@ -1840,6 +1840,21 @@ def test_check_now_reuses_inventory_synchronized_within_the_last_minute(
     now[0] += 2  # 61s after the only sync
     check_now()
     assert events[2:] == [SynchronizationTrigger.CHECK_NOW.value, "price_check"]
+
+    # A sync that raises also clears the earlier complete one.
+    raise_next = [True]
+    original = coordinator._synchronize_user_job_uncached
+
+    def raising(*args: Any) -> Any:
+        if raise_next and raise_next.pop():
+            raise RuntimeError("browser crashed")
+        return original(*args)
+
+    coordinator._synchronize_user_job_uncached = raising  # type: ignore[method-assign]
+    run(lambda cb: coordinator.request_inventory(101, cb))  # raises inside the worker
+    check_now()
+    assert events[4:] == [SynchronizationTrigger.CHECK_NOW.value, "price_check"]
+    del events[4:]
 
     # A failed sync is never reused and clears the earlier complete one.
     fail_next.append(True)

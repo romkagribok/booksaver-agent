@@ -1306,20 +1306,19 @@ class CheckCoordinator:
                 return ImmediateAdmission.ACCEPTED
             if not self._execution_gate.acquire(blocking=False):
                 return ImmediateAdmission.BUSY
-            self._inventory_waiters[telegram_user_id] = [callback]
-        worker = threading.Thread(
-            target=self._run_inventory_worker,
-            args=(telegram_user_id, trigger),
-            name=f"booksaver-inventory-{telegram_user_id}",
-            daemon=True,
-        )
-        try:
-            worker.start()
-        except Exception:
-            with self._inventory_lock:
-                del self._inventory_waiters[telegram_user_id]
+            worker = threading.Thread(
+                target=self._run_inventory_worker,
+                args=(telegram_user_id, trigger),
+                name=f"booksaver-inventory-{telegram_user_id}",
+                daemon=True,
+            )
+            # Start under the lock so nobody can join a run whose worker never starts.
+            try:
+                worker.start()
+            except Exception:
                 self._execution_gate.release()
-            raise
+                raise
+            self._inventory_waiters[telegram_user_id] = [callback]
         return ImmediateAdmission.ACCEPTED
 
     def after_inventory_sync(
@@ -2133,9 +2132,14 @@ class CheckCoordinator:
         trigger: SynchronizationTrigger,
     ) -> tuple[SynchronizationReport, _SanitizedIncidentEvidence, bool]:
         """Run exactly one inventory capability without opening an unused legacy browser."""
-        report, evidence, used_agentic = self._synchronize_user_job_uncached(
-            store, user_id, trigger,
-        )
+        try:
+            report, evidence, used_agentic = self._synchronize_user_job_uncached(
+                store, user_id, trigger,
+            )
+        except BaseException:
+            with self._inventory_lock:
+                self._recent_inventory.pop(user_id, None)
+            raise
         with self._inventory_lock:
             if report.succeeded:
                 self._recent_inventory[user_id] = (self._monotonic(), report, used_agentic)
