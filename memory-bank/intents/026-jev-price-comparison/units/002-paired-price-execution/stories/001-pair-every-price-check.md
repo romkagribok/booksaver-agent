@@ -2,7 +2,7 @@
 id: 001-pair-every-price-check
 unit: 002-paired-price-execution
 intent: 026-jev-price-comparison
-status: draft
+status: in-progress
 priority: must
 created: "2026-09-26T16:33:08Z"
 assigned_bolt: 086-paired-price-execution

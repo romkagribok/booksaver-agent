@@ -467,3 +467,43 @@ CREATE TABLE IF NOT EXISTS savings_opportunities (
     validated_at    TEXT NOT NULL,
     notified_at     TEXT
 );
+
+-- v19: paired Jev price comparison (intent 026). The Jev arm never writes check_history.
+CREATE TABLE IF NOT EXISTS price_comparisons (
+    comparison_id  TEXT PRIMARY KEY,
+    user_id        INTEGER NOT NULL,
+    booking_id     TEXT NOT NULL,
+    trigger        TEXT NOT NULL CHECK(trigger IN ('check_now', 'scheduled')),
+    cohort         TEXT NOT NULL,
+    first_arm      TEXT NOT NULL CHECK(first_arm IN ('baseline', 'jev')),
+    created_at     TEXT NOT NULL,
+    report_status  TEXT NOT NULL DEFAULT 'pending'
+        CHECK(report_status IN ('pending', 'sent', 'failed', 'suppressed')),
+    report_at      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_comparisons_created
+    ON price_comparisons(created_at);
+
+CREATE TABLE IF NOT EXISTS price_comparison_arms (
+    comparison_id  TEXT NOT NULL
+        REFERENCES price_comparisons(comparison_id) ON DELETE CASCADE,
+    arm            TEXT NOT NULL CHECK(arm IN ('baseline', 'jev')),
+    status         TEXT NOT NULL
+        CHECK(status IN ('pending', 'success', 'failure', 'not_run')),
+    outcome_code   TEXT,
+    live_amount    TEXT,
+    live_currency  TEXT,
+    room_label     TEXT,
+    savings_amount TEXT,
+    model_calls    INTEGER NOT NULL DEFAULT 0 CHECK(model_calls >= 0),
+    input_tokens   INTEGER NOT NULL DEFAULT 0 CHECK(input_tokens >= 0),
+    output_tokens  INTEGER NOT NULL DEFAULT 0 CHECK(output_tokens >= 0),
+    cost_nano_usd  INTEGER CHECK(cost_nano_usd IS NULL OR cost_nano_usd >= 0),
+    cost_certainty TEXT NOT NULL DEFAULT 'unknown'
+        CHECK(cost_certainty IN ('exact', 'conservative', 'unknown')),
+    started_at     TEXT,
+    finished_at    TEXT,
+    detail         TEXT,
+    PRIMARY KEY (comparison_id, arm)
+);

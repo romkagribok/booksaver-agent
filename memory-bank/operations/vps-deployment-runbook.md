@@ -55,6 +55,7 @@ BOOKSAVER_LLM_API_KEY=sk-ant-...          # required by default agentic inventor
 BOOKSAVER_SECRET_KEY=<output of the command below>
 BOOKSAVER_AUTH_DOMAIN=connect.example.com # DNS A/AAAA record must point to this VPS
 # BOOKSAVER_SMTP_PASSWORD=...             # optional, only if email alerts are also configured
+# BOOKSAVER_TYPESAFE_API_KEY=...          # optional, only for the paired Jev price comparison
 ```
 
 Generate `BOOKSAVER_SECRET_KEY` (a Fernet key used to encrypt both personal LLM keys and each

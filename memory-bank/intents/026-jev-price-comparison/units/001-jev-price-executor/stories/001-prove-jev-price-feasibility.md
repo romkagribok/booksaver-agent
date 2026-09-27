@@ -2,7 +2,7 @@
 id: 001-prove-jev-price-feasibility
 unit: 001-jev-price-executor
 intent: 026-jev-price-comparison
-status: draft
+status: in-progress
 priority: must
 created: "2026-09-26T16:33:08Z"
 assigned_bolt: 084-jev-price-executor

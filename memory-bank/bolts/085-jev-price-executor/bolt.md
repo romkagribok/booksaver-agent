@@ -3,17 +3,29 @@ id: 085-jev-price-executor
 unit: 001-jev-price-executor
 intent: 026-jev-price-comparison
 type: ddd-construction-bolt
-status: planned
+status: in-progress
 stories:
   - 002-access-typesafe-safely
   - 003-guard-jev-browser-decisions
   - 004-extract-complete-jev-price-evidence
   - 005-account-jev-provider-cost
 created: "2026-09-26T16:33:08Z"
-started: null
+started: "2026-09-27T17:00:00Z"
 completed: null
-current_stage: null
-stages_completed: []
+current_stage: live-acceptance
+stages_completed:
+  - name: domain-model
+    completed: "2026-09-27T17:00:00Z"
+    artifact: ddd-01-domain-model.md
+  - name: technical-design
+    completed: "2026-09-27T17:00:00Z"
+    artifact: ddd-02-technical-design.md
+  - name: adr-analysis
+    completed: "2026-09-27T17:00:00Z"
+    artifact: ddd-02-technical-design.md
+  - name: implement
+    completed: "2026-09-27T17:00:00Z"
+    artifact: src/booksaver/infrastructure/browser/jev_price_executor.py
 requires_bolts: ['084-jev-price-executor']
 enables_bolts: ['086-paired-price-execution']
 requires_units: []
@@ -46,7 +58,7 @@ Deliver the complete independent metered and guarded Jev price executor.
 - [ ] Implement: scoped source/tests, config/docs and migrations where required.
 - [ ] Test: ddd-03-test-report.md with actual commands/results and each story criterion disposition.
 
-No stage has started. Definition: .specsmd/aidlc/templates/construction/bolt-types/ddd-construction-bolt.md.
+Offline stages are complete; the test stage stays open until live acceptance evidence exists. Definition: .specsmd/aidlc/templates/construction/bolt-types/ddd-construction-bolt.md.
 
 ## Dependencies and handoff
 

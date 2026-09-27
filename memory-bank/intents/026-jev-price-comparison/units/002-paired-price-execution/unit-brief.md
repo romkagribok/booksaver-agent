@@ -2,7 +2,7 @@
 unit: 002-paired-price-execution
 intent: 026-jev-price-comparison
 phase: inception
-status: stories-defined
+status: in-progress
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-09-26T16:33:08Z"

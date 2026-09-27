@@ -133,6 +133,19 @@ the legacy browser is a configured rollback route, not an automatic second attem
 always require current versioned `/connect` disclosure consent. They may be admitted either by the
 explicit `consented_users` route or by the statistically qualified `agentic` route.
 
+### Experimental Jev price comparison
+
+`[jev_comparison] enabled = true` plus `BOOKSAVER_TYPESAFE_API_KEY` runs a second, independent
+price method on every admitted manual and scheduled check: TypeSafe's Jev (`jev-1.13.0`, pinned)
+only chooses among options BookSaver builds from the page (a guarded control to click, the
+property heading, the room-name line, the whole-stay total, the stated cancellation and tax
+terms), while BookSaver code parses every amount and applies the unchanged validators. No other
+model is called in that method. Both methods start from the same session snapshot, run one after
+the other in random order under the single browser lease, and the booking owner receives one
+Telegram report with both results, timings, and AI costs. Only the existing method updates check
+history, sessions, and savings alerts. `participants = "all"` includes invitees; their booking
+page text is then sent to TypeSafe, so tell them first.
+
 All Browser Use inventory and price calls use the deployment owner's
 `BOOKSAVER_LLM_API_KEY`, including calls initiated by invitees. `/admin users` shows that funding
 policy and only whether an optional personal key is configured for legacy LLM work; it never prints,
@@ -245,7 +258,7 @@ and `auth status|delete|import`. Run any command with `--help` for its full argu
   local data directory. Backups contain sensitive booking data and must be protected.
 - Secrets are read from environment variables, never from committed configuration:
   `BOOKSAVER_TELEGRAM_BOT_TOKEN`, `BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SECRET_KEY`, and optional
-  `BOOKSAVER_SMTP_PASSWORD`.
+  `BOOKSAVER_SMTP_PASSWORD` and `BOOKSAVER_TYPESAFE_API_KEY`.
 - BookSaver does not intentionally send cookies, passwords, MFA codes, or raw API keys to the LLM.
   When LLM features are enabled, it may send bounded rendered page text and, during escalation,
   screenshots to the configured Anthropic model. Rendered content can include account or booking

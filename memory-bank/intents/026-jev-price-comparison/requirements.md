@@ -1,7 +1,7 @@
 ---
 intent: 026-jev-price-comparison
 phase: inception
-status: units-defined
+status: construction
 created: "2026-09-26T16:29:30Z"
 updated: "2026-09-26T16:29:30Z"
 ---

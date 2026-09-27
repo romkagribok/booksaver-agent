@@ -57,3 +57,17 @@ session_timeout_seconds = 600
 max_checks_per_user_per_day = 48
 max_llm_calls_per_user_per_day = 200
 messages_per_minute_per_chat = 20
+
+# Experimental paired Jev price comparison (intent 026). When enabled and
+# BOOKSAVER_TYPESAFE_API_KEY is set, every admitted price check also runs an
+# independent Jev-only method from the same session snapshot and sends one
+# Telegram report with both results. Only the existing method's result is saved
+# or can trigger savings alerts. Jev inference costs USD 0.042 per million input
+# tokens; the daily cap below bounds it. "all" includes invitees, who should be
+# told that their booking page text is sent to TypeSafe.
+[jev_comparison]
+enabled = false
+participants = "owner"          # owner | all
+max_daily_cost_usd = "0.25"     # at most 1.00
+max_calls_per_arm = 100         # at most 120 Jev requests per candidate run
+arm_timeout_seconds = 150       # at most 180

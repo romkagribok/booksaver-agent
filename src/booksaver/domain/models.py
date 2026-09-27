@@ -8,6 +8,7 @@ from enum import Enum
 from .agent import AgentSettings
 from .browser_executor import AgenticBrowserSettings
 from .mobile_web import MobileWebSettings
+from .price_comparison import JevComparisonSettings
 from .remote_auth import RemoteAuthSettings
 from .schedule import ScheduleSettings
 from .value_objects import (
@@ -94,4 +95,7 @@ class Config:
     schedule_settings: ScheduleSettings = field(default_factory=ScheduleSettings)
     agentic_browser_settings: AgenticBrowserSettings = field(
         default_factory=AgenticBrowserSettings
+    )
+    jev_comparison_settings: JevComparisonSettings = field(
+        default_factory=JevComparisonSettings
     )

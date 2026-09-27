@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-09-20T20:07:43Z
-total_decisions: 54
+last_updated: 2026-09-27T17:00:00Z
+total_decisions: 55
 ---
 
 # Decision Index
@@ -534,3 +534,10 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/082-full-width-stream/adr-054-full-framebuffer-mobile-login.md`
 - **Summary**: Fullscreen the mobile remote window, size its emulated viewport to the framebuffer, and stream full-width with vertical scrolling on phones.
 - **Read when**: Changing remote login window geometry, device profiles for login, or the viewer's scaling and chrome.
+
+### ADR-055: Paired Jev price comparison with baseline-only authority
+- **Status**: accepted
+- **Bolt**: 086-paired-price-execution
+- **Path**: `bolts/086-paired-price-execution/adr-055-paired-jev-price-comparison.md`
+- **Summary**: In explicit paired mode run an independent Jev-only price arm beside the existing method (never a fallback); only the existing method owns canonical effects; the Jev arm's own run time extends the job allowance; own TypeSafe secret and nano-USD daily cap.
+- **Read when**: Changing price execution routing, the check job deadline, Jev/TypeSafe access, or comparison reporting.

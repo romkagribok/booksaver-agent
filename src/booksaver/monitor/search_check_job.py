@@ -313,6 +313,15 @@ class BookingComSearchMonitor:
         self._persist_trace(recorder, result, None)
         return result
 
+    def evaluate_agentic_outcome(
+        self,
+        booking: Booking,
+        outcome: PriceExecutionOutcome,
+        session_revision_id: str,
+    ) -> CheckResult:
+        """Evaluate one outcome with the canonical offer policy but no history or trace writes."""
+        return self._agentic_check_result(booking, outcome, session_revision_id)
+
     def _agentic_check_result(
         self,
         booking: Booking,

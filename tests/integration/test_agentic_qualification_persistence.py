@@ -123,7 +123,7 @@ def test_redacted_canary_consent_promotion_and_regression_round_trip(
             & columns
         )
         version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
-        assert version == SCHEMA_VERSION == 18
+        assert version == SCHEMA_VERSION == 19
 
 
 def test_invitee_cannot_record_owner_canary_or_promote(tmp_path: Path) -> None:
@@ -169,7 +169,7 @@ def test_v18_migration_tags_existing_canary_evidence_as_stagehand(tmp_path: Path
         version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
 
     assert check.policy_version == "agentic-price-v1"
-    assert version == SCHEMA_VERSION == 18
+    assert version == SCHEMA_VERSION == 19
 
 
 def _promote_clean_canary(

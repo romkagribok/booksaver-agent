@@ -16,6 +16,7 @@ from booksaver.domain.browser_executor import (
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.models import Config
+from booksaver.domain.price_comparison import ComparisonParticipants, JevComparisonSettings
 from booksaver.domain.remote_auth import RemoteAuthSettings
 from booksaver.domain.schedule import ScheduleSettings
 from booksaver.domain.value_objects import (
@@ -309,10 +310,39 @@ def load_config(source: ConfigSource) -> Config:
     except (ValueError, TypeError) as e:
         errors.append(f"agentic_browser: {e}")
 
+    jev_comparison_settings: JevComparisonSettings | None = None
+    jev_raw = raw.get("jev_comparison", {})
+    try:
+        jev_defaults = JevComparisonSettings()
+        enabled = jev_raw.get("enabled", jev_defaults.enabled)
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be true or false")
+        jev_comparison_settings = JevComparisonSettings(
+            enabled=enabled,
+            participants=ComparisonParticipants.parse(
+                jev_raw.get("participants", jev_defaults.participants.value)
+            ),
+            model=str(jev_raw.get("model", jev_defaults.model)),
+            max_calls_per_arm=int(
+                jev_raw.get("max_calls_per_arm", jev_defaults.max_calls_per_arm)
+            ),
+            arm_timeout_seconds=int(
+                jev_raw.get("arm_timeout_seconds", jev_defaults.arm_timeout_seconds)
+            ),
+            max_daily_cost_nano_usd=1_000 * _usd_micro(
+                jev_raw.get("max_daily_cost_usd", "0.25"),
+                field="jev_comparison.max_daily_cost_usd",
+                maximum="1.00",
+            ),
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"jev_comparison: {e}")
+
     if errors:
         raise ConfigValidationError(errors)
 
     assert schedule_settings is not None
+    assert jev_comparison_settings is not None
     assert data_directory is not None
     assert agent_settings is not None
     assert telegram_bot_settings is not None
@@ -360,4 +390,5 @@ def load_config(source: ConfigSource) -> Config:
         remote_auth_settings=remote_auth_settings,
         schedule_settings=schedule_settings,
         agentic_browser_settings=agentic_browser_settings,
+        jev_comparison_settings=jev_comparison_settings,
     )
