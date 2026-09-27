@@ -656,8 +656,11 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 | `024-repository-streamlining` | 3 | 6 | Complete locally (bolts 070–072) |
 
-All 194 stories (190 complete; remaining stories retain the statuses above)
-are assigned exactly once.
+| `025-session-continuity-and-paste` | 4 | 9 | Complete |
+| `026-jev-price-comparison` | 3 | 12 | Inception artifacts generated; bolts 084–088 planned |
+
+For intents 001–024, all 194 stories (190 complete; remaining stories retain the statuses above)
+are assigned exactly once. Intents 025 and 026 add 9 complete and 12 planned stories respectively.
 
 ## 025-session-continuity-and-paste
 
@@ -689,3 +692,34 @@ are assigned exactly once.
 |-------|-------|-----|--------|------|
 | `US-202` | Full-width login stream on phones | Usability | Complete | `004-full-width-stream/stories/001-full-width-login-stream.md` |
 | `US-203` | Touch presentation without a cursor, tablet-sized | Usability | Complete | `004-full-width-stream/stories/002-touch-presentation.md` |
+
+## 026-jev-price-comparison
+
+Price-only paired Jev comparison; inception artifacts generated, implementation not started.
+
+### 001-jev-price-executor
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-204` | Prove Jev price feasibility | Jev comparison | Planned | `001-jev-price-executor/stories/001-prove-jev-price-feasibility.md` |
+| `US-205` | Access TypeSafe safely | Jev comparison | Planned | `001-jev-price-executor/stories/002-access-typesafe-safely.md` |
+| `US-206` | Guard Jev browser decisions | Jev comparison | Planned | `001-jev-price-executor/stories/003-guard-jev-browser-decisions.md` |
+| `US-207` | Extract complete Jev price evidence | Jev comparison | Planned | `001-jev-price-executor/stories/004-extract-complete-jev-price-evidence.md` |
+| `US-208` | Account for Jev provider cost | Jev comparison | Planned | `001-jev-price-executor/stories/005-account-jev-provider-cost.md` |
+
+### 002-paired-price-execution
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-209` | Pair every eligible price check | Jev comparison | Planned | `002-paired-price-execution/stories/001-pair-every-price-check.md` |
+| `US-210` | Isolate pair state and recovery | Jev comparison | Planned | `002-paired-price-execution/stories/002-isolate-pair-state-and-recovery.md` |
+| `US-211` | Bound pair resources | Jev comparison | Planned | `002-paired-price-execution/stories/003-bound-pair-resources.md` |
+| `US-212` | Report two Telegram results | Jev comparison | Planned | `002-paired-price-execution/stories/004-report-two-telegram-results.md` |
+
+### 003-price-comparison-qualification
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-213` | Analyze paired results | Jev comparison | Planned | `003-price-comparison-qualification/stories/001-analyze-paired-results.md` |
+| `US-214` | Qualify paired price release | Jev comparison | Planned | `003-price-comparison-qualification/stories/002-qualify-paired-price-release.md` |
+| `US-215` | Activate and roll back comparison | Jev comparison | Planned | `003-price-comparison-qualification/stories/003-activate-and-rollback-comparison.md` |
