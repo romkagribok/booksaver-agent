@@ -576,6 +576,8 @@ def _make_check_coordinator(
             mobile_settings=cfg.mobile_web_settings,
         )
 
+    jev_factory = _make_jev_executor_factory(cfg)
+
     @contextmanager
     def _incident_recorder() -> Iterator[DomIncidentRecorder]:
         # CheckCoordinator enters this only after the relevant browser context
@@ -602,7 +604,44 @@ def _make_check_coordinator(
         bookings_inventory_executor_factory=(
             _browser_use_inventory_executor if api_key else None
         ),
+        jev_executor_factory=jev_factory,
     )
+
+
+def _make_jev_executor_factory(cfg: Config) -> Any:
+    """Enable the paired Jev arm only with explicit config and its own TypeSafe secret."""
+    import logging
+
+    settings = cfg.jev_comparison_settings
+    if not settings.enabled:
+        return None
+    typesafe_key = os.environ.get("BOOKSAVER_TYPESAFE_API_KEY", "").strip()
+    if not typesafe_key:
+        logging.getLogger(__name__).warning(
+            "jev_comparison is enabled but BOOKSAVER_TYPESAFE_API_KEY is not set; "
+            "price checks stay baseline-only"
+        )
+        return None
+    from booksaver.infrastructure.browser.jev_price_executor import LocalJevPriceExecutor
+    from booksaver.infrastructure.llm.typesafe_client import TypeSafeClient
+
+    client = TypeSafeClient(typesafe_key, model=settings.model)
+    logging.getLogger(__name__).info(
+        "Paired Jev price comparison enabled model=%s participants=%s",
+        settings.model,
+        settings.participants.value,
+    )
+
+    def _factory(lease_broker: Any, max_cost_nano_usd: int) -> Any:
+        return LocalJevPriceExecutor(
+            client=client,
+            lease_broker=lease_broker,
+            max_calls=settings.max_calls_per_arm,
+            max_cost_nano_usd=max_cost_nano_usd,
+            mobile_settings=cfg.mobile_web_settings,
+        )
+
+    return _factory
 
 
 def _make_agentic_price_executor(
@@ -1007,6 +1046,63 @@ def cmd_incidents_list(args: argparse.Namespace) -> int:
             f"{incident.evidence_state.value:12}  "
             f"{incident.last_observed_at.isoformat()}"
         )
+    return 0
+
+
+def cmd_comparison_report(args: argparse.Namespace) -> int:
+    """Summarize paired baseline/Jev price-check outcomes and model spend (intent 026)."""
+    from datetime import timedelta
+
+    from booksaver.domain.price_comparison import CostCertainty, format_usd_nano
+    from booksaver.infrastructure.persistence.price_comparison import (
+        SqlitePriceComparisonRepository,
+    )
+
+    _cfg, db_path = _db_path_for(args)
+    since = datetime.now(UTC) - timedelta(days=args.days)
+    if not db_path.exists():
+        print("No price comparisons recorded yet.")
+        return 0
+    with SqliteStore(db_path) as store:
+        repository = SqlitePriceComparisonRepository(store)
+        rows = repository.summary(since)
+        both, agreeing = repository.agreement_counts(since)
+    if not rows:
+        print("No price comparisons recorded yet.")
+        return 0
+    print(f"Paired price checks since {since:%Y-%m-%d %H:%M} UTC")
+    header = f"{'METHOD':9}  {'OUTCOME':9}  {'RUNS':>5}  {'AI COST':>22}  {'AVG SECONDS':>11}"
+    print(header)
+    print("-" * len(header))
+    for arm in ("baseline", "jev"):
+        arm_rows = [row for row in rows if row.arm == arm]
+        runs = sum(row.count for row in arm_rows)
+        successes = sum(row.count for row in arm_rows if row.status == "success")
+        for row in arm_rows:
+            seconds = f"{row.average_seconds:.0f}" if row.average_seconds is not None else "-"
+            certainty = (
+                CostCertainty.CONSERVATIVE if row.conservative_cost_count else CostCertainty.EXACT
+            )
+            print(
+                f"{arm:9}  {row.status:9}  {row.count:5}  "
+                f"{format_usd_nano(row.cost_nano_usd, certainty):>22}  {seconds:>11}"
+            )
+        total = sum(row.cost_nano_usd for row in arm_rows)
+        total_certainty = (
+            CostCertainty.CONSERVATIVE
+            if any(row.conservative_cost_count for row in arm_rows)
+            else CostCertainty.EXACT
+        )
+        unknown = sum(row.unknown_cost_count for row in arm_rows)
+        per_success = (
+            format_usd_nano(total // successes, CostCertainty.EXACT) if successes else "n/a"
+        )
+        print(
+            f"  {arm}: {successes}/{runs} verified; total AI cost "
+            f"{format_usd_nano(total, total_certainty)}; per verified result {per_success}"
+            + (f"; {unknown} run(s) with unknown cost" if unknown else "")
+        )
+    print(f"Both methods verified a price in {both} pair(s); {agreeing} reported the same price.")
     return 0
 
 
@@ -1664,6 +1760,18 @@ def create_parser() -> argparse.ArgumentParser:
     )
     p_incidents_inspect.add_argument("incident_id", metavar="INCIDENT_ID")
     p_incidents_inspect.set_defaults(func=cmd_incidents_inspect)
+
+    # paired Jev price comparison (intent 026)
+    p_cmp = sub.add_parser("comparison", help="Paired baseline/Jev price-check comparison")
+    p_cmp.set_defaults(func=_no_subcommand(p_cmp))
+    cmp_sub = p_cmp.add_subparsers(dest="comparison_command")
+    p_cmp_report = cmp_sub.add_parser(
+        "report", help="Summarize paired outcomes, timings, and AI cost per method"
+    )
+    p_cmp_report.add_argument(
+        "--days", type=int, choices=range(1, 91), default=7, metavar="N"
+    )
+    p_cmp_report.set_defaults(func=cmd_comparison_report)
 
     # recovery evaluation (explicit opt-in; simulated browser state only)
     p_eval = sub.add_parser("evaluate", help="Run privacy-safe model evaluations (no live browser)")

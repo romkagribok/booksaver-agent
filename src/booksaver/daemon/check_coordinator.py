@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import threading
 import time
@@ -19,6 +20,7 @@ from booksaver.application.browser_executor import (
     AgenticPriceExecutionService,
     InMemorySessionLeaseBroker,
     OwnerBoundAgenticPriceCheck,
+    PriceExecutionOutcome,
 )
 from booksaver.application.browser_resilience import DOM_STEP_REGISTRY
 from booksaver.application.dom_incident import build_incident_draft, is_dom_incident_eligible
@@ -32,6 +34,14 @@ from booksaver.application.ports import (
     InventoryBrowserExecutor,
     InventoryInterpreter,
     PriceBrowserExecutor,
+)
+from booksaver.application.price_comparison import (
+    JevArmRequest,
+    JevArmRunner,
+    JevPriceExecutorPort,
+    baseline_arm,
+    format_comparison_report,
+    not_run_arm,
 )
 from booksaver.application.savings_pipeline import NotificationDispatcher, SavingsPipeline
 from booksaver.application.user_sessions import (
@@ -108,6 +118,14 @@ from booksaver.domain.model_policy import (
     UsdAmount,
 )
 from booksaver.domain.models import Booking, Config
+from booksaver.domain.price_comparison import (
+    JEV_ADAPTER_VERSION,
+    JEV_MODEL,
+    ArmResult,
+    ArmStatus,
+    ComparisonArm,
+    ComparisonTrigger,
+)
 from booksaver.domain.schedule import (
     ScheduledAdmission,
     ScheduleSettings,
@@ -123,7 +141,12 @@ from booksaver.domain.session_maintenance import (
     SessionVerificationResult,
     as_utc,
 )
-from booksaver.domain.user_session import SessionUnavailableReason, UserSessionHealth
+from booksaver.domain.user import User
+from booksaver.domain.user_session import (
+    SessionUnavailableReason,
+    UserSessionHealth,
+    UserSessionSnapshot,
+)
 from booksaver.infrastructure.browser.booking_account_inventory import (
     BookingComAccountInventorySource,
 )
@@ -138,6 +161,9 @@ from booksaver.infrastructure.persistence.encrypted_session_store import (
 from booksaver.infrastructure.persistence.model_policy import (
     SqliteSpendLedger,
     ThreadScopedSqliteSpendLedger,
+)
+from booksaver.infrastructure.persistence.price_comparison import (
+    SqlitePriceComparisonRepository,
 )
 from booksaver.infrastructure.persistence.scheduled_check_slots import (
     SqliteScheduledCheckSlotRepository,
@@ -155,6 +181,7 @@ from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteStore,
     SqliteUserRepository,
 )
+from booksaver.monitor import search_check_job
 from booksaver.monitor.browser_agent import BrowserAgent
 from booksaver.monitor.failure_tracker import FailureTracker
 from booksaver.monitor.search_check_job import BookingComSearchMonitor
@@ -511,6 +538,14 @@ class InventoryCompletion:
     reservations: tuple[AccountReservation, ...] = ()
 
 
+@dataclass(slots=True)
+class _PendingComparison:
+    comparison_id: str
+    trigger: ComparisonTrigger
+    first_arm: ComparisonArm
+    jev: ArmResult | None = None
+
+
 class CheckCoordinator:
     """The daemon's single admission and execution boundary for live checks.
 
@@ -541,6 +576,10 @@ class CheckCoordinator:
         session_verifier: Callable[[bytes, datetime], SessionVerificationResult] | None = None,
         session_uncertain_notifier: AuthRequiredNotifier | None = None,
         session_clock: Callable[[], datetime] | None = None,
+        jev_executor_factory: (
+            Callable[[InMemorySessionLeaseBroker, int], JevPriceExecutorPort] | None
+        ) = None,
+        comparison_report_sender: Callable[[User, str, str], None] | None = None,
     ) -> None:
         self._config = config
         self._db_path = config.data_directory.path / "booksaver.db"
@@ -564,6 +603,8 @@ class CheckCoordinator:
         self._capped_notice_sent_today = capped_notice_sent_today or DailyCounter()
         self._execution_gate = execution_gate or threading.Lock()
         self._agentic_executor_factory = agentic_executor_factory
+        self._jev_executor_factory = jev_executor_factory
+        self._comparison_report_sender = comparison_report_sender
         self._agentic_inventory_executor_factory = agentic_inventory_executor_factory
         self._bookings_inventory_executor_factory = bookings_inventory_executor_factory
         self._job_local = threading.local()
@@ -2458,6 +2499,50 @@ class CheckCoordinator:
             )
             history.add(result)
             return result
+        comparison = self._begin_price_comparison(store, user, booking)
+        if comparison is not None and comparison.first_arm is ComparisonArm.JEV:
+            comparison.jev = self._run_jev_arm(store, comparison, user_id, booking, snapshot)
+            if agentic_job is not None:
+                # The candidate ran inside this booking's slot; give the baseline its full phase.
+                agentic_job.start_phase()
+        baseline_started = datetime.now(UTC)
+        try:
+            result, baseline_outcome = self._run_booking_price(
+                store, browser, user_id, booking, user, provider, snapshot, history
+            )
+        except BaseException:
+            if comparison is not None:
+                self._abandon_price_comparison(store, comparison, baseline_started)
+            raise
+        if comparison is not None:
+            try:
+                self._finish_price_comparison(
+                    store,
+                    comparison,
+                    user_id,
+                    booking,
+                    snapshot,
+                    result,
+                    baseline_outcome,
+                    baseline_started,
+                )
+            except Exception:
+                # The experiment must never change the outcome of the canonical check.
+                logger.warning("Price comparison could not be finished", exc_info=True)
+        return result
+
+    def _run_booking_price(
+        self,
+        store: SqliteStore,
+        browser: Any,
+        user_id: int,
+        booking: Booking,
+        user: User,
+        provider: AuthenticatedSessionProvider,
+        snapshot: UserSessionSnapshot,
+        history: SqliteCheckHistoryRepository,
+    ) -> tuple[CheckResult, PriceExecutionOutcome | None]:
+        """The existing (baseline) price method with all of its canonical effects."""
         agentic_settings = self._config.agentic_browser_settings
         qualification = SqliteAgenticQualificationRepository(store).qualification_state()
         consent = SqliteAgenticDisclosureConsentRepository(store).get(user_id)
@@ -2499,7 +2584,7 @@ class CheckCoordinator:
                 SqliteCheckTraceRepository(store).add(
                     TraceRecorder(booking.booking_id).finish(result)
                 )
-                return result
+                return result, None
             settings = replace(
                 settings,
                 max_steps=min(settings.max_steps, shared_limits.max_actions),
@@ -2549,7 +2634,7 @@ class CheckCoordinator:
                 SqliteCheckTraceRepository(store).add(
                     TraceRecorder(booking.booking_id).finish(result)
                 )
-                return result
+                return result, None
             executor = self._agentic_executor_factory(
                 agentic_budget,
                 lease_broker,
@@ -2683,7 +2768,7 @@ class CheckCoordinator:
         # access after that potentially long operation and suppress every
         # user-visible post-check effect if the booking owner was revoked.
         if not self._is_active_user(store, user_id):
-            return result
+            return result, getattr(monitor, "last_agentic_outcome", None)
 
         resolver = OwnerBookingNotifierResolver(
             booking_repo=SqliteBookingRepository(store),
@@ -2698,7 +2783,239 @@ class CheckCoordinator:
             dispatcher=NotificationDispatcher(resolver=resolver),
         ).process([result])
         self._invalid_key_notifier(SqliteUserRepository(store), [result])
-        return result
+        return result, getattr(monitor, "last_agentic_outcome", None)
+
+    def _comparisons_active(self) -> bool:
+        """Paired mode adds one explicit Jev arm allowance to a check job (intent 026)."""
+        return (
+            self._config.jev_comparison_settings.enabled
+            and self._jev_executor_factory is not None
+        )
+
+    def _begin_price_comparison(
+        self, store: SqliteStore, user: User, booking: Booking
+    ) -> _PendingComparison | None:
+        if not self._comparisons_active() or booking.occupancy is None:
+            return None
+        if not self._config.jev_comparison_settings.admits(is_owner=user.is_owner):
+            return None
+        job = self._current_agentic_job()
+        comparison = _PendingComparison(
+            comparison_id=uuid.uuid4().hex,
+            trigger=(
+                ComparisonTrigger.CHECK_NOW
+                if job is not None and job.job_kind is BrowserJobKind.CHECK_NOW
+                else ComparisonTrigger.SCHEDULED
+            ),
+            # Counterbalance order effects; the assignment is persisted before either arm runs.
+            first_arm=random.SystemRandom().choice(tuple(ComparisonArm)),
+        )
+        try:
+            SqlitePriceComparisonRepository(store).begin(
+                comparison_id=comparison.comparison_id,
+                user_id=user.user_id,
+                booking_id=booking.booking_id,
+                trigger=comparison.trigger,
+                cohort=f"{JEV_ADAPTER_VERSION}:{JEV_MODEL}",
+                first_arm=comparison.first_arm,
+                now=datetime.now(UTC),
+            )
+        except Exception:
+            logger.warning("Could not start a price comparison", exc_info=True)
+            return None
+        return comparison
+
+    def _run_jev_arm(
+        self,
+        store: SqliteStore,
+        comparison: _PendingComparison,
+        user_id: int,
+        booking: Booking,
+        snapshot: UserSessionSnapshot,
+    ) -> ArmResult:
+        """Run and persist the candidate arm; never raises into the canonical check."""
+        now = datetime.now(UTC)
+        try:
+            arm = self._jev_arm_result(store, user_id, booking, snapshot, now)
+        except Exception as exc:
+            logger.warning(
+                "Jev comparison arm could not run failure_type=%s", type(exc).__name__
+            )
+            arm = not_run_arm(
+                ComparisonArm.JEV,
+                "infrastructure_failure",
+                f"The Jev method could not start ({type(exc).__name__}).",
+                now,
+            )
+        job = self._current_agentic_job()
+        if job is not None and arm.status is not ArmStatus.NOT_RUN:
+            # The candidate's own run time is added to the job allowance, so the baseline keeps
+            # exactly the time it has without pairing (ADR-055).
+            job.deadline += arm.finished_at - arm.started_at
+        try:
+            SqlitePriceComparisonRepository(store).record_arm(comparison.comparison_id, arm)
+        except Exception:
+            logger.warning("Could not record the Jev comparison arm", exc_info=True)
+        return arm
+
+    def _jev_arm_result(
+        self,
+        store: SqliteStore,
+        user_id: int,
+        booking: Booking,
+        snapshot: UserSessionSnapshot,
+        now: datetime,
+    ) -> ArmResult:
+        if self._stop_event.is_set():
+            return not_run_arm(
+                ComparisonArm.JEV, "stopping", "BookSaver was shutting down.", now
+            )
+        if not self._is_active_user(store, user_id) or self._jev_executor_factory is None:
+            return not_run_arm(
+                ComparisonArm.JEV, "caller_revoked", "Access changed during the check.", now
+            )
+        settings = self._config.jev_comparison_settings
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        spent = SqlitePriceComparisonRepository(store).jev_cost_since(day_start)
+        return JevArmRunner(
+            settings=settings,
+            executor_factory=self._jev_executor_factory,
+            evaluate=self._evaluate_price_outcome,
+        ).run(
+            JevArmRequest(
+                user_id=user_id,
+                booking=booking,
+                # Both arms start from the same snapshot resolved before either ran.
+                session_material=snapshot.cookies,
+                session_revision_id=snapshot.metadata.revision_id,
+                deadline=now + timedelta(seconds=settings.arm_timeout_seconds),
+                remaining_daily_nano_usd=settings.max_daily_cost_nano_usd - spent,
+            )
+        )
+
+    def _abandon_price_comparison(
+        self, store: SqliteStore, comparison: _PendingComparison, baseline_started: datetime
+    ) -> None:
+        """Close the pair honestly when the canonical check itself raised."""
+        now = datetime.now(UTC)
+        try:
+            repository = SqlitePriceComparisonRepository(store)
+            repository.record_arm(
+                comparison.comparison_id,
+                ArmResult(
+                    arm=ComparisonArm.BASELINE,
+                    status=ArmStatus.FAILURE,
+                    outcome_code="infrastructure_failure",
+                    started_at=baseline_started,
+                    finished_at=max(baseline_started, now),
+                    detail="The existing method stopped unexpectedly.",
+                ),
+            )
+            if comparison.jev is None:
+                repository.record_arm(
+                    comparison.comparison_id,
+                    not_run_arm(
+                        ComparisonArm.JEV,
+                        "infrastructure_failure",
+                        "The check stopped before the Jev method ran.",
+                        now,
+                    ),
+                )
+            repository.mark_report(comparison.comparison_id, "suppressed", now)
+        except Exception:
+            logger.warning("Could not close an abandoned price comparison", exc_info=True)
+
+    def _evaluate_price_outcome(
+        self, booking: Booking, outcome: PriceExecutionOutcome, session_revision_id: str
+    ) -> CheckResult:
+        monitor = search_check_job.BookingComSearchMonitor(
+            browser=None,  # type: ignore[arg-type]  # evaluation never touches a browser
+            check_history=None,  # type: ignore[arg-type]  # nor canonical history
+            failure_tracker=None,  # type: ignore[arg-type]
+            mobile_profile_id=self._config.mobile_web_settings.profile_id,
+        )
+        return monitor.evaluate_agentic_outcome(booking, outcome, session_revision_id)
+
+    def _finish_price_comparison(
+        self,
+        store: SqliteStore,
+        comparison: _PendingComparison,
+        user_id: int,
+        booking: Booking,
+        snapshot: UserSessionSnapshot,
+        result: CheckResult,
+        baseline_outcome: PriceExecutionOutcome | None,
+        baseline_started: datetime,
+    ) -> None:
+        baseline = baseline_arm(
+            booking,
+            result,
+            baseline_outcome,
+            started_at=baseline_started,
+            finished_at=datetime.now(UTC),
+        )
+        repository = SqlitePriceComparisonRepository(store)
+        try:
+            repository.record_arm(comparison.comparison_id, baseline)
+        except Exception:
+            logger.warning("Could not record the baseline comparison arm", exc_info=True)
+        if comparison.jev is not None:
+            jev = comparison.jev
+        elif result.failure_reason is not None and result.failure_reason.code in {
+            FailureCode.AUTH_REQUIRED,
+            FailureCode.BOT_WALL,
+        }:
+            # A second browser on a session Booking.com just rejected or walled could only make
+            # the owner's account state worse; record the pair as not comparable.
+            jev = not_run_arm(
+                ComparisonArm.JEV,
+                "baseline_blocked",
+                "Booking.com rejected the session or browser during the existing method.",
+                datetime.now(UTC),
+            )
+            try:
+                repository.record_arm(comparison.comparison_id, jev)
+            except Exception:
+                logger.warning("Could not record the Jev comparison arm", exc_info=True)
+        else:
+            jev = self._run_jev_arm(store, comparison, user_id, booking, snapshot)
+        subject, body = format_comparison_report(
+            booking=booking,
+            trigger=comparison.trigger,
+            comparison_id=comparison.comparison_id,
+            first_arm=comparison.first_arm,
+            baseline=baseline,
+            jev=jev,
+        )
+        status = "failed"
+        try:
+            status = self._send_comparison_report(store, user_id, subject, body)
+        except Exception as exc:
+            logger.warning(
+                "Could not deliver price comparison %s failure_type=%s",
+                comparison.comparison_id[:8],
+                type(exc).__name__,
+            )
+        try:
+            repository.mark_report(comparison.comparison_id, status, datetime.now(UTC))
+        except Exception:
+            logger.warning("Could not record price comparison delivery", exc_info=True)
+
+    def _send_comparison_report(
+        self, store: SqliteStore, user_id: int, subject: str, body: str
+    ) -> str:
+        user = SqliteUserRepository(store).get_by_id(user_id)
+        if user is None or not user.is_active:
+            return "suppressed"
+        if self._comparison_report_sender is not None:
+            self._comparison_report_sender(user, subject, body)
+            return "sent"
+        chat_id = resolve_telegram_chat_id(user, self._config.telegram_bot_settings)
+        token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
+        if chat_id is None or not token:
+            return "failed"
+        TelegramNotifier(bot_token=token, chat_id=str(chat_id)).send(subject, body)
+        return "sent"
 
     @staticmethod
     def _session_unavailable_result(

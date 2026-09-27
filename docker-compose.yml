@@ -12,6 +12,9 @@ services:
       # and how to generate BOOKSAVER_SECRET_KEY.
       - BOOKSAVER_TELEGRAM_BOT_TOKEN=${BOOKSAVER_TELEGRAM_BOT_TOKEN:?set in .env}
       - BOOKSAVER_LLM_API_KEY=${BOOKSAVER_LLM_API_KEY:-}
+      # Optional: TypeSafe key for the experimental paired Jev price comparison
+      # ([jev_comparison] in config.toml). Empty keeps price checks baseline-only.
+      - BOOKSAVER_TYPESAFE_API_KEY=${BOOKSAVER_TYPESAFE_API_KEY:-}
       - BOOKSAVER_SECRET_KEY=${BOOKSAVER_SECRET_KEY:?set in .env}
       # Optional: email notifications alongside/instead of Telegram.
       - BOOKSAVER_SMTP_PASSWORD=${BOOKSAVER_SMTP_PASSWORD:-}
@@ -34,8 +37,9 @@ services:
       - "6080"
     # Stop is honored between scheduler jobs (ADR-006): an in-flight browser
     # check finishes first (bounded by [agent] check_timeout_seconds, default
-    # 180s). Give SIGTERM that long before Docker escalates to SIGKILL.
-    stop_grace_period: 200s
+    # 180s). A paired Jev comparison can run one 150s candidate arm before its
+    # baseline arm, so give SIGTERM that long before Docker escalates to SIGKILL.
+    stop_grace_period: 360s
     healthcheck:
       # Freshness probe against /data/heartbeat, which the daemon's main
       # thread refreshes every ~15s while all its threads (scheduler +

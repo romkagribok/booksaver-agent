@@ -38,7 +38,8 @@ production in `requirements.lock`, and explained in `memory-bank/standards/tech-
 - Self-hosted owner/invite access only; no public bot or BookSaver-operated backend.
 - Keep config, SQLite, cookies, encrypted keys, traces, and snapshots locally controlled.
 - Secrets come only from `BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`,
-  `BOOKSAVER_TELEGRAM_BOT_TOKEN`, and `BOOKSAVER_SECRET_KEY`.
+  `BOOKSAVER_TELEGRAM_BOT_TOKEN`, `BOOKSAVER_SECRET_KEY`, and (for the experimental paired Jev
+  price comparison only) `BOOKSAVER_TYPESAFE_API_KEY`.
 - Preserve per-user booking, session, alert, usage, and admin-visibility boundaries.
 - Browser-agent actions remain bounded and adapter-guarded; provider output is untrusted.
 
