@@ -301,11 +301,13 @@ class _RateEvidence:
     complete: bool
 
 
-def rate_questions(room_label: str, room: RoomSnapshot, rate: tuple[str, ...]) -> tuple[
-    dict[str, object], dict[str, Mapping[str, object]], dict[str, str]
-]:
+def rate_questions(
+    room_label: str, room: RoomSnapshot, rate: tuple[str, ...], *, nights: int
+) -> tuple[dict[str, object], dict[str, Mapping[str, object]], dict[str, str]]:
     prices = _price_options(rate)
+    stay = f"{nights} night{'s' if nights != 1 else ''}"
     state: dict[str, object] = {
+        "stay_nights": nights,
         "room": room_label,
         "room_card_notes": list(room.lines[-12:]),
         "rate_option_lines": list(rate),
@@ -313,9 +315,14 @@ def rate_questions(room_label: str, room: RoomSnapshot, rate: tuple[str, ...]) -
     questions: dict[str, Mapping[str, object]] = {
         "total": choice_question(
             {
-                "question": "Which displayed amount is the total price for the entire stay "
-                "(all nights) of this one rate option?",
-                "not_for": "a per-night price, a crossed-out previous price, a deposit, or a "
+                # Live qualification (2026-10-01): without the stay length and Booking.com's
+                # labelling, Jev answered "none" for every one-night stay, where the nightly
+                # and whole-stay amounts are equal.
+                "question": f"This is one Booking.com rate option for a stay of {stay}. Which "
+                "line shows the price to pay for the whole stay?",
+                "hint": "Booking.com shows the whole-stay price on a line like 'Price $X'. A "
+                "line followed by 'per night' is the nightly price.",
+                "not_for": "a nightly price, a crossed-out previous price, a deposit, or a "
                 "tax amount",
                 "rules": _UNTRUSTED,
             },
@@ -768,7 +775,9 @@ class LocalJevPriceRuntime:
             for rate in room.rates:
                 if not _price_options(rate):
                     continue
-                state, questions, prices = rate_questions(room_label, room, rate)
+                state, questions, prices = rate_questions(
+                    room_label, room, rate, nights=nights
+                )
                 rate_jobs.append((room_label, room, rate, prices))
                 rate_tasks.append(decider.ask(state, questions))
         rate_answers = await _all_or_fail(rate_tasks)

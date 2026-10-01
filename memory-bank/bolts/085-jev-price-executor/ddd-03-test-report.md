@@ -23,3 +23,15 @@ status: in-progress
 - Local browser smoke (see bolt 084). Full suite: 3,065 passed + new tests, Ruff and mypy clean.
 
 Pending (live acceptance): real TypeSafe responses and authenticated Booking.com pages.
+
+## 2026-10-01 — first live TypeSafe qualification
+
+With the owner's key provisioned (the `.env` variable had been named `..._AI_KEY`; renamed to
+`BOOKSAVER_TYPESAFE_API_KEY`), the first real requests succeeded: `jev-1.13.0`, ~280 ms, object
+instructions/criteria accepted, full probability maps returned. Finding: the whole-stay total
+question answered "none" (0.97–0.99) for every one-night rate card, where nightly and total amounts
+are equal, and only 0.73 for a two-night card. Fixed by stating the stay length and Booking.com's
+`Price $X` labelling (adapter cohort `jev-price-v2`); the patched full request then grounded 10/10
+live cases correctly (1/2/4 nights, USD/EUR, tax included/excluded, per-night-only rejected,
+0.94–0.99). Other questions (cancellation, cancellation line, taxes, room name, property heading)
+were correct at ≥ 0.94 unchanged. Probe spend ≈ USD 0.001.

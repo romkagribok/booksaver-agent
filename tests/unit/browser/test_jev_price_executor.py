@@ -208,7 +208,7 @@ def test_taxes_excluded_text_keeps_offers_out_of_all_in_comparison() -> None:
 
 def test_per_night_choice_and_unsupported_refund_claim_are_not_grounded() -> None:
     room = RoomSnapshot(ROOM_LINES, (FLEXIBLE,))
-    _state, questions, prices = rate_questions("Standard King Room", room, FLEXIBLE)
+    _state, questions, prices = rate_questions("Standard King Room", room, FLEXIBLE, nights=1)
     per_night = _option(prices, lambda v: v.startswith("$319 (followed by: per night"))
     answers = {
         "total": _choice(questions["total"]["criteria"], per_night),  # type: ignore[arg-type]
@@ -225,7 +225,7 @@ def test_per_night_choice_and_unsupported_refund_claim_are_not_grounded() -> Non
 
 def test_stated_nights_must_match_the_requested_stay() -> None:
     room = RoomSnapshot(ROOM_LINES, (FLEXIBLE,))
-    _state, questions, prices = rate_questions("Standard King Room", room, FLEXIBLE)
+    _state, questions, prices = rate_questions("Standard King Room", room, FLEXIBLE, nights=1)
     total = _option(prices, lambda v: v.startswith("Price $"))
     answers = {
         "total": _choice(questions["total"]["criteria"], total),  # type: ignore[arg-type]
@@ -318,7 +318,7 @@ def test_non_us_number_grouping_fails_closed(text: str) -> None:
 
 def _grounded(rate: tuple[str, ...], *, total_line: str, refund: str, refund_line: str) -> Any:
     room = RoomSnapshot(ROOM_LINES, (rate,))
-    _state, questions, prices = rate_questions("Standard King Room", room, rate)
+    _state, questions, prices = rate_questions("Standard King Room", room, rate, nights=1)
     total = _option(prices, lambda v: v.startswith(total_line))
     line = _option(
         questions["refund_line"]["criteria"],  # type: ignore[arg-type]
@@ -348,3 +348,14 @@ def test_partial_refund_terms_are_never_grounded_as_refundable(policy: str) -> N
     evidence = _grounded(rate, total_line="Price $319", refund="free_cancellation",
                          refund_line=policy)
     assert evidence.refundability == "conflicting"
+
+
+def test_total_question_states_the_stay_length_and_booking_label() -> None:
+    room = RoomSnapshot(ROOM_LINES, (FLEXIBLE,))
+    state, questions, _prices = rate_questions("Standard King Room", room, FLEXIBLE, nights=1)
+    instructions = questions["total"]["instructions"]
+    assert state["stay_nights"] == 1
+    assert "stay of 1 night." in instructions["question"]  # type: ignore[index]
+    assert "Price $X" in instructions["hint"]  # type: ignore[index]
+    _state, plural, _prices = rate_questions("Standard King Room", room, FLEXIBLE, nights=3)
+    assert "stay of 3 nights." in plural["total"]["instructions"]["question"]  # type: ignore[index]
