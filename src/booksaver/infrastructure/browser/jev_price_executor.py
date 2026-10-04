@@ -434,10 +434,96 @@ def ground_rate(
     )
 
 
+# Bounded page categories for diagnostics. Only the marker *names* are ever recorded, never
+# page text, so a failed run can explain itself without storing Booking.com content.
+_PAGE_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("oops", re.compile(r"\boops\b|something went wrong|try again later", re.IGNORECASE)),
+    (
+        "bot",
+        re.compile(
+            r"robot|captcha|unusual (?:activity|traffic)|verify (?:you|that)|are you human",
+            re.IGNORECASE,
+        ),
+    ),
+    ("signin", re.compile(r"\bsign in\b|\blog in\b", re.IGNORECASE)),
+    (
+        "soldout",
+        re.compile(
+            r"no availability|sold out|no rooms available|not available on our site",
+            re.IGNORECASE,
+        ),
+    ),
+    ("cookies", re.compile(r"cookie preferences|accept cookies|manage cookie", re.IGNORECASE)),
+)
+_MAX_DIAGNOSTIC_CHARS = 400
+
+
+def page_signature(snapshot: OfferPageSnapshot | None, property_name: str) -> str:
+    """Content-free description of the observed page: kind, sizes, and marker names."""
+
+    if snapshot is None:
+        return "nosnap"
+    try:
+        parsed = urlsplit(snapshot.url)
+    except ValueError:
+        return "badurl"
+    path = parsed.path.casefold()
+    host = (parsed.hostname or "").casefold()
+    if path.startswith("/hotel/"):
+        kind = "property"
+    elif "searchresults" in path:
+        kind = "search"
+    elif host.startswith(("secure.", "account.")) or "myaccount" in path:
+        kind = "account"
+    elif path in {"", "/"} or path.startswith("/index"):
+        kind = "home"
+    else:
+        kind = "other"
+    text = "\n".join((snapshot.title, *snapshot.headings, snapshot.viewport_text))
+    flags = [name for name, pattern in _PAGE_MARKERS if pattern.search(text)]
+    if "chal_t=" in parsed.query:
+        flags.append("chal")
+    if property_name.casefold() in text.casefold():
+        flags.append("name")
+    signature = (
+        f"{kind} r{len(snapshot.rooms)} h{len(snapshot.headings)} t{len(snapshot.viewport_text)}"
+    )
+    return f"{signature} {'+'.join(flags)}" if flags else signature
+
+
+@dataclass(slots=True)
+class _Diagnostics:
+    """What the episode saw and chose, as bounded categories and counts only."""
+
+    entry_kind: str = "unknown"
+    stage: str = "start"
+    ready_seconds: float | None = None
+    snapshot_errors: int = 0
+    snapshot_empty: int = 0
+    steps: list[str] = field(default_factory=list)
+    end: str = ""
+    extraction: str = ""
+
+    def summary(self) -> str:
+        parts = [f"entry={self.entry_kind}", f"stage={self.stage}"]
+        if self.ready_seconds is not None:
+            parts.append(f"ready={self.ready_seconds:.0f}s")
+        if self.snapshot_errors or self.snapshot_empty:
+            parts.append(f"snap_err={self.snapshot_errors} snap_empty={self.snapshot_empty}")
+        if self.steps:
+            parts.append("nav=[" + " | ".join(self.steps) + "]")
+        if self.end:
+            parts.append(f"end={self.end}")
+        if self.extraction:
+            parts.append(self.extraction)
+        return " ".join(parts)[:_MAX_DIAGNOSTIC_CHARS]
+
+
 @dataclass(slots=True)
 class _Episode:
     actions: list[dict[str, object]] = field(default_factory=list)
     safety_violations: set[ExecutorSafetyViolation] = field(default_factory=set)
+    diagnostics: _Diagnostics = field(default_factory=_Diagnostics)
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,6 +550,11 @@ class LocalJevPriceRuntime:
     def failure_stage(self) -> str:
         return self._host.failure_stage
 
+    @property
+    def diagnostic(self) -> str:
+        """Content-free account of this episode, readable even after a timeout."""
+        return self._episode.diagnostics.summary()
+
     def restore_session(self, data: bytes) -> None:
         self._host.restore_session(data)
 
@@ -474,12 +565,16 @@ class LocalJevPriceRuntime:
         decider: JevDecisionPort,
         meter: ExecutionMeter,
     ) -> JevPriceRuntimeResult:
+        diagnostics = self._episode.diagnostics
+        diagnostics.stage = "browser_start"
         hosted = await self._host.start()
         session = hosted.browser
         viewport = hosted.viewport
         self._host.failure_stage = "authentication_probe"
+        diagnostics.stage = "authentication"
         authentication = await self._host.verify_authentication(request, session)
         if authentication is not None:
+            diagnostics.end = f"auth_{authentication.value}"
             return JevPriceRuntimeResult(
                 PriceExecutionStatus.TIMEOUT
                 if authentication is BrowserUseSessionStatus.TIMEOUT
@@ -493,11 +588,15 @@ class LocalJevPriceRuntime:
         self._host.failure_stage = "price_navigation"
         meter.record_action()
         entry, entry_kind = _price_entry_url(request)
+        diagnostics.entry_kind = entry_kind
+        diagnostics.stage = "entry"
         await session.navigate_to(entry, new_tab=False)
         if not await self._invariant(session):
+            diagnostics.end = "entry_invariant"
             return self._unsafe(non_allowlisted=True)
 
         self._host.failure_stage = "jev_navigation"
+        diagnostics.stage = "navigation"
         snapshot = await self._navigate_until_offers(request, session, viewport, decider, meter)
         if isinstance(snapshot, PriceExecutionStatus):
             return (
@@ -506,8 +605,11 @@ class LocalJevPriceRuntime:
                 else JevPriceRuntimeResult(snapshot)
             )
         self._host.failure_stage = "jev_extraction"
+        diagnostics.stage = "extraction"
         observation = await self._extract(request, snapshot, decider)
+        diagnostics.stage = "done"
         if self._host.dialog_rejected:
+            diagnostics.end = "dialog_rejected"
             return self._unsafe()
         logger.info(
             "Jev price extraction execution_id=%s entry_kind=%s rooms=%s rates=%s offers=%s",
@@ -535,9 +637,13 @@ class LocalJevPriceRuntime:
             )
         except Exception:
             # Booking.com may still be navigating (for example after a WAF challenge).
+            self._episode.diagnostics.snapshot_errors += 1
             return None
         value = response.get("result", {}).get("value") if isinstance(response, dict) else None
-        return parse_offer_snapshot(value)
+        parsed = parse_offer_snapshot(value)
+        if parsed is None:
+            self._episode.diagnostics.snapshot_empty += 1
+        return parsed
 
     async def _navigate_until_offers(
         self,
@@ -547,15 +653,23 @@ class LocalJevPriceRuntime:
         decider: JevDecisionPort,
         meter: ExecutionMeter,
     ) -> OfferPageSnapshot | PriceExecutionStatus:
+        diagnostics = self._episode.diagnostics
+        property_name = request.query.property_name
+        ready_started = time.monotonic()
         snapshot = await self._await_offers(session)
+        diagnostics.ready_seconds = time.monotonic() - ready_started
         decisions = 0
         while snapshot is None or not snapshot.rooms:
+            signature = page_signature(snapshot, property_name)
             if not await self._invariant(session):
+                diagnostics.end = f"invariant_before_decision({signature})"
                 return PriceExecutionStatus.UNSAFE_ACTION
             if decisions >= _MAX_NAV_DECISIONS:
+                diagnostics.end = f"no_rooms_after_{decisions}_decisions({signature})"
                 return PriceExecutionStatus.NO_VALID_OBSERVATION
             decisions += 1
             candidates, nodes = await self._click_candidates(session)
+            step = f"{signature} c{len(candidates)}"
             operations: dict[str, str] = {
                 "SCROLL_DOWN": "Scroll down to reveal more of the page",
                 "WAIT": "Wait for the page to finish loading",
@@ -597,16 +711,24 @@ class LocalJevPriceRuntime:
                 )
             answer = await decider.ask(state, questions)
             operation = answer.choice("operation").choice
+            confidence = answer.choice("operation").confidence
             if operation == "BLOCKED":
+                diagnostics.steps.append(f"{step}>BLOCKED@{confidence:.2f}")
+                diagnostics.end = "jev_blocked"
                 return PriceExecutionStatus.NO_VALID_OBSERVATION
             meter.record_action()
             if operation == "CLICK" and candidates:
                 target = answer.choice("click_target").choice
                 clicked = await self._guarded_click(session, nodes.get(target))
                 self._episode.actions.append({"operation": "CLICK", "target": candidates[target]})
+                role = re.sub(r"[^a-z]", "", candidates[target].get("role", "").casefold())[:12]
+                outcome = "" if clicked else "!unsafe" if clicked is False else "!skipped"
+                diagnostics.steps.append(f"{step}>CLICK:{role or '?'}{outcome}@{confidence:.2f}")
                 if clicked is False:
+                    diagnostics.end = "invariant_after_click"
                     return PriceExecutionStatus.UNSAFE_ACTION
             elif operation == "SCROLL_DOWN":
+                diagnostics.steps.append(f"{step}>SCROLL@{confidence:.2f}")
                 from browser_use.browser.events import ScrollEvent
 
                 event = session.event_bus.dispatch(
@@ -616,10 +738,13 @@ class LocalJevPriceRuntime:
                 await event.event_result(raise_if_any=True, raise_if_none=False)
                 self._episode.actions.append({"operation": "SCROLL_DOWN"})
             else:
+                diagnostics.steps.append(f"{step}>{operation}@{confidence:.2f}")
                 self._episode.actions.append({"operation": "WAIT"})
             if not await self._invariant(session):
+                diagnostics.end = "invariant_after_action"
                 return PriceExecutionStatus.UNSAFE_ACTION
             snapshot = await self._await_offers(session, seconds=3.0)
+        diagnostics.end = "rooms_found"
         return snapshot
 
     async def _await_offers(
@@ -715,6 +840,10 @@ class LocalJevPriceRuntime:
         headings = [*snapshot.headings]
         if snapshot.title and snapshot.title not in headings:
             headings.append(snapshot.title)
+        diagnostics = self._episode.diagnostics
+        diagnostics.extraction = (
+            f"rooms={len(snapshot.rooms)} rates={snapshot.rate_count} headings={len(headings)}"
+        )
         if not headings:
             return None
         property_task = decider.ask(
@@ -800,10 +929,20 @@ class LocalJevPriceRuntime:
                     "completeness": "complete" if evidence.complete else "incomplete",
                 }
             )
+        facts = _url_query_facts(snapshot.url)
+        diagnostics.extraction = (
+            f"rooms={len(snapshot.rooms)} rates={snapshot.rate_count} "
+            f"named={len({id(job[1]) for job in rate_jobs})} asked={len(rate_jobs)} "
+            f"priced={len(offers)} "
+            f"refundable={sum(o['refundability'] == 'explicit_refundable' for o in offers)} "
+            f"all_in={sum(o['all_in'] == 'explicit' for o in offers)} "
+            f"complete={sum(o['completeness'] == 'complete' for o in offers)} "
+            f"property={'y' if property_name is not None else 'n'} "
+            f"stay_facts={'y' if facts is not None else 'n'}"
+        )
         if not offers or property_name is None:
             return None
         currencies = {str(offer["currency"]) for offer in offers}
-        facts = _url_query_facts(snapshot.url)
         complete = facts is not None and len(currencies) == 1
         parsed_url = urlsplit(snapshot.url)
         try:
@@ -920,8 +1059,24 @@ class JevPriceBrowserExecutor:
         self._max_cost = max_cost_nano_usd
         self._runtime_factory = runtime_factory
         self.last_usage = JevUsage()
+        self.last_diagnostic = ""
 
     def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult:
+        self.last_diagnostic = ""
+        result = self._execute_bounded(request)
+        if result.status is not PriceExecutionStatus.OBSERVED:
+            # WARNING so production records why a candidate run produced no observation.
+            logger.warning(
+                "Jev price not observed execution_id=%s status=%s latency_ms=%s calls=%s %s",
+                request.execution_id,
+                result.status.value,
+                result.latency_ms,
+                self.last_usage.calls,
+                self.last_diagnostic or "diagnostic=unavailable",
+            )
+        return result
+
+    def _execute_bounded(self, request: PriceExecutionRequest) -> PriceExecutionResult:
         remaining = (request.limits.deadline - datetime.now(UTC)).total_seconds()
         timeout = max(0.001, min(float(request.limits.timeout_seconds), remaining))
         started = time.monotonic()
@@ -1022,6 +1177,9 @@ class JevPriceBrowserExecutor:
                 fallback_used=False,
             )
         finally:
+            # Read before teardown, and on cancellation too, so a timed-out run still explains
+            # where it was.
+            self.last_diagnostic = str(getattr(runtime, "diagnostic", ""))
             await runtime.close()
 
     @staticmethod
@@ -1059,6 +1217,7 @@ class LocalJevPriceExecutor:
         self._max_cost = max_cost_nano_usd
         self._mobile_settings = mobile_settings or MobileWebSettings()
         self.last_usage = JevUsage()
+        self.last_diagnostic = ""
 
     def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult:
         with AsyncLoopRunner() as runner:
@@ -1074,3 +1233,4 @@ class LocalJevPriceExecutor:
                 return executor.execute(request)
             finally:
                 self.last_usage = executor.last_usage
+                self.last_diagnostic = executor.last_diagnostic

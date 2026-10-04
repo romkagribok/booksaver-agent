@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -153,6 +153,19 @@ class JevArmRequest:
     remaining_daily_nano_usd: int
 
 
+def _with_diagnostic(arm: ArmResult, executor: JevPriceExecutorPort) -> ArmResult:
+    """Keep the executor's content-free account of the run with its comparison record.
+
+    The detail is stored for the operator and never shown in the Telegram report. It leads the
+    text so later truncation cannot drop it.
+    """
+
+    diagnostic = str(getattr(executor, "last_diagnostic", "") or "")
+    if not diagnostic:
+        return arm
+    return replace(arm, detail=f"[{diagnostic}] {arm.detail}".strip())
+
+
 class JevArmRunner:
     """Run one Jev price arm with a fresh lease; never touches canonical state."""
 
@@ -217,7 +230,7 @@ class JevArmRunner:
                 request.booking.booking_id,
                 type(exc).__name__,
             )
-            return ArmResult(
+            failed = ArmResult(
                 arm=ComparisonArm.JEV,
                 status=ArmStatus.FAILURE,
                 outcome_code="infrastructure_failure",
@@ -230,6 +243,7 @@ class JevArmRunner:
                 cost_certainty=usage.certainty,
                 detail=f"The Jev method stopped after {type(exc).__name__}.",
             )
+            return _with_diagnostic(failed, executor)
         usage = executor.last_usage
         logger.info(
             "Jev comparison arm booking=%s status=%s rejection=%s offers=%s rejected_offers=%s "
@@ -244,7 +258,7 @@ class JevArmRunner:
             usage.cost_nano_usd,
             usage.certainty.value,
         )
-        return arm_from_check(
+        arm = arm_from_check(
             ComparisonArm.JEV,
             request.booking,
             result,
@@ -256,6 +270,7 @@ class JevArmRunner:
             cost_nano_usd=usage.cost_nano_usd,
             certainty=usage.certainty,
         )
+        return _with_diagnostic(arm, executor)
 
 
 _REASONS = {

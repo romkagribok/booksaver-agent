@@ -1067,6 +1067,7 @@ def cmd_comparison_report(args: argparse.Namespace) -> int:
         repository = SqlitePriceComparisonRepository(store)
         rows = repository.summary(since)
         both, agreeing = repository.agreement_counts(since)
+        unverified = repository.unverified_jev_runs(since)
     if not rows:
         print("No price comparisons recorded yet.")
         return 0
@@ -1103,6 +1104,13 @@ def cmd_comparison_report(args: argparse.Namespace) -> int:
             + (f"; {unknown} run(s) with unknown cost" if unknown else "")
         )
     print(f"Both methods verified a price in {both} pair(s); {agreeing} reported the same price.")
+    if unverified:
+        print("\nRecent Jev runs without a verified price (newest first):")
+        for created_at, comparison_id, outcome, calls, run_seconds, detail in unverified:
+            elapsed = f"{run_seconds:.0f}s" if run_seconds is not None else "-"
+            print(f"  {created_at[:19]}Z  {comparison_id[:8]}  {outcome}  {calls} calls  {elapsed}")
+            if detail:
+                print(f"    {detail}")
     return 0
 
 
