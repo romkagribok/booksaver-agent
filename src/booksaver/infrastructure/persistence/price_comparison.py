@@ -104,7 +104,7 @@ class SqlitePriceComparisonRepository:
                 result.cost_certainty.value,
                 result.started_at.isoformat(),
                 result.finished_at.isoformat(),
-                result.detail[:300],
+                result.detail[:800],
                 comparison_id,
                 result.arm.value,
             ),
@@ -152,6 +152,32 @@ class SqlitePriceComparisonRepository:
                 unknown_cost_count=int(row[4] or 0),
                 conservative_cost_count=int(row[5] or 0),
                 average_seconds=float(row[6]) if row[6] is not None else None,
+            )
+            for row in rows
+        )
+
+    def unverified_jev_runs(
+        self, since: datetime, *, limit: int = 20
+    ) -> tuple[tuple[str, str, str, int, float | None, str], ...]:
+        """Recent candidate runs without a verified price, newest first, with diagnostics."""
+
+        rows = self._store.conn.execute(
+            "SELECT c.created_at, c.comparison_id, COALESCE(a.outcome_code, a.status), "
+            "a.model_calls, (julianday(a.finished_at) - julianday(a.started_at)) * 86400.0, "
+            "COALESCE(a.detail, '') FROM price_comparison_arms a "
+            "JOIN price_comparisons c ON c.comparison_id = a.comparison_id "
+            "WHERE a.arm = 'jev' AND a.status IN ('failure', 'not_run') AND c.created_at >= ? "
+            "ORDER BY c.created_at DESC LIMIT ?",
+            (since.isoformat(), limit),
+        ).fetchall()
+        return tuple(
+            (
+                str(row[0]),
+                str(row[1]),
+                str(row[2]),
+                int(row[3]),
+                float(row[4]) if row[4] is not None else None,
+                str(row[5]),
             )
             for row in rows
         )

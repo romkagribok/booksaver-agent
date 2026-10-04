@@ -35,3 +35,21 @@ are equal, and only 0.73 for a two-night card. Fixed by stating the stay length 
 live cases correctly (1/2/4 nights, USD/EUR, tax included/excluded, per-night-only rejected,
 0.94–0.99). Other questions (cancellation, cancellation line, taxes, room name, property heading)
 were correct at ≥ 0.94 unchanged. Probe spend ≈ USD 0.001.
+
+## 2026-10-03 — run diagnostics after the first unexplained live failure
+
+Live record after three days (cohort `jev-price-v2`): the owner's booking verified on 10 of 11 Jev
+runs; one scheduled run (2026-10-03T22:11Z, Jev first) ended `no_valid_observation` after exactly
+six navigation decisions (4,003 input tokens, 63 s) while the baseline, run next from the same
+snapshot, verified 357.00 USD. Nothing recorded which page the candidate saw or what it chose, so
+the cause is **not determined**; candidates are a transient challenge/error page, a load slower
+than the 10 s readiness wait, a card layout the snapshot missed, or a click that left the property
+page. (The invitee booking fails on both arms every run with `room_mismatch` and is unrelated.)
+
+Added a content-free episode diagnostic: entry kind, stage, readiness seconds, snapshot
+error/empty counts, per-decision page signature (page kind, room/heading/text counts, marker
+names such as `oops`, `bot`, `chal`, control count, chosen operation and confidence), the terminal
+reason, and extraction counts. It is logged at WARNING when no observation results, captured on
+timeout, stored in `price_comparison_arms.detail` for every Jev run, listed by
+`booksaver comparison report`, and never included in the Telegram report. Tests assert that no
+page text, URL, or property name appears in it. Full suite 3,091 passed; Ruff and mypy clean.

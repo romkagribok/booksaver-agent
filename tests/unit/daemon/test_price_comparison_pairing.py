@@ -562,3 +562,72 @@ def test_lower_but_non_equivalent_price_is_not_called_no_lower() -> None:
     )
     assert "not counted as a saving versus your booked 400.00 EUR (room differs)" in body
     assert "no lower" not in body
+
+
+def test_run_diagnostic_is_stored_for_the_operator_but_never_sent(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    user, booking, sessions, _calls = _setup(tmp_path, monkeypatch)
+    diagnostic = "entry=property stage=done ready=2s end=rooms_found rooms=5 rates=11"
+
+    class DiagnosedExecutor(FakeJevExecutor):
+        def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult:
+            self.last_diagnostic = diagnostic
+            return super().execute(request)
+
+    reports: list[str] = []
+    coordinator = _pair_coordinator(
+        tmp_path, sessions, reports, jev_executor_factory=lambda b, _c: DiagnosedExecutor(b)
+    )
+    _run(tmp_path, coordinator, user, booking)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        details = dict(
+            store.conn.execute("SELECT arm, detail FROM price_comparison_arms").fetchall()
+        )
+    assert details["jev"] == f"[{diagnostic}]"
+    assert not details["baseline"]
+    assert "rooms_found" not in reports[0] and "entry=" not in reports[0]
+
+
+def test_cli_report_lists_unverified_jev_runs_with_their_diagnostic(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    import argparse
+
+    from booksaver.cli import commands
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_or_create_by_telegram_id(303, UserRole.USER)
+        booking = make_booking("00000003-1111-4111-8111-111111111111")
+        seed_booking(store, booking, user_id=user.user_id)
+        repository = SqlitePriceComparisonRepository(store)
+        now = datetime.now(UTC)
+        repository.begin(
+            comparison_id="feedbeef01",
+            user_id=user.user_id,
+            booking_id=booking.booking_id,
+            trigger=ComparisonTrigger.SCHEDULED,
+            cohort="c",
+            first_arm=ComparisonArm.JEV,
+            now=now,
+        )
+        repository.record_arm(
+            "feedbeef01",
+            ArmResult(
+                arm=ComparisonArm.JEV,
+                status=ArmStatus.FAILURE,
+                outcome_code="extraction_failed",
+                started_at=now,
+                finished_at=now,
+                model_calls=6,
+                cost_nano_usd=168_126,
+                cost_certainty=CostCertainty.EXACT,
+                detail="[entry=property stage=navigation end=no_rooms_after_6_decisions(nosnap)]",
+            ),
+        )
+    monkeypatch.setattr(commands, "_db_path_for", lambda _args: (None, tmp_path / "booksaver.db"))
+    assert commands.cmd_comparison_report(argparse.Namespace(days=7)) == 0
+    output = capsys.readouterr().out
+    assert "Recent Jev runs without a verified price" in output
+    assert "feedbeef  extraction_failed  6 calls" in output
+    assert "end=no_rooms_after_6_decisions(nosnap)" in output

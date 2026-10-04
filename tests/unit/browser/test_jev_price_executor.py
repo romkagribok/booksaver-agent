@@ -359,3 +359,210 @@ def test_total_question_states_the_stay_length_and_booking_label() -> None:
     assert "Price $X" in instructions["hint"]  # type: ignore[index]
     _state, plural, _prices = rate_questions("Standard King Room", room, FLEXIBLE, nights=3)
     assert "stay of 3 nights." in plural["total"]["instructions"]["question"]  # type: ignore[index]
+
+
+# --- diagnostics: a failed run must explain itself without storing page content ------------
+
+
+class _NavJev:
+    """Scripted navigation decisions; records the offered operations."""
+
+    def __init__(self, *operations: str) -> None:
+        self.operations = list(operations)
+        self.asked = 0
+
+    async def ask(
+        self, _state: object, questions: Mapping[str, Mapping[str, object]]
+    ) -> SystemOneResult:
+        self.asked += 1
+        options: Mapping[str, object] = questions["operation"]["criteria"]  # type: ignore[assignment]
+        chosen = self.operations.pop(0) if self.operations else "WAIT"
+        return SystemOneResult(
+            "jev-1.13.0", {"operation": _choice(options, chosen)}, 600, 0
+        )
+
+
+class _NavSession:
+    agent_focus_target_id = "target-1"
+
+    def __init__(self) -> None:
+        self.event_bus = self
+        self.scrolls = 0
+
+    def get_page_targets(self) -> list[object]:
+        return [object()]
+
+    async def get_current_page_url(self) -> str:
+        return URL
+
+    async def get_browser_state_summary(self, **_kwargs: Any) -> Any:
+        raise RuntimeError("no interactive state in this fixture")
+
+    def dispatch(self, _event: object) -> Any:
+        self.scrolls += 1
+
+        class Done:
+            def __await__(self) -> Any:
+                return iter(())
+
+            async def event_result(self, **_kwargs: Any) -> None:
+                return None
+
+        return Done()
+
+
+OOPS_TEXT = "Oops! Something went wrong on our side. Reference 8F2K-PRIVATE-TOKEN"
+
+
+def _oops_snapshot() -> Any:
+    return parse_offer_snapshot(
+        {
+            "url": URL + "&chal_t=1790524727227",
+            "title": "Booking.com",
+            "headings": ["Oops!"],
+            "viewport_text": OOPS_TEXT,
+            "rooms": [],
+        }
+    )
+
+
+def _navigate(runtime: LocalJevPriceRuntime, jev: _NavJev, snapshot: Any) -> Any:
+    async def no_wait(_session: Any, *, seconds: float = 0.0) -> Any:
+        return snapshot
+
+    runtime._await_offers = no_wait  # type: ignore[method-assign]
+    meter = ExecutionMeter(_request().limits)
+    return asyncio.run(
+        runtime._navigate_until_offers(
+            _request(), _NavSession(), {"width": 412, "height": 915}, jev, meter
+        )
+    )
+
+
+def test_page_signature_reports_categories_never_content() -> None:
+    from booksaver.infrastructure.browser.jev_price_executor import page_signature
+
+    assert page_signature(None, PROPERTY) == "nosnap"
+    assert page_signature(_snapshot(), PROPERTY) == "property r1 h4 t0 name"
+    signature = page_signature(_oops_snapshot(), PROPERTY)
+    assert signature == f"property r0 h1 t{len(OOPS_TEXT)} oops+chal"
+    assert "PRIVATE" not in signature and "wrong" not in signature
+
+
+def test_exhausted_navigation_explains_what_it_saw_and_chose() -> None:
+    runtime = LocalJevPriceRuntime()
+    jev = _NavJev("WAIT", "SCROLL_DOWN", "WAIT", "WAIT", "SCROLL_DOWN", "WAIT")
+    status = _navigate(runtime, jev, _oops_snapshot())
+
+    assert status is PriceExecutionStatus.NO_VALID_OBSERVATION and jev.asked == 6
+    diagnostic = runtime.diagnostic
+    page = f"property r0 h1 t{len(OOPS_TEXT)} oops+chal"
+    assert f"nav=[{page} c0>WAIT@1.00 | {page} c0>SCROLL@1.00 | " in diagnostic
+    assert diagnostic.count(">WAIT@") == 4 and diagnostic.count(">SCROLL@") == 2
+    assert f"end=no_rooms_after_6_decisions({page})" in diagnostic
+    assert "ready=0s" in diagnostic
+    # Categories and counts only: no page text, URL, or property name.
+    for private in ("PRIVATE", "Something went wrong", "booking.com", PROPERTY, "chal_t="):
+        assert private not in diagnostic
+    assert len(diagnostic) <= 400
+
+
+def test_jev_declaring_itself_blocked_is_recorded_as_such() -> None:
+    runtime = LocalJevPriceRuntime()
+    status = _navigate(runtime, _NavJev("WAIT", "BLOCKED"), None)
+    assert status is PriceExecutionStatus.NO_VALID_OBSERVATION
+    assert "nav=[nosnap c0>WAIT@1.00 | nosnap c0>BLOCKED@1.00] end=jev_blocked" in (
+        runtime.diagnostic
+    )
+
+
+def test_rooms_already_present_needs_no_navigation_decision() -> None:
+    runtime = LocalJevPriceRuntime()
+    jev = _NavJev()
+    snapshot = _navigate(runtime, jev, _snapshot())
+    assert snapshot.rooms and jev.asked == 0
+    assert "end=rooms_found" in runtime.diagnostic and "nav=[" not in runtime.diagnostic
+
+
+def test_extraction_records_how_far_each_offer_got() -> None:
+    runtime = LocalJevPriceRuntime()
+    asyncio.run(runtime._extract(_request(), _snapshot(), ScriptedJev()))
+    assert (
+        "rooms=1 rates=2 named=1 asked=2 priced=2 refundable=1 all_in=2 complete=2 "
+        "property=y stay_facts=y"
+    ) in runtime.diagnostic
+
+
+class _DiagnosedRuntime:
+    diagnostic = "entry=property stage=navigation end=no_rooms_after_6_decisions(other r0 h0 t0)"
+    failure_stage = "jev_navigation"
+
+    def __init__(self, *, hang: bool = False) -> None:
+        self.hang = hang
+        self.closed = False
+
+    def restore_session(self, _data: bytes) -> None:
+        return None
+
+    async def execute(self, _request: Any, *, decider: Any, meter: Any) -> Any:
+        from booksaver.infrastructure.browser.jev_price_executor import JevPriceRuntimeResult
+
+        if self.hang:
+            await asyncio.sleep(30)
+        return JevPriceRuntimeResult(PriceExecutionStatus.NO_VALID_OBSERVATION)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _facade_run(runtime: _DiagnosedRuntime, *, timeout_seconds: int) -> Any:
+    from booksaver.application.async_runner import AsyncLoopRunner
+    from booksaver.application.browser_executor import InMemorySessionLeaseBroker
+    from booksaver.infrastructure.browser.jev_price_executor import JevPriceBrowserExecutor
+
+    broker = InMemorySessionLeaseBroker()
+    lease = broker.issue(
+        owner_user_id=1, execution_id="jev-test-1", session_material=b"[]", subject_id="booking-1"
+    )
+    base = _request()
+    request = PriceExecutionRequest(
+        execution_id=base.execution_id,
+        owner_user_id=base.owner_user_id,
+        booking_id=base.booking_id,
+        query=base.query,
+        session_lease=lease,
+        limits=ExecutionLimits(
+            deadline=datetime.now(UTC) + timedelta(seconds=60),
+            max_computer_use_actions=0,
+            timeout_seconds=timeout_seconds,
+        ),
+    )
+    with AsyncLoopRunner() as runner:
+        executor = JevPriceBrowserExecutor(
+            client=object(),  # type: ignore[arg-type]
+            lease_broker=broker,
+            runner=runner,
+            max_calls=10,
+            max_cost_nano_usd=10**9,
+            runtime_factory=lambda: runtime,  # type: ignore[arg-type,return-value]
+        )
+        return executor, executor.execute(request)
+
+
+def test_unobserved_run_keeps_and_logs_its_diagnostic(caplog: pytest.LogCaptureFixture) -> None:
+    runtime = _DiagnosedRuntime()
+    with caplog.at_level("WARNING"):
+        executor, result = _facade_run(runtime, timeout_seconds=20)
+    assert result.status is PriceExecutionStatus.NO_VALID_OBSERVATION and runtime.closed
+    assert executor.last_diagnostic == runtime.diagnostic
+    [record] = [r for r in caplog.records if "Jev price not observed" in r.getMessage()]
+    assert "status=no_valid_observation" in record.getMessage()
+    assert "end=no_rooms_after_6_decisions" in record.getMessage()
+
+
+def test_timed_out_run_still_reports_where_it_was(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING"):
+        executor, result = _facade_run(_DiagnosedRuntime(hang=True), timeout_seconds=1)
+    assert result.status is PriceExecutionStatus.TIMEOUT
+    assert "stage=navigation" in executor.last_diagnostic
+    assert any("status=timeout" in r.getMessage() for r in caplog.records)
