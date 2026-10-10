@@ -7,6 +7,7 @@ from enum import Enum
 
 from .agent import AgentSettings
 from .browser_executor import AgenticBrowserSettings
+from .meal_plan import MealPlan
 from .mobile_web import MobileWebSettings
 from .price_comparison import JevComparisonSettings
 from .remote_auth import RemoteAuthSettings
@@ -50,6 +51,8 @@ class Booking:
     # None is reserved for rows registered before schema v5 (ADR-014); new
     # registrations always carry occupancy via create().
     occupancy: Occupancy | None = None
+    # Recorded by account synchronization; UNKNOWN until the reservation page has been read.
+    meal_plan: MealPlan = MealPlan.UNKNOWN
 
     @classmethod
     def create(

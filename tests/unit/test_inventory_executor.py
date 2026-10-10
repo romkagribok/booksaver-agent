@@ -46,6 +46,7 @@ from booksaver.domain.inventory_executor import (
     ObservedReservation,
     inventory_session_subject,
 )
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.models import Booking
 from booksaver.domain.value_objects import (
     ConfirmationId,
@@ -309,6 +310,40 @@ def test_validator_rejects_results_at_deadline_or_over_timeout(
 
     assert validation.failure is InventoryValidationFailure.EXECUTION_LIMIT_BREACH
     assert validation.observations == ()
+
+
+def test_meal_plan_reaches_the_reservation_observation() -> None:
+    reservation = _reservation(
+        meal_plan=MealPlan.BREAKFAST, meal_plan_text="Breakfast included"
+    )
+    validation = InventoryObservationValidator(clock=lambda: NOW).validate(
+        _request(), _result(reservations=(reservation,))
+    )
+    observation = validation.observations[0]
+    assert observation.meal_plan is MealPlan.BREAKFAST
+    assert observation.meal_plan_text == "Breakfast included"
+
+
+@pytest.mark.parametrize(
+    "duplicate, expected",
+    [
+        ((MealPlan.UNKNOWN, None), (MealPlan.BREAKFAST, "Breakfast included")),
+        ((MealPlan.BREAKFAST, "Breakfast included"), (MealPlan.BREAKFAST, "Breakfast included")),
+        # Two readings that disagree settle nothing, but the reservation itself is still kept.
+        ((MealPlan.NONE, None), (MealPlan.UNKNOWN, "")),
+    ],
+)
+def test_duplicate_reservation_meal_plans_merge_without_guessing(
+    duplicate: tuple[MealPlan, str | None], expected: tuple[MealPlan, str],
+) -> None:
+    first = _reservation(meal_plan=MealPlan.BREAKFAST, meal_plan_text="Breakfast included")
+    second = _reservation(meal_plan=duplicate[0], meal_plan_text=duplicate[1])
+    validation = InventoryObservationValidator(clock=lambda: NOW).validate(
+        _request(), _result(reservations=(first, second))
+    )
+    assert validation.failure is None
+    (observation,) = validation.observations
+    assert (observation.meal_plan, observation.meal_plan_text) == expected
 
 
 def test_conflicting_duplicate_identity_fails_the_whole_observation() -> None:

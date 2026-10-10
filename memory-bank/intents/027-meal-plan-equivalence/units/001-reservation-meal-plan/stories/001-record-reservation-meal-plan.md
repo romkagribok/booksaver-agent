@@ -2,7 +2,7 @@
 id: 001-record-reservation-meal-plan
 unit: 001-reservation-meal-plan
 intent: 027-meal-plan-equivalence
-status: draft
+status: in-progress
 priority: must
 created: "2026-10-10T01:49:45Z"
 assigned_bolt: 089-reservation-meal-plan

@@ -23,6 +23,7 @@ from .browser_executor import (
     RefundabilityEvidence,
     SessionLeaseReference,
 )
+from .meal_plan import MAX_MEAL_PLAN_TEXT, MealPlan
 from .value_objects import Money, Occupancy
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -249,6 +250,9 @@ class ObservedReservation:
     # Set only by code-owned readers that took the name and URL from one verified page anchor.
     # Provider-submitted facts never set it, so they cannot rename a saved property.
     property_anchor_verified: bool = field(default=False, repr=False)
+    # Set only by the code-owned confirmation parser; provider-submitted facts never set it.
+    meal_plan: MealPlan = MealPlan.UNKNOWN
+    meal_plan_text: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -262,6 +266,7 @@ class ObservedReservation:
             ("property_reference", 500),
             ("room_type", 500),
             ("refundability_text", 1_000),
+            ("meal_plan_text", MAX_MEAL_PLAN_TEXT),
         ):
             object.__setattr__(
                 self,

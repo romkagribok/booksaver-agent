@@ -19,8 +19,11 @@ from booksaver.domain.browser_executor import (
 from booksaver.domain.inventory_executor import (
     InventoryExecutionRequest,
     InventoryExecutionStatus,
+    InventoryScope,
+    ObservedReservation,
     inventory_session_subject,
 )
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.infrastructure.browser.browser_use_runtime import BrowserUseSessionStatus
 from booksaver.infrastructure.browser.inventory_confirmation_facts import parse_confirmation_facts
 from booksaver.infrastructure.browser.inventory_link_resolution import ResolvedInventoryLink
@@ -164,6 +167,31 @@ class Harness:
             ({"node_name": "a", "label": "View booking", "visible": True,
               "attributes": {"href": target}},),
         )
+
+
+def test_parser_read_meal_plan_reaches_the_observed_reservation(monkeypatch):
+    h = Harness(monkeypatch)
+    h.payload = {
+        **h.payload, "meal_plan": "breakfast", "meal_plan_text": "Breakfast included",
+    }
+    reservation = h.run().reservations[0]
+    assert reservation.meal_plan is MealPlan.BREAKFAST
+    assert reservation.meal_plan_text == "Breakfast included"
+
+
+def test_repeated_confirmation_with_different_meal_readings_stays_unknown():
+    observed = ObservedReservation(
+        remote_id="1234567890", identity_evidence=EvidenceCompleteness.COMPLETE,
+        scope=InventoryScope.UPCOMING,
+    )
+    parsed = [
+        {"remote_id": "1234567890", "meal_plan": "breakfast", "meal_plan_text": "Breakfast"},
+        {"remote_id": "1234567890", "meal_plan": "none", "meal_plan_text": "unknown"},
+    ]
+    assert adapter._with_parsed_meal_plans((observed,), parsed)[0].meal_plan is MealPlan.UNKNOWN
+    silent = adapter._with_parsed_meal_plans((observed,), parsed[1:])[0]
+    assert (silent.meal_plan, silent.meal_plan_text) == (MealPlan.NONE, None)
+    assert adapter._with_parsed_meal_plans((observed,), [])[0] is observed
 
 
 @pytest.mark.parametrize("desktop", [False, True])

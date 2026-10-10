@@ -1,9 +1,9 @@
 ---
 intent: 027-meal-plan-equivalence
 phase: inception
-status: units-defined
+status: construction
 created: "2026-10-10T01:38:53Z"
-updated: "2026-10-10T01:49:45Z"
+updated: "2026-10-10T02:02:11Z"
 ---
 
 # Meal plan equivalence

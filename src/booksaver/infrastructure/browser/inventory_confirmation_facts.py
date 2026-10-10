@@ -11,6 +11,13 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from urllib.parse import urlsplit
 
+from booksaver.domain.meal_plan import (
+    MAX_MEAL_PLAN_TEXT,
+    MealPlan,
+    classify_meal_text,
+    mentions_meals,
+)
+
 _MAX_TEXT = 250_000
 _MAX_LINES = 8_000
 _AMOUNT = r"[0-9]{1,7}(?:\.[0-9]{1,2})?"
@@ -49,7 +56,10 @@ _UNKNOWN_FACTS = (
     "lifecycle", "property_name", "property_reference", "check_in", "check_out",
     "room_type", "booked_total", "currency", "all_in", "refundability",
     "refundability_text", "refund_deadline", "adults", "children", "rooms",
+    "meal_plan", "meal_plan_text",
 )
+_MEAL_LABEL = re.compile(r"(?:meal plan|meal option|meals):?(?: (.+))?", re.IGNORECASE)
+_ROOM_SECTION_END = frozenset({"cancellation cost", "price", "price breakdown", "additional info"})
 
 
 def _heading(lines: list[str], label: str) -> int | None:
@@ -175,6 +185,49 @@ def _room_fact(lines: list[str], single_unit: bool) -> str | None:
         return None
     value = lines[index]
     return value if 0 < len(value) <= 500 else None
+
+
+def _meal_facts(lines: list[str], room_found: bool) -> dict[str, str]:
+    """Read the booked meal plan from the room details section, never from the rest of the page.
+
+    A labelled row is authoritative. Without one, standalone meal wording in the section counts.
+    A section with a guest row and no meal wording at all means no meals; that silent reading
+    carries no text so a later explicit statement can replace it.
+    """
+    start = _heading(lines, "Your room details")
+    if start is None or not room_found:
+        return {}
+    section: list[str] = []
+    for line in lines[start + 1:start + 61]:
+        if line.rstrip(":").casefold() in _ROOM_SECTION_END:
+            break
+        section.append(line)
+    # (wording to classify, wording to keep). An inline value is classified with its label so
+    # "Meals are not included" is not cut down to "are not included".
+    labelled: list[tuple[str, str]] = []
+    for index, line in enumerate(section):
+        match = _MEAL_LABEL.fullmatch(line)
+        if match is None:
+            continue
+        following = section[index + 1] if index + 1 < len(section) else ""
+        labelled.append((line, match.group(1)) if match.group(1) else (following, following))
+    stated = labelled or [(line, line) for line in section if mentions_meals(line)]
+    if not stated:
+        guest_row = any(line.casefold().startswith("guest name") for line in section)
+        return {"meal_plan": MealPlan.NONE.value} if guest_row else {}
+    readings = [(classify_meal_text(wording), kept) for wording, kept in stated]
+    plans = {plan for plan, _ in readings}
+    plan = next(iter(plans)) if len(plans) == 1 else MealPlan.UNKNOWN
+    if not labelled:
+        # Unlabelled lines may also price an optional extra; an inclusion among them still stands.
+        included = plans - {MealPlan.NONE, MealPlan.UNKNOWN}
+        if len(included) == 1 and MealPlan.UNKNOWN not in plans:
+            plan = next(iter(included))
+        if plan is MealPlan.UNKNOWN:
+            # Unrecognized free text in the section may be the guest's own; it is not kept.
+            return {"meal_plan": plan.value}
+    text = next((kept for found, kept in readings if found is plan), readings[0][1])
+    return {"meal_plan": plan.value, "meal_plan_text": text[:MAX_MEAL_PLAN_TEXT]}
 
 
 def _cancellation_facts(lines: list[str], observed_at: datetime) -> dict[str, str]:
@@ -414,6 +467,7 @@ def parse_confirmation_facts(
     room = _room_fact(lines, bool(guests))
     if room is not None:
         payload["room_type"] = room
+    payload.update(_meal_facts(lines, room is not None))
     payload.update(_cancellation_facts(lines, observed_at))
     payload.update(_price_facts(lines, guests, nights))
     return payload

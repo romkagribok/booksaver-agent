@@ -19,6 +19,7 @@ from booksaver.domain.account_sync import (
     SynchronizationFailureCode,
     SynchronizationTrigger,
 )
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.user import UserAccessState
 from booksaver.domain.value_objects import Money, Occupancy
 from booksaver.infrastructure.browser.booking_account_inventory import (
@@ -611,7 +612,7 @@ def test_schema_v13_migration_preserves_v12_sync_runs(tmp_path: Path) -> None:
         repo = SqliteAccountReservationRepository(store)
         legacy = repo.latest_run_for_user(1)
 
-        assert version == SCHEMA_VERSION == 20
+        assert version == SCHEMA_VERSION == 21
         assert {
             "recovery_outcome",
             "recovery_step",
@@ -638,3 +639,126 @@ def test_schema_v13_migration_preserves_v12_sync_runs(tmp_path: Path) -> None:
         assert repo.recovery_audit_for_run(
             user_id=1, run_id="preserved-v12-run"
         ) == _recovery_audit()
+
+
+def _sync_meal(
+    repo: SqliteAccountReservationRepository, user_id: int, run_id: str,
+    plan: MealPlan, text: str = "", *, method: str = "agentic_inventory",
+) -> tuple[MealPlan, str]:
+    observation = replace(
+        _eligible(), meal_plan=plan, meal_plan_text=text, extraction_method=method
+    )
+    _reconcile(
+        repo, user_id, run_id,
+        InventoryDiscoveryResult((observation,), InventoryCompleteness.COMPLETE),
+    )
+    stored = repo.list_for_user(user_id)[0].observation
+    return stored.meal_plan, stored.meal_plan_text
+
+
+def test_meal_plan_is_stored_and_projected_to_the_monitored_booking(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+
+        stored = _sync_meal(repo, user.user_id, "run-1", MealPlan.BREAKFAST, "Breakfast included")
+        (booking,) = SqliteBookingRepository(store).list_active_for_user(user.user_id)
+
+    assert stored == (MealPlan.BREAKFAST, "Breakfast included")
+    assert booking.meal_plan is MealPlan.BREAKFAST
+
+
+@pytest.mark.parametrize("method", ["agentic_inventory", "dom"])
+def test_existing_reservation_receives_its_meal_plan_on_the_next_sync(
+    tmp_path: Path, method: str,
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+        bookings = SqliteBookingRepository(store)
+
+        assert _sync_meal(repo, user.user_id, "run-1", MealPlan.UNKNOWN, method=method) == (
+            MealPlan.UNKNOWN, "",
+        )
+        assert bookings.list_active_for_user(user.user_id)[0].meal_plan is MealPlan.UNKNOWN
+        stated = _sync_meal(
+            repo, user.user_id, "run-2", MealPlan.BREAKFAST, "Breakfast included", method=method
+        )
+        booking_id = bookings.list_active_for_user(user.user_id)[0].booking_id
+        # Neither an unknown reading nor a page that stated nothing replaces a stated plan.
+        after_unknown = _sync_meal(repo, user.user_id, "run-3", MealPlan.UNKNOWN, method=method)
+        after_silent = _sync_meal(repo, user.user_id, "run-4", MealPlan.NONE, method=method)
+        # A different plan stated by a line on the page does.
+        restated = _sync_meal(
+            repo, user.user_id, "run-5", MealPlan.NONE,
+            "No meal is included in this room rate.", method=method,
+        )
+        (booking,) = bookings.list_active_for_user(user.user_id)
+
+    assert stated == after_unknown == after_silent == (MealPlan.BREAKFAST, "Breakfast included")
+    assert restated == (MealPlan.NONE, "No meal is included in this room rate.")
+    assert booking.meal_plan is MealPlan.NONE
+    assert booking.booking_id == booking_id
+
+
+def test_silent_reading_and_unrecognized_wording_are_kept_until_something_is_stated(
+    tmp_path: Path,
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+
+        unrecognized = _sync_meal(repo, user.user_id, "run-1", MealPlan.UNKNOWN, "Brunch plan")
+        silent = _sync_meal(repo, user.user_id, "run-2", MealPlan.NONE)
+        stated = _sync_meal(repo, user.user_id, "run-3", MealPlan.HALF_BOARD, "Half board")
+
+    assert unrecognized == (MealPlan.UNKNOWN, "Brunch plan")
+    assert silent == (MealPlan.NONE, "")
+    assert stated == (MealPlan.HALF_BOARD, "Half board")
+
+
+def test_recording_a_meal_plan_keeps_the_saved_opportunity(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+        _sync_meal(repo, user.user_id, "run-1", MealPlan.UNKNOWN)
+        (booking,) = SqliteBookingRepository(store).list_active_for_user(user.user_id)
+        store.conn.execute(
+            "INSERT INTO savings_opportunities (opportunity_id, booking_id, check_id, "
+            "baseline_amount, live_amount, currency, amount_saved, percent_saved, validated_at) "
+            "VALUES ('opp', ?, 'check', '200', '150', 'USD', '50', '25.00', ?)",
+            (booking.booking_id, NOW.isoformat()),
+        )
+        store.conn.commit()
+        _sync_meal(repo, user.user_id, "run-2", MealPlan.BREAKFAST, "Breakfast included")
+        kept = store.conn.execute("SELECT COUNT(*) FROM savings_opportunities").fetchone()[0]
+
+    assert kept == 1
+
+
+def test_schema_v21_migration_adds_unknown_meal_plans_to_existing_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "booksaver.db"
+    with SqliteStore(db_path) as store:
+        user = SqliteUserRepository(store).get_owner()
+        _sync_meal(SqliteAccountReservationRepository(store), user.user_id, "run-1", MealPlan.NONE)
+    conn = sqlite3.connect(db_path)
+    conn.execute("ALTER TABLE bookings DROP COLUMN meal_plan")
+    conn.execute("ALTER TABLE account_reservations DROP COLUMN meal_plan")
+    conn.execute("ALTER TABLE account_reservations DROP COLUMN meal_plan_text")
+    conn.execute("DELETE FROM schema_meta WHERE version = 21")
+    conn.execute("INSERT INTO schema_meta (version, applied_at) VALUES (20, ?)", (NOW.isoformat(),))
+    conn.commit()
+    conn.close()
+
+    with SqliteStore(db_path) as store:
+        user = SqliteUserRepository(store).get_owner()
+        version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
+        (reservation,) = SqliteAccountReservationRepository(store).list_for_user(user.user_id)
+        (booking,) = SqliteBookingRepository(store).list_active_for_user(user.user_id)
+
+    assert version == SCHEMA_VERSION == 21
+    assert reservation.observation.meal_plan is MealPlan.UNKNOWN
+    assert reservation.observation.meal_plan_text == ""
+    assert booking.meal_plan is MealPlan.UNKNOWN
+    with SqliteStore(db_path):  # Re-opening a migrated database is a no-op.
+        pass

@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from .meal_plan import MealPlan
 from .value_objects import Money, Occupancy
 
 if TYPE_CHECKING:
@@ -304,6 +305,9 @@ class ReservationObservation:
     extraction_method: str = "dom"
     # True only when a code-owned reader took name and URL from one verified page anchor.
     property_anchor_verified: bool = False
+    meal_plan: MealPlan = MealPlan.UNKNOWN
+    # Verbatim line the meal plan was read from; empty when no line stated it.
+    meal_plan_text: str = ""
 
     def __post_init__(self) -> None:
         if not self.remote_id.strip():
