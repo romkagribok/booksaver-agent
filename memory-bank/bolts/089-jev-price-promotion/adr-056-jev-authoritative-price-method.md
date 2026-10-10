@@ -23,7 +23,7 @@ observation is the canonical result and may refresh the saved session; no Anthro
 made. Jev keeps its own credential, pinned model, per-check call cap, daily nano-USD cap and a
 durable per-run cost and diagnostic record. Paired mode cannot be enabled at the same time. The
 Browser Use and Stagehand price adapters remain in the code and selectable by config. Removing
-them, or returning to them, is a later owner decision tracked in a GitHub issue.
+them, or returning to them, is a later owner decision tracked in GitHub issue #79.
 
 ## Rationale
 

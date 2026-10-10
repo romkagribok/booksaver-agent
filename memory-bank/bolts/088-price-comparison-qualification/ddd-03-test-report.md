@@ -38,3 +38,8 @@ effects, both arms recorded, report captured not sent). Record:
 | US-215 | Decision package after 5 to 7 days; owner chooses | Met: bolt 087 report; owner chose adoption on 2026-10-06 |
 
 This bolt stays in progress until the kill-switch criterion has production evidence.
+
+## 2026-10-10T03:29:57Z — PR #78
+
+Cursor Bugbot ran on PR #78 and passed with no findings, the first automated review of this
+intent's code. The kill-switch criterion remains open until phase 2 of bolt 089.
