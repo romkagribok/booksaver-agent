@@ -507,3 +507,25 @@ CREATE TABLE IF NOT EXISTS price_comparison_arms (
     detail         TEXT,
     PRIMARY KEY (comparison_id, arm)
 );
+
+-- v20: runs of Jev as the authoritative price method (ADR-056). Canonical outcomes stay in
+-- check_history; this is the provider spend, daily-cap, and content-free diagnostic record.
+CREATE TABLE IF NOT EXISTS jev_price_runs (
+    execution_id   TEXT PRIMARY KEY,
+    user_id        INTEGER NOT NULL,
+    booking_id     TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    model_calls    INTEGER NOT NULL DEFAULT 0 CHECK(model_calls >= 0),
+    input_tokens   INTEGER NOT NULL DEFAULT 0 CHECK(input_tokens >= 0),
+    output_tokens  INTEGER NOT NULL DEFAULT 0 CHECK(output_tokens >= 0),
+    cost_nano_usd  INTEGER NOT NULL DEFAULT 0 CHECK(cost_nano_usd >= 0),
+    cost_certainty TEXT NOT NULL DEFAULT 'exact'
+        CHECK(cost_certainty IN ('exact', 'conservative', 'unknown')),
+    latency_ms     INTEGER NOT NULL DEFAULT 0 CHECK(latency_ms >= 0),
+    adapter        TEXT NOT NULL,
+    diagnostic     TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_jev_price_runs_created
+    ON jev_price_runs(created_at);

@@ -22,8 +22,14 @@ _SNAPSHOT_TEMPLATE = r"""
         MAX_CHARS = __MAX_CHARS__;
   const hidden = '[aria-hidden="true"],[inert],script,style,noscript,template';
   // Struck-through (old) prices are never offered to Jev as candidate totals.
-  const struck = e => !!e.closest('s,del,strike') ||
-    getComputedStyle(e).textDecorationLine.includes('line-through');
+  // text-decoration is not inherited in computed style, so check a few ancestors too.
+  const struck = e => {
+    if (e.closest('s,del,strike')) return true;
+    for (let n = e, depth = 0; n && depth < 4; n = n.parentElement, depth++) {
+      if (getComputedStyle(n).textDecorationLine.includes('line-through')) return true;
+    }
+    return false;
+  };
   const rendered = e => !!e && !e.closest(hidden) && !struck(e) &&
     (typeof e.checkVisibility !== 'function' ||
      e.checkVisibility({checkOpacity: true, checkVisibilityCSS: true}));

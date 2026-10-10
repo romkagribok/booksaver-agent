@@ -631,3 +631,71 @@ def test_cli_report_lists_unverified_jev_runs_with_their_diagnostic(
     assert "Recent Jev runs without a verified price" in output
     assert "feedbeef  extraction_failed  6 calls" in output
     assert "end=no_rooms_after_6_decisions(nosnap)" in output
+
+
+def test_jev_as_the_only_price_method_owns_every_canonical_effect(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """ADR-056: with price_executor = "jev" the real monitor path treats Jev as authority."""
+    from booksaver.domain.browser_executor import (
+        JEV_PRICE_POLICY_VERSION,
+        AgenticBrowserSettings,
+        ExecutionRoutingMode,
+        PriceExecutorKind,
+    )
+
+    refreshed = b'[{"name":"bkng","value":"fresh","domain":".booking.com","path":"/"}]'
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        assert owner is not None
+        booking = make_booking("00000005-1111-4111-8111-111111111111")
+        seed_booking(store, booking, user_id=owner.user_id)
+    sessions = _session_repo(tmp_path)
+    _seed_session(sessions, owner.user_id)
+    pipeline: list[list[CheckResult]] = []
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.SavingsPipeline.process",
+        lambda _self, results: pipeline.append(results),
+    )
+
+    class RefreshingJev(FakeJevExecutor):
+        def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult:
+            result = super().execute(request)
+            self.broker.store_verified_refresh(request.session_lease, refreshed)
+            return replace(result, refreshed_session_eligible=True)
+
+    executors: list[RefreshingJev] = []
+
+    def factory(_anthropic_budget: Any, broker: InMemorySessionLeaseBroker) -> RefreshingJev:
+        executors.append(RefreshingJev(broker))
+        return executors[-1]
+
+    config = replace(
+        _config(tmp_path),
+        agentic_browser_settings=AgenticBrowserSettings(
+            routing=ExecutionRoutingMode.CONSENTED_USERS, price_executor=PriceExecutorKind.JEV
+        ),
+    )
+    coordinator = _build_coordinator(
+        config,
+        browser_factory=BrowserContext,
+        inventory_synchronizer=_complete_sync,
+        session_repository=sessions,
+        agentic_executor_factory=factory,
+        comparison_report_sender=lambda *_args: pytest.fail("no comparison in Jev-only mode"),
+    )
+
+    result = _run(tmp_path, coordinator, owner, booking)
+
+    assert result.live_price == Money(Decimal("380.00"), "EUR")
+    assert len(executors) == 1 and executors[0].restored == [b"[]"]
+    assert pipeline == [[result]]  # Jev's validated result now feeds savings alerts
+    assert sessions.resolve(owner.user_id).snapshot.cookies == refreshed
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        history = SqliteCheckHistoryRepository(store).get_recent(booking.booking_id)
+        canary = store.conn.execute(
+            "SELECT policy_version, valid_observation FROM agentic_canary_checks"
+        ).fetchall()
+    assert [row.live_price for row in history] == [result.live_price]
+    assert [tuple(row) for row in canary] == [(JEV_PRICE_POLICY_VERSION, 1)]
+    assert _arms(tmp_path) == []
