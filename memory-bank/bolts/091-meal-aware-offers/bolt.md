@@ -55,8 +55,11 @@ Stop reporting a cheaper offer that includes fewer meals than the reservation.
 - [ ] **4. Implement**: Pending → src and tests
 - [ ] **5. Test**: Pending → ddd-03-test-report.md
 
-No stage has started. Each stage stops for the owner's confirmation unless the owner waives it
-for this bolt before it starts.
+No stage has started. Owner instruction of 2026-10-10T08:07:38Z: "proceed to realease 2 following specsmd until
+writing any code so i can review and approve, then you will write code for it". Stages 1 to 3 are
+therefore written without a stop between them and presented together for one review; Stage 4
+starts only after that approval. The stops after Stage 4 and Stage 5 apply as the bolt type
+defines them.
 
 ## Dependencies
 

@@ -2,13 +2,14 @@
 adr: ADR-057
 bolt: 090-reservation-meal-plan
 created: "2026-10-10T07:49:45Z"
-status: proposed
+status: accepted
+accepted: "2026-10-10T08:07:38Z"
 ---
 
 # ADR-057: Meal plan is part of offer equivalence and is read by code
 
-Proposed. Drafted from the requirements the owner approved on 2026-10-10T01:49:45Z; the owner has not yet chosen
-whether to record it as an ADR.
+Drafted from the requirements the owner approved on 2026-10-10T01:49:45Z and accepted by the
+owner on 2026-10-10T08:07:38Z, after the implementation of bolt 090.
 
 ## Context
 

@@ -1,5 +1,5 @@
 ---
-last_updated: 2026-10-10T07:49:45Z
+last_updated: 2026-10-10T08:07:38Z
 total_decisions: 57
 ---
 
@@ -550,7 +550,7 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Changing which price method is authoritative, Jev spend limits, session refresh from price runs, or removing the LLM price adapters.
 
 ### ADR-057: Meal plan is part of offer equivalence and is read by code
-- **Status**: proposed
+- **Status**: accepted
 - **Bolt**: 090-reservation-meal-plan
 - **Path**: `bolts/090-reservation-meal-plan/adr-057-meal-plan-equivalence.md`
 - **Summary**: A cheaper offer that dropped the reservation's breakfast was reported as a saving. Equivalence requires the same or a better meal plan; the reservation's meal plan is set only by the code-owned confirmation parser, and a recognized room section that states nothing about meals means no meals.

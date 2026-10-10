@@ -48,7 +48,7 @@ never reported as a saving.
 | 2026-10-10T01:38:53Z | A reservation page that states no meal plan means no meals | The owner's own reservation states absence explicitly; where a page says nothing, no meal is assumed | Yes, owner |
 | 2026-10-10T01:38:53Z | Silence counts as no meals only when the room section was read | A wrong `none` recreates the reported defect | Proposed by the agent in the requirements; approved with them |
 | 2026-10-10T01:49:45Z | Unknown reservation meal plan sends a caveated alert | Keeps older bookings working while the reading proves itself | Yes, owner |
-| 2026-10-10T01:49:45Z | Recording ships before the gate | Production readings confirm the parser before it can exclude an offer | Approved with the requirements |
+| 2026-10-10T01:49:45Z | Recording ships before the gate | Production readings confirm the parser before it can exclude an offer | Approved with the requirements; confirmed 2026-10-10T08:07:38Z when the owner was reminded that release 1 does not change alerts |
 
 ## Scope Changes
 
@@ -62,10 +62,10 @@ never reported as a saving.
 - Checkpoint 1 (clarifying questions): held in conversation on 2026-10-03, 2026-10-06 and
   2026-10-09, with two real reservation examples from the owner.
 - Checkpoint 2 (requirements review): held; approved 2026-10-10T01:49:45Z.
-- Checkpoint 3 (artifacts review) and checkpoint 4 (ready for construction): **not held**. The
-  agent wrote the system context, units, stories and bolt plan and went straight to construction
-  on the strength of "proceed to implement, merge and redeploy". The owner has not reviewed those
-  artifacts separately; they are in pull request #77.
+- Checkpoint 3 (artifacts review) and checkpoint 4 (ready for construction): **not held before
+  construction**. The agent wrote the system context, units, stories and bolt plan and went
+  straight to construction on the strength of "proceed to implement, merge and redeploy". The
+  owner reviewed a condensed summary of them after the fact and approved on 2026-10-10T08:07:38Z.
 
 ## Ready for Construction
 
@@ -74,7 +74,7 @@ never reported as a saving.
 - [x] Units decomposed
 - [x] Stories created for all units
 - [x] Bolts planned
-- [ ] Human review complete (requirements only; see "Checkpoints held")
+- [x] Human review complete (requirements before construction; the rest after the fact, 2026-10-10T08:07:38Z)
 
 ## Process note
 

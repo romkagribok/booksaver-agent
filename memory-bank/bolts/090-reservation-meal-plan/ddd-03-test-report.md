@@ -4,7 +4,7 @@ bolt: 090-reservation-meal-plan
 stage: test
 status: in-progress
 created: "2026-10-10T02:02:11Z"
-updated: "2026-10-10T08:02:36Z"
+updated: "2026-10-10T08:07:38Z"
 ---
 
 # Test Report - Reservation meal plan
@@ -89,12 +89,22 @@ Not measured.
 
 ## Staging evidence
 
-Before the rebase, the candidate built from head aa7be3b passed the dev checks and a staging
-probe on a `sqlite3.backup` copy of the production database (schema 19 to 20, integrity ok, zero
-foreign-key violations, all row counts preserved, `/bookings` rendered five entries with five
-meal lines, one existing reservation received a meal plan with its booking and opportunities
-kept). **That evidence is for superseded code and a superseded base.** Production has since moved
-to schema 20; the build, dev checks and staging probe must be repeated on the rebased head.
+Recorded 2026-10-10T08:03:55Z for source `d19f7b5`, image `booksaver-agent:mealplan-d19f7b5`
+(`sha256:3c6438561e70e46e07fa5db48fa2f46380f477f5ef9a93d4eb3c6a19de26302c`), built on the image
+then running in production (`jevprimary-7b18adc`).
+
+- Dev, exact image, `--network none`: 133 installed modules match source, dependency pins
+  matched, `pip check` clean, daemon and Chromium smoke clean, three supervisor cleanup cases
+  confirmed, CLI help.
+- Staging, `mealplan_stage_probe.py` on a `sqlite3.backup` copy of the production database,
+  `--network none`: schema 20 to 21, integrity ok, zero foreign-key violations before and after,
+  all row counts preserved (3 users, 5 bookings, 13 reservations, 230 history rows, 31
+  opportunities, 82 comparisons), every existing meal plan unknown, `/bookings` rendered five
+  entries with five meal lines for three users, and one existing reservation received a stated
+  meal plan with its booking and opportunities kept. The copy was deleted; production stayed at
+  schema 20.
+- Earlier candidates (1e482eb, aa7be3b on the previous base; ec4558d) passed the same checks and
+  are superseded.
 
 ## Ready for Operations
 
@@ -103,6 +113,6 @@ to schema 20; the build, dev checks and staging probe must be repeated on the re
 - [x] No critical/high severity issues open
 - [x] Performance targets met (none apply)
 - [x] Security tests passing
-- [ ] Owner decision on the stage checkpoints
-- [ ] Bugbot on the rebased head
-- [ ] Candidate rebuilt and restaged on the current production base
+- [x] Owner decision on the stage checkpoints (2026-10-10T08:07:38Z: waived after the fact)
+- [ ] Bugbot on the final head
+- [x] Candidate rebuilt and restaged on the current production base

@@ -3,7 +3,7 @@ intent: 027-meal-plan-equivalence
 phase: construction
 status: construction
 created: "2026-10-10T01:38:53Z"
-updated: "2026-10-10T07:49:45Z"
+updated: "2026-10-10T08:07:38Z"
 ---
 
 # Requirements: Meal plan equivalence
@@ -93,8 +93,8 @@ workflow. Per-user boundaries are unchanged.
 | Question | Owner | Resolution |
 |----------|-------|------------|
 | What happens when the reservation's meal plan is unknown? | Owner | Resolved 2026-10-10T01:49:45Z: send the alert with a caveat (FR-8) |
-| Are the bolt's stage checkpoints waived for bolt 090? | Owner | Pending, asked 2026-10-10T07:49:45Z |
-| Should the decisions be recorded as ADR-057? | Owner | Pending, asked 2026-10-10T07:49:45Z; drafted as proposed |
+| Are the bolt's stage checkpoints waived for bolt 090? | Owner | Resolved 2026-10-10T08:07:38Z: waived after the fact, on a review of the stage summary |
+| Should the decisions be recorded as ADR-057? | Owner | Resolved 2026-10-10T08:07:38Z: accepted |
 
 ## Delivery order
 
