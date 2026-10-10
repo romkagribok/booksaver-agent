@@ -60,6 +60,8 @@ _UNKNOWN_FACTS = (
 )
 _MEAL_LABEL = re.compile(r"(?:meal plan|meal option|meals):?(?: (.+))?", re.IGNORECASE)
 _ROOM_SECTION_END = frozenset({"cancellation cost", "price", "price breakdown", "additional info"})
+# A facilities list describes the room, not the booked rate, even when it names a meal.
+_FACILITIES_LABEL = re.compile(r"(?:room )?(?:facilities|amenities):?( .+)?", re.IGNORECASE)
 
 
 def _heading(lines: list[str], label: str) -> int | None:
@@ -187,6 +189,14 @@ def _room_fact(lines: list[str], single_unit: bool) -> str | None:
     return value if 0 < len(value) <= 500 else None
 
 
+def _is_facilities_value(section: list[str], index: int) -> bool:
+    inline = _FACILITIES_LABEL.fullmatch(section[index])
+    if inline is not None and inline.group(1):
+        return True
+    previous = _FACILITIES_LABEL.fullmatch(section[index - 1]) if index else None
+    return previous is not None and not previous.group(1)
+
+
 def _meal_facts(lines: list[str], room_found: bool) -> dict[str, str]:
     """Read the booked meal plan from the room details section, never from the rest of the page.
 
@@ -211,7 +221,11 @@ def _meal_facts(lines: list[str], room_found: bool) -> dict[str, str]:
             continue
         following = section[index + 1] if index + 1 < len(section) else ""
         labelled.append((line, match.group(1)) if match.group(1) else (following, following))
-    stated = labelled or [(line, line) for line in section if mentions_meals(line)]
+    stated = labelled or [
+        (line, line)
+        for index, line in enumerate(section)
+        if mentions_meals(line) and not _is_facilities_value(section, index)
+    ]
     if not stated:
         guest_row = any(line.casefold().startswith("guest name") for line in section)
         return {"meal_plan": MealPlan.NONE.value} if guest_row else {}

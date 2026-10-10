@@ -632,6 +632,24 @@ def test_standalone_inclusion_line_counts_when_no_row_is_labelled():
     assert _meal(upsell) == ("breakfast", "Breakfast included")
 
 
+@pytest.mark.parametrize(
+    "facilities",
+    [
+        "Facilities\nPrivate bathroom, Breakfast, Desk\n",
+        "Facilities\nComplimentary breakfast, Desk\n",
+        "Facilities: Complimentary breakfast, Desk\n",
+        "Room facilities\tBreakfast included in the minibar, Desk\n",
+    ],
+)
+def test_facilities_list_naming_a_meal_is_not_the_booked_meal_plan(facilities):
+    rows = "Guest name\nSynthetic Guest\n" + facilities
+    assert _meal(_with_room_rows(rows)) == ("none", "unknown")
+    stated = _with_room_rows(rows + "Breakfast included\n")
+    assert _meal(stated) == ("breakfast", "Breakfast included")
+    labelled = _with_room_rows(rows + "Meal Plan\nNo meal is included in this room rate.\n")
+    assert _meal(labelled) == ("none", "No meal is included in this room rate.")
+
+
 def test_unrecognized_free_text_in_the_section_is_not_kept():
     body = _with_room_rows("Guest name\nSynthetic Guest\nPlease serve breakfast early\n")
     assert _meal(body) == ("unknown", "unknown")

@@ -13,6 +13,7 @@ created: "2026-10-10T02:02:11Z"
   priced extra. A section with a guest row and no meal wording gives `none` with no text. No
   recognized room, or no guest row, gives `unknown`.
   Unlabelled wording that is not recognized may be the guest's own text and is not kept.
+  The value of a facilities row describes the room, not the rate, and is never meal evidence.
 - **Hand-off** (`browser_use_inventory_executor._with_parsed_meal_plans`): the grouped reader's
   parsed payloads are matched to mapped reservations by confirmation number after the established
   mapper has run. The provider payload models and `_OPTIONAL_FACT_FIELDS` are unchanged, so the

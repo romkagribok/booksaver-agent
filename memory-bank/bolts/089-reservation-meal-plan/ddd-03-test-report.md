@@ -33,3 +33,12 @@ source files), `python3 -m pytest` (3,151 passed, 1 skipped).
 
 Not yet evidenced: the desktop wording of an included breakfast on a real reservation, and
 readings on production reservations. Both are recorded at release.
+
+## 2026-10-10T02:20:12Z — Bugbot review of head 1e482eb
+
+Bugbot reported one issue: with no labelled row, a room facilities list naming a meal could be
+read as the booked meal plan. Fixed: the value of a `Facilities` (or `Room facilities`,
+`Amenities`) row is never meal evidence. Regressions cover next-line, inline and tab-separated
+facilities values, alone and beside a real statement
+(`tests/unit/test_inventory_confirmation_facts.py`). Full suite 3,155 passed, 1 skipped; Ruff and
+mypy clean.
