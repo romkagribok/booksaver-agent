@@ -369,6 +369,7 @@ def register_readonly_commands(
                 f"{name}\n"
                 f"  Confirmation: {item.confirmation_id or 'unavailable'}\n"
                 f"  {dates} · {total} · {item.lifecycle.value}\n"
+                f"  Meals: {item.meal_plan.label}\n"
                 f"  {eligibility}"
             )
 

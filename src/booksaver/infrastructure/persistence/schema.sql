@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS bookings (
     occ_rooms        INTEGER CHECK(occ_rooms IS NULL OR occ_rooms >= 1),
     -- v7: ownership (US-029). Pre-v7 rows are backfilled to the owner user.
     user_id          INTEGER NOT NULL REFERENCES users(user_id),
+    -- v21: booked meal plan (US-220). NULL means it has not been read yet.
+    meal_plan        TEXT,
     UNIQUE(user_id, confirmation_id)
 );
 
@@ -139,6 +141,10 @@ CREATE TABLE IF NOT EXISTS account_reservations (
     last_observed_at        TEXT NOT NULL,
     last_sync_run_id        TEXT NOT NULL REFERENCES booking_sync_runs(run_id),
     monitoring_booking_id   TEXT UNIQUE REFERENCES bookings(booking_id),
+    -- v21: booked meal plan and the verbatim line it was read from (US-220). NULL means it
+    -- has not been read yet; an empty text means no line on the page stated it.
+    meal_plan               TEXT,
+    meal_plan_text          TEXT NOT NULL DEFAULT '',
     UNIQUE(user_id, remote_key_hash)
 );
 

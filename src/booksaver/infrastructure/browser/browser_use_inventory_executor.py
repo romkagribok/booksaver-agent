@@ -14,7 +14,7 @@ import re
 import time
 import unicodedata
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import Any, Protocol, cast
@@ -45,6 +45,7 @@ from booksaver.domain.inventory_executor import (
     ObservedReservation,
     TrustedInventoryCancellation,
 )
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.model_policy import (
     ModelStopReason,
@@ -867,6 +868,35 @@ def _inventory_submission_observation(
             raise
         return None
     return observation
+
+
+def _with_parsed_meal_plans(
+    reservations: tuple[ObservedReservation, ...],
+    parsed: Sequence[Mapping[str, str]],
+) -> tuple[ObservedReservation, ...]:
+    """Attach meal plans read by the code-owned confirmation parser, keyed by confirmation.
+
+    The provider payload models never carry a meal plan, so this is its only source. A
+    confirmation parsed more than once with different readings stays unknown.
+    """
+    readings: dict[str, tuple[MealPlan, str | None] | None] = {}
+    for raw in parsed:
+        text = raw.get("meal_plan_text")
+        reading = (
+            MealPlan.parse(raw.get("meal_plan")),
+            text if text and text != "unknown" else None,
+        )
+        remote_id = raw.get("remote_id", "")
+        readings[remote_id] = (
+            reading if readings.get(remote_id, reading) == reading else None
+        )
+    attached: list[ObservedReservation] = []
+    for item in reservations:
+        found = readings.get(item.remote_id)
+        attached.append(
+            item if found is None else replace(item, meal_plan=found[0], meal_plan_text=found[1])
+        )
+    return tuple(attached)
 
 
 def _grouped_navigation_terminal(url: str) -> InventoryExecutionStatus | None:
@@ -1779,6 +1809,7 @@ class LocalBrowserUseInventoryRuntime:
                 else item
                 for item in reservations
             )
+            reservations = _with_parsed_meal_plans(reservations, result.reservations)
         except (TypeError, ValueError):
             return BrowserUseRuntimeResult(InventoryExecutionStatus.VALIDATION_FAILURE)
         # Export only the verified bytes retained before the desktop preference switch.

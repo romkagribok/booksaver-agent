@@ -23,6 +23,7 @@ from booksaver.domain.account_sync import (
     SynchronizationTrigger,
 )
 from booksaver.domain.check_result import CheckResult, ExtractionMethod, FailureCode, FailureReason
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.mobile_web import (
     GeniusEvidence,
     MobileProfileId,
@@ -559,6 +560,41 @@ def test_bookings_reports_accepted_positive_only_refresh_as_success(
     assert "Saved reservations marked 'not verified' may have changed" in text
     assert "couldn't finish updating" not in text
     assert "refresh failed" not in text
+
+
+def test_bookings_shows_each_reservation_meal_plan(tmp_path: Path) -> None:
+    db_path = tmp_path / "booksaver.db"
+    user_id = _register_caller(db_path, telegram_id=1)
+    plans = {"breakfast": MealPlan.BREAKFAST, "roomonly": MealPlan.NONE, "unread": MealPlan.UNKNOWN}
+    _sync_observations(
+        db_path,
+        user_id,
+        tuple(
+            replace(
+                _observation(_booking(key)), occupancy=Occupancy(adults=2), meal_plan=plan,
+                meal_plan_text="Breakfast included" if plan is MealPlan.BREAKFAST else "",
+            )
+            for key, plan in plans.items()
+        ),
+    )
+    router = CommandRouter()
+    sent: list[str] = []
+    register_readonly_commands(
+        router, lambda _chat_id, text: sent.append(text), db_path, Scheduler(),
+    )
+
+    router.dispatch(_cmd("/bookings"))
+
+    entries = "\n".join(sent).split("\n\n")
+    lines = {
+        key: next(entry for entry in entries if f"Confirmation: CONF-{key}" in entry).splitlines()
+        for key in plans
+    }
+    assert "  Meals: breakfast included" in lines["breakfast"]
+    assert "  Meals: no meals included" in lines["roomonly"]
+    assert "  Meals: meals not confirmed" in lines["unread"]
+    # The verbatim Booking.com line is stored for diagnosis, not shown.
+    assert lines["breakfast"].index("  Meals: breakfast included") == 3
 
 
 @pytest.mark.parametrize("saved_run", [None, "earlier-sync"])

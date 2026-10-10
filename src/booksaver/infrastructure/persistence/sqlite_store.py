@@ -53,6 +53,7 @@ from booksaver.domain.check_result import (
     FailureReason,
     RefundIndicators,
 )
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.mobile_web import (
     AuthenticationEvidence,
     GeniusEvidence,
@@ -78,7 +79,7 @@ from booksaver.domain.value_objects import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 _MACHINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
@@ -688,6 +689,19 @@ def _migrate_v18(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_v21(conn: sqlite3.Connection) -> None:
+    """Add the booked meal plan to synchronized reservations and their projection."""
+
+    for table, name, declaration in (
+        ("bookings", "meal_plan", "TEXT"),
+        ("account_reservations", "meal_plan", "TEXT"),
+        ("account_reservations", "meal_plan_text", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if columns and name not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -707,6 +721,7 @@ def _migrate_v18(conn: sqlite3.Connection) -> None:
 # v17 -> v18: tag agentic price canary evidence by executor policy.
 # v18 -> v19: paired Jev price comparisons, purely additive (intent 026).
 # v19 -> v20: authoritative Jev price-run ledger, purely additive (ADR-056).
+# v20 -> v21: booked meal plan on reservations and bookings (intent 027).
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -721,6 +736,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     16: _migrate_v16,
     17: _migrate_v17,
     18: _migrate_v18,
+    21: _migrate_v21,
 }
 
 
@@ -865,6 +881,7 @@ class SqliteBookingRepository:
             registered_at=datetime.fromisoformat(row["registered_at"]),
             status=BookingStatus(row["status"]),
             occupancy=occupancy,
+            meal_plan=MealPlan.parse(row["meal_plan"]),
         )
 
 
@@ -1327,6 +1344,7 @@ class SqliteAccountReservationRepository:
             if existing is not None and existing["monitoring_booking_id"]
             else None
         )
+        meal_plan, meal_plan_text = self._meal_plan_to_store(existing, observation)
         if decision.is_eligible:
             monitoring_booking_id = self._upsert_projection(
                 conn,
@@ -1334,6 +1352,12 @@ class SqliteAccountReservationRepository:
                 existing_booking_id=monitoring_booking_id,
                 observation=observation,
                 observed_at=observed_at,
+            )
+            # Kept out of the projection's change detection: recording a meal plan does not
+            # invalidate a saved opportunity.
+            conn.execute(
+                "UPDATE bookings SET meal_plan = ? WHERE booking_id = ? AND user_id = ?",
+                (meal_plan, monitoring_booking_id, user_id),
             )
         elif monitoring_booking_id is not None:
             self._archive_projection(conn, monitoring_booking_id)
@@ -1349,8 +1373,10 @@ class SqliteAccountReservationRepository:
                     refund_note, refund_deadline, occ_adults, occ_children, occ_rooms,
                     remote_lifecycle, eligibility_status, eligibility_reasons,
                     snapshot_revision, first_observed_at, last_observed_at,
-                    last_sync_run_id, monitoring_booking_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                    last_sync_run_id, monitoring_booking_id, meal_plan, meal_plan_text
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     str(uuid.uuid4()),
@@ -1361,6 +1387,8 @@ class SqliteAccountReservationRepository:
                     observed_at.isoformat(),
                     run_id,
                     monitoring_booking_id,
+                    meal_plan,
+                    meal_plan_text,
                 ),
             )
             return
@@ -1387,7 +1415,9 @@ class SqliteAccountReservationRepository:
                 "eligibility_reasons",
             )
         )
-        changed = current != values
+        changed = current != values or (existing["meal_plan"], existing["meal_plan_text"]) != (
+            meal_plan, meal_plan_text
+        )
         conn.execute(
             """
             UPDATE account_reservations SET
@@ -1400,7 +1430,7 @@ class SqliteAccountReservationRepository:
                 eligibility_reasons = ?,
                 snapshot_revision = snapshot_revision + ?,
                 last_observed_at = ?, last_sync_run_id = ?,
-                monitoring_booking_id = ?
+                monitoring_booking_id = ?, meal_plan = ?, meal_plan_text = ?
             WHERE account_reservation_id = ?
             """,
             (
@@ -1409,6 +1439,8 @@ class SqliteAccountReservationRepository:
                 observed_at.isoformat(),
                 run_id,
                 monitoring_booking_id,
+                meal_plan,
+                meal_plan_text,
                 existing["account_reservation_id"],
             ),
         )
@@ -1660,6 +1692,29 @@ class SqliteAccountReservationRepository:
         )
 
     @staticmethod
+    def _meal_plan_to_store(
+        existing: sqlite3.Row | None, observation: ReservationObservation
+    ) -> tuple[str | None, str]:
+        """Choose the meal plan to keep: a stated reading, else what is saved, else a silent one.
+
+        An unknown reading never replaces a saved value, and a reading taken from a page that
+        stated nothing never replaces one that a line on the page stated.
+        """
+        observed = (
+            None if observation.meal_plan is MealPlan.UNKNOWN else observation.meal_plan.value
+        )
+        observed_text = observation.meal_plan_text
+        if existing is None:
+            return observed, observed_text
+        stored_text = str(existing["meal_plan_text"] or "")
+        if MealPlan.parse(existing["meal_plan"]) is MealPlan.UNKNOWN:
+            # Keep unrecognized wording even while unknown; it explains why it is unknown.
+            return observed, observed_text or ("" if observed is not None else stored_text)
+        if observed is None or (stored_text and not observed_text):
+            return str(existing["meal_plan"]), stored_text
+        return observed, observed_text
+
+    @staticmethod
     def _observation_values(
         observation: ReservationObservation, decision: EligibilityDecision
     ) -> tuple[Any, ...]:
@@ -1842,6 +1897,8 @@ class SqliteAccountReservationRepository:
             occupancy=occupancy,
             observed_at=datetime.fromisoformat(row["last_observed_at"]),
             extraction_method="persisted",
+            meal_plan=MealPlan.parse(row["meal_plan"]),
+            meal_plan_text=row["meal_plan_text"],
         )
         reasons = tuple(
             EligibilityReason(value) for value in json.loads(row["eligibility_reasons"])

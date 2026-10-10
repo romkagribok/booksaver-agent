@@ -576,3 +576,106 @@ def test_cancellation_contradictions_are_case_insensitive(confirmed):
     assert parse_cancelled_confirmation(
         f'Your booking is cancelled\n{confirmed}\nConfirmation number: 1234500001'
     ) is None
+
+
+# The room section of the owner's own reservation, as rendered on the layout synchronization reads.
+_OWNER_ROOM_ROWS = (
+    "Guest name\nSynthetic Guest Edit guest name\nMax capacity\n2 adults\n"
+    "Meal Plan\nNo meal is included in this room rate.\n"
+    "Smoking preference\nNon-smoking room\nFacilities\nPrivate bathroom, Desk, Dining table\n"
+)
+
+
+def _meal(body: str) -> tuple[str, str]:
+    facts = _parse(body)
+    assert facts is not None
+    return facts["meal_plan"], facts["meal_plan_text"]
+
+
+def _with_room_rows(rows: str) -> str:
+    return _BODY.replace("Guest name\nSynthetic Guest\n", rows)
+
+
+def test_explicit_no_meal_row_is_recorded_with_its_wording():
+    assert _meal(_with_room_rows(_OWNER_ROOM_ROWS)) == (
+        "none", "No meal is included in this room rate.",
+    )
+
+
+@pytest.mark.parametrize(
+    "row, expected",
+    [
+        ("Meal Plan\nBreakfast is included in the room rate.\n", "breakfast"),
+        ("Meal Plan\tBreakfast is included in the room rate.\n", "breakfast"),
+        ("Meal Plan: Breakfast & dinner included\n", "half_board"),
+        ("Meal Plan\nAll-inclusive\n", "all_inclusive"),
+        ("Meal Plan\nBreakfast costs \u20ac 15 per person per night.\n", "none"),
+        # Unrecognized wording is never rounded to a value.
+        ("Meal Plan\nSomething Booking.com has not said before\n", "unknown"),
+        ("Meal Plan\nBreakfast & lunch included\n", "unknown"),
+        ("Meal Plan\n2 meals per day\n", "unknown"),
+        ("Meals are not included\n", "none"),
+        ("Meal Plan No meal is included in this room rate.\n", "none"),
+    ],
+)
+def test_labelled_meal_plan_row_is_authoritative(row, expected):
+    body = _with_room_rows("Guest name\nSynthetic Guest\n" + row + "Smoking preference\nAny\n")
+    assert _meal(body)[0] == expected
+
+
+def test_standalone_inclusion_line_counts_when_no_row_is_labelled():
+    body = _with_room_rows("Guest name\nSynthetic Guest\nBreakfast included\n")
+    assert _meal(body) == ("breakfast", "Breakfast included")
+    upsell = _with_room_rows(
+        "Guest name\nSynthetic Guest\nBreakfast included\nAdd dinner for \u20ac 20\n"
+    )
+    assert _meal(upsell) == ("breakfast", "Breakfast included")
+
+
+@pytest.mark.parametrize(
+    "facilities",
+    [
+        "Facilities\nPrivate bathroom, Breakfast, Desk\n",
+        "Facilities\nComplimentary breakfast, Desk\n",
+        "Facilities: Complimentary breakfast, Desk\n",
+        "Room facilities\tBreakfast included in the minibar, Desk\n",
+    ],
+)
+def test_facilities_list_naming_a_meal_is_not_the_booked_meal_plan(facilities):
+    rows = "Guest name\nSynthetic Guest\n" + facilities
+    assert _meal(_with_room_rows(rows)) == ("none", "unknown")
+    stated = _with_room_rows(rows + "Breakfast included\n")
+    assert _meal(stated) == ("breakfast", "Breakfast included")
+    labelled = _with_room_rows(rows + "Meal Plan\nNo meal is included in this room rate.\n")
+    assert _meal(labelled) == ("none", "No meal is included in this room rate.")
+
+
+def test_unrecognized_free_text_in_the_section_is_not_kept():
+    body = _with_room_rows("Guest name\nSynthetic Guest\nPlease serve breakfast early\n")
+    assert _meal(body) == ("unknown", "unknown")
+    labelled = _with_room_rows("Guest name\nSynthetic Guest\nMeal Plan\nBrunch plan\n")
+    assert _meal(labelled) == ("unknown", "Brunch plan")
+    inline = _with_room_rows("Guest name\nSynthetic Guest\nMeal Plan: All-inclusive\n")
+    assert _meal(inline) == ("all_inclusive", "All-inclusive")
+
+
+def test_page_that_states_nothing_means_no_meals_only_when_the_section_was_read():
+    # Owner decision: silence means no meals. It carries no text, so a stated plan can replace it.
+    assert _meal(_BODY) == ("none", "unknown")
+    without_guest_row = _BODY.replace("Guest name\nSynthetic Guest\n", "")
+    assert _meal(without_guest_row) == ("unknown", "unknown")
+    without_room = _BODY.replace("Your room details", "Your accommodation")
+    assert _meal(without_room) == ("unknown", "unknown")
+
+
+def test_meal_wording_outside_the_room_section_is_ignored():
+    body = _BODY.replace("Additional Info\n", "Additional Info\nBreakfast included\n")
+    assert _meal(body) == ("none", "unknown")
+
+
+def test_conflicting_labelled_rows_and_long_wording_stay_bounded():
+    rows = "Guest name\nSynthetic Guest\nMeal Plan\nBreakfast included\nMeal Plan\nAll-inclusive\n"
+    assert _meal(_with_room_rows(rows))[0] == "unknown"
+    long_row = "Guest name\nSynthetic Guest\nMeal Plan\nBreakfast included " + "x" * 400 + "\n"
+    plan, text = _meal(_with_room_rows(long_row))
+    assert plan == "breakfast" and len(text) == 200

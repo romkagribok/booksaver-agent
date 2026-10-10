@@ -38,6 +38,7 @@ from booksaver.domain.inventory_executor import (
     TrustedInventoryCancellation,
     inventory_session_subject,
 )
+from booksaver.domain.meal_plan import MealPlan
 
 
 class InventoryValidationFailure(Enum):
@@ -516,8 +517,16 @@ def _merge_compatible(
     )
     if all_in is None or refundability is None:
         return None
+    # Two readings of one reservation that disagree on meals settle nothing; neither is kept.
+    meal_plan = _merge_evidence(left.meal_plan, right.meal_plan, MealPlan.UNKNOWN)
+    meal_plan_text = (
+        (left.meal_plan_text if left.meal_plan is meal_plan else None)
+        or (right.meal_plan_text if right.meal_plan is meal_plan else None)
+    )
     return replace(
         left,
+        meal_plan=meal_plan or MealPlan.UNKNOWN,
+        meal_plan_text=meal_plan_text if meal_plan is not None else None,
         lifecycle=lifecycle,
         confirmation_id=confirmation_id,
         property_name=property_name,
@@ -594,6 +603,8 @@ def _to_reservation_observation(
         refund_note=refund_note,
         refund_deadline=refund_deadline,
         occupancy=observed.occupancy,
+        meal_plan=observed.meal_plan,
+        meal_plan_text=observed.meal_plan_text or "",
         source_url="",
         extraction_method="agentic_inventory",
         property_anchor_verified=observed.property_anchor_verified,
