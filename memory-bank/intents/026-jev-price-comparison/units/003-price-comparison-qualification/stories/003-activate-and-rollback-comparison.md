@@ -2,7 +2,7 @@
 id: 003-activate-and-rollback-comparison
 unit: 003-price-comparison-qualification
 intent: 026-jev-price-comparison
-status: draft
+status: in-progress
 priority: must
 created: "2026-09-26T16:33:08Z"
 assigned_bolt: 088-price-comparison-qualification
