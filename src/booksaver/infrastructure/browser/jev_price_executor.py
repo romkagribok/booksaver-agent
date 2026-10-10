@@ -71,6 +71,10 @@ from booksaver.infrastructure.llm.typesafe_client import (
 logger = logging.getLogger(__name__)
 
 _MAX_NAV_DECISIONS = 6
+# Booking.com's transient error page has nothing to click and does not heal by waiting (live
+# diagnostics, 2026-10-09). Reloading the trusted entry URL is a code-owned recovery, bounded here.
+_MAX_ERROR_RELOADS = 2
+_ERROR_RELOAD_PAUSE_SECONDS = 4.0
 _MAX_CLICK_CANDIDATES = 150
 _READY_POLL_SECONDS = 10.0
 _PARALLEL_REQUESTS = 6
@@ -92,12 +96,22 @@ _ISO_CODES = frozenset({
 })
 # en-US grouping only (the browser locale is en-US). The look-arounds reject any other grouping
 # ("1.234", "450,50", "1,23,456") instead of silently reading a different number.
-_AMOUNT = r"(?<![\d.,])(\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+(?:\.\d{2})?)(?![.,]?\d)"
-_PREFIX_MONEY = re.compile(
-    r"(US\$|CA\$|C\$|A\$|AU\$|NZ\$|HK\$|S\$|MX\$|R\$|€|£|¥|₹|\$|\b[A-Z]{3}\b)\s?" + _AMOUNT
+# The look-arounds also reject space-grouped numbers ("1 234") rather than reading "1" or "234".
+_AMOUNT = (
+    r"(?<![\d.,])(?<!\d[ \u00a0\u202f])(\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+(?:\.\d{2})?)"
+    r"(?![.,]?\d)(?![ \u00a0\u202f]\d{3}(?!\d))"
 )
+_CURRENCY = r"(US\$|CA\$|C\$|A\$|AU\$|NZ\$|HK\$|S\$|MX\$|R\$|€|£|¥|₹|\$|\b[A-Z]{3}\b)"
+_PREFIX_MONEY = re.compile(_CURRENCY + r"\s?" + _AMOUNT)
 _SUFFIX_MONEY = re.compile(_AMOUNT + r"\s?(€|£|\b[A-Z]{3}\b)")
-_PER_NIGHT = re.compile(r"(?:per|/|a|each)\s*night|nightly|avg\.?|average", re.IGNORECASE)
+# A line that is nothing but one amount, e.g. "€ 94" or "US$1,319.50.".
+_MONEY_ONLY = re.compile(
+    r"^\s*(?:" + _CURRENCY + r"\s?" + _AMOUNT + r"|" + _AMOUNT + r"\s?(?:€|£|[A-Z]{3}))\s*\.?\s*$"
+)
+_PER_NIGHT = re.compile(
+    r"\b(?:per|a|each)\s+night\b|/\s*night\b|\bnightly\b|\bavg\b\.?|\baverage\b",
+    re.IGNORECASE,
+)
 _NIGHTS = re.compile(r"\b(\d{1,2})\s+nights?\b", re.IGNORECASE)
 _REFUNDABLE_TEXT = re.compile(r"free cancel|fully refundable|\brefundable\b", re.IGNORECASE)
 _NONREFUNDABLE_TEXT = re.compile(r"non[- ]?refundable|no refund|not refundable", re.IGNORECASE)
@@ -106,10 +120,21 @@ _NOT_FULLY_REFUNDABLE = re.compile(
     r"non[- ]?refundable|no refund|not refundable|partial|no free cancel|not free|fee applies",
     re.IGNORECASE,
 )
+# Label status is deliberately narrow: only a line that IS the label, or an amount line that
+# starts with it. "Total savings", "Member price", "Price per night", "Price for:" are not labels.
+_PRICE_LABEL_LINE = re.compile(r"^(?:total price|price|total)\s*:?$", re.IGNORECASE)
+_PRICE_LABEL_PREFIX = re.compile(r"^(?:total price|price|total)\s*:?\s*", re.IGNORECASE)
+_CURRENT_LABEL_LINE = re.compile(r"^current price\s*:?$", re.IGNORECASE)
+_CURRENT_PRICE = re.compile(r"\bcurrent price\b[\s:.]*(.+)$", re.IGNORECASE)
+_ORIGINAL_PRICE = re.compile(
+    r"\b(?:original|previous|old|regular|standard) price\b|\bwas\b|\bbefore discount\b",
+    re.IGNORECASE,
+)
 # A whole-stay total line never describes a component, deposit, discount, or old price.
 _NOT_A_TOTAL = re.compile(
-    r"\b(?:tax|taxes|fee|fees|charge|charges|deposit|prepay\w*|from|was|save|saving|off|"
-    r"discount|original|previous|per person|per room)\b|%",
+    r"\b(?:tax|taxes|fee|fees|charge|charges|deposit|prepay\w*|from|was|save|saved|saving|"
+    r"savings|off|discount|discounted|original|previous|due|per person|per room|per adult|"
+    r"per guest)\b|%",
     re.IGNORECASE,
 )
 _DEADLINE_CONTINUATION = re.compile(r"^(?:before|until|by|up to)\b", re.IGNORECASE)
@@ -117,7 +142,7 @@ _TAXES_INCLUDED = re.compile(
     r"includ\w*[^.]{0,40}\b(?:tax|taxes|charges|fees)\b", re.IGNORECASE
 )
 _TAXES_EXCLUDED = re.compile(
-    r"not included|excluded|excludes|\+\s*\S*\s*(?:tax|taxes|fees)|"
+    r"not included|excluded|excludes|\+\s*(?:\S+\s+){0,3}(?:tax|taxes|fees|charges)\b|"
     r"(?:tax|taxes|fees|charges)\s+(?:not included|extra|additional)|additional (?:tax|fee)",
     re.IGNORECASE,
 )
@@ -269,16 +294,25 @@ def parse_money(text: str, expected_currency: str) -> ParsedMoney | None:
     return parsed
 
 
+def _has_money(line: str) -> bool:
+    return bool(_PREFIX_MONEY.search(line) or _SUFFIX_MONEY.search(line))
+
+
 def _price_options(rate: tuple[str, ...]) -> dict[str, str]:
+    """Each displayed amount with its neighbouring labels, which say what kind of price it is."""
+
     options: dict[str, str] = {}
     for index, line in enumerate(rate):
-        if not (_PREFIX_MONEY.search(line) or _SUFFIX_MONEY.search(line)):
+        if not _has_money(line):
             continue
+        preceding = rate[index - 1] if index else ""
         following = rate[index + 1] if index + 1 < len(rate) else ""
-        label = line
-        if following and len(following) <= 40 and not _PREFIX_MONEY.search(following):
-            label = f"{line} (followed by: {following})"
-        options[f"p{index}"] = label
+        context = []
+        if preceding and len(preceding) <= 40 and not _has_money(preceding):
+            context.append(f"preceded by: {preceding}")
+        if following and len(following) <= 40 and not _has_money(following):
+            context.append(f"followed by: {following}")
+        options[f"p{index}"] = f"{line} ({'; '.join(context)})" if context else line
     return options
 
 
@@ -299,6 +333,8 @@ class _RateEvidence:
     refundability_text: str | None
     all_in: str
     complete: bool
+    # Bounded category for diagnostics: why this rate has (or lacks) a grounded total.
+    total_reason: str = "ok"
 
 
 def rate_questions(
@@ -320,10 +356,13 @@ def rate_questions(
                 # and whole-stay amounts are equal.
                 "question": f"This is one Booking.com rate option for a stay of {stay}. Which "
                 "line shows the price to pay for the whole stay?",
-                "hint": "Booking.com shows the whole-stay price on a line like 'Price $X'. A "
-                "line followed by 'per night' is the nightly price.",
-                "not_for": "a nightly price, a crossed-out previous price, a deposit, or a "
-                "tax amount",
+                # Live qualification (2026-10-06): member-discounted rooms show an original
+                # and a current price; without this the rate was never priced.
+                "hint": "Booking.com shows the whole-stay price on a line like 'Price $X', or "
+                "as the amount labelled 'Current price' when the rate is discounted. A line "
+                "followed by 'per night' is the nightly price.",
+                "not_for": "a nightly price, an original or crossed-out price before a "
+                "discount, a deposit, or a tax amount",
                 "rules": _UNTRUSTED,
             },
             _with_none(prices, "No displayed amount is this rate option's whole-stay total"),
@@ -366,6 +405,108 @@ def rate_questions(
     return state, questions, prices
 
 
+def _nightly_indexes(rate: tuple[str, ...]) -> set[int]:
+    """Amount lines that a per-night label applies to: itself, else the line before, else after."""
+
+    nightly: set[int] = set()
+    for index, line in enumerate(rate):
+        if not _PER_NIGHT.search(line):
+            continue
+        if _has_money(line):
+            nightly.add(index)
+        elif index and _has_money(rate[index - 1]):
+            nightly.add(index - 1)
+        elif index + 1 < len(rate) and _has_money(rate[index + 1]):
+            nightly.add(index + 1)
+    return nightly
+
+
+def _classify_amount(rate: tuple[str, ...], index: int, nightly: set[int]) -> tuple[str, str]:
+    """What kind of amount a money line is, and the text its amount must be parsed from."""
+
+    line = rate[index]
+    preceding = rate[index - 1] if index else ""
+    label = preceding.strip() if preceding and not _has_money(preceding) else ""
+    if index in nightly:
+        return "per_night", line
+    current = _CURRENT_PRICE.search(line)
+    if current is not None:
+        tail = current.group(1)
+        if _PER_NIGHT.search(tail):
+            return "per_night", tail
+        if _NOT_A_TOTAL.search(tail):
+            return "not_total", tail
+        return "current", tail
+    if _ORIGINAL_PRICE.search(line) or (label and _ORIGINAL_PRICE.search(label)):
+        return "original", line
+    if _NOT_A_TOTAL.search(line) or (label and _NOT_A_TOTAL.search(label)):
+        return "not_total", line
+    if label and _CURRENT_LABEL_LINE.fullmatch(label) and _MONEY_ONLY.match(line):
+        return "current", line
+    prefix = _PRICE_LABEL_PREFIX.match(line)
+    if prefix is not None and prefix.end() and _MONEY_ONLY.match(line[prefix.end() :]):
+        return "price", line[prefix.end() :]
+    if label and _PRICE_LABEL_LINE.fullmatch(label) and _MONEY_ONLY.match(line):
+        return "price", line
+    return "bare", line
+
+
+def _ground_total(
+    choice: str,
+    rate: tuple[str, ...],
+    prices: Mapping[str, str],
+    expected_currency: str,
+    nights: int,
+) -> tuple[ParsedMoney | None, str]:
+    """Accept the chosen amount as the whole-stay total only if the card cannot contradict it.
+
+    Every amount on the card is classified first. The chosen one is then rejected if it is a
+    nightly, original, or component amount; if a *current price* exists and this is not it; if
+    another candidate amount differs; if it is unlabelled on a multi-night stay; or if it equals
+    the card's own nightly amount on a multi-night stay. A model's choice is never the evidence.
+    """
+
+    if choice not in prices:
+        return None, "none"
+    chosen = int(choice[1:])
+    nightly = _nightly_indexes(rate)
+    classified: dict[int, tuple[str, ParsedMoney | None]] = {}
+    for index, line in enumerate(rate):
+        if _has_money(line):
+            kind, text = _classify_amount(rate, index, nightly)
+            classified[index] = (kind, parse_money(text, expected_currency))
+    kind, amount = classified[chosen]
+    if kind in {"per_night", "original", "not_total"}:
+        return None, kind
+    if amount is None:
+        return None, "unparsed"
+
+    def amounts(wanted: str) -> set[ParsedMoney]:
+        return {value for k, value in classified.values() if k == wanted and value is not None}
+
+    currents, labelled, bare = amounts("current"), amounts("price"), amounts("bare")
+    unreadable = any(
+        k in {"current", "price", "bare"} and value is None for k, value in classified.values()
+    )
+    if kind == "current":
+        if len(currents) > 1:
+            return None, "ambiguous"
+    elif currents:
+        if amount not in currents:
+            return None, "original"
+    else:
+        if unreadable or (bare | labelled) - {amount}:
+            # Another candidate amount differs, or could not be read: no label settles it.
+            return None, "ambiguous"
+        if kind == "bare" and nights > 1 and amount not in labelled:
+            # One night makes nightly and total equal; for longer stays an unlabelled amount
+            # could be either, so it stays unpriced.
+            return None, "ambiguous"
+    if nights > 1 and amount in amounts("per_night"):
+        return None, "per_night"
+    return amount, "ok"
+
+
 def ground_rate(
     result: SystemOneResult,
     room: RoomSnapshot,
@@ -377,17 +518,9 @@ def ground_rate(
 ) -> _RateEvidence:
     """Accept a Jev choice only where the chosen observed text independently supports it."""
 
-    total: ParsedMoney | None = None
-    total_choice = result.choice("total").choice
-    if total_choice in prices:
-        line = rate[int(total_choice[1:])]
-        following = rate[int(total_choice[1:]) + 1] if int(total_choice[1:]) + 1 < len(rate) else ""
-        if (
-            not _PER_NIGHT.search(line)
-            and not _PER_NIGHT.search(following)
-            and not _NOT_A_TOTAL.search(line)
-        ):
-            total = parse_money(line, expected_currency)
+    total, total_reason = _ground_total(
+        result.choice("total").choice, rate, prices, expected_currency, nights
+    )
     stated_nights = {int(match.group(1)) for line in rate for match in _NIGHTS.finditer(line)}
     nights_consistent = not stated_nights or stated_nights == {nights}
 
@@ -415,10 +548,13 @@ def ground_rate(
     else:
         refundability = "unknown"
 
-    card_text = " ".join((*room.lines, *rate))
+    # Tax wording is matched within one line or two adjacent lines, never across the whole
+    # card: "Breakfast included" must not combine with a later "+ € 12 taxes and fees".
+    card_lines = (*room.lines, *rate)
+    windows = (*card_lines, *(f"{a} {b}" for a, b in zip(card_lines, card_lines[1:], strict=False)))
     taxes_choice = result.choice("taxes").choice
-    excluded_text = _TAXES_EXCLUDED.search(card_text) is not None
-    included_text = _TAXES_INCLUDED.search(card_text) is not None
+    excluded_text = any(_TAXES_EXCLUDED.search(window) for window in windows)
+    included_text = any(_TAXES_INCLUDED.search(window) for window in windows)
     if taxes_choice == "included":
         all_in = "explicit" if included_text and not excluded_text else "conflicting"
     elif taxes_choice == "excluded" and included_text and not excluded_text:
@@ -431,6 +567,7 @@ def ground_rate(
         refundability_text=refund_line if refundability != "unknown" else None,
         all_in=all_in,
         complete=total is not None and nights_consistent,
+        total_reason=total_reason,
     )
 
 
@@ -491,6 +628,22 @@ def page_signature(snapshot: OfferPageSnapshot | None, property_name: str) -> st
     return f"{signature} {'+'.join(flags)}" if flags else signature
 
 
+def _is_error_page(snapshot: OfferPageSnapshot | None) -> bool:
+    """Booking.com's own error screen: error wording in its title or heading, no room list.
+
+    Page body text is not consulted, so a review, a map widget, or a sold-out notice that
+    happens to contain such wording does not trigger a reload; nor does a bot-check page.
+    """
+
+    if snapshot is None or snapshot.rooms:
+        return False
+    heading_text = "\n".join((snapshot.title, *snapshot.headings))
+    markers = dict(_PAGE_MARKERS)
+    return markers["oops"].search(heading_text) is not None and not markers["bot"].search(
+        "\n".join((heading_text, snapshot.viewport_text))
+    )
+
+
 @dataclass(slots=True)
 class _Diagnostics:
     """What the episode saw and chose, as bounded categories and counts only."""
@@ -531,6 +684,7 @@ class JevPriceRuntimeResult:
     status: PriceExecutionStatus
     observation: TypedObservation | None = None
     safety_violations: frozenset[ExecutorSafetyViolation] = frozenset()
+    refreshed_session: bytes | None = field(default=None, repr=False)
 
 
 class LocalJevPriceRuntime:
@@ -541,10 +695,15 @@ class LocalJevPriceRuntime:
         mobile_settings: MobileWebSettings | None = None,
         *,
         guard: BrowserUseActionGuard | None = None,
+        allow_session_refresh: bool = False,
     ) -> None:
         self._guard = guard or BrowserUseActionGuard()
         self._host = BrowserUseSessionHost(mobile_settings)
         self._episode = _Episode()
+        # Only the authoritative price method may refresh the owner's saved session; a
+        # comparison candidate never does (ADR-055, ADR-056).
+        self._allow_session_refresh = allow_session_refresh
+        self._refreshed_session: bytes | None = None
 
     @property
     def failure_stage(self) -> str:
@@ -582,8 +741,11 @@ class LocalJevPriceRuntime:
                 if authentication is BrowserUseSessionStatus.SIGNED_OUT
                 else PriceExecutionStatus.PROVIDER_FAILURE
             )
-        # The candidate arm never refreshes the owner's saved session.
-        self._host.verified_mobile_session = None
+        if self._allow_session_refresh:
+            # Same independently verified snapshot the existing method keeps after its probe.
+            self._refreshed_session = self._host.verified_mobile_session
+        else:
+            self._host.verified_mobile_session = None
 
         self._host.failure_stage = "price_navigation"
         meter.record_action()
@@ -597,7 +759,9 @@ class LocalJevPriceRuntime:
 
         self._host.failure_stage = "jev_navigation"
         diagnostics.stage = "navigation"
-        snapshot = await self._navigate_until_offers(request, session, viewport, decider, meter)
+        snapshot = await self._navigate_until_offers(
+            request, session, viewport, decider, meter, entry_url=entry
+        )
         if isinstance(snapshot, PriceExecutionStatus):
             return (
                 self._unsafe(non_allowlisted=True)
@@ -621,7 +785,11 @@ class LocalJevPriceRuntime:
         )
         if observation is None:
             return JevPriceRuntimeResult(PriceExecutionStatus.NO_VALID_OBSERVATION)
-        return JevPriceRuntimeResult(PriceExecutionStatus.OBSERVED, observation=observation)
+        return JevPriceRuntimeResult(
+            PriceExecutionStatus.OBSERVED,
+            observation=observation,
+            refreshed_session=self._refreshed_session,
+        )
 
     async def _invariant(self, session: Any) -> bool:
         if self._host.dialog_rejected or len(session.get_page_targets()) != 1:
@@ -652,12 +820,34 @@ class LocalJevPriceRuntime:
         viewport: Mapping[str, int],
         decider: JevDecisionPort,
         meter: ExecutionMeter,
+        *,
+        entry_url: str | None = None,
     ) -> OfferPageSnapshot | PriceExecutionStatus:
         diagnostics = self._episode.diagnostics
         property_name = request.query.property_name
         ready_started = time.monotonic()
         snapshot = await self._await_offers(session)
         diagnostics.ready_seconds = time.monotonic() - ready_started
+        reloads = 0
+        while (
+            entry_url is not None
+            and reloads < _MAX_ERROR_RELOADS
+            and (snapshot is None or not snapshot.rooms)
+            and _is_error_page(snapshot)
+        ):
+            if not await self._invariant(session):
+                # An off-allowlist tab, extra target, or rejected dialog is never "recovered".
+                diagnostics.end = "invariant_before_reload"
+                return PriceExecutionStatus.UNSAFE_ACTION
+            reloads += 1
+            meter.record_action()
+            diagnostics.steps.append(f"{page_signature(snapshot, property_name)}>RELOAD")
+            await asyncio.sleep(_ERROR_RELOAD_PAUSE_SECONDS)
+            await session.navigate_to(entry_url, new_tab=False)
+            if not await self._invariant(session):
+                diagnostics.end = "invariant_after_reload"
+                return PriceExecutionStatus.UNSAFE_ACTION
+            snapshot = await self._await_offers(session)
         decisions = 0
         while snapshot is None or not snapshot.rooms:
             signature = page_signature(snapshot, property_name)
@@ -912,11 +1102,13 @@ class LocalJevPriceRuntime:
         rate_answers = await _all_or_fail(rate_tasks)
 
         offers: list[dict[str, object]] = []
+        unpriced: dict[str, int] = {}
         for (room_label, room, rate, prices), answer in zip(rate_jobs, rate_answers, strict=True):
             evidence = ground_rate(
                 answer, room, rate, prices, expected_currency=query.currency, nights=nights
             )
             if evidence.total is None:
+                unpriced[evidence.total_reason] = unpriced.get(evidence.total_reason, 0) + 1
                 continue
             offers.append(
                 {
@@ -934,7 +1126,12 @@ class LocalJevPriceRuntime:
             f"rooms={len(snapshot.rooms)} rates={snapshot.rate_count} "
             f"named={len({id(job[1]) for job in rate_jobs})} asked={len(rate_jobs)} "
             f"priced={len(offers)} "
-            f"refundable={sum(o['refundability'] == 'explicit_refundable' for o in offers)} "
+            + (
+                "unpriced=" + ",".join(f"{k}:{v}" for k, v in sorted(unpriced.items())) + " "
+                if unpriced
+                else ""
+            )
+            + f"refundable={sum(o['refundability'] == 'explicit_refundable' for o in offers)} "
             f"all_in={sum(o['all_in'] == 'explicit' for o in offers)} "
             f"complete={sum(o['completeness'] == 'complete' for o in offers)} "
             f"property={'y' if property_name is not None else 'n'} "
@@ -1161,6 +1358,9 @@ class JevPriceBrowserExecutor:
                     started,
                     safety_violations=result.safety_violations,
                 )
+            refreshed = getattr(result, "refreshed_session", None)
+            if refreshed is not None:
+                self._leases.store_verified_refresh(request.session_lease, refreshed)
             usage = meter.snapshot()
             return PriceExecutionResult(
                 PriceExecutionStatus.OBSERVED,
@@ -1171,7 +1371,7 @@ class JevPriceBrowserExecutor:
                     action_count=usage.total_actions,
                     evidence_item_count=result.observation.evidence_item_count,
                 ),
-                refreshed_session_eligible=False,
+                refreshed_session_eligible=refreshed is not None,
                 usage=usage,
                 latency_ms=max(0, round((time.monotonic() - started) * 1_000)),
                 fallback_used=False,
@@ -1210,12 +1410,14 @@ class LocalJevPriceExecutor:
         max_calls: int,
         max_cost_nano_usd: int,
         mobile_settings: MobileWebSettings | None = None,
+        allow_session_refresh: bool = False,
     ) -> None:
         self._client = client
         self._leases = lease_broker
         self._max_calls = max_calls
         self._max_cost = max_cost_nano_usd
         self._mobile_settings = mobile_settings or MobileWebSettings()
+        self._allow_session_refresh = allow_session_refresh
         self.last_usage = JevUsage()
         self.last_diagnostic = ""
 
@@ -1227,7 +1429,10 @@ class LocalJevPriceExecutor:
                 runner=runner,
                 max_calls=self._max_calls,
                 max_cost_nano_usd=self._max_cost,
-                runtime_factory=lambda: LocalJevPriceRuntime(self._mobile_settings),
+                runtime_factory=lambda: LocalJevPriceRuntime(
+                    self._mobile_settings,
+                    allow_session_refresh=self._allow_session_refresh,
+                ),
             )
             try:
                 return executor.execute(request)

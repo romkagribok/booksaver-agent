@@ -2,7 +2,7 @@
 stage: test
 bolt: 085-jev-price-executor
 created: "2026-09-27T17:00:00Z"
-status: in-progress
+status: complete
 ---
 
 # Jev price executor — test report
@@ -53,3 +53,20 @@ reason, and extraction counts. It is logged at WARNING when no observation resul
 timeout, stored in `price_comparison_arms.detail` for every Jev run, listed by
 `booksaver comparison report`, and never included in the Telegram report. Tests assert that no
 page text, URL, or property name appears in it. Full suite 3,091 passed; Ruff and mypy clean.
+
+## 2026-10-10 — live acceptance and closure
+
+Production record at 2026-10-07T06:00Z, 56 Jev runs: USD 0.0819 total, 31 s average, every run's
+cost exact; same price as the LLM method in all 23 pairs where both verified. Criterion
+disposition:
+
+| Story | Disposition |
+|---|---|
+| US-205 Access TypeSafe safely | Met: pinned model, own secret, bounded retries, fail closed on missing key/invalid response/version drift, no cookies or credentials sent. **Descoped by owner decision:** TypeSafe-specific in-bot disclosure (FR-3). |
+| US-206 Guard Jev browser decisions | Met for the built scope: fresh guarded candidates, execution-time recheck, invariants after each action, no model JS/URLs/coordinates. Navigation was needed in 1 of 56 runs and that run failed (cause undetermined; diagnostics added in US-218). |
+| US-207 Extract complete Jev price evidence | Met, with two live defects fixed afterwards: one-night totals (PR #75) and member-discounted rate cards (US-216, bolt 089). |
+| US-208 Account for Jev provider cost | Met in a different form: exact nano-USD per run, conservative charging of unresolved attempts, daily cap. **Descoped by owner decision:** extending the Anthropic ledger tables (FR-5). |
+
+Process note: stage documents were written in one pass without per-stage owner stops; PR #75 and
+PR #76 changed this unit's code outside a story or bolt (now traced by US-216/US-218 and the
+maintenance log).

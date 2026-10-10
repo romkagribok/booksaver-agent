@@ -58,3 +58,16 @@ Independent review corrected the pre-release/live-acceptance lifecycle and multi
 - [ ] Construction handed to the implementation model.
 
 Next: review implementation-handoff.md, then start 084-jev-price-executor when assigned.
+
+## 2026-10-10T01:45:00Z - Owner adoption decision and scope amendment
+
+| Decision | Source |
+|---|---|
+| Stop running the LLM price method in production; keep its code as a rollback | Owner, 2026-10-06 |
+| Open a GitHub issue to later either remove the LLM price path or bring it back | Owner, 2026-10-06 |
+| Run AI-DLC stages straight through; review artifacts at the end | Owner, 2026-10-07 (waives per-stage stops) |
+| Deploy the fix with both methods running, confirm the affected booking, then switch | Owner, 2026-10-07 |
+
+Added FR-13 to FR-15, unit 004-jev-price-promotion, stories US-216 to US-218 and bolt 089. Parts of
+FR-3, FR-5, FR-8, FR-9, FR-10 and FR-11 are descoped (see requirements.md amendment). The descope
+list was proposed by the implementing agent and is presented to the owner in the pull request.

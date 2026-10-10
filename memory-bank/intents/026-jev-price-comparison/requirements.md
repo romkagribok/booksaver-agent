@@ -176,3 +176,47 @@ until a later owner decision. **Must; US-215.**
 See units.md for one-unit-per-FR ownership, experiment-design.md for state/Telegram semantics,
 research.md for verified upstream sources, and implementation-handoff.md for the next model.
 The detailed decomposition and proposed policy amendments are ready for user review.
+
+## Amendment 2026-10-09: owner adoption decision
+
+After six days and 56 paired checks the owner decided on 2026-10-06 to adopt Jev for price checks
+and stop running the LLM price method in production, keeping its code as a rollback. This ends
+the paired experiment early. Evidence is in `bolts/087-price-comparison-qualification/`.
+
+### FR-13: Jev as the authoritative price method
+
+`agentic_browser.price_executor = "jev"` selects Jev behind the unchanged price port. Its
+validated result owns every canonical effect. No Anthropic price call is made. It requires its own
+TypeSafe key, is bounded by the pinned model, per-check call cap and daily cost cap, records each
+run's cost and diagnostic, and cannot be combined with paired mode. The Browser Use and Stagehand
+price adapters stay selectable. **Must; US-217.**
+
+### FR-14: Price discounted rate cards
+
+Ground only the current price of a rate that shows an original and a current price; fail closed
+when two unlabelled amounts are shown. **Must; US-216.**
+
+### FR-15: Explainable Jev runs
+
+Every Jev run keeps a content-free account of what it saw and chose, including why rates went
+unpriced. **Must; US-218.**
+
+### FR-16: Recover from the site's transient error page
+
+When Booking.com serves its error page instead of the property, reload the trusted entry URL a
+bounded number of times before any model decision. **Must; US-219.**
+
+### Descoped by this decision
+
+These parts of the original plan were not built and are no longer needed once the comparison ends.
+They are recorded as descoped, not as delivered:
+
+- FR-5: TypeSafe spend in the Anthropic reservation ledger with table migrations. Jev spend lives
+  in its own nano-USD records with a daily cap instead.
+- FR-8: sharing one inventory cost across pairs (1/N allocation) and the 540 s combined ceiling.
+- FR-9: merging the savings alert into the comparison report and a retrying delivery outbox.
+- FR-3: a TypeSafe-specific in-bot disclosure. Invitee inclusion was the owner's explicit choice.
+- FR-10: percentile latencies, uncertainty intervals and stratified cohort statistics. A summary
+  report with per-booking outcomes was produced instead.
+- FR-11: a dedicated adversarial browser fixture suite and restart-negative tests on the exact
+  image. Unit regressions, exact-image smoke and a production-snapshot stage probe were run.

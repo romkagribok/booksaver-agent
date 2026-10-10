@@ -19,7 +19,9 @@ JEV_PRICE_TABLE_VERSION = "typesafe-2026-09-27"
 # TypeSafe publishes USD 0.042 per million input tokens and free output tokens.  One input token
 # therefore costs 42 nano-USD; the ledger keeps nano-USD so cheap calls never round to zero.
 JEV_NANO_USD_PER_INPUT_TOKEN = 42
-JEV_ADAPTER_VERSION = "jev-price-v2"
+# Kept equal to domain.browser_executor.JEV_PRICE_POLICY_VERSION (asserted by a test): one
+# behavior version for the Jev price method whether it runs as candidate or as authority.
+JEV_ADAPTER_VERSION = "jev-price-v3"
 MAX_JEV_CALLS_PER_ARM = 120
 MAX_JEV_ARM_SECONDS = 180
 MAX_JEV_DAILY_COST_NANO_USD = 1_000_000_000  # USD 1.00

@@ -3,7 +3,7 @@ id: 086-paired-price-execution
 unit: 002-paired-price-execution
 intent: 026-jev-price-comparison
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-pair-every-price-check
   - 002-isolate-pair-state-and-recovery
@@ -11,8 +11,8 @@ stories:
   - 004-report-two-telegram-results
 created: "2026-09-26T16:33:08Z"
 started: "2026-09-27T17:00:00Z"
-completed: null
-current_stage: live-acceptance
+completed: "2026-10-10T01:46:26Z"
+current_stage: null
 stages_completed:
   - name: domain-model
     completed: "2026-09-27T17:00:00Z"
@@ -26,8 +26,13 @@ stages_completed:
   - name: implement
     completed: "2026-09-27T17:00:00Z"
     artifact: src/booksaver/daemon/check_coordinator.py
-requires_bolts: ['085-jev-price-executor']
-enables_bolts: ['087-price-comparison-qualification']
+  - name: test
+    completed: "2026-10-10T01:46:00Z"
+    artifact: ddd-03-test-report.md
+requires_bolts:
+  - 085-jev-price-executor
+enables_bolts:
+  - 087-price-comparison-qualification
 requires_units: []
 blocks: true
 complexity:
@@ -58,7 +63,7 @@ Pair every eligible check, isolate side effects and send two labelled results.
 - [ ] Implement: scoped source/tests, config/docs and migrations where required.
 - [ ] Test: ddd-03-test-report.md with actual commands/results and each story criterion disposition.
 
-Offline stages are complete; the test stage stays open until live acceptance evidence exists. Definition: .specsmd/aidlc/templates/construction/bolt-types/ddd-construction-bolt.md.
+All stages complete; live acceptance is recorded in the test report. Definition: .specsmd/aidlc/templates/construction/bolt-types/ddd-construction-bolt.md.
 
 ## Dependencies and handoff
 

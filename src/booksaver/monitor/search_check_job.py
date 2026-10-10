@@ -276,7 +276,7 @@ class BookingComSearchMonitor:
                 datetime.now(UTC),
                 FailureReason(
                     FailureCode.PROVIDER_AUTHENTICATION,
-                    "Agentic routing is selected but its local Anthropic executor is unavailable.",
+                    "Agentic routing is selected but its configured price executor is unavailable.",
                 ),
             )
             self._persist_trace(recorder, result, None)

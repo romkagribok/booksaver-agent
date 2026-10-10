@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-09-27T17:00:00Z
-total_decisions: 55
+last_updated: 2026-10-10T01:46:00Z
+total_decisions: 56
 ---
 
 # Decision Index
@@ -541,3 +541,10 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/086-paired-price-execution/adr-055-paired-jev-price-comparison.md`
 - **Summary**: In explicit paired mode run an independent Jev-only price arm beside the existing method (never a fallback); only the existing method owns canonical effects; the Jev arm's own run time extends the job allowance; own TypeSafe secret and nano-USD daily cap.
 - **Read when**: Changing price execution routing, the check job deadline, Jev/TypeSafe access, or comparison reporting.
+
+### ADR-056: Jev as the authoritative price method, LLM price path retained as rollback
+- **Status**: accepted
+- **Bolt**: 089-jev-price-promotion
+- **Path**: `bolts/089-jev-price-promotion/adr-056-jev-authoritative-price-method.md`
+- **Summary**: `price_executor = "jev"` makes Jev's validated observation the canonical price result with its own key, caps and run ledger; paired mode is excluded; Browser Use and Stagehand price adapters stay selectable as rollback.
+- **Read when**: Changing which price method is authoritative, Jev spend limits, session refresh from price runs, or removing the LLM price adapters.

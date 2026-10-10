@@ -81,7 +81,7 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # Price execution is legacy until the owner selects canary, consented rollout, or qualified mode.
 # Inventory execution is independently agentic by default; legacy is its rollback route.
 # routing = "legacy"           # price: legacy | owner_canary | consented_users | agentic
-# price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
+# price_executor = "browser_use" # agentic price adapter: jev | browser_use | stagehand
 # inventory_routing = "agentic" # inventory: legacy | agentic
 # disclosure_version = "anthropic-visible-booking-page-v1"
 
@@ -558,10 +558,7 @@ def _make_check_coordinator(
     )
 
     api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
-
-    def _agentic_executor(budget: Any, lease_broker: Any) -> Any:
-        assert api_key is not None
-        return _make_agentic_price_executor(cfg, api_key, budget, lease_broker)
+    price_executor_factory = _make_price_executor_factory(cfg, api_key)
 
     def _browser_use_inventory_executor(budget: Any, lease_broker: Any) -> Any:
         from booksaver.infrastructure.browser.browser_use_inventory_executor import (
@@ -597,7 +594,7 @@ def _make_check_coordinator(
         auth_required_notifier=auth_required_notifier,
         execution_gate=execution_gate,
         incident_recorder_factory=_incident_recorder,
-        agentic_executor_factory=_agentic_executor if api_key else None,
+        agentic_executor_factory=price_executor_factory,
         agentic_inventory_executor_factory=(
             _browser_use_inventory_executor if api_key else None
         ),
@@ -638,6 +635,53 @@ def _make_jev_executor_factory(cfg: Config) -> Any:
             lease_broker=lease_broker,
             max_calls=settings.max_calls_per_arm,
             max_cost_nano_usd=max_cost_nano_usd,
+            mobile_settings=cfg.mobile_web_settings,
+        )
+
+    return _factory
+
+
+def _make_price_executor_factory(cfg: Config, api_key: str | None) -> Any:
+    """Build the one configured price method, or none when its own credential is missing.
+
+    Jev (ADR-056) needs only the TypeSafe key; the LLM adapters need only the Anthropic key.
+    Neither silently substitutes for the other: a missing credential fails the check closed.
+    """
+    import logging
+
+    if cfg.agentic_browser_settings.price_executor.value != "jev":
+        if not api_key:
+            return None
+        return lambda budget, lease_broker: _make_agentic_price_executor(
+            cfg, api_key, budget, lease_broker
+        )
+    typesafe_key = os.environ.get("BOOKSAVER_TYPESAFE_API_KEY", "").strip()
+    if not typesafe_key:
+        logging.getLogger(__name__).warning(
+            'agentic_browser.price_executor is "jev" but BOOKSAVER_TYPESAFE_API_KEY is not '
+            "set; price checks will fail closed until it is configured"
+        )
+        return None
+    from booksaver.infrastructure.browser.jev_primary_executor import JevPrimaryPriceExecutor
+    from booksaver.infrastructure.llm.typesafe_client import TypeSafeClient
+
+    settings = cfg.jev_comparison_settings
+    client = TypeSafeClient(typesafe_key, model=settings.model)
+    db_path = cfg.data_directory.path / "booksaver.db"
+    logging.getLogger(__name__).warning(
+        "Jev is the configured price method model=%s daily_cap_nano_usd=%s routing=%s; users "
+        "the routing policy does not admit still use the scripted legacy method",
+        settings.model,
+        settings.max_daily_cost_nano_usd,
+        cfg.agentic_browser_settings.routing.value,
+    )
+
+    def _factory(_anthropic_budget: Any, lease_broker: Any) -> Any:
+        return JevPrimaryPriceExecutor(
+            client=client,
+            lease_broker=lease_broker,
+            settings=settings,
+            db_path=db_path,
             mobile_settings=cfg.mobile_web_settings,
         )
 
@@ -1055,6 +1099,7 @@ def cmd_comparison_report(args: argparse.Namespace) -> int:
 
     from booksaver.domain.price_comparison import CostCertainty, format_usd_nano
     from booksaver.infrastructure.persistence.price_comparison import (
+        SqliteJevPriceRunRepository,
         SqlitePriceComparisonRepository,
     )
 
@@ -1068,8 +1113,33 @@ def cmd_comparison_report(args: argparse.Namespace) -> int:
         rows = repository.summary(since)
         both, agreeing = repository.agreement_counts(since)
         unverified = repository.unverified_jev_runs(since)
+        primary = SqliteJevPriceRunRepository(store)
+        primary_rows = primary.summary(since)
+        primary_unobserved = primary.unobserved(since)
+    if primary_rows:
+        runs = sum(row[1] for row in primary_rows)
+        cost = sum(row[2] for row in primary_rows)
+        print(f"Jev-only price runs since {since:%Y-%m-%d %H:%M} UTC: {runs}")
+        for status, count, status_cost, mean_seconds in primary_rows:
+            average = f"{mean_seconds:.0f}s avg" if mean_seconds is not None else "-"
+            print(
+                f"  {status:22} {count:5}  "
+                f"{format_usd_nano(status_cost, CostCertainty.EXACT):>10}  {average}"
+            )
+        print(f"  total AI cost {format_usd_nano(cost, CostCertainty.EXACT)}")
+        if primary_unobserved:
+            print("  Runs that produced no observation (newest first):")
+            for started_at, execution_id, status, calls, took, diagnostic in primary_unobserved:
+                print(
+                    f"    {started_at[:19]}Z  {execution_id[-8:]}  {status}  {calls} calls  "
+                    f"{took:.0f}s"
+                )
+                if diagnostic:
+                    print(f"      {diagnostic}")
+        print()
     if not rows:
-        print("No price comparisons recorded yet.")
+        if not primary_rows:
+            print("No price comparisons recorded yet.")
         return 0
     print(f"Paired price checks since {since:%Y-%m-%d %H:%M} UTC")
     header = f"{'METHOD':9}  {'OUTCOME':9}  {'RUNS':>5}  {'AI COST':>22}  {'AVG SECONDS':>11}"

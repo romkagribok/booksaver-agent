@@ -24,6 +24,7 @@ MAX_JOB_COST_MICRO_USD = 1_000_000
 MAX_DAILY_COST_MICRO_USD = 10_000_000
 BROWSER_USE_PRICE_POLICY_VERSION = "browser-use-price-v1"
 STAGEHAND_PRICE_POLICY_VERSION = "agentic-price-v1"
+JEV_PRICE_POLICY_VERSION = "jev-price-v3"
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -127,6 +128,9 @@ class PriceExecutorKind(Enum):
 
     BROWSER_USE = "browser_use"
     STAGEHAND = "stagehand"
+    # TypeSafe Jev as the authoritative price method (ADR-056). The two LLM adapters above
+    # stay selectable as the rollback path.
+    JEV = "jev"
 
     @classmethod
     def parse(cls, raw: object) -> PriceExecutorKind:
@@ -140,6 +144,8 @@ class PriceExecutorKind(Enum):
 
     @property
     def qualification_policy_version(self) -> str:
+        if self is PriceExecutorKind.JEV:
+            return JEV_PRICE_POLICY_VERSION
         return (
             BROWSER_USE_PRICE_POLICY_VERSION
             if self is PriceExecutorKind.BROWSER_USE

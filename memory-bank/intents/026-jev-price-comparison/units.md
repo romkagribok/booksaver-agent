@@ -16,6 +16,7 @@ simple CLI default because of evidence, money, lifecycle and isolation complexit
 | [001-jev-price-executor](units/001-jev-price-executor/unit-brief.md) | Own the independent Jev-only price method, provider access, safe browser decisions, grounded extraction and metered model calls. | 5 | 084-jev-price-executor, 085-jev-price-executor |
 | [002-paired-price-execution](units/002-paired-price-execution/unit-brief.md) | Own pair admission, durable independent method outcomes, single-authority effects and user-visible dual reports. | 4 | 086-paired-price-execution |
 | [003-price-comparison-qualification](units/003-price-comparison-qualification/unit-brief.md) | Own cohort analysis, representative qualification, safe activation/rollback and the eventual owner decision handoff. | 3 | 087-price-comparison-qualification, 088-price-comparison-qualification |
+| [004-jev-price-promotion](units/004-jev-price-promotion/unit-brief.md) | Carry out the owner's adoption decision: Jev as the only production price method, LLM path kept as rollback, discounted-rate gap closed, error page recovered, runs explainable. | 4 | 089-jev-price-promotion |
 
 ## One owner for each functional requirement
 
@@ -33,6 +34,10 @@ simple CLI default because of evidence, money, lifecycle and isolation complexit
 | FR-10 | 003-price-comparison-qualification | US-213 | 087-price-comparison-qualification |
 | FR-11 | 003-price-comparison-qualification | US-214 | 088-price-comparison-qualification |
 | FR-12 | 003-price-comparison-qualification | US-215 | 088-price-comparison-qualification |
+| FR-13 | 004-jev-price-promotion | US-217 | 089-jev-price-promotion |
+| FR-14 | 004-jev-price-promotion | US-216 | 089-jev-price-promotion |
+| FR-15 | 004-jev-price-promotion | US-218 | 089-jev-price-promotion |
+| FR-16 | 004-jev-price-promotion | US-219 | 089-jev-price-promotion |
 
 All NFRs apply across units; the final qualification bolt verifies the integrated contracts.
 Every story appears in exactly one bolt and in memory-bank/story-index.md.
@@ -46,6 +51,8 @@ flowchart LR
   B86 --> B87[087 Evidence report]
   B87 --> B88[088 Qualification and release controls]
   B88 --> O[Operations and observation]
+  B86 --> B89[089 Jev as the price method]
+  B89 --> O
 ```
 
 The feasibility blocker is external capability, not another existing unfinished price qualification

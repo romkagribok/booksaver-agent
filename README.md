@@ -96,7 +96,7 @@ the agentic price executor remains disabled by default:
 ```toml
 [agentic_browser]
 routing = "legacy" # price: legacy | owner_canary | consented_users | agentic
-price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
+price_executor = "browser_use" # price method: jev | browser_use | stagehand
 inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"
 ```
@@ -133,7 +133,19 @@ the legacy browser is a configured rollback route, not an automatic second attem
 always require current versioned `/connect` disclosure consent. They may be admitted either by the
 explicit `consented_users` route or by the statistically qualified `agentic` route.
 
-### Experimental Jev price comparison
+### Jev as the price method
+
+`[agentic_browser] price_executor = "jev"` (ADR-056) makes TypeSafe's Jev the only price method.
+It runs behind the same provider-neutral port and the same validators, so its result is what
+check history, session refresh, and savings alerts are based on; no Anthropic call is made for
+price checks. It needs `BOOKSAVER_TYPESAFE_API_KEY` and is bounded by the model pin, per-check
+call cap, and daily cost cap in `[jev_comparison]`, whose `enabled` flag must stay false in this
+mode. Each run's provider cost and a content-free diagnostic are kept in `jev_price_runs`
+(`booksaver comparison report`). The Browser Use and Stagehand LLM adapters remain in the code as
+the rollback path: set `price_executor = "browser_use"` and restart. Reservation discovery is
+unaffected and still uses the Anthropic key when it needs a model.
+
+### Jev price comparison (paired mode)
 
 `[jev_comparison] enabled = true` plus `BOOKSAVER_TYPESAFE_API_KEY` runs a second, independent
 price method on every admitted manual and scheduled check: TypeSafe's Jev (`jev-1.13.0`, pinned)

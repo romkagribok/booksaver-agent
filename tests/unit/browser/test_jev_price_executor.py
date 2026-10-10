@@ -209,7 +209,7 @@ def test_taxes_excluded_text_keeps_offers_out_of_all_in_comparison() -> None:
 def test_per_night_choice_and_unsupported_refund_claim_are_not_grounded() -> None:
     room = RoomSnapshot(ROOM_LINES, (FLEXIBLE,))
     _state, questions, prices = rate_questions("Standard King Room", room, FLEXIBLE, nights=1)
-    per_night = _option(prices, lambda v: v.startswith("$319 (followed by: per night"))
+    per_night = _option(prices, lambda v: v.startswith("$319") and "followed by: per night" in v)
     answers = {
         "total": _choice(questions["total"]["criteria"], per_night),  # type: ignore[arg-type]
         "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
@@ -235,7 +235,10 @@ def test_stated_nights_must_match_the_requested_stay() -> None:
     }
     result = SystemOneResult("jev-1.13.0", answers, 10, 0)
     evidence = ground_rate(result, room, FLEXIBLE, prices, expected_currency="USD", nights=3)
-    assert evidence.total is not None and not evidence.complete
+    # The card says "1 night" and its "Price" equals its own nightly amount: for a 3-night
+    # stay that is a nightly figure, so nothing is priced.
+    assert evidence.total is None and not evidence.complete
+    assert evidence.total_reason == "per_night"
 
 
 def test_missing_url_stay_facts_mark_the_query_incomplete() -> None:
@@ -566,3 +569,432 @@ def test_timed_out_run_still_reports_where_it_was(caplog: pytest.LogCaptureFixtu
     assert result.status is PriceExecutionStatus.TIMEOUT
     assert "stage=navigation" in executor.last_diagnostic
     assert any("status=timeout" in r.getMessage() for r in caplog.records)
+
+
+# --- discounted rate cards (live finding 2026-10-06: a member-discounted room was never priced) --
+
+_DISCOUNT_HEAD = ("Flexible", "Free cancellation", "before October 30, 2026")
+_DISCOUNT_LAYOUTS = {
+    # layout: (nights, price lines, marker of the option Jev chose, expected total, reason)
+    "separate_labelled_amounts": (
+        1,
+        ("€ 94", "per night", "Original price € 104", "Current price € 94", "1 night"),
+        "Current price € 94",
+        "94",
+        "ok",
+    ),
+    "labels_then_amount": (
+        1,
+        ("€ 94", "per night", "Original price", "Current price", "€ 94", "1 night"),
+        "preceded by: Current price",
+        "94",
+        "ok",
+    ),
+    "one_combined_line": (
+        1,
+        ("€ 94", "per night", "Original price € 104. Current price € 94.", "1 night"),
+        "Original price € 104. Current price € 94.",
+        "94",
+        "ok",
+    ),
+    "original_not_struck_out": (
+        1,
+        ("€ 94", "per night", "Original price", "€ 104", "Current price", "€ 94", "1 night"),
+        "preceded by: Current price",
+        "94",
+        "ok",
+    ),
+    "jev_picks_the_original": (
+        1,
+        ("€ 94", "per night", "Original price", "€ 104", "Current price", "€ 94", "1 night"),
+        "preceded by: Original price",
+        None,
+        "original",
+    ),
+    "two_bare_amounts_no_labels": (
+        1,
+        ("10% off", "€ 94", "per night", "€ 104", "€ 94", "1 night"),
+        "€ 94 (followed by: 1 night",
+        None,
+        "ambiguous",
+    ),
+    "two_nights_current_total": (
+        2,
+        ("€ 94", "per night", "Original price € 208", "Current price € 188", "2 nights"),
+        "Current price € 188",
+        "188",
+        "ok",
+    ),
+    "single_bare_amount_is_fine": (
+        1,
+        ("€ 94", "per night", "€ 94", "1 night"),
+        "followed by: 1 night",
+        "94",
+        "ok",
+    ),
+}
+
+
+@pytest.mark.parametrize("layout", sorted(_DISCOUNT_LAYOUTS))
+def test_discounted_rate_cards_ground_only_the_current_price(layout: str) -> None:
+    nights, price_lines, chosen_marker, expected, reason = _DISCOUNT_LAYOUTS[layout]
+    rate = (*_DISCOUNT_HEAD, *price_lines, "Reserve")
+    room = RoomSnapshot(ROOM_LINES, (rate,))
+    _state, questions, prices = rate_questions("Standard King Room", room, rate, nights=nights)
+    total = _option(prices, lambda v: chosen_marker in v)
+    answers = {
+        "total": _choice(questions["total"]["criteria"], total),  # type: ignore[arg-type]
+        "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
+        "refund_line": _choice(questions["refund_line"]["criteria"], "l1"),  # type: ignore[arg-type]
+        "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+    }
+    evidence = ground_rate(
+        SystemOneResult("jev-1.13.0", answers, 10, 0),
+        room,
+        rate,
+        prices,
+        expected_currency="EUR",
+        nights=nights,
+    )
+    assert (str(evidence.total.amount) if evidence.total else None) == expected
+    assert evidence.total_reason == reason
+    assert evidence.complete is (expected is not None)
+
+
+def test_extraction_diagnostic_counts_why_rates_went_unpriced() -> None:
+    ambiguous = (*_DISCOUNT_HEAD, "€ 94", "per night", "€ 104", "€ 94", "Reserve")
+    snapshot = parse_offer_snapshot(
+        {
+            "url": URL,
+            "title": PROPERTY,
+            "headings": [PROPERTY],
+            "rooms": [{"lines": list(ROOM_LINES), "rates": [list(FLEXIBLE), list(ambiguous)]}],
+        }
+    )
+
+    class PicksBareAmount(ScriptedJev):
+        """Like the live model: on a card without a 'Price' line it guesses a bare amount."""
+
+        async def ask(self, state: object, questions: Any) -> SystemOneResult:
+            total = questions.get("total")
+            if total is None or any(
+                str(value).startswith("Price") for value in total["criteria"].values()
+            ):
+                return await super().ask(state, questions)
+            chosen = {
+                "total": _option(total["criteria"], lambda v: "followed by: Reserve" in v),
+                "refund": "free_cancellation",
+                "refund_line": "l1",
+                "taxes": "included",
+            }
+            answers = {
+                question_id: _choice(question["criteria"], chosen[question_id])
+                for question_id, question in questions.items()
+            }
+            return SystemOneResult("jev-1.13.0", answers, 300, 5)
+
+    runtime = LocalJevPriceRuntime()
+    observation = asyncio.run(runtime._extract(_request(), snapshot, PicksBareAmount()))
+    assert [str(offer.total.amount) for offer in observation.offers] == ["319"]
+    assert "asked=2 priced=1 unpriced=ambiguous:1 " in runtime.diagnostic
+
+
+# --- session refresh belongs to the authoritative method only (ADR-055, ADR-056) ------------
+
+
+class _RefreshingRuntime:
+    diagnostic = "entry=property stage=done"
+    failure_stage = "jev_extraction"
+
+    def __init__(self, refreshed: bytes | None) -> None:
+        self.refreshed = refreshed
+
+    def restore_session(self, _data: bytes) -> None:
+        return None
+
+    async def execute(self, _request: Any, *, decider: Any, meter: Any) -> Any:
+        from booksaver.infrastructure.browser.jev_price_executor import JevPriceRuntimeResult
+
+        observation = await LocalJevPriceRuntime()._extract(_request, _snapshot(), ScriptedJev())
+        return JevPriceRuntimeResult(
+            PriceExecutionStatus.OBSERVED, observation=observation, refreshed_session=self.refreshed
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("refreshed", [b'[{"name":"bkng"}]', None])
+def test_only_a_runtime_that_kept_a_verified_session_marks_it_refreshable(
+    refreshed: bytes | None,
+) -> None:
+    from booksaver.application.async_runner import AsyncLoopRunner
+    from booksaver.application.browser_executor import InMemorySessionLeaseBroker
+    from booksaver.infrastructure.browser.jev_price_executor import JevPriceBrowserExecutor
+
+    broker = InMemorySessionLeaseBroker()
+    lease = broker.issue(
+        owner_user_id=1, execution_id="jev-test-1", session_material=b"[]", subject_id="booking-1"
+    )
+    base = _request()
+    request = PriceExecutionRequest(
+        execution_id=base.execution_id,
+        owner_user_id=base.owner_user_id,
+        booking_id=base.booking_id,
+        query=base.query,
+        session_lease=lease,
+        limits=base.limits,
+    )
+    with AsyncLoopRunner() as runner:
+        result = JevPriceBrowserExecutor(
+            client=object(),  # type: ignore[arg-type]
+            lease_broker=broker,
+            runner=runner,
+            max_calls=10,
+            max_cost_nano_usd=10**9,
+            runtime_factory=lambda: _RefreshingRuntime(refreshed),  # type: ignore[arg-type,return-value]
+        ).execute(request)
+    assert result.status is PriceExecutionStatus.OBSERVED
+    assert result.refreshed_session_eligible is (refreshed is not None)
+    broker.close(lease)
+    assert broker.take_verified_refresh(lease) == refreshed
+
+
+def test_candidate_runtime_discards_the_verified_session_and_primary_keeps_it() -> None:
+    candidate = LocalJevPriceRuntime()
+    primary = LocalJevPriceRuntime(allow_session_refresh=True)
+    assert candidate._allow_session_refresh is False
+    assert primary._allow_session_refresh is True
+
+
+# --- Booking.com's transient error page (live diagnostics 2026-10-09: six useless WAITs) -----
+
+
+class _ReloadSession(_NavSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self.navigations: list[str] = []
+
+    async def navigate_to(self, url: str, new_tab: bool = False) -> None:
+        self.navigations.append(url)
+
+
+def _navigate_with_reload(snapshots: list[Any], jev: _NavJev, monkeypatch: Any) -> Any:
+    import booksaver.infrastructure.browser.jev_price_executor as module
+
+    monkeypatch.setattr(module, "_ERROR_RELOAD_PAUSE_SECONDS", 0.0)
+    runtime = LocalJevPriceRuntime()
+    served = iter(snapshots)
+
+    async def next_page(_session: Any, *, seconds: float = 0.0) -> Any:
+        return next(served)
+
+    runtime._await_offers = next_page  # type: ignore[method-assign]
+    session = _ReloadSession()
+    meter = ExecutionMeter(_request().limits)
+    outcome = asyncio.run(
+        runtime._navigate_until_offers(
+            _request(),
+            session,
+            {"width": 412, "height": 915},
+            jev,
+            meter,
+            entry_url="https://www.booking.com/hotel/us/hotel-test.html?checkin=2026-11-24",
+        )
+    )
+    return runtime, session, meter, outcome
+
+
+def test_error_page_is_reloaded_before_jev_is_asked_anything(monkeypatch: Any) -> None:
+    jev = _NavJev()
+    runtime, session, meter, outcome = _navigate_with_reload(
+        [_oops_snapshot(), _oops_snapshot(), _snapshot()], jev, monkeypatch
+    )
+    assert outcome.rooms and jev.asked == 0
+    assert len(session.navigations) == 2 and all("hotel-test" in u for u in session.navigations)
+    assert meter.snapshot().total_actions == 2
+    assert runtime.diagnostic.count(">RELOAD") == 2 and "end=rooms_found" in runtime.diagnostic
+
+
+def test_reloads_are_bounded_and_then_jev_decides(monkeypatch: Any) -> None:
+    jev = _NavJev("BLOCKED")
+    runtime, session, _meter, outcome = _navigate_with_reload(
+        [_oops_snapshot()] * 4, jev, monkeypatch
+    )
+    assert outcome is PriceExecutionStatus.NO_VALID_OBSERVATION
+    assert len(session.navigations) == 2 and jev.asked == 1
+    assert "end=jev_blocked" in runtime.diagnostic
+
+
+def test_a_page_without_rooms_that_is_not_an_error_page_is_not_reloaded(
+    monkeypatch: Any,
+) -> None:
+    plain = parse_offer_snapshot(
+        {"url": URL, "title": PROPERTY, "headings": [PROPERTY], "viewport_text": "", "rooms": []}
+    )
+    jev = _NavJev("BLOCKED")
+    _runtime, session, _meter, _outcome = _navigate_with_reload([plain, plain], jev, monkeypatch)
+    assert session.navigations == [] and jev.asked == 1
+
+
+# --- independent review 2026-10-10: amounts that must never be accepted as the total ----------
+
+_HEAD2 = ("Flexible", "Free cancellation")
+_NEVER_A_TOTAL = [
+    # (price lines, marker of the option a model might choose, nights, expected reason)
+    (
+        ("before October 30, 2026", "€ 94", "per night", "Original price € 104",
+         "Current price € 94", "3 nights", "Reserve"),
+        "Current price € 94", 3, "per_night",
+    ),
+    (("per night", "Current price € 94", "3 nights"), "Current price € 94", 3, "per_night"),
+    (("Current price € 47 per person", "Price € 94", "1 night"), "Current price", 1, "not_total"),
+    (("Current price from € 80", "Price € 94", "1 night"), "Current price", 1, "not_total"),
+    (("Price per night", "€ 50", "3 nights", "€ 150", "Reserve"), "€ 50", 3, "per_night"),
+    (("Price for:", "€ 50", "€ 150", "3 nights", "Reserve"), "€ 50", 3, "ambiguous"),
+    (("Total savings € 10", "Price € 94", "1 night", "Reserve"), "Total savings", 1, "not_total"),
+    (("€ 94", "Total taxes and charges", "€ 12", "1 night"), "€ 12", 1, "not_total"),
+    (("Total due today", "€ 20", "Price € 94", "1 night"), "€ 20", 1, "not_total"),
+    (("Total discount", "€ 10", "Price € 94", "1 night"), "€ 10", 1, "not_total"),
+    (("Price drop", "€ 10", "€ 94", "1 night"), "€ 10", 1, "ambiguous"),
+    (("Member price € 80", "Price € 94", "1 night"), "Member price", 1, "ambiguous"),
+    (("Price", "€ 104", "€ 94", "1 night"), "€ 104", 1, "ambiguous"),
+    (("Price € 94", "Price € 80", "1 night"), "Price € 80", 1, "ambiguous"),
+    (("Original price € 104", "Current price € 94", "Price € 104"), "Price € 104", 1, "original"),
+    (("€ 50", "2 nights, 2 adults", "Reserve"), "€ 50", 2, "ambiguous"),
+    (("Cancellation fee € 20", "Price € 94", "1 night"), "Cancellation fee", 1, "not_total"),
+    (("You save € 10", "Price € 94", "1 night"), "You save", 1, "not_total"),
+    (("Price before discount € 104", "€ 94", "1 night"), "Price before discount", 1, "original"),
+]
+
+
+@pytest.mark.parametrize("line", ["€ 1 234", "1 234 €", "€ 1\u00a0234", "€ 1\u202f234"])
+def test_space_grouped_amounts_are_not_read_as_a_smaller_number(line: str) -> None:
+    from booksaver.infrastructure.browser.jev_price_executor import _price_options
+
+    assert parse_money(line, "EUR") is None
+    # Not even offered as a candidate, so the rate is skipped rather than mispriced.
+    assert _price_options(("Flexible", line, "1 night")) == {}
+
+
+@pytest.mark.parametrize("case", range(len(_NEVER_A_TOTAL)))
+def test_no_wrong_amount_is_ever_grounded_as_the_total(case: int) -> None:
+    price_lines, marker, nights, reason = _NEVER_A_TOTAL[case]
+    rate = (*_HEAD2, *price_lines)
+    room = RoomSnapshot(ROOM_LINES, (rate,))
+    _state, questions, prices = rate_questions("Standard King Room", room, rate, nights=nights)
+    chosen = next(key for key, value in prices.items() if value.startswith(marker))
+    answers = {
+        "total": _choice(questions["total"]["criteria"], chosen),  # type: ignore[arg-type]
+        "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
+        "refund_line": _choice(questions["refund_line"]["criteria"], "l1"),  # type: ignore[arg-type]
+        "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+    }
+    evidence = ground_rate(
+        SystemOneResult("jev-1.13.0", answers, 10, 0),
+        room,
+        rate,
+        prices,
+        expected_currency="EUR",
+        nights=nights,
+    )
+    assert evidence.total is None, f"accepted {evidence.total} for {price_lines}"
+    assert evidence.total_reason == reason
+    assert not evidence.complete
+
+
+_STILL_A_TOTAL = [
+    (("€ 104", "per night", "€ 104", "Price € 104", "1 night"), "Price € 104", 1, "104"),
+    (("€ 104", "per night", "€ 208", "Price € 208", "2 nights"), "Price € 208", 2, "208"),
+    (("€ 104", "per night", "€ 208", "Price € 208", "2 nights"), "€ 208", 2, "208"),
+    (("€ 104", "per night", "Total price", "€ 312", "3 nights"), "€ 312", 3, "312"),
+    (("€ 94", "per night", "€ 94", "1 night"), "€ 94 (preceded by: per night", 1, "94"),
+    (("€ 94", "per night", "Original price € 208", "Current price € 188", "2 nights"),
+     "Current price € 188", 2, "188"),
+    (("€ 94", "per night", "€ 104", "Current price € 94", "1 night"), "Current price", 1, "94"),
+    (("US$1,319.50", "per night", "Price US$2,639.00", "2 nights"), "Price US$", 2, "2639.00"),
+]
+
+
+@pytest.mark.parametrize("case", range(len(_STILL_A_TOTAL)))
+def test_legitimate_totals_are_still_grounded(case: int) -> None:
+    price_lines, marker, nights, expected = _STILL_A_TOTAL[case]
+    rate = (*_HEAD2, *price_lines)
+    room = RoomSnapshot(ROOM_LINES, (rate,))
+    _state, questions, prices = rate_questions("Standard King Room", room, rate, nights=nights)
+    chosen = next(key for key, value in prices.items() if value.startswith(marker))
+    answers = {
+        "total": _choice(questions["total"]["criteria"], chosen),  # type: ignore[arg-type]
+        "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
+        "refund_line": _choice(questions["refund_line"]["criteria"], "l1"),  # type: ignore[arg-type]
+        "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+    }
+    currency = "USD" if "US$" in marker else "EUR"
+    evidence = ground_rate(
+        SystemOneResult("jev-1.13.0", answers, 10, 0),
+        room, rate, prices, expected_currency=currency, nights=nights,
+    )
+    assert evidence.total is not None, evidence.total_reason
+    assert str(evidence.total.amount) == expected and evidence.total_reason == "ok"
+
+
+def test_taxes_added_on_top_are_never_grounded_as_included() -> None:
+    rate = ("Flexible", "Free cancellation", "Breakfast included", "€ 94",
+            "+ € 12 taxes and fees", "1 night")
+    room = RoomSnapshot(("Standard King Room",), (rate,))
+    _state, questions, prices = rate_questions("Standard King Room", room, rate, nights=1)
+    chosen = next(key for key, value in prices.items() if value.startswith("€ 94"))
+    answers = {
+        "total": _choice(questions["total"]["criteria"], chosen),  # type: ignore[arg-type]
+        "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
+        "refund_line": _choice(questions["refund_line"]["criteria"], "l1"),  # type: ignore[arg-type]
+        "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+    }
+    evidence = ground_rate(
+        SystemOneResult("jev-1.13.0", answers, 10, 0), room, rate, prices,
+        expected_currency="EUR", nights=1,
+    )
+    assert evidence.all_in == "conflicting"
+
+
+def test_error_page_needs_error_wording_in_the_heading_not_the_page_body(
+    monkeypatch: Any,
+) -> None:
+    from booksaver.infrastructure.browser.jev_price_executor import _is_error_page
+
+    def page(title: str, headings: list[str], text: str) -> Any:
+        return parse_offer_snapshot(
+            {"url": URL, "title": title, "headings": headings, "viewport_text": text, "rooms": []}
+        )
+
+    assert _is_error_page(page("Booking.com", ["Oops!"], "Something went wrong"))
+    assert not _is_error_page(page(PROPERTY, [PROPERTY], "Oops, the pool was closed. 2/10"))
+    assert not _is_error_page(page(PROPERTY, [PROPERTY], "Something went wrong loading the map"))
+    assert not _is_error_page(page("Oops!", ["Oops!"], "Please verify you are human (captcha)"))
+    assert not _is_error_page(_snapshot())
+
+
+def test_reload_never_recovers_a_tab_that_left_the_allowed_site(monkeypatch: Any) -> None:
+    import booksaver.infrastructure.browser.jev_price_executor as module
+
+    monkeypatch.setattr(module, "_ERROR_RELOAD_PAUSE_SECONDS", 0.0)
+    runtime = LocalJevPriceRuntime()
+
+    async def oops(_session: Any, *, seconds: float = 0.0) -> Any:
+        return _oops_snapshot()
+
+    runtime._await_offers = oops  # type: ignore[method-assign]
+
+    class Hijacked(_ReloadSession):
+        async def get_current_page_url(self) -> str:
+            return "https://evil.example/landing"
+
+    session = Hijacked()
+    outcome = asyncio.run(
+        runtime._navigate_until_offers(
+            _request(), session, {"width": 412, "height": 915}, _NavJev(),
+            ExecutionMeter(_request().limits), entry_url=URL,
+        )
+    )
+    assert outcome is PriceExecutionStatus.UNSAFE_ACTION
+    assert session.navigations == [] and "end=invariant_before_reload" in runtime.diagnostic

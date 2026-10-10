@@ -338,6 +338,26 @@ def load_config(source: ConfigSource) -> Config:
     except (ValueError, TypeError) as e:
         errors.append(f"jev_comparison: {e}")
 
+    if (
+        agentic_browser_settings is not None
+        and jev_comparison_settings is not None
+        and agentic_browser_settings.price_executor is PriceExecutorKind.JEV
+        and jev_comparison_settings.enabled
+    ):
+        errors.append(
+            "jev_comparison.enabled cannot be true when agentic_browser.price_executor is "
+            '"jev": the comparison would run Jev against itself'
+        )
+    if (
+        agentic_browser_settings is not None
+        and agentic_browser_settings.price_executor is PriceExecutorKind.JEV
+        and agentic_browser_settings.routing is ExecutionRoutingMode.LEGACY
+    ):
+        errors.append(
+            'agentic_browser.price_executor = "jev" needs a non-legacy agentic_browser.routing: '
+            "with legacy routing the scripted method would run and Jev never would"
+        )
+
     if errors:
         raise ConfigValidationError(errors)
 

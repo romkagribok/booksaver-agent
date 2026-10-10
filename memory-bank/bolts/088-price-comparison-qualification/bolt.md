@@ -3,15 +3,27 @@ id: 088-price-comparison-qualification
 unit: 003-price-comparison-qualification
 intent: 026-jev-price-comparison
 type: ddd-construction-bolt
-status: planned
+status: in-progress
 stories:
   - 002-qualify-paired-price-release
   - 003-activate-and-rollback-comparison
 created: "2026-09-26T16:33:08Z"
-started: null
+started: "2026-10-10T01:48:40Z"
 completed: null
-current_stage: null
-stages_completed: []
+current_stage: test
+stages_completed:
+  - name: domain-model
+    completed: "2026-10-10T01:48:50Z"
+    artifact: ddd-01-domain-model.md
+  - name: technical-design
+    completed: "2026-10-10T01:49:00Z"
+    artifact: ddd-02-technical-design.md
+  - name: adr-analysis
+    completed: "2026-10-10T01:49:10Z"
+    artifact: ddd-02-technical-design.md
+  - name: implement
+    completed: "2026-10-10T01:49:20Z"
+    artifact: ddd-02-technical-design.md
 requires_bolts: ['087-price-comparison-qualification']
 enables_bolts: []
 requires_units: []
@@ -42,7 +54,7 @@ Qualify the complete release and prepare controlled deployment, paired activatio
 - [ ] Implement: scoped source/tests, config/docs and migrations where required.
 - [ ] Test: ddd-03-test-report.md with actual commands/results and each story criterion disposition.
 
-No stage has started. Definition: .specsmd/aidlc/templates/construction/bolt-types/ddd-construction-bolt.md.
+Stages one to four are complete (owner pre-approval of 2026-10-07). The test stage stays open until the kill switch is exercised in production. Definition: .specsmd/aidlc/templates/construction/bolt-types/ddd-construction-bolt.md.
 
 ## Dependencies and handoff
 

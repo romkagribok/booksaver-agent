@@ -18,7 +18,7 @@ timezone_id = "UTC"
 # Inventory execution is independent and uses Browser Use for all authorized, disclosed triggers.
 # Switch only inventory back to legacy for rollback.
 routing = "legacy" # price: legacy | owner_canary | consented_users | agentic
-price_executor = "browser_use" # agentic price adapter: browser_use | stagehand
+price_executor = "browser_use" # price method: jev | browser_use | stagehand
 inventory_routing = "agentic" # inventory: legacy | agentic
 disclosure_version = "anthropic-visible-booking-page-v1"
 
@@ -65,6 +65,12 @@ messages_per_minute_per_chat = 20
 # or can trigger savings alerts. Jev inference costs USD 0.042 per million input
 # tokens; the daily cap below bounds it. "all" includes invitees, who should be
 # told that their booking page text is sent to TypeSafe.
+#
+# With [agentic_browser] price_executor = "jev", Jev is the only price method
+# (ADR-056): its validated result is saved and can trigger savings alerts, no
+# Anthropic price call is made, and `enabled` here must stay false. The model
+# pin and the caps below then bound every Jev price check. Set price_executor
+# back to "browser_use" to return to the LLM method.
 [jev_comparison]
 enabled = false
 participants = "owner"          # owner | all
