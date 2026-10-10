@@ -43,3 +43,4 @@ sequence.
 - **2026-10-10T01:45:40Z**: 089-jev-price-promotion stage-complete - technical-design → adr-analysis
 - **2026-10-10T01:46:00Z**: 089-jev-price-promotion stage-complete - adr-analysis → implement
 - **2026-10-10T01:47:40Z**: 089-jev-price-promotion stage-complete - implement → test
+- **2026-10-10T02:42:22Z**: 089-jev-price-promotion released as phase 1 (config unchanged); test stage stays open for production confirmation and the phase 2 switch

@@ -74,3 +74,12 @@ whose "current price" equals its nightly amount (unpriced) and taxes added on to
 multi-night stay. The two bookings Jev verifies today were verified under the looser rules, and
 their signed-in card layout was never observed, so their first runs on this release must be
 checked before the switch.
+
+## 2026-10-10T03:29:57Z — release evidence, phase 1
+
+Released as `jevprimary-7b18adc` on 2026-10-10T02:42:22Z with production configuration unchanged
+(`operations/releases/7b18adc-jev-price-method-phase-1.md`): full gate, Bugbot passed on the PR
+head, exact-image checks, and a two-configuration stage probe on a production snapshot passed.
+
+Still open before this bolt can complete: production confirmation of US-216 on the affected
+booking, a check that previously verified bookings still verify, and the phase 2 switch (US-217).
