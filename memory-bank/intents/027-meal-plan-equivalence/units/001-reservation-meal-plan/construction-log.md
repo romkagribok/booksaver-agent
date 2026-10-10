@@ -2,7 +2,7 @@
 unit: 001-reservation-meal-plan
 intent: 027-meal-plan-equivalence
 created: "2026-10-10T01:49:45Z"
-last_updated: "2026-10-10T08:07:38Z"
+last_updated: "2026-10-10T08:17:33Z"
 ---
 
 # Construction Log: 001-reservation-meal-plan
@@ -46,6 +46,8 @@ thing actually happened.
 | 2026-10-10T08:02:36Z | 090-reservation-meal-plan | fix | Bugbot on head ec4558d: "exclusive" read as a denial, and a bare digit read as a price; both could store a wrong stated `none` (US-220). Fixed with regressions |
 | 2026-10-10T08:03:55Z | 090-reservation-meal-plan | staged | Candidate `mealplan-d19f7b5` built on the running `jevprimary-7b18adc` image; dev checks and staging probe passed (Bolt 090 test report) |
 | 2026-10-10T08:07:38Z | 090-reservation-meal-plan | stage-complete | Owner reviewed the stage summary, waived the five stage stops after the fact and accepted ADR-057; adr-analysis recorded |
+| 2026-10-10T08:14:34Z | 090-reservation-meal-plan | merged | PR #77 merged as 063c3e4 after the Bugbot gate passed on 509a000 |
+| 2026-10-10T08:15:02Z | 090-reservation-meal-plan | released | Promoted as `mealplan-d19f7b5`; healthy, schema 21. Two scheduler jobs failed their first pass on a migration race and recovered (release record) |
 
 ## Execution Summary
 
@@ -63,7 +65,6 @@ thing actually happened.
 - Owner decisions of 2026-10-10T08:07:38Z: stage checkpoints waived after the fact, ADR-057 accepted, merge and
   redeploy approved. For bolt 091 the owner asked for the specs.md stages up to, but not
   including, code, then one review before implementation.
-- Not done yet: Bugbot on the final head; merge; promotion; release record under `memory-bank/operations/releases/`; the production
-  breakfast reading; `bolt-complete.cjs`.
+- Not done yet: the production breakfast reading; the startup-race fix; `bolt-complete.cjs`.
 - Earlier candidates (`mealplan-1e482eb`, `-aa7be3b`, `-ec4558d`) were never promoted and their
   tags are removed; their build, dev and stage logs remain in the kit `mealplan-20261010`.

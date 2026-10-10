@@ -4,7 +4,7 @@ bolt: 090-reservation-meal-plan
 stage: test
 status: in-progress
 created: "2026-10-10T02:02:11Z"
-updated: "2026-10-10T08:07:38Z"
+updated: "2026-10-10T08:17:33Z"
 ---
 
 # Test Report - Reservation meal plan
@@ -85,6 +85,7 @@ Not measured.
 | A facilities list naming a meal could be read as the booked meal plan (Bugbot, head 1e482eb) | Medium | Fixed at 2026-10-10T02:20:12Z |
 | "Exclusive" counted as a denial, so inclusion wording containing it read as a stated `none` (Bugbot, head ec4558d) | Medium | Fixed at 2026-10-10T08:02:36Z |
 | Any digit beside a named meal counted as a price, so a time or guest count read as a stated `none` (Bugbot, head ec4558d) | Medium | Fixed at 2026-10-10T08:02:36Z: a price needs a currency; "available" and "per person" alone no longer mean `none` |
+| At daemon start several threads ran `_migrate_v21` at once; two scheduler jobs failed their first pass with "duplicate column name" and recovered on the next (production, release) | Low | Open; fix proposed to the owner |
 | `SCHEMA_VERSION` merged cleanly at 20 against PR #78, which would have skipped this migration in production (reported by the session that owns PR #78) | High | Fixed at 2026-10-10T07:49:45Z by moving to v21 |
 
 ## Staging evidence
@@ -106,6 +107,13 @@ then running in production (`jevprimary-7b18adc`).
 - Earlier candidates (1e482eb, aa7be3b on the previous base; ec4558d) passed the same checks and
   are superseded.
 
+## Release evidence
+
+2026-10-10T08:15:02Z: promoted as `mealplan-d19f7b5`; healthy, schema 21, the three columns present, every
+existing meal plan still unknown until the first synchronization. See
+`memory-bank/operations/releases/d19f7b5-reservation-meal-plan.md`. The startup defect listed
+under "Issues Found" was observed here. Production readings are not recorded yet.
+
 ## Ready for Operations
 
 - [ ] All acceptance criteria met (one needs the release)
@@ -114,5 +122,5 @@ then running in production (`jevprimary-7b18adc`).
 - [x] Performance targets met (none apply)
 - [x] Security tests passing
 - [x] Owner decision on the stage checkpoints (2026-10-10T08:07:38Z: waived after the fact)
-- [ ] Bugbot on the final head
+- [x] Bugbot on the final head (passed on 509a000)
 - [x] Candidate rebuilt and restaged on the current production base
