@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-10-10T01:46:00Z
-total_decisions: 56
+last_updated: 2026-10-10T07:49:45Z
+total_decisions: 57
 ---
 
 # Decision Index
@@ -548,3 +548,10 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/089-jev-price-promotion/adr-056-jev-authoritative-price-method.md`
 - **Summary**: `price_executor = "jev"` makes Jev's validated observation the canonical price result with its own key, caps and run ledger; paired mode is excluded; Browser Use and Stagehand price adapters stay selectable as rollback.
 - **Read when**: Changing which price method is authoritative, Jev spend limits, session refresh from price runs, or removing the LLM price adapters.
+
+### ADR-057: Meal plan is part of offer equivalence and is read by code
+- **Status**: proposed
+- **Bolt**: 090-reservation-meal-plan
+- **Path**: `bolts/090-reservation-meal-plan/adr-057-meal-plan-equivalence.md`
+- **Summary**: A cheaper offer that dropped the reservation's breakfast was reported as a saving. Equivalence requires the same or a better meal plan; the reservation's meal plan is set only by the code-owned confirmation parser, and a recognized room section that states nothing about meals means no meals.
+- **Read when**: Changing offer equivalence or selection, reading meal wording from a reservation or a rate, the confirmation parser's room section, or considering a default for a reservation fact the page does not state.

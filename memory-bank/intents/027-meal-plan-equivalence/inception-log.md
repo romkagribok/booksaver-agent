@@ -1,20 +1,83 @@
-# Inception log
+---
+intent: 027-meal-plan-equivalence
+created: "2026-10-10T01:38:53Z"
+completed: "2026-10-10T01:49:45Z"
+status: complete
+---
 
-## 2026-10-10T01:38:53Z
+# Inception Log: meal-plan-equivalence
 
-An invited user reported a savings alert for an offer that dropped the breakfast included in his
-reservation. Investigation found no meal plan concept in the reservation model, any price path, or
-offer selection. The owner approved recording the reservation's meal plan, supplied two real
-reservation examples (desktop layout with an explicit no-meal row; app layout with "Breakfast
-included"), and decided that a reservation page stating no meal plan means no meals. Requirements
-drafted for review. One decision is pending: whether an unknown reservation meal plan sends a
-caveated alert or no alert.
+## Overview
 
-## 2026-10-10T01:49:45Z
+**Intent**: Make the meal plan part of offer equivalence so a cheaper offer with fewer meals is
+never reported as a saving.
+**Type**: defect-driven enhancement
 
-The owner approved the requirements, chose the caveated alert when a reservation's meal plan is
-unknown, and authorized implementation through merge and redeploy. Two units follow the approved
-delivery order: `001-reservation-meal-plan` (bolt 089, stories US-216 and US-217) records and shows
-the reservation's meal plan; `002-meal-aware-offers` (bolt 090, stories US-218 to US-221) reads
-each offer's meal plan, gates selection, and words the alert. Bolt 090 starts after bolt 089 is
-released and production readings are reviewed.
+## Artifacts Created
+
+| Artifact | Status | File |
+|----------|--------|------|
+| Requirements | ✅ | requirements.md |
+| System Context | ✅ | system-context.md |
+| Units | ✅ | units.md, units/001-reservation-meal-plan/unit-brief.md, units/002-meal-aware-offers/unit-brief.md |
+| Stories | ✅ | units/*/stories/*.md |
+| Bolt Plan | ✅ | memory-bank/bolts/090-reservation-meal-plan/bolt.md, memory-bank/bolts/091-meal-aware-offers/bolt.md |
+
+## Summary
+
+| Metric | Count |
+|--------|-------|
+| Functional Requirements | 11 |
+| Non-Functional Requirements | 4 |
+| Units | 2 |
+| Stories | 6 |
+| Bolts Planned | 2 |
+
+## Units Breakdown
+
+| Unit | Stories | Bolts | Priority |
+|------|---------|-------|----------|
+| 001-reservation-meal-plan | 2 | 1 | Must |
+| 002-meal-aware-offers | 4 | 1 | Must |
+
+## Decision Log
+
+| Date | Decision | Rationale | Approved |
+|------|----------|-----------|----------|
+| 2026-10-10T01:38:53Z | Record the reservation's meal plan | It is visible on every reservation page | Yes, owner |
+| 2026-10-10T01:38:53Z | A reservation page that states no meal plan means no meals | The owner's own reservation states absence explicitly; where a page says nothing, no meal is assumed | Yes, owner |
+| 2026-10-10T01:38:53Z | Silence counts as no meals only when the room section was read | A wrong `none` recreates the reported defect | Proposed by the agent in the requirements; approved with them |
+| 2026-10-10T01:49:45Z | Unknown reservation meal plan sends a caveated alert | Keeps older bookings working while the reading proves itself | Yes, owner |
+| 2026-10-10T01:49:45Z | Recording ships before the gate | Production readings confirm the parser before it can exclude an offer | Approved with the requirements |
+
+## Scope Changes
+
+| Date | Change | Reason | Impact |
+|------|--------|--------|--------|
+| 2026-10-10T07:49:45Z | Renumbered to schema v21, bolts 090/091, US-220 to US-225 | PR #78 merged first with the same numbers | None on scope |
+| 2026-10-10T07:49:45Z | FR-10 widened from the paired Jev arm to every price method | ADR-056 made Jev selectable as the authoritative method | Bolt 091 story US-225 reworded at its start |
+
+## Checkpoints held
+
+- Checkpoint 1 (clarifying questions): held in conversation on 2026-10-03, 2026-10-06 and
+  2026-10-09, with two real reservation examples from the owner.
+- Checkpoint 2 (requirements review): held; approved 2026-10-10T01:49:45Z.
+- Checkpoint 3 (artifacts review) and checkpoint 4 (ready for construction): **not held**. The
+  agent wrote the system context, units, stories and bolt plan and went straight to construction
+  on the strength of "proceed to implement, merge and redeploy". The owner has not reviewed those
+  artifacts separately; they are in pull request #77.
+
+## Ready for Construction
+
+- [x] All requirements documented
+- [x] System context defined
+- [x] Units decomposed
+- [x] Stories created for all units
+- [x] Bolts planned
+- [ ] Human review complete (requirements only; see "Checkpoints held")
+
+## Process note
+
+The agent did not read the inception skills and templates before writing these artifacts; it
+copied the shape of earlier intents. They were rewritten against the templates on 2026-10-10T07:49:45Z. The
+content and decisions are unchanged.

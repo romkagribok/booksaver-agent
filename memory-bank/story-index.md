@@ -733,10 +733,6 @@ Paired Jev comparison ran 2026-10-01 to 2026-10-10 (82 pairs). Owner chose adopt
 | `US-218` | Explain Jev runs that produce no price | Jev comparison | In progress | `004-jev-price-promotion/stories/003-explain-unobserved-jev-runs.md` |
 | `US-219` | Recover from Booking.com's transient error page | Jev comparison | In progress | `004-jev-price-promotion/stories/004-recover-from-booking-error-page.md` |
 
-| `US-213` | Analyze paired results | Jev comparison | Planned | `003-price-comparison-qualification/stories/001-analyze-paired-results.md` |
-| `US-214` | Qualify paired price release | Jev comparison | Planned | `003-price-comparison-qualification/stories/002-qualify-paired-price-release.md` |
-| `US-215` | Activate and roll back comparison | Jev comparison | Planned | `003-price-comparison-qualification/stories/003-activate-and-rollback-comparison.md` |
-
 ## 027-meal-plan-equivalence
 
 Meal plan as part of offer equivalence; recording ships before the gate.
@@ -745,14 +741,14 @@ Meal plan as part of offer equivalence; recording ships before the gate.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-216` | Record the reservation's meal plan | Meal plan | In progress | `001-reservation-meal-plan/stories/001-record-reservation-meal-plan.md` |
-| `US-217` | Show the meal plan in /bookings | Meal plan | In progress | `001-reservation-meal-plan/stories/002-show-meal-plan-in-bookings.md` |
+| `US-220` | Record the reservation's meal plan | Meal plan | In progress | `001-reservation-meal-plan/stories/001-record-reservation-meal-plan.md` |
+| `US-221` | Show the meal plan in /bookings | Meal plan | In progress | `001-reservation-meal-plan/stories/002-show-meal-plan-in-bookings.md` |
 
 ### 002-meal-aware-offers
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-218` | Read each offer's meal plan | Meal plan | Planned | `002-meal-aware-offers/stories/001-read-offer-meal-plans.md` |
-| `US-219` | Exclude offers with a worse meal plan | Meal plan | Planned | `002-meal-aware-offers/stories/002-exclude-worse-meal-offers.md` |
-| `US-220` | State meal plans in savings alerts | Meal plan | Planned | `002-meal-aware-offers/stories/003-state-meals-in-alerts.md` |
-| `US-221` | Apply the meal rule to the Jev arm | Meal plan | Planned | `002-meal-aware-offers/stories/004-apply-meal-rule-to-jev-arm.md` |
+| `US-222` | Read each offer's meal plan | Meal plan | Planned | `002-meal-aware-offers/stories/001-read-offer-meal-plans.md` |
+| `US-223` | Exclude offers with a worse meal plan | Meal plan | Planned | `002-meal-aware-offers/stories/002-exclude-worse-meal-offers.md` |
+| `US-224` | State meal plans in savings alerts | Meal plan | Planned | `002-meal-aware-offers/stories/003-state-meals-in-alerts.md` |
+| `US-225` | Apply the meal rule to every price method | Meal plan | Planned | `002-meal-aware-offers/stories/004-apply-meal-rule-to-every-price-method.md` |

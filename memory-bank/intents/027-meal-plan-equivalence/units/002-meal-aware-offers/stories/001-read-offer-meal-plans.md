@@ -5,19 +5,30 @@ intent: 027-meal-plan-equivalence
 status: draft
 priority: must
 created: "2026-10-10T01:49:45Z"
-assigned_bolt: 090-meal-aware-offers
+assigned_bolt: 091-meal-aware-offers
 implemented: false
 ---
 
-# US-218: Read each offer's meal plan
+# US-222: Read each offer's meal plan
+
+## User story
 
 As a BookSaver user, I want each candidate offer's meal plan read from the rate it belongs
 to, so that a room-only rate is not mistaken for my breakfast rate.
 
+## Assigned requirement
+
+FR-6, FR-11.
+
 ## Acceptance criteria
 
-- Every price path that can produce a savings alert reports a meal plan per candidate rate with
-  the verbatim text it relied on.
-- Code grounds the reported value against that text; an ungrounded value is `unknown`.
-- A rate that states nothing about meals is `none`.
-- Wording is qualified against saved real property pages before production enablement.
+- [ ] Given a candidate rate, when a price method reports it, then it carries a meal plan and the
+  verbatim text it relied on.
+- [ ] Given a reported meal plan, when code cannot ground it in that text, then it is `unknown`.
+- [ ] Given a rate that states nothing about meals, when it is read, then its meal plan is `none`.
+- [ ] Given saved real property pages, when the reader runs on them, then every rate's meal plan
+  matches the page before production enablement.
+
+## Out of scope
+
+Changing which price method is authoritative.
