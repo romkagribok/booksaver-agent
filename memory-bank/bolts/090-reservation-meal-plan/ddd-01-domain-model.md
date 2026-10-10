@@ -48,7 +48,7 @@ None. A changed meal plan raises the reservation's snapshot revision like any ot
 | Meal wording classification | `classify_meal_text(text) -> MealPlan`, `mentions_meals(text)` | None (pure). Shared with the offer side in bolt 091. |
 
 Classification rules: an included value only for explicit inclusion wording; `none` only for
-wording that denies a meal or prices a named meal as an extra; `unknown` for everything else,
+wording that denies a meal, or offers a named meal as an extra or at a price with its currency; `unknown` for everything else,
 including combinations outside the ranked values. Nothing is rounded to a neighbouring value.
 
 ## Repository Interfaces

@@ -4,23 +4,23 @@ bolt: 090-reservation-meal-plan
 stage: test
 status: in-progress
 created: "2026-10-10T02:02:11Z"
-updated: "2026-10-10T07:49:45Z"
+updated: "2026-10-10T08:02:36Z"
 ---
 
 # Test Report - Reservation meal plan
 
 ## Test Summary
 
-Run on the rebased branch at 2026-10-10T07:49:45Z: `python3 -m ruff check src tests` (clean), `python3 -m mypy
-src` (no issues in 133 source files), `python3 -m pytest` (3,216 passed, 1 skipped).
+Run on the rebased branch at 2026-10-10T08:02:36Z: `python3 -m ruff check src tests` (clean), `python3 -m mypy
+src` (no issues in 133 source files), `python3 -m pytest` (3,226 passed, 1 skipped).
 
 | Category | Passed | Failed | Skipped | Coverage |
 |----------|--------|--------|---------|----------|
-| Unit | 2,864 | 0 | 1 | not measured |
+| Unit | 2,874 | 0 | 1 | not measured |
 | Integration | 352 | 0 | 0 | not measured |
 | Security | no separate suite | - | - | - |
 | Performance | none | - | - | - |
-| **Total** | 3,216 | 0 | 1 | not measured |
+| **Total** | 3,226 | 0 | 1 | not measured |
 
 Coverage was not measured, so the template's 80% target is neither met nor missed on evidence.
 The trust rules that would sit in a security suite are unit tests (see "Security Tests").
@@ -46,7 +46,7 @@ The trust rules that would sit in a security suite are unit tests (see "Security
 
 ## Unit Tests
 
-- `tests/unit/test_meal_plan.py` (30): wording classification, including the owner's wording.
+- `tests/unit/test_meal_plan.py` (40): wording classification, including the owner's wording.
 - `tests/unit/test_inventory_confirmation_facts.py` (170, of which the meal cases are new):
   labelled, unlabelled, silent, facilities and bounded-text cases.
 - `tests/unit/test_grouped_inventory_runtime.py` (124): the parser's value reaches the observed
@@ -83,6 +83,8 @@ Not measured.
 | An inline `Meal Plan` value lost its label before classification, so "Meals are not included" read `unknown` (own review) | Low | Fixed |
 | Unrecognized unlabelled text from the room section was stored (own review) | Low | Fixed |
 | A facilities list naming a meal could be read as the booked meal plan (Bugbot, head 1e482eb) | Medium | Fixed at 2026-10-10T02:20:12Z |
+| "Exclusive" counted as a denial, so inclusion wording containing it read as a stated `none` (Bugbot, head ec4558d) | Medium | Fixed at 2026-10-10T08:02:36Z |
+| Any digit beside a named meal counted as a price, so a time or guest count read as a stated `none` (Bugbot, head ec4558d) | Medium | Fixed at 2026-10-10T08:02:36Z: a price needs a currency; "available" and "per person" alone no longer mean `none` |
 | `SCHEMA_VERSION` merged cleanly at 20 against PR #78, which would have skipped this migration in production (reported by the session that owns PR #78) | High | Fixed at 2026-10-10T07:49:45Z by moving to v21 |
 
 ## Staging evidence

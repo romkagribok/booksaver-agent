@@ -45,15 +45,20 @@ _MEAL_WORDS = re.compile(
 )
 _CLAUSES = re.compile(r"[.;!•|\n]+")
 _NEGATED = re.compile(
-    r"\bno meals?\b|\bno (?:breakfast|lunch|dinner)\b|\broom only\b|\bwithout\b|\bexclud"
-    r"|\bnot\b|\bisn't\b|\baren't\b"
+    r"\bno meals?\b|\bno (?:breakfast|lunch|dinner)\b|\broom only\b|\bwithout\b"
+    r"|\bexclud(?:e|es|ed|ing)\b|\bnot\b|\bisn't\b|\baren't\b"
 )
 # A meal offered at a price is an optional extra, not an inclusion.
 _EXTRA = re.compile(
     r"\bcosts?\b|\boptional\b|\bextra\b|\badditional\b|\bsurcharge\b|\bsupplement\b"
     r"|\bfor just\b|\badd\b|\bpurchase\b"
 )
-_PRICE_HINT = re.compile(r"[0-9]|\bper person\b|\bper night\b|\bavailable\b")
+# An amount with its currency. A bare number is a time or a guest count, not a price.
+_CURRENCY = (
+    r"(?:[$\u20ac\u00a3\u00a5\u20b9\u20bd\u20ba\u20b4\u20a9\u20aa\u0e3f]|\b(?:usd|eur|gbp|chf|cad|aud|nzd|jpy|cny"
+    r"|sek|nok|dkk|pln|czk|huf|ron|bgn|rub|uah|ils|aed|inr|thb|sgd|hkd|mxn|brl|zar|krw)\b)"
+)
+_PRICE = re.compile(rf"{_CURRENCY}\s?[0-9]|[0-9]\s?{_CURRENCY}")
 _INCLUDED = re.compile(r"\binclud(?:ed|es|ing)\b|\bcomplimentary\b")
 _ALL_INCLUSIVE = re.compile(r"\ball[- ]inclusive\b")
 _FULL_BOARD = re.compile(r"\bfull[- ]board\b")
@@ -72,7 +77,7 @@ def mentions_meals(text: str) -> bool:
 def classify_meal_text(text: str) -> MealPlan:
     """Classify Booking.com wording about what a rate includes.
 
-    Returns NONE only for wording that states no meal is included or prices a meal as an extra,
+    Returns NONE only for wording that denies a meal or offers a named meal at a price or as extra,
     an included value only for explicit inclusion wording, and UNKNOWN for everything else,
     including meal combinations outside the ranked values. Nothing is rounded to a neighbour.
     """
@@ -106,7 +111,7 @@ def classify_meal_text(text: str) -> MealPlan:
             plans.add(named)
         elif positive:
             included |= meals
-        elif meals and (extra or _PRICE_HINT.search(clause) is not None):
+        elif meals and (extra or _PRICE.search(clause) is not None):
             stated_none = True
         else:
             unrecognized = True

@@ -24,6 +24,9 @@ from booksaver.domain.meal_plan import MealPlan, classify_meal_text, mentions_me
         ("Breakfast costs € 15 per person per night.", MealPlan.NONE),
         ("Breakfast US$20 (optional)", MealPlan.NONE),
         ("Add breakfast for € 12", MealPlan.NONE),
+        ("Breakfast 20 EUR", MealPlan.NONE),
+        ("Breakfast excluded", MealPlan.NONE),
+        ("Excluding breakfast", MealPlan.NONE),
         (
             "Breakfast is included in the room rate. Dinner costs €20 per person.",
             MealPlan.BREAKFAST,
@@ -34,6 +37,14 @@ from booksaver.domain.meal_plan import MealPlan, classify_meal_text, mentions_me
         ("Breakfast included, lunch not included", MealPlan.UNKNOWN),
         ("Breakfast included, dinner optional", MealPlan.UNKNOWN),
         ("Half board. All-inclusive", MealPlan.UNKNOWN),
+        # "Exclusive" is not a denial, and a bare number is a time or a guest count, not a price.
+        ("Exclusive breakfast included", MealPlan.BREAKFAST),
+        ("Breakfast included for 2 guests from 7:00", MealPlan.BREAKFAST),
+        ("Exclusive breakfast", MealPlan.UNKNOWN),
+        ("Breakfast 7:00-10:00", MealPlan.UNKNOWN),
+        ("Breakfast for 2 guests", MealPlan.UNKNOWN),
+        ("Breakfast available", MealPlan.UNKNOWN),
+        ("Breakfast per person", MealPlan.UNKNOWN),
         ("Breakfast", MealPlan.UNKNOWN),
         ("Meals", MealPlan.UNKNOWN),
         # A number or price without a named meal says nothing about what is included.
