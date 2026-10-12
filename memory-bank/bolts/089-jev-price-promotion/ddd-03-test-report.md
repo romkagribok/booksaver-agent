@@ -83,3 +83,21 @@ head, exact-image checks, and a two-configuration stage probe on a production sn
 
 Still open before this bolt can complete: production confirmation of US-216 on the affected
 booking, a check that previously verified bookings still verify, and the phase 2 switch (US-217).
+
+## 2026-10-12T23:16:49Z — phase 2: production evidence and the switch
+
+- **US-216 met in production.** 24 paired checks on the phase 1 release: the discounted-room
+  booking verified 8 of 8 (0 of 27 before) with all 16 rates priced and the same price as the LLM
+  method in the five pairs where both verified. The two other bookings stayed at 8 of 8 under the
+  stricter grounding.
+- **US-219.** No run met the error page in this period, so the reload is still unobserved live.
+- **Defect before the switch.** The meal gate deployed by bolt 091 made the Jev path classify
+  breakfast rates as unknown (rate name counted as meal wording). Fixed in PR #86 with a
+  regression using the live wording; Bugbot passed.
+- **US-217 switch done.** Production runs `price_executor = jev` with paired mode off since
+  2026-10-12T23:15:40Z; wiring and config verified inside the container.
+
+**Still open, so this bolt is not complete:** no price check has run in Jev-only mode yet. The
+bolt closes when the first scheduled checks (from 2026-10-13T02:03Z) show a canonical Jev result
+in `check_history` with a `jev_price_runs` record, and the breakfast reservation selects a
+breakfast rate or reports why not.

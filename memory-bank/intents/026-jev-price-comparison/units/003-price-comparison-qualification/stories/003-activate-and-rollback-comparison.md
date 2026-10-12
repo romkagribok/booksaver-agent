@@ -2,11 +2,11 @@
 id: 003-activate-and-rollback-comparison
 unit: 003-price-comparison-qualification
 intent: 026-jev-price-comparison
-status: in-progress
+status: complete
 priority: must
 created: "2026-09-26T16:33:08Z"
 assigned_bolt: 088-price-comparison-qualification
-implemented: false
+implemented: true
 ---
 
 # US-215: Activate and roll back comparison
