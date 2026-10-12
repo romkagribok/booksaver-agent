@@ -20,6 +20,11 @@ class MealPlan(Enum):
     def label(self) -> str:
         return _LABELS[self]
 
+    def at_least(self, booked: MealPlan) -> bool:
+        """Same or better than ``booked``. UNKNOWN is never ranked, on either side."""
+        ranked = [plan for plan in MealPlan if plan is not MealPlan.UNKNOWN]
+        return self in ranked and booked in ranked and ranked.index(self) >= ranked.index(booked)
+
     @classmethod
     def parse(cls, value: object) -> MealPlan:
         """Read a stored or submitted value; anything unrecognized is UNKNOWN."""
@@ -72,6 +77,16 @@ _BY_MEALS = {
 
 def mentions_meals(text: str) -> bool:
     return _MEAL_WORDS.search(text) is not None
+
+
+def offer_meal_plan(meal_text: str | None) -> MealPlan:
+    """Classify the meal wording a price method reported for one rate.
+
+    ``none`` is the method's marker for a rate that shows nothing about meals. Missing,
+    ``unknown`` or unclassifiable wording is UNKNOWN, which can only exclude the offer.
+    """
+    text = (meal_text or "").strip()
+    return MealPlan.NONE if text.casefold() == "none" else classify_meal_text(text)
 
 
 def classify_meal_text(text: str) -> MealPlan:

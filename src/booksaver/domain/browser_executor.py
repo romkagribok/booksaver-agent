@@ -14,6 +14,7 @@ from enum import Enum
 from urllib.parse import urlsplit
 
 from .agent import LLMUsage
+from .meal_plan import MAX_MEAL_PLAN_TEXT
 from .model_policy import UsdAmount
 from .value_objects import Money, Occupancy, StayDates
 
@@ -341,9 +342,13 @@ class ObservedOffer:
     refundability: RefundabilityEvidence
     refundability_text: str | None
     completeness: EvidenceCompleteness
+    # The rate's own meal wording, "none" when it shows none; BookSaver classifies it (ADR-057).
+    meal_text: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "room_label", _bounded_text(self.room_label, "room_label"))
+        if self.meal_text is not None:
+            object.__setattr__(self, "meal_text", self.meal_text[:MAX_MEAL_PLAN_TEXT])
         if self.total.amount <= 0:
             raise ValueError("observed offer total must be positive")
         if self.refundability_text is not None:
@@ -427,6 +432,7 @@ class ValidatedObservedOffer:
     room_label: str
     total: Money
     cancellation_text: str
+    meal_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -635,6 +641,7 @@ def validate_price_observation(
                     room_label=offer.room_label,
                     total=offer.total,
                     cancellation_text=cancellation_text,
+                    meal_text=offer.meal_text,
                 )
             )
         else:

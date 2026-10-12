@@ -78,3 +78,19 @@ class TestConfidentExactMatch:
         text = "Standard Double\n€ 350.00\nMax persons: 2"
         candidates = parse_candidates(text, make_booking())
         assert not has_confident_exact_match(candidates, make_booking())
+
+
+def test_dom_shortcut_is_not_taken_for_a_reservation_that_includes_meals():
+    from dataclasses import replace
+
+    from booksaver.domain.meal_plan import MealPlan
+
+    booking = make_booking()
+    text = "Standard Double\n€ 350\nFree cancellation\nBreakfast included"
+    candidates = parse_candidates(text, booking)
+    assert has_confident_exact_match(candidates, booking)
+    assert has_confident_exact_match(candidates, replace(booking, meal_plan=MealPlan.NONE))
+    # This parser cannot tie a meal line to one rate, so the model extraction decides.
+    assert candidates[0].meal_plan is MealPlan.UNKNOWN
+    with_meals = replace(booking, meal_plan=MealPlan.BREAKFAST)
+    assert not has_confident_exact_match(candidates, with_meals)

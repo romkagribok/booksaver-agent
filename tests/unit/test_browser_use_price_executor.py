@@ -148,6 +148,7 @@ def _observation() -> TypedObservation:
                 all_in=AllInEvidence.EXPLICIT,
                 refundability=RefundabilityEvidence.EXPLICIT_REFUNDABLE,
                 refundability_text="Free cancellation until November 23",
+                meal_text="Breakfast included",
                 completeness=EvidenceCompleteness.COMPLETE,
             ),
         ),
@@ -193,6 +194,7 @@ def test_price_submission_maps_to_existing_typed_contract() -> None:
                 all_in="explicit",
                 refundability="explicit_refundable",
                 refundability_text="Free cancellation until November 23",
+                meal_text="Breakfast included",
                 completeness="complete",
             )
         ],
@@ -234,6 +236,7 @@ def test_price_submission_canonicalizes_property_reference_without_query() -> No
                 all_in="explicit",
                 refundability="explicit_refundable",
                 refundability_text="Free cancellation until November 23",
+                meal_text="Breakfast included",
                 completeness="complete",
             )
         ],
@@ -282,6 +285,7 @@ def test_price_action_schemas_reject_ambiguous_evidence_labels() -> None:
             all_in="yes",  # type: ignore[arg-type]
             refundability="refundable",  # type: ignore[arg-type]
             refundability_text="Free cancellation until November 23",
+            meal_text="Breakfast included",
             completeness="complete",
         )
 
@@ -308,6 +312,7 @@ def test_typed_observation_error_is_reduced_to_privacy_safe_code() -> None:
                 all_in="explicit",
                 refundability="explicit_refundable",
                 refundability_text="Free cancellation until November 23",
+                meal_text="Breakfast included",
                 completeness="complete",
             )
         ],
@@ -656,7 +661,7 @@ def _mixed_price_submission(*, completeness="complete"):
     valid = BrowserUsePriceOfferSubmission(
         room_label="Deluxe King Room", total="275.00", currency="USD", all_in="explicit",
         refundability="explicit_refundable", refundability_text="Free cancellation",
-        completeness="complete",
+        completeness="complete", meal_text="none",
     )
     return BrowserUsePriceObservationSubmission(
         property_name="Hotel Example", check_in="2026-11-24", check_out="2026-11-25",
@@ -699,6 +704,7 @@ def test_complete_query_with_mixed_offers_keeps_only_valid_candidate(monkeypatch
     assert observation.facts.completeness is EvidenceCompleteness.COMPLETE
     assert observation.facts.genius is None
     assert len(observation.offers) == 4
+    assert {offer.meal_text for offer in observation.offers} == {"none"}
     assert observation.offers[1].completeness is EvidenceCompleteness.INCOMPLETE
     assert observation.offers[1].all_in is AllInEvidence.UNKNOWN
     assert observation.offers[1].refundability is RefundabilityEvidence.UNKNOWN

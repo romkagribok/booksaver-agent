@@ -31,7 +31,8 @@ production in `requirements.lock`, and explained in `memory-bank/standards/tech-
 ## Non-negotiable boundaries
 
 - Booking.com hotels only; registered and candidate offers must be refundable.
-- Equivalence requires the same property, stay dates, room type, and occupancy.
+- Equivalence requires the same property, stay dates, room type, and occupancy, and the same or a
+  better meal plan (ADR-057).
 - Compare currency-aligned, all-in bookable totals; fail closed on ambiguity.
 - Never autonomously cancel, reserve, purchase, pay, or submit a final booking action.
 - Never orchestrate a rebooking workflow; users act independently in Booking.com.

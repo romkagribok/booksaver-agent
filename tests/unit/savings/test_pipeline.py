@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -15,6 +16,7 @@ from booksaver.domain.check_result import (
     FailureReason,
     RefundIndicators,
 )
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.mobile_web import (
     GeniusEvidence,
     MobileProfileId,
@@ -201,6 +203,17 @@ def test_render_alert_states_bookings_are_never_mutated() -> None:
     )
     _, body = render_alert(opportunity, booking)
     assert "never cancels or books reservations" in body
+    # FR-8: an unknown reservation meal plan still alerts, with a caveat.
+    assert "Meals (yours): meals not confirmed" in body
+    assert "Meals (offer): meals not confirmed" in body
+    assert "matches your stay and room. We could not confirm which meals" in body
+
+    confirmed = replace(booking, meal_plan=MealPlan.BREAKFAST)
+    _, body = render_alert(opportunity, confirmed, offer_meal_plan=MealPlan.HALF_BOARD)
+    assert "Meals (yours): breakfast included" in body
+    assert "Meals (offer): half board (breakfast and dinner)" in body
+    assert "matches your stay, room and meal plan." in body
+    assert "could not confirm" not in body
 
 
 def test_render_alert_labels_logged_out_price_as_public_rate() -> None:

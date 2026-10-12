@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -22,6 +23,7 @@ from booksaver.domain.browser_executor import (
     ValidationRejection,
 )
 from booksaver.domain.check_result import CheckOutcome, ExtractionMethod, FailureCode
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.user_session import UserSessionMetadata, UserSessionSnapshot
 from booksaver.domain.value_objects import Money, Platform
 from booksaver.monitor.failure_tracker import FailureTracker
@@ -52,6 +54,7 @@ def _outcome(
     fallback: bool = False,
     status: PriceExecutionStatus = PriceExecutionStatus.OBSERVED,
     rejection: ValidationRejection | None = None,
+    meal_text: str | None = None,
 ) -> PriceExecutionOutcome:
     booking = make_booking()
     if status is not PriceExecutionStatus.OBSERVED:
@@ -110,6 +113,7 @@ def _outcome(
                     room_label,
                     offer.total,
                     offer.refundability_text or "",
+                    meal_text,
                 ),
             )
         ),
@@ -205,3 +209,31 @@ def test_agentic_provider_failure_is_terminal_without_legacy_retry() -> None:
     assert result.failure_reason.code is FailureCode.PROVIDER_UNAVAILABLE
     assert browser.actions == []
     assert browser.restored_cookies == []
+
+
+def test_room_only_offer_is_not_reported_for_a_reservation_with_breakfast() -> None:
+    booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
+    for meal_text, reason in (("none", "meal_plan_worse=1"), (None, "meal_plan_unknown=1")):
+        monitor, _browser, _history = _monitor(_AgenticCheck(_outcome(meal_text=meal_text)))
+        result = monitor.run_authenticated(booking, _snapshot())
+        assert result.outcome is CheckOutcome.FAILURE
+        assert result.failure_reason is not None
+        # The existing conclusive observation: it clears the current opportunity (intent 018).
+        assert result.failure_reason.code is FailureCode.NO_EQUIVALENT_OFFER
+        assert reason in result.failure_reason.detail
+        assert result.terminal_diagnosis is None
+
+
+def test_offer_meal_plan_reaches_the_check_result() -> None:
+    booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
+    check = _AgenticCheck(_outcome(meal_text="Very good breakfast included"))
+    monitor, _browser, _history = _monitor(check)
+    result = monitor.run_authenticated(booking, _snapshot())
+    assert result.outcome is CheckOutcome.SUCCESS
+    assert result.offer_meal_plan is MealPlan.BREAKFAST
+    # A reservation without a known meal plan is not constrained by the offer's.
+    unconstrained = _monitor(_AgenticCheck(_outcome()))[0].run_authenticated(
+        make_booking(), _snapshot()
+    )
+    assert unconstrained.outcome is CheckOutcome.SUCCESS
+    assert unconstrained.offer_meal_plan is MealPlan.UNKNOWN

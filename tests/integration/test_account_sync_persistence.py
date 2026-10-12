@@ -762,3 +762,25 @@ def test_schema_v21_migration_adds_unknown_meal_plans_to_existing_rows(tmp_path:
     assert booking.meal_plan is MealPlan.UNKNOWN
     with SqliteStore(db_path):  # Re-opening a migrated database is a no-op.
         pass
+
+
+def test_schema_v21_migration_tolerates_a_column_added_by_a_concurrent_start() -> None:
+    from booksaver.infrastructure.persistence.sqlite_store import _migrate_v21
+
+    class RacingConnection:
+        """Reports the table without the new columns, then loses the race to add them."""
+
+        def __init__(self, error: str) -> None:
+            self.error, self.alters = error, 0
+
+        def execute(self, sql: str):
+            if sql.startswith("PRAGMA"):
+                return [(0, "booking_id")]
+            self.alters += 1
+            raise sqlite3.OperationalError(self.error)
+
+    racing = RacingConnection("duplicate column name: meal_plan")
+    _migrate_v21(racing)  # type: ignore[arg-type]
+    assert racing.alters == 3
+    with pytest.raises(sqlite3.OperationalError):
+        _migrate_v21(RacingConnection("database is locked"))  # type: ignore[arg-type]

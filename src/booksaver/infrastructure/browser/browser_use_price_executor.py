@@ -142,6 +142,7 @@ class BrowserUsePriceOfferSubmission(BaseModel):
     ]
     refundability_text: str
     completeness: Literal["complete", "incomplete", "conflicting"]
+    meal_text: str
 
     @field_validator(
         "room_label",
@@ -151,6 +152,7 @@ class BrowserUsePriceOfferSubmission(BaseModel):
         "refundability",
         "refundability_text",
         "completeness",
+        "meal_text",
         mode="before",
     )
     @classmethod
@@ -367,7 +369,10 @@ def _price_agent_task(request: PriceExecutionRequest) -> str:
         "Mark all_in=explicit only when the displayed total explicitly includes taxes and fees. "
         "Mark refundability=explicit_refundable only when visible text explicitly says the rate "
         "is refundable/free-cancellation and copy that text. When no cancellation text is visible, "
-        "use refundability=unknown and refundability_text=unknown. Never infer missing facts. The "
+        "use refundability=unknown and refundability_text=unknown. For meal_text copy that rate's "
+        "own visible wording about meals exactly (for example 'Breakfast included' or 'Breakfast "
+        "US$15'); use none when that rate shows nothing about meals and unknown when you cannot "
+        "tell which rate a meal line belongs to. Never infer missing facts. The "
         "observation submission completes the job; use done(success=false, status=<reason>) only "
         "when the query facts or usable visible offer values cannot be obtained. "
         "Allowed status values: "

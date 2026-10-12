@@ -1,6 +1,11 @@
 import pytest
 
-from booksaver.domain.meal_plan import MealPlan, classify_meal_text, mentions_meals
+from booksaver.domain.meal_plan import (
+    MealPlan,
+    classify_meal_text,
+    mentions_meals,
+    offer_meal_plan,
+)
 
 
 @pytest.mark.parametrize(
@@ -68,3 +73,31 @@ def test_stored_values_parse_and_anything_else_is_unknown() -> None:
     assert MealPlan.parse(None) is MealPlan.UNKNOWN
     assert MealPlan.parse("brunch") is MealPlan.UNKNOWN
     assert MealPlan.UNKNOWN.label == "meals not confirmed"
+
+
+@pytest.mark.parametrize(
+    "meal_text, expected",
+    [
+        ("none", MealPlan.NONE),
+        (" None ", MealPlan.NONE),
+        ("Breakfast included", MealPlan.BREAKFAST),
+        ("Very good breakfast included\nDinner US$30", MealPlan.BREAKFAST),
+        ("Breakfast US$15", MealPlan.NONE),
+        # Anything a price method could not ground can only exclude the offer.
+        (None, MealPlan.UNKNOWN),
+        ("", MealPlan.UNKNOWN),
+        ("unknown", MealPlan.UNKNOWN),
+        ("Free WiFi", MealPlan.UNKNOWN),
+        ("Breakfast", MealPlan.UNKNOWN),
+    ],
+)
+def test_offer_wording_is_classified_by_code(meal_text: str | None, expected: MealPlan) -> None:
+    assert offer_meal_plan(meal_text) is expected
+
+
+def test_same_or_better_never_ranks_unknown() -> None:
+    assert MealPlan.HALF_BOARD.at_least(MealPlan.BREAKFAST)
+    assert MealPlan.BREAKFAST.at_least(MealPlan.BREAKFAST)
+    assert not MealPlan.NONE.at_least(MealPlan.BREAKFAST)
+    assert not MealPlan.UNKNOWN.at_least(MealPlan.NONE)
+    assert not MealPlan.ALL_INCLUSIVE.at_least(MealPlan.UNKNOWN)

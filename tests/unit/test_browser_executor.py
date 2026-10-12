@@ -188,6 +188,7 @@ def test_complete_observation_is_validated_without_equivalence_claim() -> None:
         "room_label",
         "total",
         "cancellation_text",
+        "meal_text",
     }
 
 

@@ -48,6 +48,7 @@ thing actually happened.
 | 2026-10-10T08:07:38Z | 090-reservation-meal-plan | stage-complete | Owner reviewed the stage summary, waived the five stage stops after the fact and accepted ADR-057; adr-analysis recorded |
 | 2026-10-10T08:14:34Z | 090-reservation-meal-plan | merged | PR #77 merged as 063c3e4 after the Bugbot gate passed on 509a000 |
 | 2026-10-10T08:15:02Z | 090-reservation-meal-plan | released | Promoted as `mealplan-d19f7b5`; healthy, schema 21. Two scheduler jobs failed their first pass on a migration race and recovered (release record) |
+| 2026-10-12T22:48:46Z | 090-reservation-meal-plan | evidence | Production readings recorded: the breakfast reservation reads `breakfast` from real wording; startup-race fix shipped with bolt 091 (Bolt 090 test report) |
 
 ## Execution Summary
 

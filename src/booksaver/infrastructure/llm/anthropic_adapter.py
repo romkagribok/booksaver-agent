@@ -19,6 +19,7 @@ from booksaver.domain.agent import (
     AgentTurnContext,
     LLMUsage,
 )
+from booksaver.domain.meal_plan import offer_meal_plan
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.value_objects import Money, Occupancy
@@ -147,7 +148,9 @@ do NOT match. Express your certainty in match_confidence (0.0-1.0).
 Respond with ONLY a JSON array, no other text:
 [{{"room_label": "<string>", "price": "<decimal string>", "currency": "<ISO-4217>",
 "is_refundable": <true/false/null>, "cancellation_text": "<string or null>",
-"matches_room": <true/false>, "match_confidence": <0.0-1.0>}}]
+"matches_room": <true/false>, "match_confidence": <0.0-1.0>,
+"meal_text": "<that rate's own wording about meals copied exactly, 'none' if that rate shows
+nothing about meals, 'unknown' if you cannot tell which rate a meal line belongs to>"}}]
 
 Page text:
 ---
@@ -579,6 +582,9 @@ def parse_offers_response(raw: str) -> list[OfferCandidate]:
                 cancellation_text=cancellation,
                 matches_room=bool(item.get("matches_room")),
                 match_confidence=float(confidence),
+                meal_plan=offer_meal_plan(
+                    meal_text if isinstance(meal_text := item.get("meal_text"), str) else None
+                ),
             )
         )
     return candidates

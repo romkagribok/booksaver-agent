@@ -699,7 +699,13 @@ def _migrate_v21(conn: sqlite3.Connection) -> None:
     ):
         columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
         if columns and name not in columns:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+            except sqlite3.OperationalError as error:
+                # The daemon opens the store from several threads at start; another
+                # connection may add the column between the check and the ALTER.
+                if "duplicate column name" not in str(error):
+                    raise
 
 
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).

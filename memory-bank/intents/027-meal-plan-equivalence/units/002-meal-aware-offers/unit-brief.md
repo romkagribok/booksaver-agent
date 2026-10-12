@@ -1,8 +1,8 @@
 ---
 unit: 002-meal-aware-offers
 intent: 027-meal-plan-equivalence
-phase: inception
-status: stories-defined
+phase: construction
+status: in-progress
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-10-10T01:49:45Z"

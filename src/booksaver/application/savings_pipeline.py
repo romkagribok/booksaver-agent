@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from booksaver.domain.check_result import CheckOutcome, CheckResult
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.models import Booking
 from booksaver.domain.savings import RejectionReason, SavingsOpportunity, detect_savings
@@ -32,6 +33,7 @@ def render_alert(
     booking: Booking,
     session_mode: SessionMode | None = None,
     price_source: PriceSourceProvenance | None = None,
+    offer_meal_plan: MealPlan = MealPlan.UNKNOWN,
 ) -> tuple[str, str]:
     """Subject + body shared by all channels (US-009 core facts).
 
@@ -57,6 +59,12 @@ def render_alert(
         )
         if price_source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT:
             source_lines += "\nGenius       : evidence visible on the rendered page"
+    matches = "matches your stay, room and meal plan."
+    if booking.meal_plan is MealPlan.UNKNOWN:
+        matches = (
+            "matches your stay and room. We could not confirm which meals your booking "
+            "includes, so compare meals before you rebook."
+        )
     body = (
         f"Savings opportunity found for your Booking.com reservation.\n"
         f"\n"
@@ -64,13 +72,15 @@ def render_alert(
         f"Confirmation : {booking.confirmation_id.value}\n"
         f"Stay         : {booking.stay_dates.check_in} -> {booking.stay_dates.check_out}\n"
         f"Room         : {booking.room_type.label}\n"
+        f"Meals (yours): {booking.meal_plan.label}\n"
+        f"Meals (offer): {offer_meal_plan.label}\n"
         f"\n"
         f"You paid     : {opportunity.baseline_price.amount} "
         f"{opportunity.baseline_price.currency}\n"
         f"{live_price_line}{source_lines}\n"
         f"You save     : {saved.amount} {saved.currency} ({opportunity.percent_saved}%)\n"
         f"\n"
-        f"The cheaper offer is confirmed refundable and matches your stay and room.\n"
+        f"The cheaper offer is confirmed refundable and {matches}\n"
         f"\n"
         f"Review and make any reservation changes directly in Booking.com. BookSaver "
         f"will observe the updated account state during the next refresh; it never "
@@ -103,6 +113,7 @@ class NotificationDispatcher:
         booking: Booking,
         session_mode: SessionMode | None = None,
         price_source: PriceSourceProvenance | None = None,
+        offer_meal_plan: MealPlan = MealPlan.UNKNOWN,
     ) -> list[ChannelOutcome]:
         notifiers = self._resolver(booking) if self._resolver is not None else self._notifiers
         if not notifiers:
@@ -113,7 +124,7 @@ class NotificationDispatcher:
             return []
 
         subject, body = render_alert(
-            opportunity, booking, session_mode, price_source
+            opportunity, booking, session_mode, price_source, offer_meal_plan
         )
         outcomes: list[ChannelOutcome] = []
         for notifier in notifiers:
@@ -173,6 +184,7 @@ class SavingsPipeline:
                 booking,
                 result.session_mode,
                 result.price_source,
+                result.offer_meal_plan,
             )
             if any(o.ok for o in outcomes):
                 self._savings.mark_notified(detection.opportunity_id, datetime.now(UTC))
