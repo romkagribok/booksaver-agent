@@ -666,7 +666,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `024-repository-streamlining` | 3 | 6 | Complete locally (bolts 070–072) |
 
 | `025-session-continuity-and-paste` | 4 | 9 | Complete |
-| `026-jev-price-comparison` | 4 | 16 | Bolts 084–087 complete; 088 open on kill switch; 089 (Jev as the price method) in progress |
+| `026-jev-price-comparison` | 4 | 16 | Bolts 084–088 complete; Jev is the production price method since 2026-10-12; 089 open until the first Jev-only check is observed |
 
 For intents 001–024, all 194 stories (190 complete; remaining stories retain the statuses above)
 are assigned exactly once. Intents 025 and 026 add 9 complete and 12 planned stories respectively.
@@ -731,8 +731,8 @@ Paired Jev comparison ran 2026-10-01 to 2026-10-10 (82 pairs). Owner chose adopt
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-213` | Analyze paired results | Jev comparison | Complete | `003-price-comparison-qualification/stories/001-analyze-paired-results.md` |
-| `US-214` | Qualify paired price release | Jev comparison | In progress | `003-price-comparison-qualification/stories/002-qualify-paired-price-release.md` |
-| `US-215` | Activate and roll back comparison | Jev comparison | In progress | `003-price-comparison-qualification/stories/003-activate-and-rollback-comparison.md` |
+| `US-214` | Qualify paired price release | Jev comparison | Complete | `003-price-comparison-qualification/stories/002-qualify-paired-price-release.md` |
+| `US-215` | Activate and roll back comparison | Jev comparison | Complete | `003-price-comparison-qualification/stories/003-activate-and-rollback-comparison.md` |
 
 ### 004-jev-price-promotion
 

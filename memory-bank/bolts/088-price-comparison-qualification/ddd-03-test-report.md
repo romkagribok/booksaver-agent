@@ -2,7 +2,7 @@
 stage: test
 bolt: 088-price-comparison-qualification
 created: "2026-10-10T01:49:30Z"
-status: in-progress
+status: complete
 ---
 
 # Release qualification and activation — evidence
@@ -43,3 +43,11 @@ This bolt stays in progress until the kill-switch criterion has production evide
 
 Cursor Bugbot ran on PR #78 and passed with no findings, the first automated review of this
 intent's code. The kill-switch criterion remains open until phase 2 of bolt 089.
+
+## 2026-10-12T23:16:49Z — kill switch exercised
+
+Paired mode was turned off in production on 2026-10-12T23:15:40Z
+(`operations/releases/a273c78-jev-only-price-method.md`): 0 pending arms afterwards, all 106
+comparisons and 254 history rows retained, no candidate factory built, schema unchanged, container
+healthy. The last open criterion of US-215 is met. Dispositions above stand, including the
+descoped items and the Bugbot waivers on PRs #73 to #76.
