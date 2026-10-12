@@ -65,6 +65,7 @@ def price_validation_diagnostics(
             candidate = candidates[candidate_index]
             candidate_index += 1
             record["room_comparison"] = "matched" if candidate.matches_room else "mismatched"
+            record["meal_plan"] = candidate.meal_plan.value
             if selection is not None:
                 excluded = next(
                     (reason.value for item, reason in selection.excluded if item is candidate), None

@@ -998,3 +998,22 @@ def test_reload_never_recovers_a_tab_that_left_the_allowed_site(monkeypatch: Any
     )
     assert outcome is PriceExecutionStatus.UNSAFE_ACTION
     assert session.navigations == [] and "end=invariant_before_reload" in runtime.diagnostic
+
+
+def test_each_offer_carries_its_own_rate_meal_wording() -> None:
+    snapshot = parse_offer_snapshot(
+        {
+            "url": URL,
+            "title": f"{PROPERTY}, West Lafayette – Updated 2026 Prices",
+            "headings": ["Booking.com", PROPERTY, "Reviews", "Standard King Room"],
+            "viewport_text": "",
+            "rooms": [{
+                "lines": [*ROOM_LINES, "Breakfast room on the ground floor"],
+                "rates": [list(SAVER), [*FLEXIBLE, "Very good breakfast included"]],
+            }],
+        }
+    )
+    saver, flexible = _extract(ScriptedJev(), snapshot).offers
+    # Read by code from the rate row; the room card's own lines are never meal evidence.
+    assert saver.meal_text == "none"
+    assert flexible.meal_text == "Very good breakfast included"

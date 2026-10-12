@@ -39,7 +39,7 @@ The trust rules that would sit in a security suite are unit tests (see "Security
 | US-220 | Value and wording stored; value reaches the booking | ✅ |
 | US-220 | Stated value kept against `unknown` and silent readings; replaced by a different stated one | ✅ |
 | US-220 | Schema v20 migrates to v21 with every meal plan `unknown` | ✅ |
-| US-220 | A production reservation that includes breakfast reads `breakfast` | ❌ not yet evidenced; needs the release |
+| US-220 | A production reservation that includes breakfast reads `breakfast` | ✅ production, 2026-10-12 |
 | US-221 | `/bookings` shows the meal plan in plain words | ✅ |
 | US-221 | `unknown` shows as "meals not confirmed" | ✅ |
 | US-221 | The stored wording is not shown | ✅ |
@@ -85,7 +85,7 @@ Not measured.
 | A facilities list naming a meal could be read as the booked meal plan (Bugbot, head 1e482eb) | Medium | Fixed at 2026-10-10T02:20:12Z |
 | "Exclusive" counted as a denial, so inclusion wording containing it read as a stated `none` (Bugbot, head ec4558d) | Medium | Fixed at 2026-10-10T08:02:36Z |
 | Any digit beside a named meal counted as a price, so a time or guest count read as a stated `none` (Bugbot, head ec4558d) | Medium | Fixed at 2026-10-10T08:02:36Z: a price needs a currency; "available" and "per person" alone no longer mean `none` |
-| At daemon start several threads ran `_migrate_v21` at once; two scheduler jobs failed their first pass with "duplicate column name" and recovered on the next (production, release) | Low | Open; fix proposed to the owner |
+| At daemon start several threads ran `_migrate_v21` at once; two scheduler jobs failed their first pass with "duplicate column name" and recovered on the next (production, release) | Low | Fixed in bolt 091: `_migrate_v21` tolerates a column another connection has just added |
 | `SCHEMA_VERSION` merged cleanly at 20 against PR #78, which would have skipped this migration in production (reported by the session that owns PR #78) | High | Fixed at 2026-10-10T07:49:45Z by moving to v21 |
 
 ## Staging evidence
@@ -114,9 +114,26 @@ existing meal plan still unknown until the first synchronization. See
 `memory-bank/operations/releases/d19f7b5-reservation-meal-plan.md`. The startup defect listed
 under "Issues Found" was observed here. Production readings are not recorded yet.
 
+## Production readings (2026-10-12T22:48:46Z)
+
+Read from the production database after the scheduled synchronizations of 2026-10-10 to
+2026-10-12 (image `mealplan-d19f7b5`, then `bookedtotal-baf9b29`, which contains it). Five upcoming
+reservations across two users, every reading stated by a line on the page:
+
+| Wording on the reservation page | Reading | Reservations |
+|---------------------------------|---------|--------------|
+| "Breakfast is included in the final price" | `breakfast` | 1 (the reservation that prompted this intent) |
+| "No meal is included in this room rate." | `none` | 2 |
+| "There is no meal included in the rate for this apartment." | `none` | 2 |
+
+The three monitored bookings carry the same values (`breakfast`, `none`, `none`). Eight older
+reservations that are completed or no longer in the account were not re-read and stay unknown.
+No reading was `unknown` and none came from a silent page. No traceback has been logged since
+the first scheduler pass after the release.
+
 ## Ready for Operations
 
-- [ ] All acceptance criteria met (one needs the release)
+- [x] All acceptance criteria met
 - [ ] Code coverage > 80% (not measured)
 - [x] No critical/high severity issues open
 - [x] Performance targets met (none apply)

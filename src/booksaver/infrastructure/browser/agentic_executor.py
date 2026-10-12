@@ -900,6 +900,9 @@ def _map_extracted_observation(raw: Mapping[str, Any]) -> TypedObservation:
                         else None
                     ),
                     completeness=_enum_value(EvidenceCompleteness, item["completeness"]),
+                    meal_text=(
+                        str(item["meal_text"]) if item.get("meal_text") is not None else None
+                    ),
                 )
             )
     except (KeyError, TypeError, ValueError, InvalidOperation) as exc:

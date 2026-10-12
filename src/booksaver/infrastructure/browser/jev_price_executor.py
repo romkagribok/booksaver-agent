@@ -35,6 +35,7 @@ from booksaver.domain.browser_executor import (
     PriceExecutionStatus,
     RedactedProvenance,
 )
+from booksaver.domain.meal_plan import mentions_meals
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.model_policy import UsdAmount
 from booksaver.domain.price_comparison import (
@@ -1119,6 +1120,8 @@ class LocalJevPriceRuntime:
                     "refundability": evidence.refundability,
                     "refundability_text": evidence.refundability_text,
                     "completeness": "complete" if evidence.complete else "incomplete",
+                    "meal_text": "\n".join(line for line in rate if mentions_meals(line))
+                    or "none",
                 }
             )
         facts = _url_query_facts(snapshot.url)

@@ -3,14 +3,14 @@ id: 090-reservation-meal-plan
 unit: 001-reservation-meal-plan
 intent: 027-meal-plan-equivalence
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-record-reservation-meal-plan
   - 002-show-meal-plan-in-bookings
 created: "2026-10-10T01:49:45Z"
 started: "2026-10-10T01:49:45Z"
-completed: null
-current_stage: test
+completed: "2026-10-12T22:48:51Z"
+current_stage: null
 stages_completed:
   - name: domain-model
     completed: "2026-10-10T02:02:11Z"
@@ -25,7 +25,8 @@ stages_completed:
     completed: "2026-10-10T08:07:38Z"
     artifact: adr-057-meal-plan-equivalence.md
 requires_bolts: []
-enables_bolts: ['091-meal-aware-offers']
+enables_bolts:
+  - 091-meal-aware-offers
 requires_units: []
 blocks: false
 complexity:

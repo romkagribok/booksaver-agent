@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.models import Booking
 from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.value_objects import Money
@@ -88,7 +89,10 @@ def parse_candidates(text: str, booking: Booking) -> list[OfferCandidate]:
 
 def has_confident_exact_match(candidates: list[OfferCandidate], booking: Booking) -> bool:
     """True when DOM parsing alone found the booked room with explicit refundability —
-    the zero-LLM-call happy path."""
+    the zero-LLM-call happy path. This parser cannot tie a meal line to one rate, so a
+    reservation that includes meals always goes to the model extraction (ADR-057)."""
+    if booking.meal_plan not in (MealPlan.UNKNOWN, MealPlan.NONE):
+        return False
     return any(
         c.exact_label_match(booking) and c.is_refundable is not None for c in candidates
     )

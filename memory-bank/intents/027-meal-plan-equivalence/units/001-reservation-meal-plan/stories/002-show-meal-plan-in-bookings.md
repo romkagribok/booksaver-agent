@@ -2,11 +2,11 @@
 id: 002-show-meal-plan-in-bookings
 unit: 001-reservation-meal-plan
 intent: 027-meal-plan-equivalence
-status: in-progress
+status: complete
 priority: must
 created: "2026-10-10T01:49:45Z"
 assigned_bolt: 090-reservation-meal-plan
-implemented: false
+implemented: true
 ---
 
 # US-221: Show the meal plan in /bookings

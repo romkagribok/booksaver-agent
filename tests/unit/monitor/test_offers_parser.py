@@ -65,3 +65,15 @@ class TestParseOffersResponse:
         )
         [offer] = parse_offers_response(raw)
         assert offer.is_refundable is None
+
+
+def test_meal_wording_is_classified_and_anything_else_is_unknown():
+    from booksaver.domain.meal_plan import MealPlan
+
+    raw = _VALID.replace('0.9}', '0.9, "meal_text": "none"}')
+    room_only, unstated = parse_offers_response(raw)
+    assert room_only.meal_plan is MealPlan.NONE
+    assert unstated.meal_plan is MealPlan.UNKNOWN
+    included = parse_offers_response(raw.replace('"none"', '"Breakfast included"'))[0]
+    assert included.meal_plan is MealPlan.BREAKFAST
+    assert parse_offers_response(raw.replace('"none"', "7"))[0].meal_plan is MealPlan.UNKNOWN

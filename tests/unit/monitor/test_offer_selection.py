@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
+import pytest
+
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.offer import (
     ExclusionReason,
     OfferCandidate,
@@ -113,3 +117,55 @@ class TestSelection:
         booking = make_booking()  # room "Standard Double"
         assert _candidate(label="standard double ").exact_label_match(booking)
         assert not _candidate(label="Deluxe Double").exact_label_match(booking)
+
+
+class TestMealPlanRule:
+    """ADR-057: an offer is equivalent only with the same or a better meal plan."""
+
+    @pytest.mark.parametrize(
+        "booked, offered, expected",
+        [
+            # Only a reservation known to include meals constrains the offer.
+            (MealPlan.UNKNOWN, MealPlan.NONE, None),
+            (MealPlan.UNKNOWN, MealPlan.UNKNOWN, None),
+            (MealPlan.NONE, MealPlan.NONE, None),
+            (MealPlan.NONE, MealPlan.UNKNOWN, None),
+            (MealPlan.NONE, MealPlan.BREAKFAST, None),
+            (MealPlan.BREAKFAST, MealPlan.BREAKFAST, None),
+            (MealPlan.BREAKFAST, MealPlan.HALF_BOARD, None),
+            (MealPlan.HALF_BOARD, MealPlan.ALL_INCLUSIVE, None),
+            (MealPlan.BREAKFAST, MealPlan.NONE, ExclusionReason.MEAL_PLAN_WORSE),
+            (MealPlan.FULL_BOARD, MealPlan.HALF_BOARD, ExclusionReason.MEAL_PLAN_WORSE),
+            (MealPlan.BREAKFAST, MealPlan.UNKNOWN, ExclusionReason.MEAL_PLAN_UNKNOWN),
+        ],
+    )
+    def test_rule_table(self, booked, offered, expected):
+        booking = replace(make_booking(), meal_plan=booked)
+        candidate = replace(_candidate(), meal_plan=offered)
+        selection = select_offer([candidate], booking)
+        if expected is None:
+            assert selection.chosen is candidate
+        else:
+            assert selection.chosen is None
+            assert selection.excluded == ((candidate, expected),)
+
+    def test_cheaper_room_only_rate_loses_to_the_breakfast_rate(self):
+        # The reported defect: the same room, cheaper, without the booked breakfast.
+        booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
+        room_only = replace(_candidate(amount="300.00"), meal_plan=MealPlan.NONE)
+        with_breakfast = replace(_candidate(amount="380.00"), meal_plan=MealPlan.BREAKFAST)
+        selection = select_offer([room_only, with_breakfast], booking)
+        assert selection.chosen is with_breakfast
+        assert selection.exclusion_summary() == "meal_plan_worse=1"
+
+    def test_currency_mismatch_only_counts_offers_that_also_satisfy_meals(self):
+        booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
+        room_only_usd = replace(_candidate(currency="USD"), meal_plan=MealPlan.NONE)
+        selection = select_offer([room_only_usd], booking)
+        assert selection.currency_mismatches == ()
+        assert selection.excluded[0][1] is ExclusionReason.MEAL_PLAN_WORSE
+
+    def test_earlier_rules_still_come_first(self):
+        booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
+        candidate = replace(_candidate(is_refundable=False), meal_plan=MealPlan.NONE)
+        assert select_offer([candidate], booking).excluded[0][1] is ExclusionReason.NOT_REFUNDABLE

@@ -63,6 +63,17 @@ Points 1, 4 and 5 take effect with bolt 091; points 2 and 3 with bolt 090.
   or as `none` if it is outside the room section. Mitigation: the stored line, the `/bookings`
   line, and releasing the gate only after production readings are reviewed.
 
+## Addendum 2026-10-12T22:38:30Z: offer wording on the model price paths (bolt 091)
+
+Price methods supply a rate's meal wording, never a meal plan; BookSaver classifies it. On the
+Jev path the wording is the rate row's own lines from the code-owned page snapshot. On the
+Browser Use and legacy extraction paths the wording is copied by the model and has the trust
+level of the cancellation wording those paths already copy: a missing or unclear value can only
+exclude an offer, but a fabricated inclusion could admit one. Accepted by the owner's "pls
+continue" of 2026-10-12 to the bolt 091 stage summary. The alternative, reporting `unknown` on
+those paths until Jev is the price method, would hide every cheaper offer from users whose
+reservation includes meals.
+
 ## Related
 
 - **Stories**: US-220 to US-225

@@ -47,6 +47,7 @@ from booksaver.domain.check_result import (
 )
 from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.journey import JourneyResult, JourneyStep
+from booksaver.domain.meal_plan import offer_meal_plan
 from booksaver.domain.mobile_web import (
     GeniusEvidence,
     MobileProfileId,
@@ -366,6 +367,7 @@ class BookingComSearchMonitor:
                     cancellation_text=offer.cancellation_text,
                     matches_room=matches,
                     match_confidence=confidence,
+                    meal_plan=offer_meal_plan(offer.meal_text),
                 )
             )
         selection = select_offer(candidates, booking)
@@ -1095,6 +1097,7 @@ class BookingComSearchMonitor:
             session_mode=session_mode,
             price_source=price_source,
             assisted_diagnoses=assisted_diagnoses,
+            offer_meal_plan=chosen.meal_plan,
         )
 
     def _try_llm_offers(

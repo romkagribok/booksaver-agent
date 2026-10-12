@@ -751,8 +751,8 @@ Meal plan as part of offer equivalence; recording ships before the gate.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-220` | Record the reservation's meal plan | Meal plan | In progress | `001-reservation-meal-plan/stories/001-record-reservation-meal-plan.md` |
-| `US-221` | Show the meal plan in /bookings | Meal plan | In progress | `001-reservation-meal-plan/stories/002-show-meal-plan-in-bookings.md` |
+| `US-220` | Record the reservation's meal plan | Meal plan | Complete | `001-reservation-meal-plan/stories/001-record-reservation-meal-plan.md` |
+| `US-221` | Show the meal plan in /bookings | Meal plan | Complete | `001-reservation-meal-plan/stories/002-show-meal-plan-in-bookings.md` |
 
 ### 002-meal-aware-offers
 
