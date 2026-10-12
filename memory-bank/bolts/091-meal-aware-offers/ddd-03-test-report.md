@@ -4,7 +4,7 @@ bolt: 091-meal-aware-offers
 stage: test
 status: in-progress
 created: "2026-10-12T22:48:46Z"
-updated: "2026-10-12T22:48:46Z"
+updated: "2026-10-12T23:03:28Z"
 ---
 
 # Test Report - Meal-aware offers
@@ -86,6 +86,13 @@ Not measured.
 | No real rate-table wording is available to qualify the offer reader (FR-11) | Medium | Open. After release the price diagnostic records each candidate's classified meal plan for read-back |
 | Legacy path without a model key: a reservation with meals always ends as no equivalent offer | Low | Accepted; fails closed |
 
+## Release evidence
+
+2026-10-12T23:02:04Z: promoted as `mealgate-507aa5b` after Bugbot passed with no findings, dev checks on the
+exact image and a staging probe on the real monitored bookings. Healthy, schema 21, no traceback
+at start. See `memory-bank/operations/releases/507aa5b-meal-plan-gate.md`. The 24-hour read-back
+of the reservation with breakfast is not recorded yet.
+
 ## Ready for Operations
 
 - [ ] All acceptance criteria met (FR-11 real-page qualification is open)
@@ -94,4 +101,5 @@ Not measured.
 - [x] Performance targets met (none apply)
 - [x] Security tests passing
 - [x] Owner review of Stages 4 and 5 (2026-10-12T22:56:19Z: approved, with merge and redeploy)
-- [ ] Bugbot, staging and release evidence
+- [x] Bugbot, staging and release evidence
+- [ ] 24-hour production read-back
