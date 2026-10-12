@@ -2,7 +2,7 @@
 unit: 002-meal-aware-offers
 intent: 027-meal-plan-equivalence
 created: "2026-10-10T08:20:49Z"
-last_updated: "2026-10-12T22:56:19Z"
+last_updated: "2026-10-12T23:03:28Z"
 ---
 
 # Construction Log: 002-meal-aware-offers
@@ -42,6 +42,8 @@ without a stop between them and presented together; no code is written before th
 | 2026-10-12T22:38:30Z | 091-meal-aware-offers | stage-complete | Owner replied "pls continue"; taken as approval of Stages 1 to 3 with the recommended options. adr-analysis → implement: addendum to ADR-057, no new ADR. Plan departures recorded in the technical design before any code |
 | 2026-10-12T22:48:46Z | 091-meal-aware-offers | stage-complete | implement → test: code and tests written; full suite 3,288 passed. Stopped for the owner's review of Stages 4 and 5 together; nothing committed |
 | 2026-10-12T22:56:19Z | 091-meal-aware-offers | approved | Owner approved Stages 4 and 5, merge and redeploy, and asked for 24 hours of monitoring of the breakfast reservation |
+| 2026-10-12T23:01:16Z | 091-meal-aware-offers | merged | PR #84 merged as 1ebf46d after the Bugbot gate passed on 507aa5b with no findings |
+| 2026-10-12T23:02:04Z | 091-meal-aware-offers | released | Promoted as `mealgate-507aa5b`; healthy, clean start. 24-hour read-back of the breakfast reservation started (release record) |
 
 ## Execution Summary
 
