@@ -104,3 +104,14 @@ URL, at most twice, checking the single-target and allowed-destination invariant
 after each reload and counting each as a browser action. Only then does the Jev decision loop
 start. The error page is recognised by error wording in the title or a heading (not page body
 text) with no bot-check wording. The diagnostic records each `>RELOAD`.
+
+## Meal wording on the Jev path (added 2026-10-12T23:10:16Z)
+
+The meal gate (ADR-057, bolt 091) classifies each offer's `meal_text` and treats any
+unclassifiable meal mention as unknown, which excludes the offer for a reservation booked with
+meals. The Jev path built `meal_text` from every rate-card line that mentions a meal. The first
+line of a rate card is the rate's name ("Flexible + Breakfast"): a meal mention with no inclusion
+wording, hence unclassifiable, so a rate that also says "Very good breakfast included in the
+price" became unknown. The name line is now left out; only the card's statements are meal
+evidence. A rate named for a meal but with no inclusion statement reports `none`, which can only
+exclude it.

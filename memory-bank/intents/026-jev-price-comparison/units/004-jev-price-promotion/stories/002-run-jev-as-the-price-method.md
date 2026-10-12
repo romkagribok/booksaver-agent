@@ -37,6 +37,9 @@ FR-13.
 - [ ] Given `price_executor = "browser_use"`, when restarting, then the previous LLM method runs
   unchanged (rollback), with history preserved.
 - [ ] Given a user purge or booking removal, when deleting, then Jev run records are removed too.
+- [ ] Given a reservation booked with meals and a rate whose name mentions a meal (for example
+  "Flexible + Breakfast"), when Jev reports the rate's meal wording, then the rate's name is not
+  part of it, so an explicit "breakfast included" line is classified as breakfast.
 
 ## Out of scope
 

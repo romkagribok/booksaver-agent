@@ -1017,3 +1017,25 @@ def test_each_offer_carries_its_own_rate_meal_wording() -> None:
     # Read by code from the rate row; the room card's own lines are never meal evidence.
     assert saver.meal_text == "none"
     assert flexible.meal_text == "Very good breakfast included"
+
+
+def test_a_rate_named_for_a_meal_still_classifies_by_its_inclusion_statement() -> None:
+    """Live wording: the rate is called "Flexible + Breakfast" and says breakfast is included."""
+    from booksaver.domain.meal_plan import MealPlan, offer_meal_plan
+
+    named = ("Flexible + Breakfast", *FLEXIBLE[1:3], "Very good breakfast included in the price",
+             *FLEXIBLE[3:])
+    name_only = ("Flexible + Breakfast", *FLEXIBLE[1:])
+    snapshot = parse_offer_snapshot(
+        {
+            "url": URL,
+            "title": PROPERTY,
+            "headings": [PROPERTY],
+            "rooms": [{"lines": list(ROOM_LINES), "rates": [list(named), list(name_only)]}],
+        }
+    )
+    with_statement, without = _extract(ScriptedJev(), snapshot).offers
+    assert with_statement.meal_text == "Very good breakfast included in the price"
+    assert offer_meal_plan(with_statement.meal_text) is MealPlan.BREAKFAST
+    # A name alone is not evidence of an included meal; it can only exclude the offer.
+    assert without.meal_text == "none"
