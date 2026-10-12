@@ -1507,7 +1507,10 @@ class SqliteAccountReservationRepository:
         only as another rendering of the same recognized Booking hotel URL (locale suffix or
         host); the stored reference is kept. A new name is accepted only when that URL proof
         holds and a code-owned reader took the name and URL from one verified page anchor, so
-        provider output cannot rename a saved hotel. Any other difference fails closed.
+        provider output cannot rename a saved hotel. A booked total may differ only when a
+        code-owned reader reconciled it on the confirmation page, which is the amount the guest
+        actually owes; a provider-submitted total cannot replace a saved one. Any other
+        difference fails closed.
         """
 
         def _different(column: str, observed: object | None) -> bool:
@@ -1548,7 +1551,7 @@ class SqliteAccountReservationRepository:
             )
         ):
             conflicts.append("remote_lifecycle")
-        if observation.booked_total is not None:
+        if observation.booked_total is not None and not observation.booked_total_verified:
             stored_amount = existing["baseline_amount"]
             stored_currency = existing["baseline_currency"]
             if stored_amount is not None and Decimal(str(stored_amount)) != (
@@ -1641,7 +1644,13 @@ class SqliteAccountReservationRepository:
                 else observation.check_out
             ),
             room_type=existing["room_type"] or observation.room_type,
-            booked_total=stored_total or observation.booked_total,
+            # A total reconciled on the confirmation page replaces the saved one; the conflict
+            # check has already rejected every other difference.
+            booked_total=(
+                observation.booked_total
+                if observation.booked_total_verified and observation.booked_total is not None
+                else stored_total or observation.booked_total
+            ),
             refundable=(
                 bool(existing["refundable"])
                 if existing["refundable"] is not None

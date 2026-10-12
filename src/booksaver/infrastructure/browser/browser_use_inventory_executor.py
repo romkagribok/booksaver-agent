@@ -28,6 +28,7 @@ from booksaver.application.model_policy import BrowserJobCostBudget
 from booksaver.application.ports import SessionRestoreTarget
 from booksaver.domain.account_sync import ReservationLifecycle
 from booksaver.domain.browser_executor import (
+    AllInEvidence,
     EvidenceCompleteness,
     ExecutorSafetyViolation,
     ObservationSource,
@@ -1802,11 +1803,18 @@ class LocalBrowserUseInventoryRuntime:
             )
             scopes, reservations = _map_browser_use_observation(payload)
             # The grouped reader takes name and URL only from the single confirmation-header
-            # anchor (inventory_confirmation_facts), never from provider output.
+            # anchor and the total only from the reconciled price section
+            # (inventory_confirmation_facts), never from provider output.
             reservations = tuple(
-                replace(item, property_anchor_verified=True)
-                if item.property_name is not None and item.property_reference is not None
-                else item
+                replace(
+                    item,
+                    property_anchor_verified=(
+                        item.property_name is not None and item.property_reference is not None
+                    ),
+                    booked_total_verified=(
+                        item.booked_total is not None and item.all_in is AllInEvidence.EXPLICIT
+                    ),
+                )
                 for item in reservations
             )
             reservations = _with_parsed_meal_plans(reservations, result.reservations)

@@ -308,6 +308,8 @@ class ReservationObservation:
     meal_plan: MealPlan = MealPlan.UNKNOWN
     # Verbatim line the meal plan was read from; empty when no line stated it.
     meal_plan_text: str = ""
+    # True only when a code-owned reader reconciled the total on the confirmation page.
+    booked_total_verified: bool = False
 
     def __post_init__(self) -> None:
         if not self.remote_id.strip():

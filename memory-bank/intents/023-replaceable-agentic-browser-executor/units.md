@@ -3,12 +3,20 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: complete
 created: 2026-08-16T19:18:41Z
-updated: 2026-09-19T22:04:01Z
+updated: 2026-10-10T01:59:26Z
 ---
 
 # Units: Replaceable Agentic Browser Executor
 
 ## Unit Decomposition
+
+### 013-confirmation-booked-total
+
+- Purpose: Record the confirmation page's booked total in its printed currency, read the refund
+  schedule layout, and let a reader-reconciled total replace a stale saved baseline.
+- Assigned requirements: FR34–36; stories US226–228; Bolt092 construction complete, release pending.
+- Dependencies: completed Units011/012 and the existing confirmation reader, validator and SQLite
+  reconciliation boundary. No new service, route, dependency or schema change.
 
 ### 012-trusted-inventory-reconciliation
 
@@ -179,3 +187,6 @@ flowchart LR
 
 21. Bolt077: trusted current-list proof, scoped absence retirement, identity-safe cancellation and
     unverified saved-row presentation; mandatory caller/release qualification.
+
+22. Bolt092: confirmation booked total in the printed currency, refund schedule layout,
+    reader-verified replacement of a stale saved total, and affected-caller qualification.
