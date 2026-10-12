@@ -1120,7 +1120,9 @@ class LocalJevPriceRuntime:
                     "refundability": evidence.refundability,
                     "refundability_text": evidence.refundability_text,
                     "completeness": "complete" if evidence.complete else "incomplete",
-                    "meal_text": "\n".join(line for line in rate if mentions_meals(line))
+                    # rate[0] is the rate's name ("Flexible + Breakfast"): a meal word with no
+                    # inclusion wording, which would make the whole text unclassifiable.
+                    "meal_text": "\n".join(line for line in rate[1:] if mentions_meals(line))
                     or "none",
                 }
             )
