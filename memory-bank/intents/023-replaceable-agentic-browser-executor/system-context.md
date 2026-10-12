@@ -194,3 +194,11 @@ current-list evidence may authorize covered active-row retirement only after tru
 model observations and incomplete evidence remain positive-only. Retain local history, current-run
 price receipts and per-user isolation. Exact cancellation and replacement identities remain separate.
 See Bolt077/ADR049; the proof contract, exact-image Staging and normal production reconciliation are verified; see Unit012 deployment history.
+
+## Confirmation booked-total follow-up
+
+Unit013 changes no actor, service or integration. The existing code-owned confirmation reader
+remains the only source of a page-verified booked total; it now reports the currency the page
+prints instead of assuming euros. Reconciliation gains one narrow rule: a reader-reconciled total
+may replace a saved one, while provider output still cannot. Price checks keep requesting and
+requiring the booking's own currency and never convert. See Bolt092 and ADR-058.

@@ -292,8 +292,10 @@ class GroupedInventoryRead:
     auxiliary_links_skipped: int = 0
     unresolved: int = 0
     desktop_view_used: bool = False
+    # Fixed "fact:reason" codes from the confirmation parser; never page text or identifiers.
+    unknown_facts: dict[str, int] = field(default_factory=dict)
 
-    def diagnostic(self) -> dict[str, int | bool | None]:
+    def diagnostic(self) -> dict[str, int | bool | None | dict[str, int]]:
         return {
             "root_detail_count": self.root_detail_count,
             "active_coverage_complete": self.active_coverage_complete,
@@ -308,6 +310,7 @@ class GroupedInventoryRead:
             "unresolved": self.unresolved,
             "desktop_view_used": self.desktop_view_used,
             "parsed_reservations": len(self.reservations),
+            "unknown_facts": dict(sorted(self.unknown_facts.items())),
         }
 
 
@@ -613,13 +616,21 @@ class GroupedInventoryReader:
                     )
                     if cancellation_card and cancelled is None:
                         self.unresolved("cancellation_not_verified")
+                    reasons: dict[str, str] = {}
                     facts = cancelled or parse_confirmation_facts(
-                        snapshot.text, snapshot.hotel_anchors, observed_at=self.observed_at
+                        snapshot.text, snapshot.hotel_anchors, observed_at=self.observed_at,
+                        reasons=reasons,
                     )
                     if (cancelled is not None and card_conflict) or (
                         cancellation_card and cancelled is None
                     ):
                         facts = None
+                    if facts is not None:
+                        for fact, reason in reasons.items():
+                            code = f"{fact}:{reason}"
+                            self.result.unknown_facts[code] = (
+                                self.result.unknown_facts.get(code, 0) + 1
+                            )
                     if cancelled is not None and not card_conflict:
                         self.result.cancelled_confirmation_ids.add(cancelled["confirmation_id"])
                     if facts is not None:

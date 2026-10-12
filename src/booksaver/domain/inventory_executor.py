@@ -253,6 +253,9 @@ class ObservedReservation:
     # Set only by the code-owned confirmation parser; provider-submitted facts never set it.
     meal_plan: MealPlan = MealPlan.UNKNOWN
     meal_plan_text: str | None = field(default=None, repr=False)
+    # Set only by code-owned readers that reconciled the all-in total on the confirmation page.
+    # Provider-submitted totals never set it, so they cannot replace a saved booked total.
+    booked_total_verified: bool = field(default=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(

@@ -403,6 +403,75 @@ def test_agentic_refresh_accepts_renamed_property_and_locale_variant_reference(
         assert tuple(projection) == ("Hotel Example by Marriott", stored_ref)
 
 
+@pytest.mark.parametrize("verified", [True, False])
+def test_only_a_page_verified_total_replaces_the_saved_booked_total(
+    tmp_path: Path, verified: bool,
+) -> None:
+    """The reconciled confirmation total is what the guest owes; provider output is not."""
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        owner = SqliteUserRepository(store).get_owner()
+        repo = SqliteAccountReservationRepository(store)
+        original = replace(_reservation(), booked_total=Money(Decimal("301"), "USD"))
+        repo.reconcile(
+            user_id=owner.user_id,
+            run_id="seed-stale-total",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((original,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW,
+        )
+        before = repo.list_for_user(owner.user_id)
+        # An opportunity computed against the stale baseline must not outlive a replacement.
+        store.conn.execute(
+            "INSERT INTO savings_opportunities (opportunity_id, booking_id, check_id, "
+            "baseline_amount, live_amount, currency, amount_saved, percent_saved, validated_at) "
+            "VALUES ('stale-opportunity', ?, 'check-1', '301', '290', 'USD', '11', '3.65', ?)",
+            (before[0].monitoring_booking_id, NOW.isoformat()),
+        )
+        store.conn.commit()
+
+        def opportunities() -> int:
+            return int(store.conn.execute(
+                "SELECT COUNT(*) FROM savings_opportunities WHERE booking_id = ?",
+                (before[0].monitoring_booking_id,),
+            ).fetchone()[0])
+
+        refreshed = replace(
+            original,
+            remote_id=original.confirmation_id or "",
+            observed_at=NOW + timedelta(minutes=1),
+            booked_total=Money(Decimal("346.08"), "USD"),
+            extraction_method="agentic_inventory",
+            booked_total_verified=verified,
+        )
+
+        report = repo.reconcile(
+            user_id=owner.user_id,
+            run_id="agentic-page-total",
+            trigger=SynchronizationTrigger.BOOKINGS,
+            session_revision="session-1",
+            result=InventoryDiscoveryResult((refreshed,), InventoryCompleteness.INCOMPLETE),
+            observed_at=NOW + timedelta(minutes=1),
+        )
+        after = repo.list_for_user(owner.user_id)
+
+        if not verified:
+            assert report.failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT
+            assert after == before
+            assert opportunities() == 1
+            return
+        assert opportunities() == 0
+        projection = store.conn.execute(
+            "SELECT baseline_amount, baseline_currency FROM bookings WHERE booking_id = ?",
+            (after[0].monitoring_booking_id,),
+        ).fetchone()
+        assert report.failure_code is None
+        assert report.eligible == 1
+        assert after[0].monitoring_booking_id == before[0].monitoring_booking_id
+        assert after[0].observation.booked_total == Money(Decimal("346.08"), "USD")
+        assert tuple(projection) == ("346.08", "USD")
+
+
 def test_agentic_lifecycle_conflict_cannot_requalify_a_saved_projection(
     tmp_path: Path,
 ) -> None:

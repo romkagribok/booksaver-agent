@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -557,6 +558,25 @@ def test_partial_step_diagnostic_contains_no_booking_or_url(monkeypatch, caplog)
     assert "step=trip_navigation count=1" in caplog.text
     assert "booking.com" not in caplog.text
     assert "auth_key" not in caplog.text
+
+
+def test_unknown_fact_reasons_are_counted_as_fixed_codes_without_page_content(monkeypatch):
+    browser = Browser()
+    worker, result = harness(monkeypatch, browser)
+
+    def parse(*args, reasons=None, **kwargs):
+        # The readiness wait parses without asking for reasons; only the final read counts.
+        if reasons is not None:
+            reasons["booked_total"] = "total_not_money"
+        return header_facts()
+
+    monkeypatch.setattr(reader, "parse_confirmation_facts", parse)
+    assert asyncio.run(worker.run())
+    assert len(result.reservations) == 6
+    assert result.unknown_facts == {"booked_total:total_not_money": 6}
+    diagnostic = json.dumps(result.diagnostic(), sort_keys=True)
+    assert '"unknown_facts": {"booked_total:total_not_money": 6}' in diagnostic
+    assert "booking.com" not in diagnostic and "Hotel" not in diagnostic
 
 
 def test_root_detail_count_is_unknown_until_a_qualified_root_is_read(monkeypatch):

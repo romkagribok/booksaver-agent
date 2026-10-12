@@ -1,6 +1,6 @@
 ---
-last_updated: 2026-10-10T08:07:38Z
-total_decisions: 57
+last_updated: 2026-10-12T21:55:29Z
+total_decisions: 58
 ---
 
 # Decision Index
@@ -555,3 +555,11 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/090-reservation-meal-plan/adr-057-meal-plan-equivalence.md`
 - **Summary**: A cheaper offer that dropped the reservation's breakfast was reported as a saving. Equivalence requires the same or a better meal plan; the reservation's meal plan is set only by the code-owned confirmation parser, and a recognized room section that states nothing about meals means no meals.
 - **Read when**: Changing offer equivalence or selection, reading meal wording from a reservation or a rate, the confirmation parser's room section, or considering a default for a reservation fact the page does not state.
+
+### ADR-058: Page-verified booked total replaces a saved total
+- **Status**: accepted
+- **Date**: 2026-10-10
+- **Bolt**: 092-confirmation-booked-total (confirmation-booked-total)
+- **Path**: `bolts/092-confirmation-booked-total/adr-058-page-verified-booked-total.md`
+- **Summary**: Saved booked totals were immutable, which made a wrong saved baseline permanent. A total reconciled by the code-owned confirmation reader in the page's printed currency replaces a differing saved total and baseline; provider-submitted totals still fail closed.
+- **Read when**: Changing how booked totals, currencies or monitoring baselines are read, saved or reconciled, or the saved-fact conflict rules for agentic inventory.

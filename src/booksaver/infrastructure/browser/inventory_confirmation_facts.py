@@ -20,7 +20,28 @@ from booksaver.domain.meal_plan import (
 
 _MAX_TEXT = 250_000
 _MAX_LINES = 8_000
-_AMOUNT = r"[0-9]{1,7}(?:\.[0-9]{1,2})?"
+# en-US grouping only: the reader qualifies English pages rendered in the en-US browser locale.
+_AMOUNT = r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})(?:\.[0-9]{1,2})?"
+# Dollar currencies are read only with their prefix (the observed page prints "US$309"); a bare
+# "$" names no single currency and is not money here.
+_CURRENCY_SYMBOLS = {
+    "US$": "USD", "CA$": "CAD", "C$": "CAD", "AU$": "AUD", "A$": "AUD", "NZ$": "NZD",
+    "HK$": "HKD", "S$": "SGD", "MX$": "MXN", "R$": "BRL", "€": "EUR", "£": "GBP",
+    "¥": "JPY", "₹": "INR",
+}
+_CURRENCY_CODES = (
+    "AED", "ARS", "AUD", "AZN", "BGN", "BHD", "BRL", "CAD", "CHF", "CLP", "CNY", "COP",
+    "CZK", "DKK", "EGP", "EUR", "FJD", "GBP", "GEL", "HKD", "HUF", "IDR", "ILS", "INR",
+    "ISK", "JOD", "JPY", "KRW", "KWD", "KZT", "MDL", "MOP", "MXN", "MYR", "NAD", "NOK",
+    "NZD", "OMR", "PLN", "QAR", "RON", "RUB", "SAR", "SEK", "SGD", "THB", "TRY", "TWD",
+    "UAH", "USD", "XOF", "ZAR",
+)
+# Two groups: the currency symbol or ISO code, then the amount. The look-behind keeps a prefixed
+# symbol from matching inside a longer one ("S$" inside "US$").
+_MONEY = (
+    r"(?<![A-Za-z$])(" + "|".join(re.escape(symbol) for symbol in _CURRENCY_SYMBOLS)
+    + r"|\b(?:" + "|".join(_CURRENCY_CODES) + r")\b)\s*(" + _AMOUNT + r")"
+)
 _MONTHS = {
     name: index
     for index, names in enumerate(
@@ -62,6 +83,14 @@ _MEAL_LABEL = re.compile(r"(?:meal plan|meal option|meals):?(?: (.+))?", re.IGNO
 _ROOM_SECTION_END = frozenset({"cancellation cost", "price", "price breakdown", "additional info"})
 # A facilities list describes the room, not the booked rate, even when it names a meal.
 _FACILITIES_LABEL = re.compile(r"(?:room )?(?:facilities|amenities):?( .+)?", re.IGNORECASE)
+
+
+def _currency(token: str) -> str:
+    return _CURRENCY_SYMBOLS.get(token, token)
+
+
+def _amount(text: str) -> Decimal:
+    return Decimal(text.replace(",", ""))
 
 
 def _heading(lines: list[str], label: str) -> int | None:
@@ -244,39 +273,103 @@ def _meal_facts(lines: list[str], room_found: bool) -> dict[str, str]:
     return {"meal_plan": plan.value, "meal_plan_text": text[:MAX_MEAL_PLAN_TEXT]}
 
 
-def _cancellation_facts(lines: list[str], observed_at: datetime) -> dict[str, str]:
+# Free until one local moment, charged from the next: (until day, minute, from day, minute).
+_RefundWindow = tuple[date, int, date, int]
+_REFUND_SCHEDULE = re.compile(
+    r"You'll get a full refund if you cancel before ([0-9]{1,2}):([0-9]{2}) (AM|PM) on "
+    r"([A-Za-z]+) ([0-9]{1,2}), ([0-9]{4})\. If you cancel after ([0-9]{1,2}):([0-9]{2}) "
+    r"(AM|PM) on ([A-Za-z]+) ([0-9]{1,2}), ([0-9]{4}), you won't be eligible for a refund\."
+)
+
+
+def _clock_minutes(hour: str, minute: str, meridiem: str) -> int | None:
+    if not 1 <= int(hour) <= 12 or int(minute) > 59:
+        return None
+    return (int(hour) % 12 + (12 if meridiem == "PM" else 0)) * 60 + int(minute)
+
+
+def _cost_tier_window(lines: list[str]) -> tuple[bool, _RefundWindow | None]:
+    """Return whether any cost tier is rendered, and the free-then-paid window the tiers prove."""
     index = _heading(lines, "Cancellation cost")
     if index is None:
-        return {}
+        return False, None
     # Only the two explicit cost tiers in this confirmation's cancellation section qualify.
-    tiers: dict[str, tuple[date, int, Decimal]] = {}
+    tiers: dict[str, tuple[date, int, str, Decimal]] = {}
     section_ended = False
+    rendered = False
     for line in lines[index + 1:index + 16]:
         if re.match(r"1 (room|apartment)\b", line) or line in {"Price", "Price breakdown"}:
             section_ended = True
             break
         if not line.startswith(("until ", "from ")):
             continue
+        rendered = True
         match = re.fullmatch(
             r"(until|from) ([A-Za-z]+) ([0-9]{1,2}), ([0-9]{4}) "
-            r"([0-9]{1,2}):([0-9]{2}) (AM|PM): €\s*(" + _AMOUNT + r")"
-            r"(?: – Changing the dates of your stay isn't possible\.)?", line,
+            r"([0-9]{1,2}):([0-9]{2}) (AM|PM): " + _MONEY
+            + r"(?: – Changing the dates of your stay isn't possible\.)?", line,
         )
         if match is None:
-            return {}
-        kind, month, day, year, hour, minute, meridiem, amount = match.groups()
+            return True, None
+        kind, month, day, year, hour, minute, meridiem, token, amount = match.groups()
         parsed = _calendar_date(month, day, year)
-        if parsed is None or not 1 <= int(hour) <= 12 or int(minute) > 59 or kind in tiers:
-            return {}
-        minutes = (int(hour) % 12 + (12 if meridiem == "PM" else 0)) * 60 + int(minute)
-        tiers[kind] = parsed, minutes, Decimal(amount)
+        minutes = _clock_minutes(hour, minute, meridiem)
+        if parsed is None or minutes is None or kind in tiers:
+            return True, None
+        tiers[kind] = parsed, minutes, _currency(token), _amount(amount)
+    if not rendered:
+        return False, None
     if not section_ended or set(tiers) != {"until", "from"}:
-        return {}
-    until_day, until_minute, until_cost = tiers["until"]
-    from_day, from_minute, from_cost = tiers["from"]
+        return True, None
+    until_day, until_minute, until_currency, until_cost = tiers["until"]
+    from_day, from_minute, from_currency, from_cost = tiers["from"]
+    if until_currency != from_currency or until_cost != 0 or from_cost <= 0:
+        return True, None
+    return True, (until_day, until_minute, from_day, from_minute)
+
+
+def _refund_schedule_window(lines: list[str]) -> _RefundWindow | None:
+    """Read the single full-refund-then-no-refund sentence rendered beside "Refund schedule"."""
+    labels = [index for index, line in enumerate(lines) if line.startswith("Refund schedule")]
+    if len(labels) != 1:
+        return None
+    index = labels[0]
+    sentence = lines[index].removeprefix("Refund schedule").strip()
+    if not sentence and index + 1 < len(lines):
+        sentence = lines[index + 1]
+    match = _REFUND_SCHEDULE.fullmatch(sentence)
+    if match is None:
+        return None
+    (
+        until_hour, until_min, until_meridiem, until_month, until_date, until_year,
+        from_hour, from_min, from_meridiem, from_month, from_date, from_year,
+    ) = match.groups()
+    until_day = _calendar_date(until_month, until_date, until_year)
+    from_day = _calendar_date(from_month, from_date, from_year)
+    until_minute = _clock_minutes(until_hour, until_min, until_meridiem)
+    from_minute = _clock_minutes(from_hour, from_min, from_meridiem)
+    if until_day is None or from_day is None or until_minute is None or from_minute is None:
+        return None
+    return until_day, until_minute, from_day, from_minute
+
+
+def _cancellation_facts(lines: list[str], observed_at: datetime) -> dict[str, str] | str:
+    """Return refundability facts, or the fixed reason code for leaving them unknown."""
+    # Rendered cost tiers stay authoritative. The refund schedule sentence is read only on the
+    # confirmation layout that prints no cost tiers at all.
+    tiers_rendered, window = _cost_tier_window(lines)
+    if not tiers_rendered:
+        window = _refund_schedule_window(lines)
+    if window is None:
+        if tiers_rendered:
+            return "cost_tiers_unrecognized"
+        if any(line.startswith("Refund schedule") for line in lines):
+            return "refund_schedule_unrecognized"
+        return "no_cancellation_evidence"
+    until_day, until_minute, from_day, from_minute = window
     gap = (from_day - until_day).days * 1440 + from_minute - until_minute
-    if until_cost != 0 or from_cost <= 0 or not 0 <= gap <= 1:
-        return {}
+    if not 0 <= gap <= 1:
+        return "cutoffs_not_adjacent"
     # The snapshot has no verified property timezone. Today's local cutoff stays unknown. At
     # adjacent UTC dates, require the result to hold even at the earliest/latest real-world offset
     # instead of treating a UTC date as the property's local date.
@@ -291,7 +384,7 @@ def _cancellation_facts(lines: list[str], observed_at: datetime) -> dict[str, st
         earliest_cutoff = until_time - timedelta(hours=14)
         latest_charge_start = from_time + timedelta(hours=12)
     except OverflowError:
-        return {}
+        return "cutoff_out_of_range"
     if until_day > now.date() and now < earliest_cutoff:
         return {
             "refundability": "explicit_refundable",
@@ -305,27 +398,41 @@ def _cancellation_facts(lines: list[str], observed_at: datetime) -> dict[str, st
             "refundability": "explicit_nonrefundable",
             "refundability_text": "The displayed free-cancellation period has expired.",
         }
-    return {}
+    return "deadline_not_provable"
 
 
-def _price_facts(lines: list[str], guests: dict[str, str], nights: int | None) -> dict[str, str]:
+def _price_facts(
+    lines: list[str], guests: dict[str, str], nights: int | None,
+) -> dict[str, str] | str:
+    """Return the reconciled all-in total, or the fixed reason code for leaving it unknown."""
     if not guests or nights is None:
-        return {}
+        return "guest_composition"
     statements = [i for i, line in enumerate(lines) if line in _FINAL_PRICE_STATEMENTS]
     price_index = _heading(lines, "Price")
-    if len(statements) != 1 or price_index is None:
-        return {}
-    end = statements[0]
+    if price_index is None:
+        return "price_heading"
+    # The observed dollar layout prints no final-price statement: the total is closed directly by
+    # the "Additional Info" heading and must then be proven tax-inclusive by its own tax row.
+    statement_free = (
+        not statements
+        and price_index + 3 < len(lines)
+        and lines[price_index + 3] == "Additional Info"
+    )
+    if len(statements) != 1 and not statement_free:
+        return "final_price_statement"
+    end = price_index + 3 if statement_free else statements[0]
     if end not in {price_index + 3, price_index + 9}:
-        return {}
+        return "price_block_shape"
     if lines[price_index + 1] != f"(for {guests['adults']} guests)":
-        return {}
-    total_match = re.fullmatch(r"€\s*(" + _AMOUNT + r")", lines[price_index + 2])
+        return "guest_count_line"
+    total_match = re.fullmatch(_MONEY, lines[price_index + 2])
     if total_match is None:
-        return {}
-    total = Decimal(total_match[1])
+        return "total_not_money"
+    # Every amount that reconciles this total must be printed in the total's own currency.
+    currency = _currency(total_match[1])
+    total = _amount(total_match[2])
     if total <= 0:
-        return {}
+        return "total_not_positive"
 
     final_total = total
     additional_city = Decimal(0)
@@ -339,29 +446,32 @@ def _price_facts(lines: list[str], guests: dict[str, str], nights: int | None) -
             or _heading(lines, "Final Price") != price_index + 6
             or lines[price_index + 7] != "(taxes included)"
         ):
-            return {}
+            return "additional_charges_shape"
         city = re.fullmatch(
-            r"City tax \(€\s*(" + _AMOUNT + r") × ([1-9][0-9]?) guests? × "
-            r"([1-9][0-9]?) nights?\) €\s*(" + _AMOUNT + r")",
+            r"City tax \(" + _MONEY + r" × ([1-9][0-9]?) guests? × "
+            r"([1-9][0-9]?) nights?\) " + _MONEY,
             lines[price_index + 5],
         )
-        final = re.fullmatch(r"€\s*(" + _AMOUNT + r")", lines[price_index + 8])
+        final = re.fullmatch(_MONEY, lines[price_index + 8])
         if city is None or final is None:
-            return {}
-        rate, party, duration, amount = city.groups()
-        additional_city = Decimal(amount)
-        final_total = Decimal(final[1])
+            return "additional_charges_shape"
+        rate_token, rate_text, party, duration, amount_token, amount = city.groups()
+        if {_currency(rate_token), _currency(amount_token), _currency(final[1])} != {currency}:
+            return "mixed_currency"
+        rate = _amount(rate_text)
+        additional_city = _amount(amount)
+        final_total = _amount(final[2])
         if (
             int(party) != int(guests["adults"])
             or int(duration) != nights
-            or Decimal(rate) <= 0
-            or additional_city != Decimal(rate) * int(party) * int(duration)
+            or rate <= 0
+            or additional_city != rate * int(party) * int(duration)
             or final_total != total + additional_city
         ):
-            return {}
+            return "additional_charges_arithmetic"
         qualified_notice_indexes = {price_index + 3, price_index + 4}
     elif any(line.rstrip(":").casefold() == "final price" for line in lines):
-        return {}
+        return "unexpected_final_price"
 
     # These exact notices concern optional extras or special requests. Every other charge warning
     # makes this narrowly qualified total insufficient, wherever it is rendered.
@@ -374,42 +484,46 @@ def _price_facts(lines: list[str], guests: dict[str, str], nights: int | None) -
         r"payable separately|collected separately|paid separately|extra (?:tax|fee|charge)|"
         r"(?:tax|fee).{0,80}(?:pay at|paid at|collected at)", other_text,
     ):
-        return {}
+        return "charge_warning"
     room_rows = [
-        (i, re.fullmatch(r"1 (?:room|apartment) €\s*(" + _AMOUNT + r")", line))
+        (i, re.fullmatch(r"1 (?:room|apartment) " + _MONEY, line))
         for i, line in enumerate(lines[:price_index])
     ]
     room_rows = [(i, match) for i, match in room_rows if match is not None]
     if len(room_rows) != 1:
-        return {}
+        return "room_row"
     start, room_match = room_rows[0]
     assert room_match is not None
     if price_index - start > 4:
-        return {}
-    room_amount = Decimal(room_match[1])
+        return "room_row"
+    if _currency(room_match[1]) != currency:
+        return "mixed_currency"
+    room_amount = _amount(room_match[2])
     charges = room_amount
     seen: set[str] = set()
     for line in lines[start + 1:price_index]:
-        vat = re.fullmatch(r"([0-9]{1,2}(?:\.[0-9]{1,2})?) % VAT €\s*(" + _AMOUNT + r")", line)
-        city = re.fullmatch(
-            r"€\s*(" + _AMOUNT + r") City tax per person per night €\s*(" + _AMOUNT + r")", line
-        )
+        vat = re.fullmatch(r"([0-9]{1,2}(?:\.[0-9]{1,2})?) % (?:VAT|TAX) " + _MONEY, line)
+        city = re.fullmatch(_MONEY + r" City tax per person per night " + _MONEY, line)
         if vat is not None and "vat" not in seen:
-            rate, amount = Decimal(vat[1]), Decimal(vat[2])
+            rate, amount = Decimal(vat[1]), _amount(vat[3])
             expected = (room_amount * rate / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            if amount != expected:
-                return {}
+            if _currency(vat[2]) != currency or amount != expected:
+                return "tax_row"
             seen.add("vat")
         elif city is not None and "city" not in seen and not additional_city:
-            rate, amount = Decimal(city[1]), Decimal(city[2])
+            rate, amount = _amount(city[2]), _amount(city[4])
+            if {_currency(city[1]), _currency(city[3])} != {currency}:
+                return "mixed_currency"
             if amount != rate * int(guests["adults"]) * nights:
-                return {}
+                return "city_tax_row"
             seen.add("city")
         else:
-            return {}
+            return "unrecognized_component_row"
         charges += amount
     if charges != total:
-        return {}
+        return "components_do_not_sum"
+    if statement_free and "vat" not in seen:
+        return "tax_inclusion_unproven"
     # An unmatched monetary fee/tax row invalidates either layout, including rows below the
     # final-price statement. Only the additional layout has a reconciled row after its subtotal.
     recognized_rows = set(range(start, price_index))
@@ -417,12 +531,12 @@ def _price_facts(lines: list[str], guests: dict[str, str], nights: int | None) -
         recognized_rows.add(price_index + 5)
     if any(
         index not in recognized_rows
-        and "€" in line
+        and re.search(_MONEY, line)
         and re.search(r"\b(?:tax(?:es)?|fees?|charges?)\b", line, re.I)
         for index, line in enumerate(lines)
     ):
-        return {}
-    return {"booked_total": str(final_total), "currency": "EUR", "all_in": "explicit"}
+        return "unreconciled_charge_row"
+    return {"booked_total": str(final_total), "currency": currency, "all_in": "explicit"}
 
 
 def parse_confirmation_facts(
@@ -430,8 +544,11 @@ def parse_confirmation_facts(
     hotel_anchors: tuple[tuple[str, str], ...],
     *,
     observed_at: datetime,
+    reasons: dict[str, str] | None = None,
 ) -> dict[str, str] | None:
     """Return a partial payload for one recognized English confirmation, without guessing facts.
+
+    ``reasons`` receives a fixed, content-free code for an unknown total or refundability.
 
     Hotel anchors must be captured from the same rendered header before Check-in. Unknown optional
     fields stay ``unknown``; unsupported or contradictory confirmation identity/status returns None.
@@ -482,8 +599,14 @@ def parse_confirmation_facts(
     if room is not None:
         payload["room_type"] = room
     payload.update(_meal_facts(lines, room is not None))
-    payload.update(_cancellation_facts(lines, observed_at))
-    payload.update(_price_facts(lines, guests, nights))
+    for fact, outcome in (
+        ("refundability", _cancellation_facts(lines, observed_at)),
+        ("booked_total", _price_facts(lines, guests, nights)),
+    ):
+        if not isinstance(outcome, str):
+            payload.update(outcome)
+        elif reasons is not None:
+            reasons[fact] = outcome
     return payload
 
 

@@ -679,3 +679,154 @@ def test_conflicting_labelled_rows_and_long_wording_stay_bounded():
     long_row = "Guest name\nSynthetic Guest\nMeal Plan\nBreakfast included " + "x" * 400 + "\n"
     plan, text = _meal(_with_room_rows(long_row))
     assert plan == "breakfast" and len(text) == 200
+
+
+# The dollar confirmation layout, shaped from the affected caller's real page: a refund schedule
+# sentence under its own label instead of cost tiers, "US$" amounts, a TAX row, and the total
+# closed by "Additional Info" with no final-price statement.
+_DOLLAR_BODY = (
+    _BODY.replace(
+        """Cancellation cost
+
+Free cancellation within: 1 month 9 days
+until October 23, 2026 12:00 PM: € 0
+from October 23, 2026 12:00 PM: € 100 – Changing the dates of your stay isn't possible.
+Cancellation deadlines are in the property's local time.
+""",
+        "Cancellation policy\tYou can cancel for free until 2 days before arrival.\n"
+        "Refund schedule\n"
+        "You'll get a full refund if you cancel before 11:59 PM on October 20, 2026. If you "
+        "cancel after 12:00 AM on October 21, 2026, you won't be eligible for a refund.\n",
+    )
+    .replace("1 room\t€ 89.29", "1 room\tUS$309")
+    .replace("12 % VAT\t€ 10.71", "12 % TAX\tUS$37.08")
+    .replace("€ 2 City tax per person per night\t€ 4\n", "")
+    .replace("€ 104", "US$346.08")
+    .replace("The final price shown is the amount you'll pay to the property.\n", "")
+    + "If you cancel, applicable taxes may still be charged by the property.\n"
+)
+
+
+def _reasons(body: str) -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    assert parse_confirmation_facts(body, _ANCHORS, observed_at=_NOW, reasons=reasons) is not None
+    return reasons
+
+
+def test_dollar_confirmation_records_its_own_currency_total_and_refund_schedule():
+    facts = _parse(_DOLLAR_BODY)
+    assert facts is not None
+    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == (
+        "346.08", "USD", "explicit",
+    )
+    assert facts["refundability"] == "explicit_refundable"
+    assert facts["refund_deadline"] == "2026-10-20"
+    assert _reasons(_DOLLAR_BODY) == _reasons(_BODY) == {}
+
+
+@pytest.mark.parametrize(
+    ("other", "currency"),
+    [("£", "GBP"), ("US$", "USD"), ("CAD ", "CAD"), ("PLN ", "PLN")],
+)
+def test_price_and_cancellation_tiers_follow_the_printed_currency(other, currency):
+    facts = _parse(_BODY.replace("€ ", other))
+    assert facts is not None
+    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == (
+        "104", currency, "explicit",
+    )
+    assert facts["refundability"] == "explicit_refundable"
+
+
+def test_grouped_thousands_total_is_read_as_one_amount():
+    body = (
+        _BODY.replace("1 room\t€ 89.29", "1 room\t€ 1,000.00")
+        .replace("12 % VAT\t€ 10.71", "12 % VAT\t€ 120.00")
+        .replace("€ 104", "€ 1,124.00")
+    )
+    facts = _parse(body)
+    assert facts is not None
+    assert (facts["booked_total"], facts["currency"]) == ("1124.00", "EUR")
+
+
+@pytest.mark.parametrize(
+    ("change", "reasons"),
+    [
+        (("US$346.08", "346.08"), {"booked_total": "total_not_money"}),
+        # A bare dollar sign names no single currency.
+        (("US$346.08", "$346.08"), {"booked_total": "total_not_money"}),
+        (("US$346.08", "XYZ 346.08"), {"booked_total": "total_not_money"}),
+        (("US$346.08", "US$346,08"), {"booked_total": "total_not_money"}),
+        (("1 room\tUS$309", "1 room\t€ 309"), {"booked_total": "mixed_currency"}),
+        (("12 % TAX\tUS$37.08", "12 % TAX\tCAD 37.08"), {"booked_total": "tax_row"}),
+        (("12 % TAX\tUS$37.08", "12 % TAX\tUS$37.00"), {"booked_total": "tax_row"}),
+        (("12 % TAX\tUS$37.08", "Resort fee\tUS$37.08"),
+         {"booked_total": "unrecognized_component_row"}),
+        # Without the page's final-price statement, only a reconciled tax row proves all-in.
+        (("1 room\tUS$309\n12 % TAX\tUS$37.08", "1 room\tUS$346.08"),
+         {"booked_total": "tax_inclusion_unproven"}),
+        (("(for 2 guests)\n", ""), {"booked_total": "final_price_statement"}),
+        (("Additional Info\n", "Good to know\n"), {"booked_total": "final_price_statement"}),
+        (("you won't be eligible for a refund.", "you'll get a partial refund."),
+         {"refundability": "refund_schedule_unrecognized"}),
+        (("cancel after 12:00 AM on October 21", "cancel after 12:00 AM on October 22"),
+         {"refundability": "cutoffs_not_adjacent"}),
+        (("before 11:59 PM", "before 13:59 PM"),
+         {"refundability": "refund_schedule_unrecognized"}),
+        (("Refund schedule\n", "Refund schedule\nRefund schedule\n"),
+         {"refundability": "refund_schedule_unrecognized"}),
+        (("Refund schedule\n", "Refund policy\n"),
+         {"refundability": "no_cancellation_evidence"}),
+    ],
+)
+def test_unknown_total_or_refundability_names_the_rule_that_stopped_it(change, reasons):
+    body = _DOLLAR_BODY.replace(*change)
+    assert body != _DOLLAR_BODY
+    facts = _parse(body)
+    assert facts is not None
+    assert _reasons(body) == reasons
+    if "booked_total" in reasons:
+        assert (facts["booked_total"], facts["all_in"]) == ("unknown", "unknown")
+    if "refundability" in reasons:
+        assert facts["refundability"] == "unknown"
+
+
+def test_unknown_fact_reasons_never_carry_page_content():
+    reasons = _reasons(_DOLLAR_BODY.replace("US$346.08", "346.08 secret"))
+    assert reasons and all(value.replace("_", "").isalpha() for value in reasons.values())
+
+
+def test_cancellation_tiers_in_two_currencies_are_insufficient():
+    assert _reasons(_BODY.replace("PM: € 100", "PM: US$100")) == {
+        "refundability": "cost_tiers_unrecognized",
+    }
+
+
+def test_refund_schedule_beside_its_label_and_expired_schedule():
+    inline = _parse(_DOLLAR_BODY.replace("Refund schedule\n", "Refund schedule\t"))
+    assert inline is not None and inline["refund_deadline"] == "2026-10-20"
+    expired = _parse(_DOLLAR_BODY, now=datetime(2026, 10, 22, 13, tzinfo=UTC))
+    assert expired is not None
+    assert expired["refundability"] == "explicit_nonrefundable"
+
+
+def test_rendered_cost_tiers_outrank_a_refund_schedule_sentence():
+    # A page that prints cost tiers is judged by them alone, even when they do not qualify.
+    body = _BODY.replace(
+        "from October 23, 2026 12:00 PM: € 100 – Changing the dates of your stay isn't possible.\n",
+        "",
+    ).replace(
+        "1 room\t€ 89.29",
+        "Refund schedule\nYou'll get a full refund if you cancel before 11:59 PM on "
+        "October 20, 2026. If you cancel after 12:00 AM on October 21, 2026, you won't be "
+        "eligible for a refund.\n1 room\t€ 89.29",
+    )
+    assert _reasons(body) == {"refundability": "cost_tiers_unrecognized"}
+
+
+def test_euro_page_without_its_statement_needs_the_same_closed_shape_and_tax_row():
+    without = _BODY.replace("The final price shown is the amount you'll pay to the property.\n", "")
+    facts = _parse(without)
+    assert facts is not None and (facts["booked_total"], facts["currency"]) == ("104", "EUR")
+    assert _reasons(without.replace("12 % VAT\t€ 10.71\n", "").replace("€ 89.29", "€ 100")) == {
+        "booked_total": "tax_inclusion_unproven",
+    }

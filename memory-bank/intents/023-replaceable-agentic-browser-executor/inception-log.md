@@ -216,3 +216,28 @@ Bolt077/US192–194/Unit012 completed through the official cascade after accepte
 reconciliation and final2803tests/Ruff/mypy123. Scoped proof correctly retired the old reservation
 while preserving its distinct eligible replacement. Exact-image Operations and current-head review/
 merge/promotion remain pending. Other unfinished units keep Intent023 in construction.
+
+## 2026-10-10T01:59:26Z - Confirmation booked-total follow-up
+
+Master analysis routed this owner-reported defect to Inception as a follow-up unit of Intent023:
+the confirmation reader belongs to Unit011 and saved-fact reconciliation to Unit012, both complete.
+Registry allocation: Unit013, Bolt089, US216–218, FR34–36, proposed ADR056 (accepted in construction).
+These were renumbered at rebase on 2026-10-12 to Bolt092, US226–228 and ADR058 after two other
+changes took 089–091, US216–225 and ADR056–057; Unit013 and FR34–36 are unchanged.
+
+Clarifying answers were taken from the owner's own statements in the reporting session rather than
+asked again: users are the owner and invitees with reservations in any currency; the outcome is
+that a refresh captures each reservation's booked price, currency and details for later checks;
+the constraint is the existing fail-closed, no-conversion, no-content-logging boundary; success is
+the owner's dollar reservation compared against its confirmation total instead of USD301; the main
+concern is a wrong baseline hiding real savings.
+
+Checkpoints 1–4 are recorded as waived by the owner for this task ("without my approval on each
+step, but everything needs to be recorded"), not as individually approved. Requirements, context,
+unit, stories, bolt plan and story index are aligned; Intent023 now has 13 units and 45 stories.
+
+Process deviation, recorded as it happened: before this inception the diagnosis was made by
+reading source and production state, and a draft implementation was written and tested without
+any AI-DLC record. The owner rejected that order. The draft was removed from the worktree and
+kept only as an external patch; it is input to be re-derived and reviewed against the Bolt092
+design, not accepted work. No commit, merge, deployment or production replay has occurred.

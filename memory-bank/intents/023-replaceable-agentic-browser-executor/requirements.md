@@ -3,7 +3,7 @@ intent: 023-replaceable-agentic-browser-executor
 phase: inception
 status: construction
 created: 2026-08-14T02:46:26Z
-updated: 2026-09-19T22:04:01Z
+updated: 2026-10-10T01:59:26Z
 checkpoint_1_approved: 2026-08-16T19:18:41Z
 checkpoint_2_approved: 2026-08-16T19:18:41Z
 checkpoint_3_approved: 2026-08-16T19:18:41Z
@@ -11,6 +11,34 @@ checkpoint_4_approved: 2026-08-16T19:18:41Z
 ---
 
 # Requirements: Replaceable Agentic Browser Executor
+
+## Confirmation booked-total amendment (2026-10-10T01:59:26Z)
+
+Finding: the owner's dollar reservation is monitored against a booked total of USD301 saved by the
+retired trips-list reader on 2026-07-27, while the confirmation page states USD346.08. Every later
+refresh opens that confirmation page but records no total, because the confirmation reader accepts
+only euro amounts, euro cost tiers and the VAT row. A first-time non-euro reservation therefore has
+no booked total or refundability and is never monitored. Two of the invitee's upcoming euro
+reservations are also unmonitored for a missing total; their cause is not yet observed.
+
+FR-34 / US-226: The code-owned confirmation reader records the booked total in the currency the
+page prints, for every recognized currency symbol or ISO code, including en-US grouped amounts and
+the TAX row label. It reads free-cancellation evidence from cost tiers in that currency or from the
+exact "Refund schedule" full-refund-then-no-refund sentence. One total, one currency: mixed,
+unrecognized or unreconciled amounts leave the total unknown. No conversion is ever performed.
+
+FR-35 / US-227: A total reconciled by the code-owned reader on the caller's own confirmation page
+replaces a different saved booked total and its monitoring baseline in the same transaction.
+Provider-submitted totals keep failing closed against a saved total. Stale savings opportunities
+computed against the replaced baseline are removed.
+
+FR-36 / US-228: Qualify the reader against the affected caller's real confirmation page through an
+isolated replay with notifications disabled, and record a content-free reason whenever a total or
+refundability stays unknown, so unsupported layouts can be identified without exposing content.
+
+The owner asked for this fix directly on 2026-10-09 and waived per-step approval for this task
+while requiring every AI-DLC step to be recorded. Merge, deployment and any production replay
+remain separately approved actions.
 
 ## Trusted current-list reconciliation amendment
 

@@ -500,6 +500,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `007-shared-browser-use-access` | 2 stories | Complete (bolt 065) |
 | `008-connect-refresh-status` | 1 story | Complete (bolt 066) |
 | `009-price-rejection-diagnostics` | 1 story | Complete (bolt 068) |
+| `013-confirmation-booked-total` | 3 stories | Complete (bolt 092; release pending) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
 
@@ -603,6 +604,14 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-193` | Distinguish cancellations, replacements and unverified records | Agentic Browser | Complete | `012-trusted-inventory-reconciliation/stories/002-distinguish-cancellation-and-unverified-records.md` |
 | `US-194` | Qualify trusted reconciliation for the affected caller | Agentic Browser | Complete | `012-trusted-inventory-reconciliation/stories/003-qualify-trusted-reconciliation.md` |
 
+### 013-confirmation-booked-total: Confirmation Booked Total
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-226` | Record the confirmation total in its printed currency | Agentic Browser | Complete | `013-confirmation-booked-total/stories/001-record-confirmation-total-in-printed-currency.md` |
+| `US-227` | Replace a stale saved total with the page-verified total | Agentic Browser | Complete | `013-confirmation-booked-total/stories/002-replace-saved-total-with-page-verified-total.md` |
+| `US-228` | Qualify the confirmation total for the affected caller | Agentic Browser | Complete | `013-confirmation-booked-total/stories/003-qualify-confirmation-total-for-affected-caller.md` |
+
 ## 024-repository-streamlining
 
 ### 001-retired-runtime
@@ -652,7 +661,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 12 | 42 | In construction (Bolt077 and Unit012 Operations complete; bolts073–076 complete; price qualification bolt052 active, bolt055 blocked) |
+| `023-replaceable-agentic-browser-executor` | 13 | 45 | In construction (Bolt077 and Unit012 Operations complete; bolts073–076 complete; price qualification bolt052 active, bolt055 blocked; Unit013 bolt092 construction complete, release pending) |
 
 | `024-repository-streamlining` | 3 | 6 | Complete locally (bolts 070–072) |
 
@@ -661,6 +670,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 
 For intents 001–024, all 194 stories (190 complete; remaining stories retain the statuses above)
 are assigned exactly once. Intents 025 and 026 add 9 complete and 12 planned stories respectively.
+Intent 023 Unit013 adds US-226–228 (complete), assigned only to Bolt092.
 
 ## 025-session-continuity-and-paste
 

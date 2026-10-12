@@ -214,6 +214,9 @@ def test_parsed_positive_uses_mapper_and_preserves_original_price_session(monkey
     # Name and URL came from the reader's single confirmation-header anchor.
     assert reservation.property_reference is not None
     assert reservation.property_anchor_verified is True
+    # This page reconciled no total, so there is nothing that could replace a saved one.
+    assert reservation.booked_total is None
+    assert reservation.booked_total_verified is False
     assert reservation.lifecycle.value == "upcoming"
     assert reservation.completeness is EvidenceCompleteness.INCOMPLETE
     assert len(result.scopes) == 1
@@ -227,6 +230,21 @@ def test_parsed_positive_uses_mapper_and_preserves_original_price_session(monkey
     assert h.meter.snapshot().model_calls == 0
     h.auth.assert_awaited_once_with(h.request, h.session)
     h.capture.assert_not_called()
+
+
+def test_reconciled_confirmation_total_is_marked_as_page_verified(monkeypatch):
+    h = Harness(monkeypatch)
+    h.payload = {
+        **parsed_facts(), "booked_total": "346.08", "currency": "USD", "all_in": "explicit",
+    }
+    result = h.run()
+    assert result.status is InventoryExecutionStatus.OBSERVED
+    reservation = result.reservations[0]
+    assert reservation.booked_total is not None
+    assert (str(reservation.booked_total.amount), reservation.booked_total.currency) == (
+        "346.08", "USD",
+    )
+    assert reservation.booked_total_verified is True
 
 
 def test_grouped_final_authentication_cannot_replace_initial_mobile_snapshot(monkeypatch):
