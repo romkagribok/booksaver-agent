@@ -71,8 +71,11 @@ breakfast rate at 114 and 124 EUR, above the 101.20 EUR paid, so no alert was se
 opportunity was created. The two reservations without meals were unconstrained. 26 accepted
 rates on three properties were classified `breakfast` or `none`, none `unknown`.
 
-Production moved to image `jevonly-a273c78` (Jev as the only price method) at
-2026-10-12T23:15Z, so this evidence is for the Jev path only. The Browser Use and legacy paths
+**This release had a defect on the Jev path**: the rate's name was passed as meal wording, so
+breakfast rates read `unknown` and were excluded. The bolt 089 session found it against real
+wording and fixed it in PR #86. Production moved to image `jevonly-a273c78` (that fix, Jev as
+the only price method) at 2026-10-12T23:15Z, before any check ran on this image, so the evidence
+above is for the fixed Jev path only. The Browser Use and legacy paths
 have not run with the gate, and no alert with the new wording has been sent. The owner closed
 the intent after about 15 of the 24 hours of monitoring. Details: bolt 091 test report.
 

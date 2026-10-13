@@ -101,3 +101,26 @@ booking, a check that previously verified bookings still verify, and the phase 2
 bolt closes when the first scheduled checks (from 2026-10-13T02:03Z) show a canonical Jev result
 in `check_history` with a `jev_price_runs` record, and the breakfast reservation selects a
 breakfast rate or reports why not.
+
+## 2026-10-13T13:54:35Z — first Jev-only checks observed; exit condition met
+
+Recorded by the session that owns intent 027, at the owner's request to close finished work.
+Read-only from the production database (image `jevonly-a273c78`, `price_executor = jev`, paired
+mode off).
+
+- **Canonical Jev results.** Six scheduled checks ran in Jev-only mode between
+  2026-10-12T23:23Z and 2026-10-13T10:52Z, two for each of the three active bookings. All six are
+  successes in `check_history`, each with a `jev_price_runs` record of status `observed`
+  (adapter `jev-price-v3`, cost certainty `exact`, every rate priced).
+- **Breakfast reservation under the meal gate.** Both of its checks excluded the room-only rate
+  as `meal_plan_worse` and selected the breakfast rate (114 and 124 EUR against 101.20 EUR paid),
+  so the PR #86 fix holds on a signed-in production run.
+- **US-219.** Still not observed live: no run met Booking.com's error page. The bolt closes
+  without that observation; see the requirements amendment of the same time.
+
+| Story | Status at close |
+|---|---|
+| US-216 discounted rate cards | Met in production (phase 2 evidence above) |
+| US-217 Jev as the price method | Met: switch done and first Jev-only checks observed |
+| US-218 explainable runs | Met |
+| US-219 error-page reload | Built and unit-tested; production confirmation never observed |

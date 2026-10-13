@@ -339,7 +339,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Unit | Stories | Status |
 |------|---------|--------|
 | `001-device-aware-remote-auth-viewer` | 6 stories | Complete (bolts 030–031, 067) |
-| `002-device-adaptive-login-browser` | 3 stories | In progress (bolt 069) |
+| `002-device-adaptive-login-browser` | 3 stories | Complete (bolt 069) |
 
 ### 001-device-aware-remote-auth-viewer: Device-Aware Remote Authentication Viewer
 
@@ -666,7 +666,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `024-repository-streamlining` | 3 | 6 | Complete locally (bolts 070–072) |
 
 | `025-session-continuity-and-paste` | 4 | 9 | Complete |
-| `026-jev-price-comparison` | 4 | 16 | Bolts 084–088 complete; Jev is the production price method since 2026-10-12; 089 open until the first Jev-only check is observed |
+| `026-jev-price-comparison` | 4 | 16 | Complete (bolts 084–089); Jev is the production price method since 2026-10-12; US-219's error-page reload is unobserved in production |
 
 For intents 001–024, all 194 stories (190 complete; remaining stories retain the statuses above)
 are assigned exactly once. Intents 025 and 026 add 9 complete and 12 planned stories respectively.
@@ -738,10 +738,10 @@ Paired Jev comparison ran 2026-10-01 to 2026-10-10 (82 pairs). Owner chose adopt
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-216` | Price member-discounted rate cards | Jev comparison | In progress | `004-jev-price-promotion/stories/001-price-discounted-rate-cards.md` |
-| `US-217` | Run Jev as the price method with the LLM path as rollback | Jev comparison | In progress | `004-jev-price-promotion/stories/002-run-jev-as-the-price-method.md` |
-| `US-218` | Explain Jev runs that produce no price | Jev comparison | In progress | `004-jev-price-promotion/stories/003-explain-unobserved-jev-runs.md` |
-| `US-219` | Recover from Booking.com's transient error page | Jev comparison | In progress | `004-jev-price-promotion/stories/004-recover-from-booking-error-page.md` |
+| `US-216` | Price member-discounted rate cards | Jev comparison | Complete | `004-jev-price-promotion/stories/001-price-discounted-rate-cards.md` |
+| `US-217` | Run Jev as the price method with the LLM path as rollback | Jev comparison | Complete | `004-jev-price-promotion/stories/002-run-jev-as-the-price-method.md` |
+| `US-218` | Explain Jev runs that produce no price | Jev comparison | Complete | `004-jev-price-promotion/stories/003-explain-unobserved-jev-runs.md` |
+| `US-219` | Recover from Booking.com's transient error page | Jev comparison | Complete | `004-jev-price-promotion/stories/004-recover-from-booking-error-page.md` |
 
 ## 027-meal-plan-equivalence
 

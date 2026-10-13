@@ -26,7 +26,7 @@ last_updated: "2026-10-10T01:49:50Z"
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
-| 089-jev-price-promotion | US-216 to US-219 | ⏳ in-progress | +US-219 |
+| 089-jev-price-promotion | US-216 to US-219 | ✅ completed | +US-219 |
 
 ## Execution Log
 
@@ -46,3 +46,5 @@ sequence.
 - **2026-10-10T02:42:22Z**: 089-jev-price-promotion released as phase 1 (config unchanged); test stage stays open for production confirmation and the phase 2 switch
 - **2026-10-12T23:10:16Z**: 089-jev-price-promotion phase 2 pre-check found the Jev path classifying breakfast rates as unknown under the meal gate deployed 2026-10-12T23:01Z (rate name counted as meal wording); recorded in US-217 and the technical design before the fix
 - **2026-10-12T23:15:40Z**: 089-jev-price-promotion phase 2 switch deployed (PR #86 fix plus config); test stage stays open until the first Jev-only check is observed
+- **2026-10-13T13:54:35Z**: 089-jev-price-promotion first Jev-only checks observed (six canonical successes with `jev_price_runs` records; breakfast reservation selects a breakfast rate); exit condition met
+- **2026-10-13T13:54:35Z**: 089-jev-price-promotion completed - All 5 stages done; US-219's production confirmation unobserved (requirements amendment)

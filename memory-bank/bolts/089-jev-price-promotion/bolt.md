@@ -3,7 +3,7 @@ id: 089-jev-price-promotion
 unit: 004-jev-price-promotion
 intent: 026-jev-price-comparison
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-price-discounted-rate-cards
   - 002-run-jev-as-the-price-method
@@ -11,8 +11,8 @@ stories:
   - 004-recover-from-booking-error-page
 created: "2026-10-10T01:45:00Z"
 started: "2026-10-10T01:45:10Z"
-completed: null
-current_stage: test
+completed: "2026-10-13T13:55:03Z"
+current_stage: null
 stages_completed:
   - name: domain-model
     completed: "2026-10-10T01:45:20Z"
@@ -26,7 +26,8 @@ stages_completed:
   - name: implement
     completed: "2026-10-10T01:47:40Z"
     artifact: src/booksaver/infrastructure/browser/jev_primary_executor.py
-requires_bolts: ['086-paired-price-execution']
+requires_bolts:
+  - 086-paired-price-execution
 enables_bolts: []
 requires_units: []
 blocks: false
@@ -65,3 +66,9 @@ Two phases, chosen by the owner on 2026-10-07 ("Fix, verify, then switch"):
 2. Switch production config to `price_executor = "jev"`, `jev_comparison.enabled = false`.
 
 The bolt completes after phase 2 evidence, not before.
+
+**Completion (2026-10-13T13:54:35Z).** Phase 2 evidence is recorded in the test report: six Jev-only checks,
+all canonical successes, and the breakfast reservation selecting a breakfast rate. On
+2026-10-13 the owner asked that finished work be closed in the AI-DLC records ("all interim work
+should be finished until a new issue is picked so aidlc system should reflect that"). US-219's
+production confirmation was never observed and is recorded as such.

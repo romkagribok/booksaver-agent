@@ -2,11 +2,11 @@
 id: 001-price-discounted-rate-cards
 unit: 004-jev-price-promotion
 intent: 026-jev-price-comparison
-status: in-progress
+status: complete
 priority: must
 created: "2026-10-10T01:45:00Z"
 assigned_bolt: 089-jev-price-promotion
-implemented: false
+implemented: true
 ---
 
 # US-216: Price member-discounted rate cards

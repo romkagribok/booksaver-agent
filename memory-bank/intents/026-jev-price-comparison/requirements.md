@@ -1,7 +1,7 @@
 ---
 intent: 026-jev-price-comparison
 phase: inception
-status: construction
+status: complete
 created: "2026-09-26T16:29:30Z"
 updated: "2026-09-26T16:29:30Z"
 ---
@@ -220,3 +220,10 @@ They are recorded as descoped, not as delivered:
   report with per-booking outcomes was produced instead.
 - FR-11: a dedicated adversarial browser fixture suite and restart-negative tests on the exact
   image. Unit regressions, exact-image smoke and a production-snapshot stage probe were run.
+
+## Amendment 2026-10-13T13:54:35Z: closed without one production observation
+
+Bolt 089 closed when the first Jev-only checks were observed. US-219 (reload on Booking.com's
+transient error page) is built and unit-tested, but no production run has met the error page, so
+its live behaviour is unproven. Whether to keep or remove the LLM price path stays open in GitHub
+issue #79.

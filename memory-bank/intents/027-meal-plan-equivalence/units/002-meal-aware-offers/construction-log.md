@@ -46,6 +46,7 @@ without a stop between them and presented together; no code is written before th
 | 2026-10-12T23:02:04Z | 091-meal-aware-offers | released | Promoted as `mealgate-507aa5b`; healthy, clean start. 24-hour read-back of the breakfast reservation started (release record) |
 | 2026-10-13T13:51:32Z | 091-meal-aware-offers | evidence | Production read-back: both checks of the breakfast reservation excluded the room-only rate (`meal_plan_worse`) and selected the breakfast rate; no opportunity created. Owner confirmed completion after about 15 of 24 hours |
 | 2026-10-13T13:51:32Z | 091-meal-aware-offers | completed | All 5 stages done; descopes recorded in the requirements amendment |
+| 2026-10-13T13:54:35Z | 091-meal-aware-offers | correction | Recorded a released defect found and fixed by the bolt 089 session (PR #86): the Jev path read the rate's name as meal wording |
 
 ## Execution Summary
 

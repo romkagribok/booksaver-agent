@@ -83,7 +83,8 @@ Not measured.
 | Issue | Severity | Status |
 |-------|----------|--------|
 | Seven existing tests pinned the offer shape and failed on the new field | Low | Fixed (fixtures updated) |
-| No real rate-table wording is available to qualify the offer reader (FR-11) | Medium | Open. After release the price diagnostic records each candidate's classified meal plan for read-back |
+| **Released defect.** The Jev path passed the rate's name ("Flexible + Breakfast") as meal wording, so a breakfast rate read `unknown` and was excluded; under Jev alone the reservation with breakfast could never verify. Found by the bolt 089 session against that hotel's real wording, not by this bolt | High | Fixed in PR #86 and deployed in `jevonly-a273c78` 13 minutes after this release, before any check ran on it |
+| No real rate-table wording was available to qualify the offer reader (FR-11); the defect above is what that qualification would have caught | Medium | Descoped (requirements amendment) |
 | Legacy path without a model key: a reservation with meals always ends as no equivalent offer | Low | Accepted; fails closed |
 
 ## Release evidence
@@ -96,8 +97,9 @@ of the reservation with breakfast is not recorded yet.
 ## Production read-back (2026-10-13T13:51:32Z)
 
 Read from the production database, read-only, about 15 hours after the release. Production ran
-this release for 13 minutes and then image `jevonly-a273c78` (which contains it) with Jev as the
-only price method, so every check below used the Jev path.
+this release for 13 minutes and then image `jevonly-a273c78` (this release plus the PR #86 fix
+for the defect under "Issues Found") with Jev as the only price method, so every check below
+used the Jev path with that fix. This bolt's own Jev code never ran a production check.
 
 Reservation with breakfast (paid 101.20 EUR; five alerts at 86 to 87 EUR before the release):
 

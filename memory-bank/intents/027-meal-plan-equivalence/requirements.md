@@ -148,7 +148,8 @@ Recorded when the owner closed the intent. These are descoped or unproven, not d
   done. No real rate table was available before release. It was replaced by a production
   read-back after release: on three properties every accepted rate was classified `breakfast` or
   `none`, none `unknown`. That shows the classifier produced plausible values, not that each
-  matches its page; the wording itself is not recorded.
+  matches its page; the wording itself is not recorded. Skipping this let a defect ship: the
+  Jev path read a rate's name as meal wording (fixed by PR #86 before any check ran).
 - **FR-10 on the model price paths**: built and unit-tested, never run in production with the
   gate. Production switched to Jev as the only price method 13 minutes after this release, so
   Browser Use and the legacy extraction are unproven with model-copied meal wording. Stagehand
