@@ -745,7 +745,8 @@ Paired Jev comparison ran 2026-10-01 to 2026-10-10 (82 pairs). Owner chose adopt
 
 ## 027-meal-plan-equivalence
 
-Meal plan as part of offer equivalence; recording ships before the gate.
+Meal plan as part of offer equivalence. Both releases are in production; descoped and unproven
+items are listed in the requirements amendment of 2026-10-13.
 
 ### 001-reservation-meal-plan
 
@@ -758,7 +759,7 @@ Meal plan as part of offer equivalence; recording ships before the gate.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-222` | Read each offer's meal plan | Meal plan | Planned | `002-meal-aware-offers/stories/001-read-offer-meal-plans.md` |
-| `US-223` | Exclude offers with a worse meal plan | Meal plan | Planned | `002-meal-aware-offers/stories/002-exclude-worse-meal-offers.md` |
-| `US-224` | State meal plans in savings alerts | Meal plan | Planned | `002-meal-aware-offers/stories/003-state-meals-in-alerts.md` |
-| `US-225` | Apply the meal rule to every price method | Meal plan | Planned | `002-meal-aware-offers/stories/004-apply-meal-rule-to-every-price-method.md` |
+| `US-222` | Read each offer's meal plan | Meal plan | Complete | `002-meal-aware-offers/stories/001-read-offer-meal-plans.md` |
+| `US-223` | Exclude offers with a worse meal plan | Meal plan | Complete | `002-meal-aware-offers/stories/002-exclude-worse-meal-offers.md` |
+| `US-224` | State meal plans in savings alerts | Meal plan | Complete | `002-meal-aware-offers/stories/003-state-meals-in-alerts.md` |
+| `US-225` | Apply the meal rule to every price method | Meal plan | Complete | `002-meal-aware-offers/stories/004-apply-meal-rule-to-every-price-method.md` |

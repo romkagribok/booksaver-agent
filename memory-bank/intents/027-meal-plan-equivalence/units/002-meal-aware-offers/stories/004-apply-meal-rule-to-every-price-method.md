@@ -2,11 +2,11 @@
 id: 004-apply-meal-rule-to-every-price-method
 unit: 002-meal-aware-offers
 intent: 027-meal-plan-equivalence
-status: draft
+status: complete
 priority: must
 created: "2026-10-10T01:49:45Z"
 assigned_bolt: 091-meal-aware-offers
-implemented: false
+implemented: true
 ---
 
 # US-225: Apply the meal rule to every price method

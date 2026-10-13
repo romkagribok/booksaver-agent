@@ -2,11 +2,11 @@
 version: mealgate-507aa5b
 commit: 507aa5b
 created: "2026-10-12T23:02:04Z"
-status: deployed-monitoring
+status: deployed-verified
 recorded: "2026-10-12T23:03:28Z"
 ---
 
-# Meal plan gate — released, 24-hour monitoring running
+# Meal plan gate — released and verified on the Jev path
 
 Intent 027, bolt 091 (ADR-057 and its addendum), stories US-222 to US-225. Offer selection now
 excludes an offer with fewer meals than a reservation that includes meals, and every savings
@@ -63,7 +63,20 @@ monitor dads booking for the next 24 hours to make sure it runs as expoected"). 
 ran under that approval. Monitoring is the 24-hour read-back below; no separate monitoring
 system was added.
 
-## Pending
+## Read-back (2026-10-13T13:51:32Z)
+
+Both scheduled checks of the reservation with breakfast since the release (03:16Z and 10:52Z on
+2026-10-13) excluded the room-only rate for the booked room as `meal_plan_worse` and selected the
+breakfast rate at 114 and 124 EUR, above the 101.20 EUR paid, so no alert was sent and no
+opportunity was created. The two reservations without meals were unconstrained. 26 accepted
+rates on three properties were classified `breakfast` or `none`, none `unknown`.
+
+Production moved to image `jevonly-a273c78` (Jev as the only price method) at
+2026-10-12T23:15Z, so this evidence is for the Jev path only. The Browser Use and legacy paths
+have not run with the gate, and no alert with the new wording has been sent. The owner closed
+the intent after about 15 of the 24 hours of monitoring. Details: bolt 091 test report.
+
+## Pending (at release; superseded by the read-back above)
 
 1. Read back that reservation's scheduled checks (03:12Z, 10:49Z and 17:08Z on 2026-10-13) and
    the per-candidate meal plans in their diagnostics; final review at 24 hours.
