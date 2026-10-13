@@ -1,9 +1,9 @@
 ---
 intent: 027-meal-plan-equivalence
 phase: construction
-status: construction
+status: complete
 created: "2026-10-10T01:38:53Z"
-updated: "2026-10-10T08:07:38Z"
+updated: "2026-10-13T13:51:32Z"
 ---
 
 # Requirements: Meal plan equivalence
@@ -139,3 +139,24 @@ This intent was renumbered before merging: schema v21, bolts 090 and 091, storie
 US-225. FR-10 originally named only the paired Jev arm; ADR-056 has since made Jev selectable as
 the authoritative price method, so the requirement now covers whichever method is authoritative.
 No scope was added or dropped.
+
+## Amendment 2026-10-13T13:51:32Z: what was not built or not evidenced
+
+Recorded when the owner closed the intent. These are descoped or unproven, not delivered:
+
+- **FR-11, qualification against saved real property pages before production enablement**: not
+  done. No real rate table was available before release. It was replaced by a production
+  read-back after release: on three properties every accepted rate was classified `breakfast` or
+  `none`, none `unknown`. That shows the classifier produced plausible values, not that each
+  matches its page; the wording itself is not recorded. Skipping this let a defect ship: the
+  Jev path read a rate's name as meal wording (fixed by PR #86 before any check ran).
+- **FR-10 on the model price paths**: built and unit-tested, never run in production with the
+  gate. Production switched to Jev as the only price method 13 minutes after this release, so
+  Browser Use and the legacy extraction are unproven with model-copied meal wording. Stagehand
+  was not extended and reports `unknown`.
+- **FR-9, alert wording**: built and tested; no production alert has been sent since the release
+  because no check found a saving, so the new wording has not been seen live.
+- **Design items cut before coding** (never requirements): storing the offer's meal plan, a
+  `/savings` line, `/checknow` success wording and the paired-report line.
+- **Monitoring**: the owner asked for 24 hours and closed the intent after about 15, on two of the
+  three scheduled checks of the reservation with breakfast.

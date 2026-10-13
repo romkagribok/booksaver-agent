@@ -3,7 +3,7 @@ id: 091-meal-aware-offers
 unit: 002-meal-aware-offers
 intent: 027-meal-plan-equivalence
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-read-offer-meal-plans
   - 002-exclude-worse-meal-offers
@@ -11,8 +11,8 @@ stories:
   - 004-apply-meal-rule-to-every-price-method
 created: "2026-10-10T01:49:45Z"
 started: "2026-10-10T08:20:49Z"
-completed: null
-current_stage: test
+completed: "2026-10-13T13:51:59Z"
+current_stage: null
 stages_completed:
   - name: domain-model
     completed: "2026-10-10T08:21:20Z"
@@ -26,7 +26,8 @@ stages_completed:
   - name: implement
     completed: "2026-10-12T22:48:46Z"
     artifact: src/booksaver/domain/offer.py
-requires_bolts: ['090-reservation-meal-plan']
+requires_bolts:
+  - 090-reservation-meal-plan
 enables_bolts: []
 requires_units: []
 blocks: true
@@ -65,7 +66,7 @@ Stop reporting a cheaper offer that includes fewer meals than the reservation.
 - [x] **2. Technical Design**: written → ddd-02-technical-design.md (owner review pending, combined)
 - [x] **3. ADR Analysis**: addendum to ADR-057; no new ADR (see below)
 - [x] **4. Implement**: src and tests (owner approved with Stage 5)
-- [ ] **5. Test**: ⏳ construction evidence recorded → ddd-03-test-report.md (release evidence pending)
+- [x] **5. Test**: ddd-03-test-report.md (construction, release and production read-back)
 
 No stage has started. Owner instruction of 2026-10-10T08:07:38Z: "proceed to realease 2 following specsmd until
 writing any code so i can review and approve, then you will write code for it". Stages 1 to 3 are
@@ -109,6 +110,13 @@ is not verified. The owner replied: "sounds good, merge, redeploy and monitor da
 the next 24 hours to make sure it runs as expoected". That approves Stage 4, the construction
 evidence of Stage 5, and the merge and production deployment, and asks for 24 hours of
 monitoring of the reservation that includes breakfast. The bolt completes after that evidence.
+
+## Owner confirmation of completion (2026-10-13T13:51:32Z)
+
+After the production read-back the owner wrote: "so i think this can be marked as success then
+and we can close this thread you agree?". The agent agreed on the evidence and pointed out that
+it covers two of three scheduled checks and about 15 of the 24 hours asked for. Descoped and
+unproven items are listed in the requirements amendment of the same time.
 
 ## Dependencies
 

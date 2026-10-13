@@ -2,7 +2,7 @@
 unit: 004-jev-price-promotion
 intent: 026-jev-price-comparison
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-10-10T01:45:00Z"

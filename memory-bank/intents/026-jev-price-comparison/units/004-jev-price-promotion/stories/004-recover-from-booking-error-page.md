@@ -2,11 +2,11 @@
 id: 004-recover-from-booking-error-page
 unit: 004-jev-price-promotion
 intent: 026-jev-price-comparison
-status: in-progress
+status: complete
 priority: must
 created: "2026-10-10T01:45:00Z"
 assigned_bolt: 089-jev-price-promotion
-implemented: false
+implemented: true
 ---
 
 # US-219: Recover from Booking.com's transient error page

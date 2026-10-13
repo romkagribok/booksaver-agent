@@ -2,11 +2,11 @@
 id: 002-run-jev-as-the-price-method
 unit: 004-jev-price-promotion
 intent: 026-jev-price-comparison
-status: in-progress
+status: complete
 priority: must
 created: "2026-10-10T01:45:00Z"
 assigned_bolt: 089-jev-price-promotion
-implemented: false
+implemented: true
 ---
 
 # US-217: Run Jev as the price method with the LLM path as rollback

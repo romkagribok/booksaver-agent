@@ -2,7 +2,7 @@
 version: jevonly-a273c78
 commit: a273c78d3388
 created: "2026-10-12T23:15:40Z"
-status: deployed-awaiting-first-check
+status: deployed-verified
 recorded: "2026-10-12T23:16:49Z"
 ---
 
@@ -69,6 +69,13 @@ the first canonical Jev result in production, and that invitee B's breakfast res
 breakfast rate under the meal gate (the fix was checked against that hotel's signed-out wording,
 not a signed-in run). A failed scheduled check is silent, so this needs looking at:
 `booksaver comparison report --days 1` and `check_history` for that booking.
+
+## Observed (2026-10-13T13:54:35Z)
+
+Six scheduled checks ran in Jev-only mode by 2026-10-13T10:52Z, two per active booking: all
+canonical successes with `jev_price_runs` records. Invitee B's breakfast reservation excluded the
+room-only rate and selected the breakfast rate on both of its checks. Container healthy, zero
+restarts. The error-page reload (US-219) has still not been observed.
 
 ## Rollback
 

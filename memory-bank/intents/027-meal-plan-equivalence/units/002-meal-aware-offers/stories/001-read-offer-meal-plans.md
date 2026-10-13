@@ -2,11 +2,11 @@
 id: 001-read-offer-meal-plans
 unit: 002-meal-aware-offers
 intent: 027-meal-plan-equivalence
-status: draft
+status: complete
 priority: must
 created: "2026-10-10T01:49:45Z"
 assigned_bolt: 091-meal-aware-offers
-implemented: false
+implemented: true
 ---
 
 # US-222: Read each offer's meal plan
@@ -27,7 +27,8 @@ FR-6, FR-11.
 - [ ] Given a reported meal plan, when code cannot ground it in that text, then it is `unknown`.
 - [ ] Given a rate that states nothing about meals, when it is read, then its meal plan is `none`.
 - [ ] Given saved real property pages, when the reader runs on them, then every rate's meal plan
-  matches the page before production enablement.
+  matches the page before production enablement. **Descoped**: see the requirements amendment
+  of 2026-10-13T13:51:32Z; replaced by a production read-back after release.
 
 ## Out of scope
 
