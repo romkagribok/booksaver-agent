@@ -2,7 +2,7 @@
 unit: 013-confirmation-booked-total
 intent: 023-replaceable-agentic-browser-executor
 created: 2026-10-10T02:00:18Z
-last_updated: 2026-10-12T22:18:16Z
+last_updated: 2026-10-12T22:26:23Z
 ---
 
 # Construction Log: Confirmation Booked Total
@@ -141,3 +141,10 @@ last_updated: 2026-10-12T22:18:16Z
   bolt in-progress → complete, US-226–228 complete and implemented, Unit013 complete; Intent023
   unchanged with two other incomplete units. Story index and unit list aligned. Nothing is
   committed, pushed, merged or deployed; the production booking still reads USD301 until release.
+- **2026-10-12T22:26:23Z**: Operations handoff. Committed as baf9b29, PR #82; Bugbot merge gate passed on that
+  head; merged as 8a3eb1e. Exact image `bookedtotal-baf9b29` passed Development and both Staging
+  checks (offline snapshot; live affected-caller replay 22:21:42Z–22:23:26Z, USD301 to USD346.08)
+  and was promoted at 2026-10-12T22:25:30Z with backup and rollback tag; production health,
+  integrity and public health verified. The production reservation is corrected by the first
+  synchronization after promotion, which has not happened yet. See release
+  `baf9b29-confirmation-booked-total`.

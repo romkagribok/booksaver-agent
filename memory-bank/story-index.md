@@ -500,7 +500,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `007-shared-browser-use-access` | 2 stories | Complete (bolt 065) |
 | `008-connect-refresh-status` | 1 story | Complete (bolt 066) |
 | `009-price-rejection-diagnostics` | 1 story | Complete (bolt 068) |
-| `013-confirmation-booked-total` | 3 stories | Complete (bolt 092; release pending) |
+| `013-confirmation-booked-total` | 3 stories | Complete (bolt 092; released baf9b29) |
 
 ### 001-agentic-executor-control-plane: Agentic Executor Control Plane
 
@@ -661,7 +661,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 13 | 45 | In construction (Bolt077 and Unit012 Operations complete; bolts073–076 complete; price qualification bolt052 active, bolt055 blocked; Unit013 bolt092 construction complete, release pending) |
+| `023-replaceable-agentic-browser-executor` | 13 | 45 | In construction (Bolt077 and Unit012 Operations complete; bolts073–076 complete; price qualification bolt052 active, bolt055 blocked; Unit013 bolt092 released as baf9b29) |
 
 | `024-repository-streamlining` | 3 | 6 | Complete locally (bolts 070–072) |
 

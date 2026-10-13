@@ -14,7 +14,7 @@ updated: 2026-10-10T01:59:26Z
 
 - Purpose: Record the confirmation page's booked total in its printed currency, read the refund
   schedule layout, and let a reader-reconciled total replace a stale saved baseline.
-- Assigned requirements: FR34–36; stories US226–228; Bolt092 construction complete, release pending.
+- Assigned requirements: FR34–36; stories US226–228; Bolt092 complete and released as baf9b29.
 - Dependencies: completed Units011/012 and the existing confirmation reader, validator and SQLite
   reconciliation boundary. No new service, route, dependency or schema change.
 
