@@ -83,7 +83,7 @@ updated: 2026-10-10T01:59:26Z
 - **Assigned Requirements**: FR-10, FR-12
 - **Dependencies**: Units 001 and 002; existing account synchronization and reconciliation policy.
 
-### 005-legacy-price-selector-retirement
+### 005-legacy-price-selector-retirement (descoped 2026-10-13T14:06:46Z, removed from the plan)
 
 - **Purpose**: Retire the legacy price path only after price promotion and the complete rollback
   window.
@@ -117,7 +117,7 @@ updated: 2026-10-10T01:59:26Z
 | FR-4, FR-5, FR-8 | `002-local-agentic-price-executor` |
 | FR-9 | `003-agentic-browser-qualification` |
 | FR-10, FR-12 | `004-agentic-inventory-executor` |
-| FR-11 | `005-legacy-price-selector-retirement` |
+| FR-11 | descoped 2026-10-13 (was `005-legacy-price-selector-retirement`) |
 | FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-19, FR-20 | `006-browser-use-price-executor` |
 | FR-21, FR-22 | `007-shared-browser-use-access` |
 | FR-23 | `008-connect-refresh-status` |
@@ -179,7 +179,7 @@ flowchart LR
 17. Bolt 068: retain bounded price-rejection diagnostics without changing acceptance.
 18. Bolt 073: preserve validated partial positives, recognize code-observed empty upcoming inventory
     without absence authority, simplify Telegram outcomes, and qualify caller-specific paths.
-19. Bolt 055: legacy price-selector retirement, blocked until Browser Use price promotion and the
+19. Bolt 055 (descoped 2026-10-13, removed): legacy price-selector retirement, blocked until Browser Use price promotion and the
     30-day rollback window pass.
 
 20. Bolt 074: evidence-grounded grouped-trip/reservation/detail discovery, strict fact eligibility and

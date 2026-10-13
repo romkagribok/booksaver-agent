@@ -37,8 +37,7 @@ requires_bolts:
   - 054-local-agentic-price-executor
   - 060-agentic-inventory-executor
   - 063-agentic-inventory-executor
-enables_bolts:
-  - 055-legacy-price-selector-retirement
+enables_bolts: []
 requires_units:
   - 001-agentic-executor-control-plane
   - 002-local-agentic-price-executor
