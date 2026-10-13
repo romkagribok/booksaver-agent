@@ -2,11 +2,11 @@
 id: 002-govern-canary-promotion-and-regression-rollback
 unit: 003-agentic-browser-qualification
 intent: 023-replaceable-agentic-browser-executor
-status: in-progress
+status: complete
 priority: must
-created: 2026-08-16T19:18:41Z
+created: "2026-08-16T19:18:41Z"
 assigned_bolt: 052-agentic-browser-qualification
-implemented: false
+implemented: true
 ---
 
 # Story: Govern Canary Promotion and Regression Rollback

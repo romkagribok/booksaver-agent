@@ -1,13 +1,13 @@
 ---
 intent: 023-replaceable-agentic-browser-executor
 phase: inception
-status: construction
-created: 2026-08-14T02:46:26Z
-updated: 2026-10-10T01:59:26Z
-checkpoint_1_approved: 2026-08-16T19:18:41Z
-checkpoint_2_approved: 2026-08-16T19:18:41Z
-checkpoint_3_approved: 2026-08-16T19:18:41Z
-checkpoint_4_approved: 2026-08-16T19:18:41Z
+status: complete
+created: "2026-08-14T02:46:26Z"
+updated: "2026-10-10T01:59:26Z"
+checkpoint_1_approved: "2026-08-16T19:18:41Z"
+checkpoint_2_approved: "2026-08-16T19:18:41Z"
+checkpoint_3_approved: "2026-08-16T19:18:41Z"
+checkpoint_4_approved: "2026-08-16T19:18:41Z"
 ---
 
 # Requirements: Replaceable Agentic Browser Executor
@@ -616,3 +616,21 @@ flow works accepted FR-20 and ADR-044's Browser Use inventory-trigger expansion.
 owner explicitly authorized currently disclosed invitees to receive the same Browser Use execution
 as the owner and requested secret-safe key/funding visibility in `/admin users`, accepting FR-21,
 FR-22, Unit 007, and construction through Cursor Bugbot review and merge.
+
+## Amendment 2026-10-13T14:06:46Z: price qualification and legacy retirement descoped
+
+Owner decision of 2026-10-13 ("bolts 52 and 55 are basically not needed anymore cuz we are not really using browser use?"), confirmed by the agent for price checks: production has
+priced with Jev only since 2026-10-12 (intent 026, ADR-056).
+
+Descoped, not delivered:
+
+- **Live owner canary and promotion of the agentic price method** (bolt 052, US-152's live
+  evidence): never run. The qualification evaluator, its thresholds and offline gates were built
+  and remain tested; no promotion happened and none is planned.
+- **Unit 005, bolt 055, US-154, FR-11 (retire the legacy price selectors after promotion and a
+  30-day rollback window)**: never started. The unit, its story and its bolt were removed from
+  the plan; they remain in git history before this amendment. The legacy scripted price path is
+  still in the code and still serves users the routing policy does not admit.
+
+What happens to the price paths Jev replaced is open in GitHub issue #79, which now also names the
+legacy scripted path. Browser Use continues to run account inventory synchronization (ADR-044).

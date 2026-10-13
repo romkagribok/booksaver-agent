@@ -493,9 +493,8 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 |------|---------|--------|
 | `001-agentic-executor-control-plane` | 4 stories | Complete (bolt 050) |
 | `002-local-agentic-price-executor` | 5 stories | Complete (bolts 051 and 054) |
-| `003-agentic-browser-qualification` | 2 stories | In progress (bolt 052; live gate required) |
+| `003-agentic-browser-qualification` | 2 stories | Complete (bolt 052; live promotion descoped 2026-10-13) |
 | `004-agentic-inventory-executor` | 9 stories | Complete (bolt 063) |
-| `005-legacy-price-selector-retirement` | 1 story | Blocked (bolt 055; post-promotion) |
 | `006-browser-use-price-executor` | 6 stories | Complete (bolt 064) |
 | `007-shared-browser-use-access` | 2 stories | Complete (bolt 065) |
 | `008-connect-refresh-status` | 1 story | Complete (bolt 066) |
@@ -526,7 +525,7 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-151` | Prove DOM resilience and privacy boundaries | Agentic Browser | Complete | `003-agentic-browser-qualification/stories/001-prove-dom-resilience-and-privacy-boundaries.md` |
-| `US-152` | Govern canary promotion and regression rollback | Agentic Browser | In progress | `003-agentic-browser-qualification/stories/002-govern-canary-promotion-and-regression-rollback.md` |
+| `US-152` | Govern canary promotion and regression rollback | Agentic Browser | Complete | `003-agentic-browser-qualification/stories/002-govern-canary-promotion-and-regression-rollback.md` |
 
 ### 004-agentic-inventory-executor: Agentic Inventory Executor
 
@@ -541,12 +540,6 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `US-161` | Enter Browser Use inventory through canonical HTTPS | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/007-enter-browser-use-inventory-through-canonical-https.md` |
 | `US-162` | Discover previously unknown Browser Use inventory | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/008-discover-previously-unknown-browser-use-inventory.md` |
 | `US-163` | Report accepted positive inventory refreshes accurately | Agentic Browser | Complete | `004-agentic-inventory-executor/stories/009-report-positive-only-bookings-refresh.md` |
-
-### 005-legacy-price-selector-retirement: Legacy Price Selector Retirement
-
-| Story | Title | Tag | Status | File |
-|-------|-------|-----|--------|------|
-| `US-154` | Retire legacy price selectors after rollback window | Agentic Browser | Blocked | `005-legacy-price-selector-retirement/stories/001-retire-legacy-price-selectors-after-rollback.md` |
 
 ### 006-browser-use-price-executor: Browser Use Price Executor
 
@@ -661,12 +654,13 @@ Story file paths are relative to `memory-bank/intents/{intent}/units/`.
 | `020-randomized-daily-booking-checks` | 1 | 3 | Complete (bolt 037; 1038 tests) |
 | `021-booking-browser-llm-recovery` | 2 | 8 | Complete (bolts 038–040; 1230 tests) |
 | `022-adaptive-booking-browser-resilience` | 3 | 13 | Complete (bolts 041–049) |
-| `023-replaceable-agentic-browser-executor` | 13 | 45 | In construction (Bolt077 and Unit012 Operations complete; bolts073–076 complete; price qualification bolt052 active, bolt055 blocked; Unit013 bolt092 released as baf9b29) |
+| `023-replaceable-agentic-browser-executor` | 12 | 44 | Complete. Unit 005 (legacy price selector retirement, US-154, bolt 055) and bolt 052's live promotion were descoped on 2026-10-13 after Jev became the price method; see the requirements amendment |
 
 | `024-repository-streamlining` | 3 | 6 | Complete locally (bolts 070–072) |
 
 | `025-session-continuity-and-paste` | 4 | 9 | Complete |
 | `026-jev-price-comparison` | 4 | 16 | Complete (bolts 084–089); Jev is the production price method since 2026-10-12; US-219's error-page reload is unobserved in production |
+| `027-meal-plan-equivalence` | 2 | 6 | Complete (bolts 090–091); meal plan recorded per reservation and required of offers; descoped and unproven items in the requirements amendment of 2026-10-13 |
 
 For intents 001–024, all 194 stories (190 complete; remaining stories retain the statuses above)
 are assigned exactly once. Intents 025 and 026 add 9 complete and 12 planned stories respectively.
