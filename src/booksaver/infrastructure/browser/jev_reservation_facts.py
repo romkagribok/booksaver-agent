@@ -56,13 +56,13 @@ _DATE = re.compile(
     r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|"
     r"Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?) ([0-9]{1,2}), ([0-9]{4})\b"
 )
-# Affirmative constructions only; any negation leaves the terms unknown.
+_TIME = r"[0-9]{1,2}:[0-9]{2} ?[AP]M"
+# Only Booking.com's own sentence templates in which the date ends an open free window. Any other
+# wording, including added conditions or a negation, leaves the terms unknown.
 _REFUNDABLE = re.compile(
-    r"\b(?:you(?:'ll| will)? (?:get|receive) a full refund|free cancellation (?:until|before)|"
-    r"(?:can|may) cancel (?:for free|free of charge))\b",
-    re.I,
+    rf"(?:You'll get a full refund if you cancel before (?:{_TIME} on )?(?P<a>{_DATE.pattern})"
+    rf"|Free cancellation until (?P<b>{_DATE.pattern})(?: {_TIME})?)\.?",
 )
-_NEGATION = re.compile(r"\b(?:not|no|never|cannot|can't|won't|isn't|aren't)\b", re.I)
 # Reasons where the code reader only failed on the page's layout. Its deliberate rejections
 # (rendered cost tiers, unprovable cutoffs, fees, mixed currencies) are never retried.
 _RETRY_TOTAL = frozenset({
@@ -119,7 +119,13 @@ def prove_total(
         return None
     start, end = section
     picked = re.fullmatch(_MONEY, lines[index])
-    if picked is None:
+    party = (
+        re.fullmatch(r"\(for ([0-9]{1,2}) guests?\)", lines[start + 1])
+        if start + 1 < end else None
+    )
+    booked = int(guests.get("adults", 0)) + int(guests.get("children", 0)) if guests else 0
+    # The price must be for the booked party; "guest" and "guests" are both Booking's wording.
+    if picked is None or party is None or int(party[1]) != booked:
         return None
     currency, total = _currency(picked[1]), _amount(picked[2])
     in_currency = [
@@ -181,8 +187,11 @@ def prove_refund(sentence: str, check_in: date | None, now: datetime) -> dict[st
         return None
     if _NON_REFUNDABLE.search(sentence) and not _REFUNDABLE.search(sentence):
         return {"refundability": "explicit_nonrefundable", "refundability_text": sentence}
-    dates = _DATE.findall(sentence)
-    if not _REFUNDABLE.search(sentence) or _NEGATION.search(sentence) or len(dates) != 1:
+    match = _REFUNDABLE.fullmatch(sentence.strip())
+    if match is None:
+        return None
+    dates = _DATE.findall(match[0])
+    if len(dates) != 1:
         return None
     deadline = _calendar_date(*dates[0])
     if deadline is None or deadline > check_in:
@@ -227,7 +236,10 @@ class JevReservationFacts:
         check_in = _known_date(facts, "check_in")
         check_out = _known_date(facts, "check_out")
         nights = (check_out - check_in).days if check_in and check_out else None
-        guests = {"adults": facts["adults"]} if facts.get("adults", "unknown") != "unknown" else {}
+        guests = {
+            name: facts[name] for name in ("adults", "children")
+            if facts.get(name, "unknown") != "unknown"
+        } if facts.get("adults", "unknown") != "unknown" else {}
         if reasons.get("booked_total") in _RETRY_TOTAL:
             proven = [
                 p for key in total_options(lines)

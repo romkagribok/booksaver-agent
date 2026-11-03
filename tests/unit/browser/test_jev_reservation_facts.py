@@ -88,6 +88,7 @@ def test_single_guest_page_with_city_tax_proves_its_total() -> None:
         (CONVERTED, ("Payment Info", "City tax is not included in your total.")),
         (CONVERTED, ("(for 1 guest)", "(for 1 guest) US$190 per night")),  # second amount
         (SINGLE_GUEST, ("Additional Info", "Additional Info\nMandatory cleaning fee € 25")),
+        (SINGLE_GUEST, ("(for 1 guest)", "(for 2 guests)")),  # not the booked party
     ],
 )
 def test_anything_the_page_does_not_prove_stays_unknown(
@@ -127,7 +128,9 @@ def test_explicit_no_refund_wording_is_non_refundable() -> None:
         "You'll get a full refund if you cancel before 11:59 PM on October 1, 2026.",
         "Full refund before January 20, 2027 or January 22, 2027.",  # two dates
         "You will not receive a full refund if you cancel before January 23, 2027.",  # negated
-        "Full refund if you cancel before January 23, 2027.",  # not an affirmative construction
+        "Full refund if you cancel before January 23, 2027.",  # not Booking's template
+        "You can cancel for free after January 23, 2027.",  # the date opens, not ends, it
+        "Free cancellation until January 23, 2027 within 24 hours of booking.",  # extra condition
     ],
 )
 def test_unproven_refund_sentences_stay_unknown(sentence: str) -> None:
@@ -137,9 +140,9 @@ def test_unproven_refund_sentences_stay_unknown(sentence: str) -> None:
 @pytest.mark.parametrize(
     ("sentence", "proven"),
     [
-        ("Free cancellation until 12:00 AM on November 3, 2026.", False),  # today
-        ("Free cancellation until 11:59 PM on November 4, 2026.", False),  # could be past at +14
-        ("Free cancellation until 11:59 PM on November 5, 2026.", True),
+        ("Free cancellation until November 3, 2026.", False),  # today
+        ("Free cancellation until November 4, 2026.", False),  # could be past at +14
+        ("Free cancellation until November 5, 2026.", True),
     ],
 )
 def test_a_cutoff_too_close_for_any_timezone_stays_unknown(sentence: str, proven: bool) -> None:
