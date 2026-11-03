@@ -1039,3 +1039,109 @@ def test_a_rate_named_for_a_meal_still_classifies_by_its_inclusion_statement() -
     assert offer_meal_plan(with_statement.meal_text) is MealPlan.BREAKFAST
     # A name alone is not evidence of an included meal; it can only exclude the offer.
     assert without.meal_text == "none"
+
+
+# --- FR-6: Booking.com's signed-in redirect drops selected_currency -----------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://b.com/h.html?a=1", "https://b.com/h.html?a=1&selected_currency=USD"),
+        ("https://b.com/h.html", "https://b.com/h.html?selected_currency=USD"),
+        ("https://b.com/h.html?a=1&selected_currency=USD", None),
+        (
+            "https://b.com/h.html?selected_currency=EUR&a=1&b=&a=2",
+            "https://b.com/h.html?selected_currency=USD&a=1&b=&a=2",
+        ),
+        (
+            "https://b.com/h.html?selected_currency=USD&selected_currency=EUR",
+            "https://b.com/h.html?selected_currency=USD",
+        ),
+        (None, None),
+        ("", None),
+    ],
+)
+def test_url_with_currency_pins_only_when_needed(url: str | None, expected: str | None) -> None:
+    from booksaver.infrastructure.browser.jev_price_executor import _url_with_currency
+
+    assert _url_with_currency(url, "USD") == expected
+
+
+class _PinHost:
+    failure_stage = ""
+    dialog_rejected = False
+    verified_mobile_session = None
+
+    def __init__(self, session: Any) -> None:
+        self.session = session
+
+    async def start(self) -> Any:
+        from types import SimpleNamespace
+
+        return SimpleNamespace(browser=self.session, viewport={"width": 412, "height": 915})
+
+    async def verify_authentication(self, _request: Any, _session: Any) -> None:
+        return None
+
+
+class _RedirectSession(_ReloadSession):
+    """The entry navigation lands on ``landing`` (the redirect); later ones keep their URL."""
+
+    def __init__(self, landing: str, *, off_site_after_pin: bool = False) -> None:
+        super().__init__()
+        self.landing = landing
+        self.current = landing
+        self.off_site_after_pin = off_site_after_pin
+
+    async def get_current_page_url(self) -> str:
+        return self.current
+
+    async def navigate_to(self, url: str, new_tab: bool = False) -> None:
+        await super().navigate_to(url, new_tab)
+        if len(self.navigations) == 1:
+            self.current = self.landing
+        else:
+            self.current = "https://evil.example/x" if self.off_site_after_pin else url
+
+
+def _execute_pinned(session: _RedirectSession) -> tuple[LocalJevPriceRuntime, list[str], Any, Any]:
+    runtime = LocalJevPriceRuntime()
+    runtime._host = _PinHost(session)  # type: ignore[assignment]
+    entries: list[str | None] = []
+
+    async def stop_here(*_args: Any, entry_url: str | None = None) -> Any:
+        entries.append(entry_url)
+        return PriceExecutionStatus.NO_VALID_OBSERVATION
+
+    runtime._navigate_until_offers = stop_here  # type: ignore[method-assign]
+    meter = ExecutionMeter(_request().limits)
+    result = asyncio.run(runtime.execute(_request(), decider=_NavJev(), meter=meter))
+    return runtime, entries, meter, result
+
+
+def test_dropped_currency_is_reopened_once_and_the_pinned_url_is_kept() -> None:
+    landing = "https://www.booking.com/hotel/us/hotel-test.html?label=x&checkin=2026-11-24"
+    session = _RedirectSession(landing)
+    runtime, entries, meter, result = _execute_pinned(session)
+    assert len(session.navigations) == 2
+    assert session.navigations[1] == landing + "&selected_currency=USD"
+    assert entries == [session.navigations[1]]
+    assert meter.snapshot().total_actions == 2
+    assert "PIN_CURRENCY" in runtime.diagnostic and "booking.com" not in runtime.diagnostic
+    assert result.status is PriceExecutionStatus.NO_VALID_OBSERVATION
+
+
+def test_kept_currency_needs_no_second_navigation() -> None:
+    session = _RedirectSession(URL + "&selected_currency=USD")
+    runtime, entries, meter, _result = _execute_pinned(session)
+    assert len(session.navigations) == 1 and entries == [session.navigations[0]]
+    assert meter.snapshot().total_actions == 1 and "PIN_CURRENCY" not in runtime.diagnostic
+
+
+def test_off_site_page_after_the_pin_is_unsafe() -> None:
+    session = _RedirectSession(URL, off_site_after_pin=True)
+    runtime, entries, _meter, result = _execute_pinned(session)
+    assert result.status is PriceExecutionStatus.UNSAFE_ACTION
+    assert len(session.navigations) == 2 and entries == []
+    assert "end=currency_invariant" in runtime.diagnostic
