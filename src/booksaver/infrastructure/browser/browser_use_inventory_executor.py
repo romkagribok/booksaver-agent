@@ -101,6 +101,7 @@ from booksaver.infrastructure.browser.inventory_traversal import (
     inventory_page_kind,
     read_inventory_page_links,
 )
+from booksaver.infrastructure.browser.jev_reservation_facts import JevReservationFacts
 
 logger = logging.getLogger(__name__)
 
@@ -927,9 +928,11 @@ class LocalBrowserUseInventoryRuntime:
         mobile_settings: MobileWebSettings | None = None,
         *,
         guard: BrowserUseActionGuard | None = None,
+        assist: JevReservationFacts | None = None,
     ) -> None:
         self._mobile_settings = mobile_settings or MobileWebSettings()
         self._guard = guard or BrowserUseActionGuard()
+        self._assist = assist
         self._host = BrowserUseSessionHost(self._mobile_settings)
         self._state = _EpisodeState()
 
@@ -1747,7 +1750,7 @@ class LocalBrowserUseInventoryRuntime:
 
         reader = GroupedInventoryReader(
             session, navigate=navigate, back=back, check=check,
-            refresh_root=refresh_root,
+            refresh_root=refresh_root, assist=self._assist,
             observed_at=datetime.now(UTC), result=result,
         )
         try:
@@ -2065,20 +2068,30 @@ class LocalBrowserUseInventoryExecutor:
         lease_broker: InMemorySessionLeaseBroker,
         budget: BrowserJobCostBudget,
         mobile_settings: MobileWebSettings | None = None,
+        facts_assistant: Callable[[], JevReservationFacts | None] | None = None,
+        record_assistant: Callable[[JevReservationFacts, InventoryExecutionRequest], None]
+        | None = None,
     ) -> None:
         self._api_key = api_key
         self._leases = lease_broker
         self._budget = budget
         self._mobile_settings = mobile_settings or MobileWebSettings()
+        self._facts_assistant = facts_assistant
+        self._record_assistant = record_assistant
 
     def execute(self, request: InventoryExecutionRequest) -> InventoryExecutionResult:
-        with AsyncLoopRunner() as runner:
-            return BrowserUseInventoryBrowserExecutor(
-                api_key=self._api_key,
-                lease_broker=self._leases,
-                budget=self._budget,
-                runner=runner,
-                runtime_factory=lambda: LocalBrowserUseInventoryRuntime(
-                    self._mobile_settings
-                ),
-            ).execute(request)
+        assist = self._facts_assistant() if self._facts_assistant is not None else None
+        try:
+            with AsyncLoopRunner() as runner:
+                return BrowserUseInventoryBrowserExecutor(
+                    api_key=self._api_key,
+                    lease_broker=self._leases,
+                    budget=self._budget,
+                    runner=runner,
+                    runtime_factory=lambda: LocalBrowserUseInventoryRuntime(
+                        self._mobile_settings, assist=assist,
+                    ),
+                ).execute(request)
+        finally:
+            if assist is not None and self._record_assistant is not None:
+                self._record_assistant(assist, request)

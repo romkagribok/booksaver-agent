@@ -900,3 +900,28 @@ def test_empty_final_proof_must_still_belong_to_root(monkeypatch):
     monkeypatch.setattr(reader, 'read_inventory_snapshot', read)
     assert not asyncio.run(worker.run())
     assert not result.active_coverage_complete
+
+
+def test_assist_runs_only_for_unknown_facts_before_the_reservation_is_kept(monkeypatch):
+    browser = Browser()
+    worker, result = harness(monkeypatch, browser)
+    calls: list[dict[str, str]] = []
+
+    def parse(*_args, reasons=None, **_kwargs):
+        if reasons is not None and len(calls) % 2 == 0:
+            reasons["booked_total"] = "guest_count_line"
+        return header_facts()
+
+    async def assist(text, facts, reasons):
+        calls.append(dict(reasons))
+        facts["booked_total"] = "102"
+        reasons.clear()
+
+    monkeypatch.setattr(reader, "parse_confirmation_facts", parse)
+    worker.assist = assist
+
+    assert asyncio.run(worker.run())
+
+    assert calls and all(call == {"booked_total": "guest_count_line"} for call in calls)
+    assert all(item["booked_total"] == "102" for item in result.reservations[: len(calls)])
+    assert not any(code.startswith("booked_total") for code in result.unknown_facts)

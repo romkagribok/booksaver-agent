@@ -571,7 +571,11 @@ def _make_check_coordinator(
             lease_broker=lease_broker,
             budget=budget,
             mobile_settings=cfg.mobile_web_settings,
+            facts_assistant=facts_assistant,
+            record_assistant=record_assistant,
         )
+
+    facts_assistant, record_assistant = _make_reservation_facts_assistant(cfg)
 
     jev_factory = _make_jev_executor_factory(cfg)
 
@@ -603,6 +607,41 @@ def _make_check_coordinator(
         ),
         jev_executor_factory=jev_factory,
     )
+
+
+def _make_reservation_facts_assistant(cfg: Config) -> tuple[Any, Any]:
+    """Jev for unreadable refund wording in syncs, under the shared Jev daily cap (ADR-060)."""
+    typesafe_key = os.environ.get("BOOKSAVER_TYPESAFE_API_KEY", "").strip()
+    if not typesafe_key:
+        return None, None
+    from booksaver.infrastructure.browser.jev_price_executor import JevArmMeter
+    from booksaver.infrastructure.browser.jev_reservation_facts import (
+        JevReservationFacts,
+        remaining_daily_nano_usd,
+    )
+    from booksaver.infrastructure.llm.typesafe_client import TypeSafeClient
+
+    settings = cfg.jev_comparison_settings
+    client = TypeSafeClient(typesafe_key, model=settings.model)
+    db_path = cfg.data_directory.path / "booksaver.db"
+
+    def _assistant() -> Any:
+        now = datetime.now(UTC)
+        return JevReservationFacts(
+            client=client,
+            meter=JevArmMeter(
+                max_calls=8,
+                max_cost_nano_usd=remaining_daily_nano_usd(db_path, settings, now),
+            ),
+            observed_at=now,
+        )
+
+    def _record(assistant: Any, request: Any) -> None:
+        assistant.record(
+            db_path, user_id=request.owner_user_id, execution_id=request.execution_id,
+        )
+
+    return _assistant, _record
 
 
 def _make_jev_executor_factory(cfg: Config) -> Any:
