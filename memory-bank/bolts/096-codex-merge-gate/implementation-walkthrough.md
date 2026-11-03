@@ -9,6 +9,7 @@ created: 2026-11-03T01:23:31Z
 - `scripts/codex_merge_gate.py` replaces `scripts/bugbot_merge_gate.py`, with a smaller pure
   `evaluate_gate` and one `gh` call per fact. It only trusts comments by the Codex connector.
 - The usage-limit wording is not observed yet. The gate matches "usage limit" in a Codex comment
-  that is not the state comment and is newer than the head commit. Correct it if the real notice
-  differs. The miss direction is blocked, not passed.
+  that is not the state comment and names the current head commit. Correct it if the real notice
+  differs. The miss direction is blocked, not passed: the owner's waiver then needs reading by hand.
+- The gate blocks a pull request with more than 100 review threads rather than paging.
 - Historical records that mention Bugbot are unchanged.

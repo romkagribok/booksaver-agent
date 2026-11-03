@@ -7,7 +7,6 @@ import pytest
 from scripts.codex_merge_gate import GateRejected, evaluate_gate
 
 _HEAD = "a" * 40
-_LANDED = "2026-11-03T01:00:00Z"
 
 
 def _state(**review: object) -> dict[str, Any]:
@@ -15,7 +14,6 @@ def _state(**review: object) -> dict[str, Any]:
     return {
         "author": {"login": "chatgpt-codex-connector"},
         "body": f"<!-- codex-review-state:v1 {json.dumps({'code_review': body})} -->",
-        "createdAt": "2026-11-03T01:05:00Z",
     }
 
 
@@ -24,7 +22,6 @@ def _pr(*comments: dict[str, Any], state: str = "OPEN") -> dict[str, Any]:
         "state": state,
         "headRefOid": _HEAD,
         "comments": list(comments),
-        "commits": [{"committedDate": _LANDED}],
     }
 
 
@@ -60,12 +57,11 @@ def test_gate_fails_closed(pr: dict[str, Any], threads: list[dict[str, Any]]) ->
 
 
 def _limit_notice(
-    created_at: str = "2026-11-03T01:05:00Z", login: str = "chatgpt-codex-connector",
+    commit: str = _HEAD[:10], login: str = "chatgpt-codex-connector",
 ) -> dict[str, Any]:
     return {
         "author": {"login": login},
-        "body": "Codex could not run: your usage limit was reached.",
-        "createdAt": created_at,
+        "body": f"Codex could not review `{commit}`: your usage limit was reached.",
     }
 
 
@@ -76,7 +72,8 @@ def test_current_codex_usage_limit_notice_waives_the_gate() -> None:
 @pytest.mark.parametrize(
     "notice",
     [
-        _limit_notice(created_at="2026-11-03T00:30:00Z"),  # before the head landed
+        _limit_notice(commit="b" * 10),  # another commit
+        _limit_notice(commit="no commit named"),
         _limit_notice(login="someone"),
     ],
 )
