@@ -37,14 +37,13 @@ class SqliteMonitoringStallRepository:
         ).fetchone()
         rows = self._conn.execute(
             """
-            SELECT r.monitoring_booking_id, r.property_name, r.eligibility_status,
+            SELECT r.account_reservation_id, r.property_name, r.eligibility_status,
                    r.eligibility_reasons, r.first_observed_at, r.last_sync_run_id,
                    (SELECT MAX(h.checked_at) FROM check_history h
                      WHERE h.booking_id = r.monitoring_booking_id
                        AND (h.outcome = ? OR h.failure_code = ?)) AS last_conclusive
             FROM account_reservations r
-            WHERE r.user_id = ? AND r.monitoring_booking_id IS NOT NULL
-              AND r.remote_lifecycle = 'upcoming' AND r.check_out > ?
+            WHERE r.user_id = ? AND r.remote_lifecycle = 'upcoming' AND r.check_out > ?
             """,
             (
                 CheckOutcome.SUCCESS.value,
@@ -55,7 +54,7 @@ class SqliteMonitoringStallRepository:
         ).fetchall()
         return tuple(
             MonitoredReservation(
-                booking_id=row[0],
+                reservation_key=row[0],
                 property_name=row[1] or "Your reservation",
                 eligibility=EligibilityStatus(row[2]),
                 eligibility_reasons=frozenset(

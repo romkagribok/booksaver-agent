@@ -538,7 +538,7 @@ CREATE INDEX IF NOT EXISTS idx_jev_price_runs_created
 
 -- v22: a user was told a monitored reservation has stalled; removed when it recovers.
 CREATE TABLE IF NOT EXISTS monitoring_stall_notices (
-    booking_id  TEXT PRIMARY KEY,
+    booking_id  TEXT PRIMARY KEY,  -- holds the account reservation id
     user_id     INTEGER NOT NULL,
     reason      TEXT NOT NULL,
     notified_at TEXT NOT NULL

@@ -17,7 +17,7 @@ NOW = datetime(2026, 11, 3, 12, tzinfo=UTC)
 
 def _reservation(**facts: object) -> MonitoredReservation:
     values: dict[str, object] = {
-        "booking_id": "booking-1",
+        "reservation_key": "booking-1",
         "property_name": "Synthetic Hotel",
         "eligibility": EligibilityStatus.ELIGIBLE,
         "eligibility_reasons": frozenset(),
@@ -50,6 +50,22 @@ def test_sync_failure_takes_precedence_then_a_hold() -> None:
     assert stall_reason(
         _reservation(**hold, latest_sync_failed=True), NOW,
     ) is StallReason.SYNC_FAILING
+
+
+def test_a_never_monitored_reservation_stalls_a_day_after_it_was_first_seen() -> None:
+    never = {
+        "eligibility": EligibilityStatus.INELIGIBLE,
+        "eligibility_reasons": frozenset({
+            EligibilityReason.REFUNDABILITY_UNKNOWN, EligibilityReason.MISSING_BOOKED_TOTAL,
+        }),
+        "last_conclusive_at": None,
+    }
+    assert stall_reason(
+        _reservation(**never, first_observed_at=NOW - timedelta(hours=23)), NOW,
+    ) is None
+    assert stall_reason(
+        _reservation(**never, first_observed_at=NOW - timedelta(hours=24)), NOW,
+    ) is StallReason.TOTAL_UNCONFIRMED
 
 
 @pytest.mark.parametrize(

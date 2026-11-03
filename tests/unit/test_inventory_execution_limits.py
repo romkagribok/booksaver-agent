@@ -20,7 +20,11 @@ from booksaver.domain.browser_executor import (
     ExecutionLimits,
     ExecutionUsage,
 )
-from booksaver.domain.inventory_executor import MAX_INVENTORY_ACTIONS, InventoryExecutionLimits
+from booksaver.domain.inventory_executor import (
+    MAX_INVENTORY_ACTIONS,
+    MAX_INVENTORY_SECONDS,
+    InventoryExecutionLimits,
+)
 from booksaver.domain.model_policy import UsdAmount
 from tests.support.executors import FakeInventoryBrowserExecutor
 from tests.unit.test_browser_executor import _request as _price_request
@@ -33,7 +37,8 @@ def test_inventory_has_distinct_action_cap_with_unchanged_common_caps() -> None:
     assert price.max_actions == MAX_EXECUTOR_ACTIONS == 15
     assert inventory.max_actions == MAX_INVENTORY_ACTIONS == 40
     assert inventory.deadline == price.deadline
-    assert inventory.timeout_seconds == price.timeout_seconds == 180
+    assert price.timeout_seconds == 180
+    assert inventory.timeout_seconds == MAX_INVENTORY_SECONDS == 300
     assert inventory.max_computer_use_actions == price.max_computer_use_actions
     assert inventory.max_job_cost == price.max_job_cost
     assert inventory.max_deployment_daily_cost == price.max_deployment_daily_cost
@@ -49,7 +54,7 @@ def test_inventory_has_distinct_action_cap_with_unchanged_common_caps() -> None:
         {"max_actions": 0},
         {"max_computer_use_actions": MAX_COMPUTER_USE_ACTIONS + 1},
         {"max_actions": 2, "max_computer_use_actions": 3},
-        {"timeout_seconds": 181},
+        {"timeout_seconds": 301},
         {"timeout_seconds": 0},
         {"max_job_cost": UsdAmount(MAX_JOB_COST_MICRO_USD + 1)},
         {"max_deployment_daily_cost": UsdAmount(MAX_DAILY_COST_MICRO_USD + 1)},
@@ -125,7 +130,7 @@ def test_inventory_application_default_is_40_but_supplied_residual_is_never_expa
     if supplied is None:
         assert isinstance(issued, InventoryExecutionLimits)
         assert issued.max_actions == 40
-        assert issued.deadline == NOW + timedelta(seconds=180)
+        assert issued.deadline == NOW + timedelta(seconds=300)
     else:
         assert issued is supplied
         assert issued.max_actions == 4

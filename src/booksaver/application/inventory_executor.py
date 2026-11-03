@@ -25,6 +25,7 @@ from booksaver.domain.browser_executor import (
     RefundabilityEvidence,
 )
 from booksaver.domain.inventory_executor import (
+    MAX_INVENTORY_SECONDS,
     REQUIRED_INVENTORY_SCOPES,
     ActiveInventoryCoverage,
     InventoryExecutionLimits,
@@ -329,7 +330,9 @@ class OwnerBoundAgenticInventoryExecution:
             execution_id=execution_id,
             owner_user_id=owner_user_id,
             session_lease=lease,
-            limits=limits or InventoryExecutionLimits(deadline=now + timedelta(seconds=180)),
+            limits=limits or InventoryExecutionLimits(
+                deadline=now + timedelta(seconds=MAX_INVENTORY_SECONDS),
+            ),
             known_confirmation_ids=known_confirmation_ids,
             known_reservations=known_reservations,
         )

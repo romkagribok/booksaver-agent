@@ -338,7 +338,10 @@ def _seed_inventory_projection(
     user_id: int,
     remote_id: str,
     booking: Any,
-) -> str:
+    run_suffix: str = "",
+    **observed: Any,
+) -> str | None:
+    """Reconcile one upcoming observation; returns its monitoring booking id, if it has one."""
     observed_at = datetime.now(UTC)
     observation = ReservationObservation(
         remote_id=remote_id,
@@ -356,11 +359,12 @@ def _seed_inventory_projection(
         refund_deadline=booking.refundability.deadline,
         occupancy=booking.occupancy,
     )
+    observation = replace(observation, **observed)
     with SqliteStore(tmp_path / "booksaver.db") as store:
         repository = SqliteAccountReservationRepository(store)
         repository.reconcile(
             user_id=user_id,
-            run_id=f"seed-{remote_id}",
+            run_id=f"seed-{remote_id}{run_suffix}",
             trigger=SynchronizationTrigger.BOOKINGS,
             session_revision="seed-session",
             result=InventoryDiscoveryResult(
@@ -374,7 +378,6 @@ def _seed_inventory_projection(
             for item in repository.list_for_user(user_id)
             if item.observation.confirmation_id == booking.confirmation_id.value
         )
-    assert reservation.monitoring_booking_id is not None
     return reservation.monitoring_booking_id
 
 
@@ -2683,8 +2686,8 @@ def test_empty_inventory_reports_for_owner_and_invitee_without_legacy_browser(
 
 
 @pytest.mark.parametrize("kind,seconds", [
-    (BrowserJobKind.CHECK_NOW, 360), (BrowserJobKind.SCHEDULED_SLOT, 360),
-    (BrowserJobKind.BOOKINGS_SYNC, 180), (BrowserJobKind.QUALIFICATION, 180),
+    (BrowserJobKind.CHECK_NOW, 480), (BrowserJobKind.SCHEDULED_SLOT, 480),
+    (BrowserJobKind.BOOKINGS_SYNC, 300), (BrowserJobKind.QUALIFICATION, 300),
 ])
 def test_operation_deadline_depends_on_combined_job_kind(tmp_path, kind, seconds):
     coordinator = _build_coordinator(_config(tmp_path))
@@ -2699,8 +2702,8 @@ def test_operation_deadline_depends_on_combined_job_kind(tmp_path, kind, seconds
             assert context.deadline <= after + timedelta(seconds=seconds)
             limits = context.remaining_limits(now=after, inventory=True)
             assert limits is not None
-            assert limits.timeout_seconds <= 180
-            assert limits.deadline <= after + timedelta(seconds=180)
+            assert limits.timeout_seconds <= 300
+            assert limits.deadline <= after + timedelta(seconds=300)
 
 
 @pytest.mark.parametrize("entry", ["immediate", "scheduled", "slot"])
@@ -2821,8 +2824,8 @@ def test_real_price_admission_starts_fixed_phase_after_long_inventory(
 
 
 def _stalled_slot(
-    tmp_path: Path, coordinator: Any, monkeypatch: pytest.MonkeyPatch,
-) -> tuple[Callable[[], None], list[tuple[str, str]], str, int]:
+    tmp_path: Path, coordinator: Any, monkeypatch: pytest.MonkeyPatch, **observed: Any,
+) -> tuple[Callable[[], None], list[tuple[str, str]], str | None, int]:
     """One user's monitored reservation with no conclusive result, and a way to run a slot."""
     monkeypatch.setenv("BOOKSAVER_TELEGRAM_BOT_TOKEN", "token")
     sent: list[tuple[str, str]] = []
@@ -2839,7 +2842,7 @@ def _stalled_slot(
         )
     booking_id = _seed_inventory_projection(
         tmp_path, user_id=user_id, remote_id="stall-remote",
-        booking=_future_booking("stall-booking"),
+        booking=_future_booking("stall-booking"), **observed,
     )
     with SqliteStore(tmp_path / "booksaver.db") as store:
         store.conn.execute(
@@ -2862,7 +2865,7 @@ def _stalled_slot(
     return run_slot, sent, booking_id, user_id
 
 
-def _conclusive(tmp_path: Path, booking_id: str) -> None:
+def _conclusive(tmp_path: Path, booking_id: str | None) -> None:
     with SqliteStore(tmp_path / "booksaver.db") as store:
         store.conn.execute(
             "INSERT INTO check_history (check_id, booking_id, checked_at, outcome, "
@@ -2901,6 +2904,58 @@ def test_stall_notice_once_then_recovery_then_a_new_notice(
         store.conn.commit()
     restarted._report_monitoring_stalls(_user_id)  # noqa: SLF001
     assert len(sent) == 3
+
+
+def test_a_never_monitored_reservation_with_unknown_terms_stalls_then_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    _run_slot, sent, booking_id, user_id = _stalled_slot(
+        tmp_path, coordinator, monkeypatch, booked_total=None, refundable=None,
+    )
+    assert booking_id is None  # never monitored: nothing to check
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        store.conn.execute("UPDATE booking_sync_runs SET completeness = 'complete'")
+        store.conn.commit()
+        row = store.conn.execute(
+            "SELECT eligibility_reasons FROM account_reservations WHERE user_id = ?", (user_id,),
+        ).fetchone()
+    assert {"refundability_unknown", "missing_booked_total"} <= set(json.loads(row[0]))
+
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+    assert len(sent) == 1
+    assert "can't confirm this reservation's booked total or refund terms" in sent[0][1]
+
+    # A later sync establishes the facts; the same key is now monitored and gets a result.
+    booking_id = _seed_inventory_projection(
+        tmp_path, user_id=user_id, remote_id="stall-remote", run_suffix="-later",
+        booking=_future_booking("stall-booking"),
+    )
+    assert booking_id is not None
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+    assert len(sent) == 1  # still waiting for a conclusive result
+    _conclusive(tmp_path, booking_id)
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+    assert [subject.split()[-1] for subject, _body in sent] == ["checked", "again"]
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        assert store.conn.execute(
+            "SELECT COUNT(*) FROM monitoring_stall_notices"
+        ).fetchone()[0] == 0
+
+
+def test_a_never_monitored_non_refundable_reservation_never_stalls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    _run_slot, sent, booking_id, user_id = _stalled_slot(
+        tmp_path, coordinator, monkeypatch, booked_total=None, refundable=False,
+    )
+    assert booking_id is None
+
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+
+    assert sent == []
 
 
 def test_no_stall_notice_without_a_ready_session(

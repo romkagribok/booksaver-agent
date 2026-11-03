@@ -27,7 +27,7 @@ class StallReason(Enum):
 
 @dataclass(frozen=True, slots=True)
 class MonitoredReservation:
-    booking_id: str
+    reservation_key: str  # the account reservation id; stable before and after monitoring starts
     property_name: str
     eligibility: EligibilityStatus
     eligibility_reasons: frozenset[EligibilityReason]
@@ -65,8 +65,8 @@ def stall_message(reservation: MonitoredReservation, reason: StallReason) -> tup
     cause = {
         StallReason.SYNC_FAILING: "BookSaver can't read this reservation from your account.",
         StallReason.TOTAL_UNCONFIRMED: (
-            "BookSaver can't confirm your booked total or terms since the reservation changed, "
-            "so it won't report savings."
+            "BookSaver can't confirm this reservation's booked total or refund terms from "
+            "Booking.com, so it can't check it for savings."
         ),
         StallReason.CHECKS_FAILING: "Its price checks keep failing.",
     }[reason]
