@@ -612,7 +612,7 @@ def test_schema_v13_migration_preserves_v12_sync_runs(tmp_path: Path) -> None:
         repo = SqliteAccountReservationRepository(store)
         legacy = repo.latest_run_for_user(1)
 
-        assert version == SCHEMA_VERSION == 21
+        assert version == SCHEMA_VERSION == 22
         assert {
             "recovery_outcome",
             "recovery_step",
@@ -745,7 +745,7 @@ def test_schema_v21_migration_adds_unknown_meal_plans_to_existing_rows(tmp_path:
     conn.execute("ALTER TABLE bookings DROP COLUMN meal_plan")
     conn.execute("ALTER TABLE account_reservations DROP COLUMN meal_plan")
     conn.execute("ALTER TABLE account_reservations DROP COLUMN meal_plan_text")
-    conn.execute("DELETE FROM schema_meta WHERE version = 21")
+    conn.execute("DELETE FROM schema_meta WHERE version >= 21")
     conn.execute("INSERT INTO schema_meta (version, applied_at) VALUES (20, ?)", (NOW.isoformat(),))
     conn.commit()
     conn.close()
@@ -756,7 +756,7 @@ def test_schema_v21_migration_adds_unknown_meal_plans_to_existing_rows(tmp_path:
         (reservation,) = SqliteAccountReservationRepository(store).list_for_user(user.user_id)
         (booking,) = SqliteBookingRepository(store).list_active_for_user(user.user_id)
 
-    assert version == SCHEMA_VERSION == 21
+    assert version == SCHEMA_VERSION == 22
     assert reservation.observation.meal_plan is MealPlan.UNKNOWN
     assert reservation.observation.meal_plan_text == ""
     assert booking.meal_plan is MealPlan.UNKNOWN

@@ -535,3 +535,11 @@ CREATE TABLE IF NOT EXISTS jev_price_runs (
 
 CREATE INDEX IF NOT EXISTS idx_jev_price_runs_created
     ON jev_price_runs(created_at);
+
+-- v22: a user was told a monitored reservation has stalled; removed when it recovers.
+CREATE TABLE IF NOT EXISTS monitoring_stall_notices (
+    booking_id  TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    notified_at TEXT NOT NULL
+);

@@ -3,15 +3,27 @@ id: 095-monitoring-stall-notice
 unit: 003-monitoring-stall-notice
 intent: 028-reservation-change-reconciliation
 type: ddd-construction-bolt
-status: planned
+status: in-progress
 stories:
   - 001-notify-stalled-monitoring
   - 002-recover-without-repeats
 created: "2026-11-02T20:51:19Z"
-started: null
+started: "2026-11-03T01:27:07Z"
 completed: null
-current_stage: null
-stages_completed: []
+current_stage: test
+stages_completed:
+  - name: domain-model
+    completed: "2026-11-03T01:27:07Z"
+    artifact: ddd-01-domain-model.md
+  - name: technical-design
+    completed: "2026-11-03T01:27:07Z"
+    artifact: ddd-02-technical-design.md
+  - name: adr-analysis
+    completed: "2026-11-03T01:27:07Z"
+    artifact: ddd-02-technical-design.md
+  - name: implement
+    completed: "2026-11-03T01:33:53Z"
+    artifact: src/booksaver/domain/monitoring_stall.py
 requires_bolts:
   - 093-reservation-change-sync
   - 094-jev-currency-pin
