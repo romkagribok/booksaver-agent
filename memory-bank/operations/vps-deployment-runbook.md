@@ -169,27 +169,26 @@ each user completes `/connect` as described in §11.
 
 ## 6. Upgrade procedure
 
-### Pre-merge Bugbot gate
+### Pre-merge Codex gate
 
-Cursor Bugbot review is asynchronous and may arrive after local checks or after a pull request is
-marked ready. Do not infer a clean review from the absence of comments and do not merge while its
-review of the final proposed commit is missing or stale.
+The Codex code review is asynchronous and may arrive after local checks or after a pull request is
+opened. It runs when a pull request is opened or marked ready, and on an `@codex review` comment.
 
-1. Finish the local release gate and push the final candidate commit to the pull request.
-2. Mark the pull request ready and wait for Cursor Bugbot to complete its review. A clean run may
-   appear only as the successful current-head `Cursor Bugbot` check rather than a review object.
+1. Complete local validation and push the proposed commit.
+2. Open the pull request, or comment `@codex review` for a new head, and wait for Codex to finish.
 3. Inspect thread-aware review state. Fix every valid concern with regression coverage; answer any
-   false positive with concrete evidence; resolve every Cursor-authored thread.
-4. If any code or documentation changes are pushed, wait for Bugbot to review the new head commit.
+   false positive with concrete evidence; resolve every Codex-authored thread.
+4. If any code or documentation changes are pushed, wait for Codex to review the new head commit.
 5. Run the executable gate from the repository root:
 
    ```bash
-   python3 scripts/bugbot_merge_gate.py PR_NUMBER
+   python3 scripts/codex_merge_gate.py PR_NUMBER
    ```
 
-   Use `--repo owner/name` outside a checkout, or pass the canonical GitHub pull-request URL. The
-   gate fails closed when `gh` authentication/network access is unavailable, no successful Bugbot
-   review/check exists for the current head, or any Cursor thread remains unresolved.
+   The gate fails closed when `gh` authentication/network access is unavailable, no completed clean
+   Codex review exists for the current head, or any Codex thread remains unresolved. It prints
+   `waived` only when Codex itself reports its usage limit for the current head; record that in the
+   release evidence.
 
 Only present or execute merge approval after this command passes for the final head commit. GitHub
 mergeability, an unprotected `main` branch, and passing local tests do not substitute for this gate.
