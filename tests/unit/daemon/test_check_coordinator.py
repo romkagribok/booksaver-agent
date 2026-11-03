@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
+import uuid
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
@@ -9,6 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import MethodType
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -90,7 +93,11 @@ from booksaver.domain.schedule import (
     SlotStatus,
 )
 from booksaver.domain.user import UserAccessState, UserRole
-from booksaver.domain.user_session import UserSessionMetadata, UserSessionSnapshot
+from booksaver.domain.user_session import (
+    UserSessionHealth,
+    UserSessionMetadata,
+    UserSessionSnapshot,
+)
 from booksaver.domain.value_objects import (
     CheckInterval,
     DataDirectory,
@@ -2811,3 +2818,152 @@ def test_real_price_admission_starts_fixed_phase_after_long_inventory(
     assert limits.max_computer_use_actions == 4
     assert limits.max_job_cost == UsdAmount(750_000)
     assert context.budget.job_id == "long-inventory-job"
+
+
+def _stalled_slot(
+    tmp_path: Path, coordinator: Any, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Callable[[], None], list[tuple[str, str]], str, int]:
+    """One user's monitored reservation with no conclusive result, and a way to run a slot."""
+    monkeypatch.setenv("BOOKSAVER_TELEGRAM_BOT_TOKEN", "token")
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.TelegramNotifier.send",
+        lambda _self, subject, body: sent.append((subject, body)),
+    )
+    ready = MagicMock()
+    ready.return_value.health = UserSessionHealth.READY
+    monkeypatch.setattr(EncryptedUserSessionRepository, "status", ready)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        user_id = (
+            SqliteUserRepository(store).get_or_create_by_telegram_id(101, UserRole.USER).user_id
+        )
+    booking_id = _seed_inventory_projection(
+        tmp_path, user_id=user_id, remote_id="stall-remote",
+        booking=_future_booking("stall-booking"),
+    )
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        store.conn.execute(
+            "UPDATE account_reservations SET first_observed_at = ? WHERE user_id = ?",
+            ((datetime.now(UTC) - timedelta(days=3)).isoformat(), user_id),
+        )
+        store.conn.commit()
+    coordinator._run_scheduled_user_locked = MethodType(  # type: ignore[method-assign]  # noqa: SLF001
+        lambda _self, _store, _user: None, coordinator,
+    )
+
+    def run_slot() -> None:
+        planned_at = datetime.now(UTC) - timedelta(seconds=1)
+        coordinator.run_scheduled_slot(
+            _scheduled_slot(tmp_path, user_id, planned_at),
+            ScheduleSettings(),
+            datetime.now(UTC),
+        )
+
+    return run_slot, sent, booking_id, user_id
+
+
+def _conclusive(tmp_path: Path, booking_id: str) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        store.conn.execute(
+            "INSERT INTO check_history (check_id, booking_id, checked_at, outcome, "
+            "extraction_method) VALUES (?, ?, ?, 'success', 'llm')",
+            (str(uuid.uuid4()), booking_id, datetime.now(UTC).isoformat()),
+        )
+        store.conn.commit()
+
+
+def test_stall_notice_once_then_recovery_then_a_new_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    _run_slot, sent, booking_id, _user_id = _stalled_slot(tmp_path, coordinator, monkeypatch)
+
+    coordinator._report_monitoring_stalls(_user_id)  # noqa: SLF001
+    coordinator._report_monitoring_stalls(_user_id)  # noqa: SLF001
+    assert len(sent) == 1
+    assert "isn't being checked" in sent[0][0]
+
+    # The durable record survives a restart: a new coordinator does not repeat the notice.
+    restarted = _coordinator(tmp_path)
+    restarted._report_monitoring_stalls(_user_id)  # noqa: SLF001
+    assert len(sent) == 1
+
+    _conclusive(tmp_path, booking_id)
+    restarted._report_monitoring_stalls(_user_id)  # noqa: SLF001
+    restarted._report_monitoring_stalls(_user_id)  # noqa: SLF001
+    assert len(sent) == 2
+    assert "being checked again" in sent[1][0]
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        store.conn.execute("UPDATE check_history SET checked_at = ?", (
+            (datetime.now(UTC) - timedelta(days=2)).isoformat(),
+        ))
+        store.conn.commit()
+    restarted._report_monitoring_stalls(_user_id)  # noqa: SLF001
+    assert len(sent) == 3
+
+
+def test_no_stall_notice_without_a_ready_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    _run_slot, sent, _booking_id, user_id = _stalled_slot(tmp_path, coordinator, monkeypatch)
+    status = MagicMock()
+    status.return_value.health = UserSessionHealth.EXPIRED
+    monkeypatch.setattr(EncryptedUserSessionRepository, "status", status)
+
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+
+    assert sent == []
+
+
+def test_failed_stall_delivery_retries_on_the_next_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    _run_slot, sent, _booking_id, user_id = _stalled_slot(tmp_path, coordinator, monkeypatch)
+
+    def refuse(_self: Any, _subject: str, _body: str) -> None:
+        raise OSError("telegram down")
+
+    with monkeypatch.context() as down:
+        down.setattr("booksaver.daemon.check_coordinator.TelegramNotifier.send", refuse)
+        coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+    assert sent == []
+
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+    assert len(sent) == 1
+
+
+def test_a_failing_stall_report_cannot_strand_the_scheduled_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    run_slot, sent, _booking_id, user_id = _stalled_slot(tmp_path, coordinator, monkeypatch)
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.SqliteMonitoringStallRepository.list_upcoming",
+        MagicMock(side_effect=sqlite3.OperationalError("broken")),
+    )
+
+    run_slot()
+
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        slots = SqliteScheduledCheckSlotRepository(store).list_for_user_date(
+            user_id, datetime.now(UTC).date(),
+        )
+    assert slots[0].status is SlotStatus.COMPLETED
+    assert sent == []
+
+
+def test_a_user_is_never_told_about_another_users_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    _run_slot, sent, _booking_id, _user_id = _stalled_slot(tmp_path, coordinator, monkeypatch)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        other = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER).user_id
+
+    coordinator._report_monitoring_stalls(other)  # noqa: SLF001
+
+    assert sent == []
+

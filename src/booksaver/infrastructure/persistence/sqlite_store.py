@@ -79,7 +79,7 @@ from booksaver.domain.value_objects import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 _MACHINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
@@ -2956,6 +2956,7 @@ class SqliteUserRepository:
             _delete_booking_rows(conn, booking_id)
         # Keep this explicit for legacy connections with foreign keys disabled.
         conn.execute("DELETE FROM agentic_inventory_executions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM monitoring_stall_notices WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM booking_sync_runs WHERE user_id = ?", (user_id,))
         # Keep this explicit even though schema v12 also declares ON DELETE
         # CASCADE: purge must remain safe if a legacy connection disabled

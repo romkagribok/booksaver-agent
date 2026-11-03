@@ -118,6 +118,12 @@ from booksaver.domain.model_policy import (
     UsdAmount,
 )
 from booksaver.domain.models import Booking, Config
+from booksaver.domain.monitoring_stall import (
+    is_monitored,
+    recovery_message,
+    stall_message,
+    stall_reason,
+)
 from booksaver.domain.price_comparison import (
     JEV_ADAPTER_VERSION,
     JEV_MODEL,
@@ -162,6 +168,7 @@ from booksaver.infrastructure.persistence.model_policy import (
     SqliteSpendLedger,
     ThreadScopedSqliteSpendLedger,
 )
+from booksaver.infrastructure.persistence.monitoring_stall import SqliteMonitoringStallRepository
 from booksaver.infrastructure.persistence.price_comparison import (
     SqlitePriceComparisonRepository,
 )
@@ -1295,6 +1302,7 @@ class CheckCoordinator:
                     ):
                         self._run_scheduled_user_locked(store, identity.user_id)
             finally:
+                self._report_monitoring_stalls(identity.user_id)
                 # Terminalize through a fresh connection so an unexpected
                 # browser/persistence transaction cannot strand this slot in
                 # RUNNING until the next process restart.
@@ -3070,6 +3078,41 @@ class CheckCoordinator:
                 detail=f"{prefix}: daily per-user check limit reached.",
             ),
         )
+
+    def _report_monitoring_stalls(self, user_id: int) -> None:
+        """Tell one user about stalled or recovered reservations; never affects the slot."""
+        try:
+            if self._session_repository.status(user_id).health is not UserSessionHealth.READY:
+                return  # A sign-in or uncertain-session notice covers this user.
+            now = datetime.now(UTC)
+            with SqliteStore(self._db_path) as store:
+                user = SqliteUserRepository(store).get_by_id(user_id)
+                chat_id = (
+                    resolve_telegram_chat_id(user, self._config.telegram_bot_settings)
+                    if user is not None and user.is_active
+                    else None
+                )
+                token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
+                if chat_id is None or not token:
+                    return
+                notifier = TelegramNotifier(bot_token=token, chat_id=str(chat_id))
+                stalls = SqliteMonitoringStallRepository(store)
+                notified = stalls.notified_booking_ids(user_id)
+                reservations = stalls.list_upcoming(user_id, now.date())
+                current = {r.booking_id for r in reservations if is_monitored(r)}
+                for booking_id in notified - current:
+                    stalls.delete(user_id, booking_id)
+                for reservation in reservations:
+                    reason = stall_reason(reservation, now)
+                    # Recorded only after delivery, so a failed send retries on the next run.
+                    if reason is not None and reservation.booking_id not in notified:
+                        notifier.send(*stall_message(reservation, reason))
+                        stalls.record(user_id, reservation.booking_id, reason, now)
+                    elif reason is None and reservation.booking_id in current & notified:
+                        notifier.send(*recovery_message(reservation))
+                        stalls.delete(user_id, reservation.booking_id)
+        except Exception:
+            logger.warning("Could not report monitoring stalls for user %s", user_id, exc_info=True)
 
     def _send_capped_notice(
         self, store: SqliteStore, user_id: int, *, already_marked: bool = False
