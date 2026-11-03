@@ -2,7 +2,7 @@
 unit: 002-jev-currency-pin
 intent: 028-reservation-change-reconciliation
 phase: inception
-status: stories-defined
+status: in-progress
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-11-02T20:51:19Z"
