@@ -24,6 +24,10 @@ Keep the Jev page in the booked currency. Bolt `094-jev-currency-pin`, story US-
 Tell a user when a reservation stops being monitored and when it recovers. Bolt
 `095-monitoring-stall-notice`, stories US-230 and US-231. FR-7 and FR-8.
 
+### Unit 4: 004-codex-merge-gate
+
+Replace the Bugbot merge gate with a Codex merge gate. Bolt `096-codex-merge-gate`, story US-232. FR-9.
+
 ## Unit Dependency Graph
 
 ```text

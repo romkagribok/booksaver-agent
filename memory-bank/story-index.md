@@ -782,3 +782,9 @@ Accept code-read reservation changes, keep Jev on the booked currency, and repor
 |-------|-------|-----|--------|------|
 | `US-230` | Tell the user monitoring has stalled | Reservation change | Planned | `003-monitoring-stall-notice/stories/001-notify-stalled-monitoring.md` |
 | `US-231` | Report recovery without repeats | Reservation change | Planned | `003-monitoring-stall-notice/stories/002-recover-without-repeats.md` |
+
+### 004-codex-merge-gate
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-232` | Require the Codex review before merge | Merge gate | Planned | `004-codex-merge-gate/stories/001-require-codex-review.md` |

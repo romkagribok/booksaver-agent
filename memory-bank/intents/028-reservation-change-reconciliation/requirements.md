@@ -103,3 +103,10 @@ FR-1: the hotel must be proven on the page, not only unopposed. FR-2: when dates
 room or occupancy is also cleared, which holds the reservation. FR-4: provider output cannot release
 a hold. A reservation that was monitored had every fact, so a missing fact was cleared by a change;
 first-time gaps on never-monitored reservations may still be filled, as before.
+
+### 2026-11-03T01:23:31Z: FR-9, Codex merge gate (owner decision)
+
+Cursor reported on PR #90 that Bugbot is disabled for the owner's account. The owner chose: "Codex
+replaces Bugbot". **FR-9.** The required pull-request review is the Codex code review of the final
+head commit, enforced by `scripts/codex_merge_gate.py`, with the owner's existing waiver when Codex
+reports a usage limit. PR #90 was merged on this decision with no Bugbot review.
