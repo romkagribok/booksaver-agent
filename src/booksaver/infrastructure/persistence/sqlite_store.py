@@ -1527,7 +1527,7 @@ class SqliteAccountReservationRepository:
         checks: tuple[tuple[str, object | None], ...] = (
             ("confirmation_id", observation.confirmation_id),
         )
-        if not cls._stay_facts_trusted(observation):
+        if not cls._stay_facts_trusted(existing, observation):
             checks += (
                 ("check_in", observation.check_in.isoformat() if observation.check_in else None),
                 ("check_out", observation.check_out.isoformat() if observation.check_out else None),
@@ -1576,20 +1576,29 @@ class SqliteAccountReservationRepository:
         if (
             observation.refundable is not None
             and existing["refundable"] is not None
-            and not cls._stay_facts_trusted(observation)
+            and not cls._stay_facts_trusted(existing, observation)
         ):
             if bool(existing["refundable"]) is not observation.refundable:
                 conflicts.append("refundable")
         return tuple(conflicts)
 
-    @staticmethod
-    def _stay_facts_trusted(observation: ReservationObservation) -> bool:
-        """Code-read facts of a complete upcoming stay may replace saved ones (ADR-059)."""
+    @classmethod
+    def _stay_facts_trusted(
+        cls, existing: sqlite3.Row, observation: ReservationObservation,
+    ) -> bool:
+        """Code-read facts of a complete upcoming stay at the same hotel replace saved ones."""
+        stored_ref = existing["property_ref"]
         return (
             observation.stay_facts_verified
             and observation.lifecycle is ReservationLifecycle.UPCOMING
             and observation.check_in is not None
             and observation.check_out is not None
+            and observation.property_ref is not None
+            and (
+                stored_ref is None
+                or stored_ref == observation.property_ref
+                or cls._same_recognized_hotel(stored_ref, observation.property_ref)
+            )
         )
 
     @staticmethod
@@ -1644,19 +1653,22 @@ class SqliteAccountReservationRepository:
             or cls._trusted_cancellation_matches(existing, observation, trusted_cancellation)
             else stored_lifecycle
         )
-        if cls._stay_facts_trusted(observation):
+        if cls._stay_facts_trusted(existing, observation):
             # A changed stay can change the total and refund terms, so facts this reading did not
             # state are cleared instead of carried over (ADR-059).
-            stay_changed = (
+            dates_changed = (
                 existing["check_in"] not in (None, str(observation.check_in))
                 or existing["check_out"] not in (None, str(observation.check_out))
+            )
+            stay_changed = (
+                dates_changed
                 or (observation.room_type or existing["room_type"]) != existing["room_type"]
                 or (observation.occupancy or stored_occupancy) != stored_occupancy
             )
             booked_total = (
                 observation.booked_total
                 if observation.booked_total_verified and observation.booked_total is not None
-                else None if stay_changed else stored_total or observation.booked_total
+                else None if stay_changed else stored_total
             )
             stored_refundable = None if existing["refundable"] is None else bool(
                 existing["refundable"]
@@ -1677,7 +1689,9 @@ class SqliteAccountReservationRepository:
                     else existing["property_name"] or observation.property_name
                 ),
                 property_ref=existing["property_ref"] or observation.property_ref,
-                room_type=observation.room_type or existing["room_type"],
+                room_type=observation.room_type or (
+                    None if dates_changed else existing["room_type"]
+                ),
                 booked_total=booked_total,
                 refundable=(
                     observation.refundable
@@ -1690,8 +1704,19 @@ class SqliteAccountReservationRepository:
                 refund_deadline=observation.refund_deadline or (
                     None if stay_changed else stored_deadline
                 ),
-                occupancy=observation.occupancy or stored_occupancy,
+                occupancy=observation.occupancy or (None if dates_changed else stored_occupancy),
             )
+        # A reservation that was monitored had every fact, so a missing one was cleared by a change
+        # and is held; provider output cannot release that hold. Others may fill first-time gaps.
+        fill = (
+            replace(
+                observation,
+                room_type=None, booked_total=None, refundable=None,
+                refund_note="", refund_deadline=None, occupancy=None,
+            )
+            if existing["monitoring_booking_id"]
+            else observation
+        )
         return replace(
             observation,
             lifecycle=lifecycle,
@@ -1716,26 +1741,26 @@ class SqliteAccountReservationRepository:
                 if existing["check_out"]
                 else observation.check_out
             ),
-            room_type=existing["room_type"] or observation.room_type,
+            room_type=existing["room_type"] or fill.room_type,
             # A total reconciled on the confirmation page replaces the saved one; the conflict
             # check has already rejected every other difference.
             booked_total=(
                 observation.booked_total
                 if observation.booked_total_verified and observation.booked_total is not None
-                else stored_total or observation.booked_total
+                else stored_total or fill.booked_total
             ),
             refundable=(
                 bool(existing["refundable"])
                 if existing["refundable"] is not None
-                else observation.refundable
+                else fill.refundable
             ),
-            refund_note=existing["refund_note"] or observation.refund_note,
+            refund_note=existing["refund_note"] or fill.refund_note,
             refund_deadline=(
                 date.fromisoformat(existing["refund_deadline"])
                 if existing["refund_deadline"]
-                else observation.refund_deadline
+                else fill.refund_deadline
             ),
-            occupancy=stored_occupancy or observation.occupancy,
+            occupancy=stored_occupancy or fill.occupancy,
         )
 
     @staticmethod

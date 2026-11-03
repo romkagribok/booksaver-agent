@@ -949,6 +949,8 @@ def test_unchanged_stay_with_an_unverified_total_keeps_the_saved_total(tmp_path:
         },
         # A different hotel.
         {"property_ref": "https://www.booking.com/hotel/us/different-hotel.en-us.html"},
+        # The hotel was not proven on the page.
+        {"property_ref": None, "check_in": date(2030, 1, 1), "check_out": date(2030, 1, 2)},
     ],
 )
 def test_changes_outside_the_code_read_rule_still_fail_closed(
@@ -964,4 +966,44 @@ def test_changes_outside_the_code_read_rule_still_fail_closed(
         assert report.failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT
         assert repo.list_for_user(user_id) == before
         assert _opportunities(store) == 1
+
+
+def test_changed_dates_clear_an_unread_room_and_occupancy(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        new_in = original.check_in + timedelta(days=100)  # type: ignore[operator]
+        new_out = original.check_out + timedelta(days=100)  # type: ignore[operator]
+
+        report = _sync_change(repo, user_id, _changed(
+            original, check_in=new_in, check_out=new_out, room_type=None, occupancy=None,
+            booked_total=Money(Decimal("659.68"), "USD"), booked_total_verified=True,
+        ))
+
+        held = repo.list_for_user(user_id)[0]
+        assert report.eligible == 0
+        assert held.observation.room_type is None
+        assert held.observation.occupancy is None
+        assert EligibilityReason.MISSING_ROOM_TYPE in held.eligibility.reasons
+        assert EligibilityReason.MISSING_OCCUPANCY in held.eligibility.reasons
+
+
+def test_provider_output_cannot_release_a_hold(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        new_in = original.check_in + timedelta(days=100)  # type: ignore[operator]
+        new_out = original.check_out + timedelta(days=100)  # type: ignore[operator]
+        _sync_change(repo, user_id, _changed(
+            original, check_in=new_in, check_out=new_out, booked_total=None,
+        ), "hold")
+
+        report = _sync_change(repo, user_id, replace(
+            _changed(original, check_in=new_in, check_out=new_out),
+            stay_facts_verified=False,
+            booked_total=Money(Decimal("100"), "USD"),
+        ), "provider")
+
+        held = repo.list_for_user(user_id)[0]
+        assert report.eligible == 0
+        assert held.observation.booked_total is None
+        assert EligibilityReason.MISSING_BOOKED_TOTAL in held.eligibility.reasons
 
