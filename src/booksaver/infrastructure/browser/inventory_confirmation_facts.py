@@ -555,13 +555,12 @@ def _price_facts(
 
 
 def _optional_request_charge(sentence: str) -> bool:
-    """A charge a special request *may* incur is an optional extra, in any hotel's wording."""
-    text = sentence.casefold()
-    return (
-        "special request" in text
-        and re.search(r"\bmay (?:incur|apply|be subject to)\b", text) is not None
-        and "mandatory" not in text
-    )
+    """This exact sentence only concerns optional special requests (observed on 2026-11-03)."""
+    return re.fullmatch(
+        r"special requests cannot be guaranteed and may incur additional charges\.?",
+        sentence.strip(),
+        re.I,
+    ) is not None
 
 
 def charge_warning(lines: list[str], skip: set[int] | frozenset[int] = frozenset()) -> bool:

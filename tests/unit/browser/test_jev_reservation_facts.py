@@ -257,3 +257,17 @@ def test_deliberate_code_rejections_are_never_retried(reasons: dict[str, str]) -
     assert "refund_deadline" not in facts and "booked_total" not in facts
     assert client.requests == []
 
+
+def test_a_call_cut_off_by_the_deadline_is_still_charged(tmp_path: Any) -> None:
+    from booksaver.infrastructure.persistence.price_comparison import SqliteJevPriceRunRepository
+    from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
+
+    assistant = _assistant(_Client())
+    assistant.meter.admit()  # admitted, then cancelled before any usage came back
+    db = tmp_path / "booksaver.db"
+    with SqliteStore(db):
+        pass
+    assistant.record(db, user_id=1, execution_id="sync-1")
+    with SqliteStore(db) as store:
+        assert SqliteJevPriceRunRepository(store).cost_since(datetime(2026, 1, 1, tzinfo=UTC)) > 0
+

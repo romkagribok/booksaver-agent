@@ -892,3 +892,13 @@ def test_a_charge_a_special_request_may_incur_is_not_a_hidden_fee():
     assert facts is not None
     assert facts["all_in"] == "explicit"
 
+
+def test_a_sentence_that_also_excludes_a_tax_still_blocks_the_total():
+    notice = (
+        "Special requests may incur additional charges; city tax is not included in the total "
+        "and is payable separately."
+    )
+    facts = _parse(_BODY + notice + "\n")
+    assert facts is not None
+    assert facts["all_in"] == "unknown"
+

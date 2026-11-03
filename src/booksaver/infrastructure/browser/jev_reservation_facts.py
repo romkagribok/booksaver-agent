@@ -308,6 +308,8 @@ class JevReservationFacts:
 
     def record(self, db_path: Path, *, user_id: int, execution_id: str) -> None:
         """Count this sync's spend in the Jev ledger that the daily cap reads."""
+        # A call cut off by the sync deadline may still be billed; charge it conservatively.
+        self.meter.abandon_in_flight()
         usage = self.meter.snapshot()
         if not usage.calls:
             return
