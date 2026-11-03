@@ -757,3 +757,28 @@ items are listed in the requirements amendment of 2026-10-13.
 | `US-223` | Exclude offers with a worse meal plan | Meal plan | Complete | `002-meal-aware-offers/stories/002-exclude-worse-meal-offers.md` |
 | `US-224` | State meal plans in savings alerts | Meal plan | Complete | `002-meal-aware-offers/stories/003-state-meals-in-alerts.md` |
 | `US-225` | Apply the meal rule to every price method | Meal plan | Complete | `002-meal-aware-offers/stories/004-apply-meal-rule-to-every-price-method.md` |
+
+## 028-reservation-change-reconciliation
+
+Accept code-read reservation changes, keep Jev on the booked currency, and report stalled monitoring.
+
+### 001-reservation-change-sync
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-226` | Accept code-read reservation changes | Reservation change | Planned | `001-reservation-change-sync/stories/001-accept-code-read-changes.md` |
+| `US-227` | Clear stale facts and hold | Reservation change | Planned | `001-reservation-change-sync/stories/002-clear-stale-facts-and-hold.md` |
+| `US-228` | Read the total under a conversion line | Reservation change | Planned | `001-reservation-change-sync/stories/003-read-total-under-conversion.md` |
+
+### 002-jev-currency-pin
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-229` | Keep the Jev page in the booked currency | Reservation change | Planned | `002-jev-currency-pin/stories/001-pin-page-currency.md` |
+
+### 003-monitoring-stall-notice
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-230` | Tell the user monitoring has stalled | Reservation change | Planned | `003-monitoring-stall-notice/stories/001-notify-stalled-monitoring.md` |
+| `US-231` | Report recovery without repeats | Reservation change | Planned | `003-monitoring-stall-notice/stories/002-recover-without-repeats.md` |
