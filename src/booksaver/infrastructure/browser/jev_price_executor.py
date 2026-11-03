@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from booksaver.application.async_runner import AsyncLoopRunner
 from booksaver.application.browser_executor import ExecutionMeter, InMemorySessionLeaseBroker
@@ -673,6 +673,26 @@ class _Diagnostics:
         return " ".join(parts)[:_MAX_DIAGNOSTIC_CHARS]
 
 
+def _url_with_currency(url: str | None, currency: str) -> str | None:
+    """The same URL pinned to ``currency``, or None when it already is (or is unreadable)."""
+
+    if not url:
+        return None
+    parts = urlsplit(url)
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if [v for k, v in pairs if k == "selected_currency"] == [currency]:
+        return None
+    pinned: list[tuple[str, str]] = []
+    for key, value in pairs:
+        if key != "selected_currency":
+            pinned.append((key, value))
+        elif not any(k == key for k, _ in pinned):
+            pinned.append((key, currency))
+    if not any(k == "selected_currency" for k, _ in pinned):
+        pinned.append(("selected_currency", currency))
+    return urlunsplit(parts._replace(query=urlencode(pinned)))
+
+
 @dataclass(slots=True)
 class _Episode:
     actions: list[dict[str, object]] = field(default_factory=list)
@@ -757,6 +777,17 @@ class LocalJevPriceRuntime:
         if not await self._invariant(session):
             diagnostics.end = "entry_invariant"
             return self._unsafe(non_allowlisted=True)
+        if entry_kind == "property":
+            pinned = _url_with_currency(await self._current_url(session), request.query.currency)
+            if pinned is not None:
+                # Booking.com's signed-in redirect drops selected_currency (FR-6): re-open once.
+                meter.record_action()
+                diagnostics.steps.append("PIN_CURRENCY")
+                await session.navigate_to(pinned, new_tab=False)
+                if not await self._invariant(session):
+                    diagnostics.end = "currency_invariant"
+                    return self._unsafe(non_allowlisted=True)
+                entry = pinned
 
         self._host.failure_stage = "jev_navigation"
         diagnostics.stage = "navigation"
@@ -791,6 +822,13 @@ class LocalJevPriceRuntime:
             observation=observation,
             refreshed_session=self._refreshed_session,
         )
+
+    @staticmethod
+    async def _current_url(session: Any) -> str | None:
+        try:
+            return await session.get_current_page_url() or None
+        except Exception:
+            return None
 
     async def _invariant(self, session: Any) -> bool:
         if self._host.dialog_rejected or len(session.get_page_targets()) != 1:

@@ -707,6 +707,15 @@ Cancellation deadlines are in the property's local time.
 )
 
 
+# The owner's page while the session displays euros: a whole-euro breakdown and "approx." line above
+# the booked dollar total.
+_CONVERTED_BODY = (
+    _DOLLAR_BODY.replace("1 room\tUS$309", "1 room\t€ 526")
+    .replace("12 % TAX\tUS$37.08", "12 % TAX\t€ 63")
+    .replace("US$346.08", "approx. € 589\nUS$659.68")
+)
+
+
 def _reasons(body: str) -> dict[str, str]:
     reasons: dict[str, str] = {}
     assert parse_confirmation_facts(body, _ANCHORS, observed_at=_NOW, reasons=reasons) is not None
@@ -830,3 +839,44 @@ def test_euro_page_without_its_statement_needs_the_same_closed_shape_and_tax_row
     assert _reasons(without.replace("12 % VAT\t€ 10.71\n", "").replace("€ 89.29", "€ 100")) == {
         "booked_total": "tax_inclusion_unproven",
     }
+
+
+def test_converted_breakdown_records_the_printed_booked_total():
+    facts = _parse(_CONVERTED_BODY)
+    assert facts is not None
+    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == (
+        "659.68", "USD", "explicit",
+    )
+    assert _reasons(_CONVERTED_BODY) == {}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        ("€ 526", "€ 528"),  # rows miss the conversion by more than display rounding
+        ("€ 63", "€ 66"),  # tax does not match its stated rate
+        ("€ 526", "£ 526"),  # a third currency
+        ("approx. € 589", "approx. US$589"),  # no conversion at all
+        ("approx. € 589\nUS$659.68", "US$659.68\napprox. € 589"),  # not directly above the total
+        ("approx. € 589", "approx. € 589\napprox. € 589"),
+        ("approx. € 589", "about € 589"),
+        ("12 % TAX\t€ 63\n", ""),  # tax inclusion unproven
+        ("12 % TAX\t€ 63", "Service charge\t€ 63"),
+        (
+            "Additional Info",
+            "The final price shown is the amount you'll pay to the property.\nAdditional Info",
+        ),
+        ("12 % TAX\t€ 63", "€ 31.5 City tax per person per night\t€ 63"),
+    ],
+)
+def test_any_other_converted_shape_leaves_the_total_unknown(change):
+    assert change[0] in _CONVERTED_BODY
+    facts = _parse(_CONVERTED_BODY.replace(*change))
+    assert facts is not None
+    assert facts["booked_total"] == facts["currency"] == facts["all_in"] == "unknown"
+
+
+def test_conversion_rounding_is_not_tolerated_on_a_booked_total():
+    facts = _parse(_DOLLAR_BODY.replace("US$309", "US$309.50"))
+    assert facts is not None
+    assert facts["booked_total"] == "unknown"

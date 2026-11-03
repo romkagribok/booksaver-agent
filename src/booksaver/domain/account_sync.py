@@ -310,6 +310,8 @@ class ReservationObservation:
     meal_plan_text: str = ""
     # True only when a code-owned reader reconciled the total on the confirmation page.
     booked_total_verified: bool = False
+    # True only when a code-owned reader parsed stay, room, occupancy and refund facts.
+    stay_facts_verified: bool = False
 
     def __post_init__(self) -> None:
         if not self.remote_id.strip():

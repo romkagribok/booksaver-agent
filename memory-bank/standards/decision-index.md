@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 58
+total_decisions: 59
 ---
 
 # Decision Index
@@ -563,3 +563,11 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/092-confirmation-booked-total/adr-058-page-verified-booked-total.md`
 - **Summary**: Saved booked totals were immutable, which made a wrong saved baseline permanent. A total reconciled by the code-owned confirmation reader in the page's printed currency replaces a differing saved total and baseline; provider-submitted totals still fail closed.
 - **Read when**: Changing how booked totals, currencies or monitoring baselines are read, saved or reconciled, or the saved-fact conflict rules for agentic inventory.
+
+### ADR-059: Code-read reservation changes replace saved facts
+- **Status**: accepted
+- **Date**: 2026-11-03
+- **Bolt**: 093-reservation-change-sync (reservation-change-sync)
+- **Path**: `bolts/093-reservation-change-sync/adr-059-code-read-reservation-changes.md`
+- **Summary**: A real date change failed every sync. Facts read by the code-owned confirmation parser for the same confirmation and hotel now replace saved stay, room, occupancy and refund facts; dependent facts not re-read are cleared and a missing total holds the reservation. Provider-submitted facts still fail closed.
+- **Read when**: Changing the saved-fact conflict rules for agentic inventory, reservation eligibility, or how confirmation totals are read.

@@ -245,6 +245,7 @@ def test_reconciled_confirmation_total_is_marked_as_page_verified(monkeypatch):
         "346.08", "USD",
     )
     assert reservation.booked_total_verified is True
+    assert reservation.stay_facts_verified is True
 
 
 def test_grouped_final_authentication_cannot_replace_initial_mobile_snapshot(monkeypatch):

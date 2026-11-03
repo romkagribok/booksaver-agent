@@ -407,10 +407,21 @@ def _price_facts(
     """Return the reconciled all-in total, or the fixed reason code for leaving it unknown."""
     if not guests or nights is None:
         return "guest_composition"
-    statements = [i for i, line in enumerate(lines) if line in _FINAL_PRICE_STATEMENTS]
     price_index = _heading(lines, "Price")
     if price_index is None:
         return "price_heading"
+    # A session displaying another currency prints the breakdown and an "approx." line in it, above
+    # the total in the booked currency. The line is evidence only and is checked against the rows.
+    converted = (
+        re.fullmatch(r"approx\. " + _MONEY, lines[price_index + 2])
+        if price_index + 2 < len(lines)
+        else None
+    )
+    if converted is not None:
+        lines = [*lines[:price_index + 2], *lines[price_index + 3:]]
+    statements = [i for i, line in enumerate(lines) if line in _FINAL_PRICE_STATEMENTS]
+    if converted is not None and statements:
+        return "converted_price_shape"
     # The observed dollar layout prints no final-price statement: the total is closed directly by
     # the "Additional Info" heading and must then be proven tax-inclusive by its own tax row.
     statement_free = (
@@ -418,6 +429,8 @@ def _price_facts(
         and price_index + 3 < len(lines)
         and lines[price_index + 3] == "Additional Info"
     )
+    if converted is not None and not statement_free:
+        return "converted_price_shape"
     if len(statements) != 1 and not statement_free:
         return "final_price_statement"
     end = price_index + 3 if statement_free else statements[0]
@@ -433,6 +446,11 @@ def _price_facts(
     total = _amount(total_match[2])
     if total <= 0:
         return "total_not_positive"
+    row_currency, row_total = currency, total
+    if converted is not None:
+        row_currency, row_total = _currency(converted[1]), _amount(converted[2])
+        if row_currency == currency:
+            return "converted_price_shape"
 
     final_total = total
     additional_city = Decimal(0)
@@ -496,7 +514,7 @@ def _price_facts(
     assert room_match is not None
     if price_index - start > 4:
         return "room_row"
-    if _currency(room_match[1]) != currency:
+    if _currency(room_match[1]) != row_currency:
         return "mixed_currency"
     room_amount = _amount(room_match[2])
     charges = room_amount
@@ -507,10 +525,17 @@ def _price_facts(
         if vat is not None and "vat" not in seen:
             rate, amount = Decimal(vat[1]), _amount(vat[3])
             expected = (room_amount * rate / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            if _currency(vat[2]) != currency or amount != expected:
+            # Converted rows are displayed in rounded whole units; a booked total's are exact.
+            tax_matches = (
+                abs(amount - expected) <= 1 if converted is not None else amount == expected
+            )
+            if _currency(vat[2]) != row_currency or not tax_matches:
                 return "tax_row"
             seen.add("vat")
-        elif city is not None and "city" not in seen and not additional_city:
+        elif (
+            city is not None and "city" not in seen and not additional_city
+            and converted is None
+        ):
             rate, amount = _amount(city[2]), _amount(city[4])
             if {_currency(city[1]), _currency(city[3])} != {currency}:
                 return "mixed_currency"
@@ -520,7 +545,7 @@ def _price_facts(
         else:
             return "unrecognized_component_row"
         charges += amount
-    if charges != total:
+    if (abs(charges - row_total) > 1) if converted is not None else charges != total:
         return "components_do_not_sum"
     if statement_free and "vat" not in seen:
         return "tax_inclusion_unproven"

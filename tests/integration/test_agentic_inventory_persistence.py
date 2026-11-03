@@ -9,11 +9,13 @@ import pytest
 from _pytest.logging import LogCaptureFixture
 
 from booksaver.domain.account_sync import (
+    EligibilityReason,
     InventoryCompleteness,
     InventoryDiscoveryResult,
     ReservationLifecycle,
     ReservationObservation,
     SynchronizationFailureCode,
+    SynchronizationReport,
     SynchronizationTrigger,
 )
 from booksaver.domain.value_objects import Money, Occupancy
@@ -766,3 +768,242 @@ def test_locale_variant_without_rename_needs_no_anchor(tmp_path: Path) -> None:
         assert report.failure_code is None
         assert report.eligible == 1
         assert repo.list_for_user(owner.user_id)[0].observation.property_ref == _STORED_URL
+
+
+def _seed_changeable(
+    store: SqliteStore,
+) -> tuple[SqliteAccountReservationRepository, int, ReservationObservation]:
+    owner = SqliteUserRepository(store).get_owner()
+    repo = SqliteAccountReservationRepository(store)
+    original = replace(
+        _reservation(), property_ref="https://www.booking.com/hotel/us/hotel-example.html",
+    )
+    repo.reconcile(
+        user_id=owner.user_id,
+        run_id="seed-changeable",
+        trigger=SynchronizationTrigger.BOOKINGS,
+        session_revision="session-1",
+        result=InventoryDiscoveryResult((original,), InventoryCompleteness.INCOMPLETE),
+        observed_at=NOW,
+    )
+    booking_id = repo.list_for_user(owner.user_id)[0].monitoring_booking_id
+    store.conn.execute(
+        "INSERT INTO savings_opportunities (opportunity_id, booking_id, check_id, "
+        "baseline_amount, live_amount, currency, amount_saved, percent_saved, validated_at) "
+        "VALUES ('old-opportunity', ?, 'check-1', '301', '290', 'USD', '11', '3.65', ?)",
+        (booking_id, NOW.isoformat()),
+    )
+    store.conn.commit()
+    return repo, owner.user_id, original
+
+
+def _sync_change(
+    repo: SqliteAccountReservationRepository,
+    user_id: int,
+    observation: ReservationObservation,
+    run_id: str = "change",
+) -> SynchronizationReport:
+    return repo.reconcile(
+        user_id=user_id,
+        run_id=run_id,
+        trigger=SynchronizationTrigger.BOOKINGS,
+        session_revision="session-1",
+        result=InventoryDiscoveryResult((observation,), InventoryCompleteness.INCOMPLETE),
+        observed_at=NOW + timedelta(minutes=1),
+    )
+
+
+def _opportunities(store: SqliteStore) -> int:
+    return int(store.conn.execute("SELECT COUNT(*) FROM savings_opportunities").fetchone()[0])
+
+
+def _changed(original: ReservationObservation, **facts: object) -> ReservationObservation:
+    return replace(
+        original,
+        remote_id=original.confirmation_id or "",
+        observed_at=NOW + timedelta(minutes=1),
+        extraction_method="agentic_inventory",
+        stay_facts_verified=True,
+        **facts,  # type: ignore[arg-type]
+    )
+
+
+def test_code_read_date_change_updates_the_reservation_and_removes_old_savings(
+    tmp_path: Path,
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        before = repo.list_for_user(user_id)[0]
+        new_in = original.check_in + timedelta(days=100)  # type: ignore[operator]
+        new_out = original.check_out + timedelta(days=100)  # type: ignore[operator]
+        total = Money(Decimal("659.68"), "USD")
+
+        report = _sync_change(repo, user_id, _changed(
+            original, check_in=new_in, check_out=new_out,
+            refund_deadline=new_in - timedelta(days=3),
+            booked_total=total, booked_total_verified=True,
+        ))
+
+        after = repo.list_for_user(user_id)[0]
+        assert report.failure_code is None
+        assert report.eligible == 1
+        assert after.account_reservation_id == before.account_reservation_id
+        assert after.monitoring_booking_id == before.monitoring_booking_id
+        assert (after.observation.check_in, after.observation.check_out) == (new_in, new_out)
+        assert after.observation.refund_deadline == new_in - timedelta(days=3)
+        assert after.observation.booked_total == total
+        projection = store.conn.execute(
+            "SELECT check_in, baseline_amount, status FROM bookings WHERE booking_id = ?",
+            (after.monitoring_booking_id,),
+        ).fetchone()
+        assert tuple(projection) == (new_in.isoformat(), "659.68", "active")
+        assert _opportunities(store) == 0
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [
+        {"room_type": "Different Room"},
+        {"occupancy": Occupancy(3, 0, 1)},
+        {"refundable": False},
+    ],
+)
+def test_code_read_room_occupancy_or_refund_change_updates_the_fact(
+    tmp_path: Path, facts: dict[str, object],
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        report = _sync_change(repo, user_id, _changed(original, **facts))
+        after = repo.list_for_user(user_id)[0].observation
+        assert report.failure_code is None
+        for name, value in facts.items():
+            assert getattr(after, name) == value
+
+
+def test_changed_stay_without_a_verified_total_holds_then_resumes_the_same_booking(
+    tmp_path: Path,
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        booking_id = repo.list_for_user(user_id)[0].monitoring_booking_id
+        new_in = original.check_in + timedelta(days=100)  # type: ignore[operator]
+        new_out = original.check_out + timedelta(days=100)  # type: ignore[operator]
+
+        report = _sync_change(repo, user_id, _changed(
+            original, check_in=new_in, check_out=new_out, booked_total=None,
+            refundable=None, refund_note="", refund_deadline=None,
+        ), "hold")
+
+        held = repo.list_for_user(user_id)[0]
+        assert report.failure_code is None
+        assert held.observation.check_in == new_in
+        assert held.observation.booked_total is None
+        assert held.observation.refundable is None
+        assert held.observation.refund_deadline is None
+        assert EligibilityReason.MISSING_BOOKED_TOTAL in held.eligibility.reasons
+        assert store.conn.execute(
+            "SELECT status FROM bookings WHERE booking_id = ?", (booking_id,),
+        ).fetchone()[0] == "archived"
+        assert _opportunities(store) == 0
+
+        total = Money(Decimal("659.68"), "USD")
+        resumed = _sync_change(repo, user_id, _changed(
+            original, check_in=new_in, check_out=new_out,
+            refundable=True, refund_deadline=new_in - timedelta(days=3),
+            booked_total=total, booked_total_verified=True,
+        ), "resume")
+
+        after = repo.list_for_user(user_id)[0]
+        assert resumed.eligible == 1
+        assert after.monitoring_booking_id == booking_id
+        assert after.observation.booked_total == total
+        assert store.conn.execute(
+            "SELECT status, baseline_amount FROM bookings WHERE booking_id = ?", (booking_id,),
+        ).fetchone()[:2] == ("active", "659.68")
+
+
+def test_unchanged_stay_with_an_unverified_total_keeps_the_saved_total(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        report = _sync_change(repo, user_id, _changed(
+            original, booked_total=None, refund_deadline=None, refund_note="",
+        ))
+        after = repo.list_for_user(user_id)[0].observation
+        assert report.failure_code is None
+        assert after.booked_total == original.booked_total
+        assert after.refund_deadline == original.refund_deadline
+        assert _opportunities(store) == 1
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [
+        # A provider-submitted date change.
+        {"stay_facts_verified": False, "check_in": date(2030, 1, 1), "check_out": date(2030, 1, 2)},
+        # One stay date missing.
+        {"check_in": None, "check_out": date(2030, 1, 2)},
+        # Facts from a page that is not an upcoming stay.
+        {
+            "lifecycle": ReservationLifecycle.CANCELLED,
+            "check_in": date(2030, 1, 1), "check_out": date(2030, 1, 2),
+        },
+        # A different hotel.
+        {"property_ref": "https://www.booking.com/hotel/us/different-hotel.en-us.html"},
+        # The hotel was not proven on the page.
+        {"property_ref": None, "check_in": date(2030, 1, 1), "check_out": date(2030, 1, 2)},
+    ],
+)
+def test_changes_outside_the_code_read_rule_still_fail_closed(
+    tmp_path: Path, facts: dict[str, object],
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        before = repo.list_for_user(user_id)
+        observation = replace(_changed(original), **facts)  # type: ignore[arg-type]
+
+        report = _sync_change(repo, user_id, observation, "refused")
+
+        assert report.failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT
+        assert repo.list_for_user(user_id) == before
+        assert _opportunities(store) == 1
+
+
+def test_changed_dates_clear_an_unread_room_and_occupancy(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        new_in = original.check_in + timedelta(days=100)  # type: ignore[operator]
+        new_out = original.check_out + timedelta(days=100)  # type: ignore[operator]
+
+        report = _sync_change(repo, user_id, _changed(
+            original, check_in=new_in, check_out=new_out, room_type=None, occupancy=None,
+            booked_total=Money(Decimal("659.68"), "USD"), booked_total_verified=True,
+        ))
+
+        held = repo.list_for_user(user_id)[0]
+        assert report.eligible == 0
+        assert held.observation.room_type is None
+        assert held.observation.occupancy is None
+        assert EligibilityReason.MISSING_ROOM_TYPE in held.eligibility.reasons
+        assert EligibilityReason.MISSING_OCCUPANCY in held.eligibility.reasons
+
+
+def test_provider_output_cannot_release_a_hold(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        new_in = original.check_in + timedelta(days=100)  # type: ignore[operator]
+        new_out = original.check_out + timedelta(days=100)  # type: ignore[operator]
+        _sync_change(repo, user_id, _changed(
+            original, check_in=new_in, check_out=new_out, booked_total=None,
+        ), "hold")
+
+        report = _sync_change(repo, user_id, replace(
+            _changed(original, check_in=new_in, check_out=new_out),
+            stay_facts_verified=False,
+            booked_total=Money(Decimal("100"), "USD"),
+        ), "provider")
+
+        held = repo.list_for_user(user_id)[0]
+        assert report.eligible == 0
+        assert held.observation.booked_total is None
+        assert EligibilityReason.MISSING_BOOKED_TOTAL in held.eligibility.reasons
+
