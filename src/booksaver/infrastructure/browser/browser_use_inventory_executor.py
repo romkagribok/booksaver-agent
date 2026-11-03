@@ -1804,10 +1804,12 @@ class LocalBrowserUseInventoryRuntime:
             scopes, reservations = _map_browser_use_observation(payload)
             # The grouped reader takes name and URL only from the single confirmation-header
             # anchor and the total only from the reconciled price section
-            # (inventory_confirmation_facts), never from provider output.
+            # (inventory_confirmation_facts), never from provider output. The same parser reads
+            # stay, room, occupancy and refund facts.
             reservations = tuple(
                 replace(
                     item,
+                    stay_facts_verified=True,
                     property_anchor_verified=(
                         item.property_name is not None and item.property_reference is not None
                     ),

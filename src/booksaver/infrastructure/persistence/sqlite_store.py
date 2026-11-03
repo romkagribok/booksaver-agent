@@ -1524,19 +1524,24 @@ class SqliteAccountReservationRepository:
             return observed is not None and stored is not None and str(observed) != str(stored)
 
         conflicts: list[str] = []
-        checks = (
+        checks: tuple[tuple[str, object | None], ...] = (
             ("confirmation_id", observation.confirmation_id),
-            ("check_in", observation.check_in.isoformat() if observation.check_in else None),
-            ("check_out", observation.check_out.isoformat() if observation.check_out else None),
-            ("room_type", observation.room_type),
-            (
-                "refund_deadline",
-                observation.refund_deadline.isoformat() if observation.refund_deadline else None,
-            ),
-            ("occ_adults", observation.occupancy.adults if observation.occupancy else None),
-            ("occ_children", observation.occupancy.children if observation.occupancy else None),
-            ("occ_rooms", observation.occupancy.rooms if observation.occupancy else None),
         )
+        if not cls._stay_facts_trusted(observation):
+            checks += (
+                ("check_in", observation.check_in.isoformat() if observation.check_in else None),
+                ("check_out", observation.check_out.isoformat() if observation.check_out else None),
+                ("room_type", observation.room_type),
+                (
+                    "refund_deadline",
+                    observation.refund_deadline.isoformat()
+                    if observation.refund_deadline
+                    else None,
+                ),
+                ("occ_adults", observation.occupancy.adults if observation.occupancy else None),
+                ("occ_children", observation.occupancy.children if observation.occupancy else None),
+                ("occ_rooms", observation.occupancy.rooms if observation.occupancy else None),
+            )
         conflicts.extend(column for column, observed in checks if _different(column, observed))
         same_hotel = cls._same_recognized_hotel(existing["property_ref"], observation.property_ref)
         if _different("property_ref", observation.property_ref) and not same_hotel:
@@ -1568,10 +1573,24 @@ class SqliteAccountReservationRepository:
                 observation.booked_total.currency
             ):
                 conflicts.append("baseline_currency")
-        if observation.refundable is not None and existing["refundable"] is not None:
+        if (
+            observation.refundable is not None
+            and existing["refundable"] is not None
+            and not cls._stay_facts_trusted(observation)
+        ):
             if bool(existing["refundable"]) is not observation.refundable:
                 conflicts.append("refundable")
         return tuple(conflicts)
+
+    @staticmethod
+    def _stay_facts_trusted(observation: ReservationObservation) -> bool:
+        """Code-read facts of a complete upcoming stay may replace saved ones (ADR-059)."""
+        return (
+            observation.stay_facts_verified
+            and observation.lifecycle is ReservationLifecycle.UPCOMING
+            and observation.check_in is not None
+            and observation.check_out is not None
+        )
 
     @staticmethod
     def _same_recognized_hotel(stored: object | None, observed: str | None) -> bool:
@@ -1625,6 +1644,54 @@ class SqliteAccountReservationRepository:
             or cls._trusted_cancellation_matches(existing, observation, trusted_cancellation)
             else stored_lifecycle
         )
+        if cls._stay_facts_trusted(observation):
+            # A changed stay can change the total and refund terms, so facts this reading did not
+            # state are cleared instead of carried over (ADR-059).
+            stay_changed = (
+                existing["check_in"] not in (None, str(observation.check_in))
+                or existing["check_out"] not in (None, str(observation.check_out))
+                or (observation.room_type or existing["room_type"]) != existing["room_type"]
+                or (observation.occupancy or stored_occupancy) != stored_occupancy
+            )
+            booked_total = (
+                observation.booked_total
+                if observation.booked_total_verified and observation.booked_total is not None
+                else None if stay_changed else stored_total or observation.booked_total
+            )
+            stored_refundable = None if existing["refundable"] is None else bool(
+                existing["refundable"]
+            )
+            stored_deadline = (
+                date.fromisoformat(existing["refund_deadline"])
+                if existing["refund_deadline"]
+                else None
+            )
+            return replace(
+                observation,
+                lifecycle=lifecycle,
+                confirmation_id=existing["confirmation_id"] or observation.confirmation_id,
+                property_name=(
+                    observation.property_name
+                    if same_hotel and observation.property_anchor_verified
+                    and observation.property_name
+                    else existing["property_name"] or observation.property_name
+                ),
+                property_ref=existing["property_ref"] or observation.property_ref,
+                room_type=observation.room_type or existing["room_type"],
+                booked_total=booked_total,
+                refundable=(
+                    observation.refundable
+                    if observation.refundable is not None
+                    else None if stay_changed else stored_refundable
+                ),
+                refund_note=observation.refund_note or (
+                    "" if stay_changed else existing["refund_note"] or ""
+                ),
+                refund_deadline=observation.refund_deadline or (
+                    None if stay_changed else stored_deadline
+                ),
+                occupancy=observation.occupancy or stored_occupancy,
+            )
         return replace(
             observation,
             lifecycle=lifecycle,
