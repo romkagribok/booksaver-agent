@@ -1,7 +1,7 @@
 ---
 intent: 028-reservation-change-reconciliation
 phase: inception
-status: units-defined
+status: construction
 created: "2026-11-02T20:51:19Z"
 updated: "2026-11-02T20:51:19Z"
 ---
@@ -96,3 +96,10 @@ shape, as inception's open item foresaw. FR-2 also covers room and occupancy cha
 can change the total. The owner approved the requirements and plan with no price checks during a
 hold, and approved commit, merge and deploy if nothing unexpected arises. Recorded here as an
 anticipated design change, reported to the owner.
+
+### 2026-11-03T01:04:19Z: Codex review of PR #90
+
+FR-1: the hotel must be proven on the page, not only unopposed. FR-2: when dates change, an unread
+room or occupancy is also cleared, which holds the reservation. FR-4: provider output cannot release
+a hold. A reservation that was monitored had every fact, so a missing fact was cleared by a change;
+first-time gaps on never-monitored reservations may still be filled, as before.

@@ -18,8 +18,10 @@ reservation. A real date change failed every sync with `persistence_conflict`, s
 
 Extend ADR-058's provenance rule from the total to stay, room, occupancy and refund facts. Facts
 from BookSaver's code-owned confirmation parser, for the same confirmation and hotel with both dates
-present, replace saved ones. Provider-submitted facts still fail closed. When dates, room or
-occupancy change, dependent facts not re-read are cleared; a missing total makes the reservation
+present and the hotel proven on the page, replace saved ones. Provider-submitted facts still fail
+closed and cannot release a hold. When dates, room or
+occupancy change, dependent facts not re-read are cleared (and on a date change an unread room or
+occupancy); a missing total makes the reservation
 ineligible until verified, so no check or alert uses the old total. A converted breakdown may prove
 a printed booked-currency total includes tax; BookSaver stores only the printed total.
 
