@@ -22,7 +22,7 @@ from booksaver.infrastructure.llm.typesafe_client import (
     TypeSafeError,
 )
 
-TODAY = date(2026, 11, 3)
+NOW = datetime(2026, 11, 3, 12, tzinfo=UTC)
 
 # Euro breakdown, an "approx." line, the dollar total, then the final-price sentence.
 CONVERTED = [
@@ -87,6 +87,7 @@ def test_single_guest_page_with_city_tax_proves_its_total() -> None:
         (SINGLE_GUEST, ("€ 102", "€ 103")),  # exact rows, so no rounding is allowed
         (CONVERTED, ("Payment Info", "City tax is not included in your total.")),
         (CONVERTED, ("(for 1 guest)", "(for 1 guest) US$190 per night")),  # second amount
+        (SINGLE_GUEST, ("Additional Info", "Additional Info\nMandatory cleaning fee € 25")),
     ],
 )
 def test_anything_the_page_does_not_prove_stays_unknown(
@@ -100,7 +101,7 @@ def test_anything_the_page_does_not_prove_stays_unknown(
 
 def test_refund_proof_takes_the_dated_full_refund_sentence() -> None:
     options = refund_options([PARTIAL_REFUND])
-    proven = [p for s in options.values() if (p := prove_refund(s, date(2027, 1, 27), TODAY))]
+    proven = [p for s in options.values() if (p := prove_refund(s, date(2027, 1, 27), NOW))]
     assert proven == [{
         "refundability": "explicit_refundable",
         "refundability_text": options["r0"],
@@ -110,7 +111,7 @@ def test_refund_proof_takes_the_dated_full_refund_sentence() -> None:
 
 def test_explicit_no_refund_wording_is_non_refundable() -> None:
     proof = prove_refund(
-        "You won't be eligible for a refund if you cancel this booking.", date(2026, 11, 10), TODAY,
+        "You won't be eligible for a refund if you cancel this booking.", date(2026, 11, 10), NOW,
     )
     assert proof is not None
     assert proof["refundability"] == "explicit_nonrefundable"
@@ -128,7 +129,19 @@ def test_explicit_no_refund_wording_is_non_refundable() -> None:
     ],
 )
 def test_unproven_refund_sentences_stay_unknown(sentence: str) -> None:
-    assert prove_refund(sentence, date(2027, 1, 27), TODAY) is None
+    assert prove_refund(sentence, date(2027, 1, 27), NOW) is None
+
+
+@pytest.mark.parametrize(
+    ("sentence", "proven"),
+    [
+        ("Free cancellation until 12:00 AM on November 3, 2026.", False),  # today
+        ("Free cancellation until 11:59 PM on November 4, 2026.", False),  # could be past at +14
+        ("Free cancellation until 11:59 PM on November 5, 2026.", True),
+    ],
+)
+def test_a_cutoff_too_close_for_any_timezone_stays_unknown(sentence: str, proven: bool) -> None:
+    assert (prove_refund(sentence, date(2026, 11, 10), NOW) is not None) is proven
 
 
 class _Client:

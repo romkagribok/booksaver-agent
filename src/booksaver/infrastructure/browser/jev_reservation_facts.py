@@ -13,7 +13,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
@@ -152,10 +152,18 @@ def prove_total(
         return None
     if charge_warning(lines):
         return None
+    # As in the code reader: a monetary tax, fee or charge row outside the breakdown is unpaid.
+    if any(
+        i not in range(room_index, start)
+        and re.search(_MONEY, line)
+        and re.search(r"\b(?:tax(?:es)?|fees?|charges?)\b", line, re.I)
+        for i, line in enumerate(lines)
+    ):
+        return None
     return {"booked_total": str(total), "currency": currency, "all_in": "explicit"}
 
 
-def prove_refund(sentence: str, check_in: date | None, today: date) -> dict[str, str] | None:
+def prove_refund(sentence: str, check_in: date | None, now: datetime) -> dict[str, str] | None:
     """Refund terms from the picked sentence, only if its own wording and date prove them."""
     if check_in is None:
         return None
@@ -165,7 +173,13 @@ def prove_refund(sentence: str, check_in: date | None, today: date) -> dict[str,
     if not _REFUNDABLE.search(sentence) or _NON_REFUNDABLE.search(sentence) or len(dates) != 1:
         return None
     deadline = _calendar_date(*dates[0])
-    if deadline is None or not today <= deadline <= check_in:
+    if deadline is None or deadline > check_in:
+        return None
+    # The property's timezone is not verified, so like the code reader require the window to be
+    # open even at the earliest offset (UTC+14) from the start of that day.
+    if now.astimezone(UTC) >= datetime.combine(deadline, datetime.min.time(), UTC) - timedelta(
+        hours=14
+    ):
         return None
     return {
         "refundability": "explicit_refundable",
@@ -212,7 +226,7 @@ class JevReservationFacts:
             return
         proven_refunds = {
             key: p for key, sentence in refund_options(lines).items()
-            if (p := prove_refund(sentence, check_in, self.observed_at.date())) is not None
+            if (p := prove_refund(sentence, check_in, self.observed_at)) is not None
         }
         answers = {tuple(sorted((k, v) for k, v in p.items() if k != "refundability_text"))
                    for p in proven_refunds.values()}
