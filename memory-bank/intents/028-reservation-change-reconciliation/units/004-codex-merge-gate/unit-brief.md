@@ -23,4 +23,4 @@ FR-9. See ../../requirements.md.
 
 | Story | Title | Bolt |
 |---|---|---|
-| US-232 | Require the Codex review before merge | 096-codex-merge-gate |
+| US-239 | Require the Codex review before merge | 096-codex-merge-gate |

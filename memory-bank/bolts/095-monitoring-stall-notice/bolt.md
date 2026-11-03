@@ -3,14 +3,14 @@ id: 095-monitoring-stall-notice
 unit: 003-monitoring-stall-notice
 intent: 028-reservation-change-reconciliation
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-notify-stalled-monitoring
   - 002-recover-without-repeats
 created: "2026-11-02T20:51:19Z"
 started: "2026-11-03T01:27:07Z"
-completed: null
-current_stage: test
+completed: "2026-11-03T14:37:29Z"
+current_stage: null
 stages_completed:
   - name: domain-model
     completed: "2026-11-03T01:27:07Z"
@@ -49,8 +49,8 @@ Deliver FR-7, FR-8 of intent 028-reservation-change-reconciliation.
 
 ## Stories Included
 
-- [ ] US-230: Tell the user monitoring has stalled (001-notify-stalled-monitoring; Must)
-- [ ] US-231: Report recovery without repeats (002-recover-without-repeats; Must)
+- [ ] US-237: Tell the user monitoring has stalled (001-notify-stalled-monitoring; Must)
+- [ ] US-238: Report recovery without repeats (002-recover-without-repeats; Must)
 
 ## Bolt Type
 

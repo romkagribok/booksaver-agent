@@ -2,7 +2,7 @@
 version: reschange-f54b7b7
 commit: f54b7b7d11a9
 created: "2026-11-03T01:22:09Z"
-status: deployed-awaiting-readback
+status: deployed-verified
 recorded: "2026-11-03T03:45:20Z"
 ---
 
@@ -41,5 +41,10 @@ checks before that failed with `currency_mismatch`. Nobody was told.
 
 ## Production read-back
 
-Pending: the owner's first scheduled run is 2026-11-03T05:38Z. The invitee sync at 03:11Z on this
-code completed with no errors.
+- 2026-11-03T05:39Z and 13:39Z: the owner's scheduled syncs completed with no conflict; reservation and
+  booking on 2027-04-15/16 at USD 659.68. Both price checks after them succeeded at USD 592 (the
+  currency pin worked on the live daemon).
+- 2026-11-03T13:40Z: savings alert delivered for USD 592 against USD 659.68 (USD 67.68). The owner
+  confirmed receiving it in Telegram.
+- No stall notice was sent (none due); `monitoring_stall_notices` empty. The stall path itself has
+  not yet fired in production.

@@ -2,7 +2,7 @@
 unit: 003-monitoring-stall-notice
 intent: 028-reservation-change-reconciliation
 phase: inception
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-11-02T20:51:19Z"
@@ -23,5 +23,5 @@ FR-7, FR-8. See ../../requirements.md.
 
 | Story | Title | Bolt |
 |---|---|---|
-| US-230 | Tell the user monitoring has stalled | 095-monitoring-stall-notice |
-| US-231 | Report recovery without repeats | 095-monitoring-stall-notice |
+| US-237 | Tell the user monitoring has stalled | 095-monitoring-stall-notice |
+| US-238 | Report recovery without repeats | 095-monitoring-stall-notice |

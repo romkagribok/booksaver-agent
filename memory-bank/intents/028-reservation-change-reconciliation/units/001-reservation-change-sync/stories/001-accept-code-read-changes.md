@@ -2,14 +2,14 @@
 id: 001-accept-code-read-changes
 unit: 001-reservation-change-sync
 intent: 028-reservation-change-reconciliation
-status: draft
+status: complete
 priority: must
 created: "2026-11-02T20:51:19Z"
 assigned_bolt: 093-reservation-change-sync
-implemented: false
+implemented: true
 ---
 
-# US-226: Accept code-read reservation changes
+# US-233: Accept code-read reservation changes
 
 ## User story
 

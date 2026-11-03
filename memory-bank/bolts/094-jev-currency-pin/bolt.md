@@ -3,13 +3,13 @@ id: 094-jev-currency-pin
 unit: 002-jev-currency-pin
 intent: 028-reservation-change-reconciliation
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-pin-page-currency
 created: "2026-11-02T20:51:19Z"
 started: "2026-11-03T00:52:47Z"
-completed: null
-current_stage: test
+completed: "2026-11-03T14:37:29Z"
+current_stage: null
 stages_completed:
   - name: domain-model
     completed: "2026-11-03T00:52:47Z"
@@ -49,7 +49,7 @@ Deliver FR-6 of intent 028-reservation-change-reconciliation.
 
 ## Stories Included
 
-- [ ] US-229: Keep the Jev page in the booked currency (001-pin-page-currency; Must)
+- [ ] US-236: Keep the Jev page in the booked currency (001-pin-page-currency; Must)
 
 ## Bolt Type
 

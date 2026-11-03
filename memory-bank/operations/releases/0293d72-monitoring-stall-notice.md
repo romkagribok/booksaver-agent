@@ -2,7 +2,7 @@
 version: stallnotice-0293d72
 commit: 0293d722d8
 created: "2026-11-03T03:44:43Z"
-status: deployed-awaiting-readback
+status: deployed-verified
 recorded: "2026-11-03T03:45:20Z"
 ---
 
@@ -33,4 +33,10 @@ adds `monitoring_stall_notices`.
 
 ## Production read-back
 
-Pending, with release 1's: the owner's run at 2026-11-03T05:38Z.
+- 2026-11-03T05:39Z and 13:39Z: the owner's scheduled syncs completed with no conflict; reservation and
+  booking on 2027-04-15/16 at USD 659.68. Both price checks after them succeeded at USD 592 (the
+  currency pin worked on the live daemon).
+- 2026-11-03T13:40Z: savings alert delivered for USD 592 against USD 659.68 (USD 67.68). The owner
+  confirmed receiving it in Telegram.
+- No stall notice was sent (none due); `monitoring_stall_notices` empty. The stall path itself has
+  not yet fired in production.

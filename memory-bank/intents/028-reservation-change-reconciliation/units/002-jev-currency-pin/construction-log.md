@@ -14,7 +14,7 @@ last_updated: "2026-11-03T00:52:47Z"
 
 | Bolt ID | Stories | Type |
 |---------|---------|------|
-| 094-jev-currency-pin | US-229 | ddd-construction-bolt |
+| 094-jev-currency-pin | US-236 | ddd-construction-bolt |
 
 ## Replanning History
 
@@ -25,7 +25,7 @@ last_updated: "2026-11-03T00:52:47Z"
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
-| 094-jev-currency-pin | US-229 | ⏳ in-progress | - |
+| 094-jev-currency-pin | US-236 | ⏳ in-progress | - |
 
 ## Execution History
 
@@ -37,3 +37,5 @@ Same owner waiver as unit 001.
 | 2026-11-03T00:52:47Z | 094-jev-currency-pin | stage-complete | domain-model, technical-design, adr-analysis (no ADR), implement → test |
 | 2026-11-03T00:56:28Z | 094-jev-currency-pin | stage-complete | test: live replay passed on candidate `reschange-8faf528`; awaiting reviews, merge and release |
 | 2026-11-03T03:45:20Z | 094-jev-currency-pin | released | merged PR #90 as fe1b457; released `reschange-f54b7b7` at 2026-11-03T01:22:09Z. Completion waits for the owner's production run |
+| 2026-11-03T14:37:29Z | 094-jev-currency-pin | evidence | Production read-back: both checks succeeded in USD (592); savings alert delivered 13:40Z. Owner confirmed the alert and asked to close the work |
+| 2026-11-03T14:37:29Z | 094-jev-currency-pin | completed | Closed with bolt-complete.cjs |
