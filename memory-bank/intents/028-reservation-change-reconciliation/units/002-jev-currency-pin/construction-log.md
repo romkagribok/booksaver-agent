@@ -35,3 +35,4 @@ Same owner waiver as unit 001.
 |------|------|-------|---------|
 | 2026-11-03T00:52:47Z | 094-jev-currency-pin | process-note | The design was fixed in the approved requirements (FR-6) and the worker's brief, but these stage documents were written after the worker wrote the code. Stage times are when the documents were written |
 | 2026-11-03T00:52:47Z | 094-jev-currency-pin | stage-complete | domain-model, technical-design, adr-analysis (no ADR), implement → test |
+| 2026-11-03T00:56:28Z | 094-jev-currency-pin | stage-complete | test: live replay passed on candidate `reschange-8faf528`; awaiting reviews, merge and release |

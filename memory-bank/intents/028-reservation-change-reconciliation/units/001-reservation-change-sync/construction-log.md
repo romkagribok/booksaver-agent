@@ -38,3 +38,4 @@ encountered proceed to commit merge deploy and wait for codex review".
 | 2026-11-03T00:49:01Z | 093-reservation-change-sync | started | Live capture of the rows above `Price` changed FR-3 (requirements amendment). Stages 1 to 3 written before any bolt code |
 | 2026-11-03T00:49:01Z | 093-reservation-change-sync | stage-complete | domain-model, technical-design, adr-analysis (ADR-059) → implement |
 | 2026-11-03T00:52:47Z | 093-reservation-change-sync | stage-complete | implement → test. Local gate: 3,322 passed, 1 skipped; mypy clean |
+| 2026-11-03T00:56:28Z | 093-reservation-change-sync | stage-complete | test: live replay passed on candidate `reschange-8faf528`; awaiting reviews, merge and release |

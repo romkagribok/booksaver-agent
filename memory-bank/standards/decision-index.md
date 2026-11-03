@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 58
+total_decisions: 59
 ---
 
 # Decision Index
