@@ -36,3 +36,4 @@ Same owner waiver as unit 001.
 | 2026-11-03T01:27:07Z | 095-monitoring-stall-notice | stage-complete | domain-model, technical-design, adr-analysis (no ADR) → implement. Documents written before any bolt code |
 | 2026-11-03T01:33:53Z | 095-monitoring-stall-notice | stage-complete | implement → test. Production read showed only the owner's reservation could notify on the first run, and a scheduled run reports after its check |
 | 2026-11-03T01:38:43Z | 095-monitoring-stall-notice | review | Codex: recovery was missed when a later stall began, and a blocking incomplete sync was misreported. Fixed with tests; an incomplete agentic sync that observed the reservation is not a sync failure |
+| 2026-11-03T03:45:20Z | 095-monitoring-stall-notice | released | merged PR #92 as 69924fb; released `stallnotice-0293d72` at 2026-11-03T03:44:43Z. Completion waits for the owner's production run |

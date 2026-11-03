@@ -2,11 +2,11 @@
 id: 001-require-codex-review
 unit: 004-codex-merge-gate
 intent: 028-reservation-change-reconciliation
-status: draft
+status: complete
 priority: must
 created: "2026-11-03T01:23:31Z"
 assigned_bolt: 096-codex-merge-gate
-implemented: false
+implemented: true
 ---
 
 # US-232: Require the Codex review before merge

@@ -787,4 +787,4 @@ Accept code-read reservation changes, keep Jev on the booked currency, and repor
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-232` | Require the Codex review before merge | Merge gate | Planned | `004-codex-merge-gate/stories/001-require-codex-review.md` |
+| `US-232` | Require the Codex review before merge | Merge gate | Complete | `004-codex-merge-gate/stories/001-require-codex-review.md` |
