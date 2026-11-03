@@ -3109,7 +3109,8 @@ class CheckCoordinator:
                     conclusive_at = reservation.last_conclusive_at
                     # A result newer than the notice ended that stall, even if a new one began.
                     if notified_at is not None and (
-                        reason is None or (conclusive_at is not None and conclusive_at > notified_at)
+                        reason is None
+                        or (conclusive_at is not None and conclusive_at > notified_at)
                     ):
                         notifier.send(*recovery_message(reservation))
                         stalls.delete(user_id, reservation.booking_id)
