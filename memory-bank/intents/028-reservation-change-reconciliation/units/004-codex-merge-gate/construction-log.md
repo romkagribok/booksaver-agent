@@ -33,3 +33,4 @@ last_updated: "2026-11-03T01:23:31Z"
 |------|------|-------|---------|
 | 2026-11-03T01:23:31Z | 096-codex-merge-gate | started | Owner chose "Codex replaces Bugbot". Plan and code written together under the stage waiver |
 | 2026-11-03T01:25:39Z | 096-codex-merge-gate | stage-complete | plan, implement → test. Gate reported "the pull request is not open" on merged PR #90; its Codex state comment shows a clean review of the merged head |
+| 2026-11-03T03:45:20Z | 096-codex-merge-gate | completed | Codex review clean on e235eb1 after two findings fixed (waiver bound to the head commit; thread pagination fails closed); gate passed on PRs #91 and #92; merged as 4833d9e |

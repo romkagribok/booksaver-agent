@@ -3,13 +3,13 @@ id: 096-codex-merge-gate
 unit: 004-codex-merge-gate
 intent: 028-reservation-change-reconciliation
 type: simple-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-require-codex-review
 created: "2026-11-03T01:23:31Z"
 started: "2026-11-03T01:23:31Z"
-completed: null
-current_stage: test
+completed: "2026-11-03T03:45:20Z"
+current_stage: null
 stages_completed:
   - name: plan
     completed: "2026-11-03T01:23:31Z"
@@ -17,6 +17,9 @@ stages_completed:
   - name: implement
     completed: "2026-11-03T01:23:31Z"
     artifact: implementation-walkthrough.md
+  - name: test
+    completed: "2026-11-03T03:45:20Z"
+    artifact: test-walkthrough.md
 requires_bolts: []
 enables_bolts: []
 requires_units: []
