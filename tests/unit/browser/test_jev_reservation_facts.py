@@ -126,6 +126,8 @@ def test_explicit_no_refund_wording_is_non_refundable() -> None:
         "You'll get a full refund if you cancel before 11:59 PM on February 3, 2027.",
         "You'll get a full refund if you cancel before 11:59 PM on October 1, 2026.",
         "Full refund before January 20, 2027 or January 22, 2027.",  # two dates
+        "You will not receive a full refund if you cancel before January 23, 2027.",  # negated
+        "Full refund if you cancel before January 23, 2027.",  # not an affirmative construction
     ],
 )
 def test_unproven_refund_sentences_stay_unknown(sentence: str) -> None:
@@ -231,5 +233,24 @@ def test_at_most_eight_pages_ask_jev_in_one_sync() -> None:
     client = _Client("none")
     assistant = _assistant(client)
     for _ in range(10):
-        asyncio.run(assistant(_CONFLICTING_PAGE, dict(_FACTS), {"refundability": "x"}))
+        reasons = {"refundability": "refund_schedule_unrecognized"}
+        asyncio.run(assistant(_CONFLICTING_PAGE, dict(_FACTS), reasons))
     assert len(client.requests) == 8
+
+
+@pytest.mark.parametrize(
+    "reasons",
+    [
+        {"refundability": "cost_tiers_unrecognized"},  # rendered tiers outrank any sentence
+        {"refundability": "deadline_not_provable"},
+        {"booked_total": "unreconciled_charge_row"},
+        {"booked_total": "charge_warning"},
+    ],
+)
+def test_deliberate_code_rejections_are_never_retried(reasons: dict[str, str]) -> None:
+    client = _Client(_full_refund_key())
+    facts = {**_FACTS, "check_out": "2027-01-28", "adults": "1"}
+    asyncio.run(_assistant(client)(_CONFLICTING_PAGE, facts, dict(reasons)))
+    assert "refund_deadline" not in facts and "booked_total" not in facts
+    assert client.requests == []
+

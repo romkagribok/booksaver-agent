@@ -56,7 +56,19 @@ _DATE = re.compile(
     r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|"
     r"Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?) ([0-9]{1,2}), ([0-9]{4})\b"
 )
-_REFUNDABLE = re.compile(r"full refund|free cancellation|cancel for free|free of charge", re.I)
+# Affirmative constructions only; any negation leaves the terms unknown.
+_REFUNDABLE = re.compile(
+    r"\b(?:you(?:'ll| will)? (?:get|receive) a full refund|free cancellation (?:until|before)|"
+    r"(?:can|may) cancel (?:for free|free of charge))\b",
+    re.I,
+)
+_NEGATION = re.compile(r"\b(?:not|no|never|cannot|can't|won't|isn't|aren't)\b", re.I)
+# Reasons where the code reader only failed on the page's layout. Its deliberate rejections
+# (rendered cost tiers, unprovable cutoffs, fees, mixed currencies) are never retried.
+_RETRY_TOTAL = frozenset({
+    "final_price_statement", "price_block_shape", "guest_count_line", "converted_price_shape",
+})
+_RETRY_REFUND = frozenset({"refund_schedule_unrecognized", "no_cancellation_evidence"})
 _NON_REFUNDABLE = re.compile(
     r"non-refundable|not refundable|won't be eligible for a refund|no refund", re.I
 )
@@ -170,7 +182,7 @@ def prove_refund(sentence: str, check_in: date | None, now: datetime) -> dict[st
     if _NON_REFUNDABLE.search(sentence) and not _REFUNDABLE.search(sentence):
         return {"refundability": "explicit_nonrefundable", "refundability_text": sentence}
     dates = _DATE.findall(sentence)
-    if not _REFUNDABLE.search(sentence) or _NON_REFUNDABLE.search(sentence) or len(dates) != 1:
+    if not _REFUNDABLE.search(sentence) or _NEGATION.search(sentence) or len(dates) != 1:
         return None
     deadline = _calendar_date(*dates[0])
     if deadline is None or deadline > check_in:
@@ -216,13 +228,13 @@ class JevReservationFacts:
         check_out = _known_date(facts, "check_out")
         nights = (check_out - check_in).days if check_in and check_out else None
         guests = {"adults": facts["adults"]} if facts.get("adults", "unknown") != "unknown" else {}
-        if "booked_total" in reasons:
+        if reasons.get("booked_total") in _RETRY_TOTAL:
             proven = [
                 p for key in total_options(lines)
                 if (p := prove_total(lines, int(key[1:]), guests, nights)) is not None
             ]
             self._apply(facts, reasons, "booked_total", proven[0] if len(proven) == 1 else None)
-        if "refundability" not in reasons:
+        if reasons.get("refundability") not in _RETRY_REFUND:
             return
         proven_refunds = {
             key: p for key, sentence in refund_options(lines).items()

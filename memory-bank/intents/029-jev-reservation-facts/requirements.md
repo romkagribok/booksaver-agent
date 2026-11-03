@@ -100,4 +100,8 @@ exactly as today. No model-only fact is ever stored.
 - **Staging found the owner's own booking unmonitored in production**: the owner rebooked the Union
   Club stay after the 13:40Z alert, and the new confirmation's total (USD 592.48) is in the same
   converted shape. The candidate reads it.
+- **2026-11-03T22:19:46Z, Codex review.** The fallback retries only facts the code reader left unknown
+  because of the page's layout, never its deliberate rejections (rendered cost tiers, unprovable
+  cutoffs, fees, mixed currencies). Refund wording must be an affirmative construction with no
+  negation; fee rows outside the breakdown and same-day cutoffs fail proof, as in the code reader.
 
