@@ -2967,3 +2967,77 @@ def test_a_user_is_never_told_about_another_users_reservation(
 
     assert sent == []
 
+
+def test_a_result_newer_than_the_notice_reports_recovery_even_if_stalled_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    _run_slot, sent, booking_id, user_id = _stalled_slot(tmp_path, coordinator, monkeypatch)
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+    two_days_ago = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        store.conn.execute(
+            "UPDATE monitoring_stall_notices SET notified_at = ?",
+            ((datetime.now(UTC) - timedelta(days=3)).isoformat(),),
+        )
+        store.conn.execute(
+            "INSERT INTO check_history (check_id, booking_id, checked_at, outcome, "
+            "extraction_method) VALUES ('old-result', ?, ?, 'success', 'llm')",
+            (booking_id, two_days_ago),
+        )
+        store.conn.commit()
+
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+
+    assert [subject.split()[-1] for subject, _body in sent] == ["checked", "again", "checked"]
+
+
+@pytest.mark.parametrize(
+    ("completeness", "agentic", "observed", "blocked"),
+    [
+        ("complete", False, True, False),
+        ("failed", True, True, True),
+        ("incomplete", True, True, False),  # checks what it positively observed
+        ("incomplete", True, False, True),
+        ("incomplete", False, True, True),  # a non-agentic incomplete sync stops its checks
+    ],
+)
+def test_stall_reason_reflects_whether_the_latest_sync_blocks_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    completeness: str, agentic: bool, observed: bool, blocked: bool,
+) -> None:
+    coordinator = _coordinator(tmp_path)
+    _run_slot, sent, _booking_id, user_id = _stalled_slot(tmp_path, coordinator, monkeypatch)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        store.conn.execute(
+            "INSERT INTO booking_sync_runs (run_id, user_id, trigger, started_at, completed_at, "
+            "completeness, discovered_count, eligible_count, ineligible_count, session_revision) "
+            "VALUES ('latest', ?, 'scheduled', ?, ?, ?, 0, 0, 0, 'session')",
+            (
+                user_id,
+                (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+                (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+                completeness,
+            ),
+        )
+        if observed:
+            store.conn.execute(
+                "UPDATE account_reservations SET last_sync_run_id = 'latest' WHERE user_id = ?",
+                (user_id,),
+            )
+        if agentic:
+            store.conn.execute(
+                "INSERT INTO agentic_inventory_executions (run_id, user_id, source, "
+                "terminal_status, accepted_count, rejected_count, scope_count, page_count, "
+                "detail_count, semantic_action_count, computer_action_count, input_tokens, "
+                "output_tokens, model_cost_micro_usd, latency_ms, fallback_used, "
+                "safety_codes_json) VALUES ('latest', ?, 'test', 'observed', "
+                "0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '[]')",
+                (user_id,),
+            )
+        store.conn.commit()
+
+    coordinator._report_monitoring_stalls(user_id)  # noqa: SLF001
+
+    assert ("can't read this reservation" in sent[0][1]) is blocked
+

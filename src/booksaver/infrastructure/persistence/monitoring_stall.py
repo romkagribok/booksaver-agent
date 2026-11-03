@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import date, datetime
 
 from booksaver.domain.account_sync import EligibilityReason, EligibilityStatus
@@ -11,20 +12,33 @@ from booksaver.domain.monitoring_stall import MonitoredReservation, StallReason
 from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
 
 
+def _sync_blocks_checks(sync: Sequence[object] | None, observed_in_run: object) -> bool:
+    """Whether the latest sync stops this reservation's check, as the scheduled run decides it."""
+    if sync is None or sync[1] == "complete":
+        return False
+    if sync[1] != "incomplete":
+        return True
+    # An incomplete agentic sync still checks what it positively observed; other syncs do not.
+    return not sync[2] or observed_in_run != sync[0]
+
+
 class SqliteMonitoringStallRepository:
     def __init__(self, store: SqliteStore) -> None:
         self._conn = store.conn
 
     def list_upcoming(self, user_id: int, today: date) -> tuple[MonitoredReservation, ...]:
         sync = self._conn.execute(
-            "SELECT completeness FROM booking_sync_runs WHERE user_id = ? "
-            "ORDER BY started_at DESC LIMIT 1",
+            "SELECT s.run_id, s.completeness, "
+            "EXISTS (SELECT 1 FROM agentic_inventory_executions e "
+            "WHERE e.run_id = s.run_id AND e.user_id = s.user_id) "
+            "FROM booking_sync_runs s WHERE s.user_id = ? "
+            "ORDER BY s.started_at DESC LIMIT 1",
             (user_id,),
         ).fetchone()
         rows = self._conn.execute(
             """
             SELECT r.monitoring_booking_id, r.property_name, r.eligibility_status,
-                   r.eligibility_reasons, r.first_observed_at,
+                   r.eligibility_reasons, r.first_observed_at, r.last_sync_run_id,
                    (SELECT MAX(h.checked_at) FROM check_history h
                      WHERE h.booking_id = r.monitoring_booking_id
                        AND (h.outcome = ? OR h.failure_code = ?)) AS last_conclusive
@@ -48,17 +62,18 @@ class SqliteMonitoringStallRepository:
                     EligibilityReason(value) for value in json.loads(row[3] or "[]")
                 ),
                 first_observed_at=datetime.fromisoformat(row[4]),
-                last_conclusive_at=datetime.fromisoformat(row[5]) if row[5] else None,
-                latest_sync_failed=sync is not None and sync[0] == "failed",
+                last_conclusive_at=datetime.fromisoformat(row[6]) if row[6] else None,
+                latest_sync_failed=_sync_blocks_checks(sync, row[5]),
             )
             for row in rows
         )
 
-    def notified_booking_ids(self, user_id: int) -> frozenset[str]:
+    def notices(self, user_id: int) -> dict[str, datetime]:
         rows = self._conn.execute(
-            "SELECT booking_id FROM monitoring_stall_notices WHERE user_id = ?", (user_id,),
+            "SELECT booking_id, notified_at FROM monitoring_stall_notices WHERE user_id = ?",
+            (user_id,),
         ).fetchall()
-        return frozenset(row[0] for row in rows)
+        return {row[0]: datetime.fromisoformat(row[1]) for row in rows}
 
     def record(self, user_id: int, booking_id: str, reason: StallReason, at: datetime) -> None:
         self._conn.execute(

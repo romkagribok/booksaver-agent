@@ -3097,20 +3097,27 @@ class CheckCoordinator:
                     return
                 notifier = TelegramNotifier(bot_token=token, chat_id=str(chat_id))
                 stalls = SqliteMonitoringStallRepository(store)
-                notified = stalls.notified_booking_ids(user_id)
-                reservations = stalls.list_upcoming(user_id, now.date())
-                current = {r.booking_id for r in reservations if is_monitored(r)}
-                for booking_id in notified - current:
+                notices = stalls.notices(user_id)
+                reservations = [
+                    r for r in stalls.list_upcoming(user_id, now.date()) if is_monitored(r)
+                ]
+                for booking_id in notices.keys() - {r.booking_id for r in reservations}:
                     stalls.delete(user_id, booking_id)
                 for reservation in reservations:
                     reason = stall_reason(reservation, now)
-                    # Recorded only after delivery, so a failed send retries on the next run.
-                    if reason is not None and reservation.booking_id not in notified:
-                        notifier.send(*stall_message(reservation, reason))
-                        stalls.record(user_id, reservation.booking_id, reason, now)
-                    elif reason is None and reservation.booking_id in current & notified:
+                    notified_at = notices.get(reservation.booking_id)
+                    conclusive_at = reservation.last_conclusive_at
+                    # A result newer than the notice ended that stall, even if a new one began.
+                    if notified_at is not None and (
+                        reason is None or (conclusive_at is not None and conclusive_at > notified_at)
+                    ):
                         notifier.send(*recovery_message(reservation))
                         stalls.delete(user_id, reservation.booking_id)
+                        notified_at = None
+                    # Recorded only after delivery, so a failed send retries on the next run.
+                    if reason is not None and notified_at is None:
+                        notifier.send(*stall_message(reservation, reason))
+                        stalls.record(user_id, reservation.booking_id, reason, now)
         except Exception:
             logger.warning("Could not report monitoring stalls for user %s", user_id, exc_info=True)
 
