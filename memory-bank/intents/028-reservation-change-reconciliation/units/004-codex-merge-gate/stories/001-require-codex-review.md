@@ -9,7 +9,7 @@ assigned_bolt: 096-codex-merge-gate
 implemented: true
 ---
 
-# US-232: Require the Codex review before merge
+# US-239: Require the Codex review before merge
 
 ## User story
 

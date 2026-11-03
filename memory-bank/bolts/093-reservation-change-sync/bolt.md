@@ -3,15 +3,15 @@ id: 093-reservation-change-sync
 unit: 001-reservation-change-sync
 intent: 028-reservation-change-reconciliation
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-accept-code-read-changes
   - 002-clear-stale-facts-and-hold
   - 003-read-total-under-conversion
 created: "2026-11-02T20:51:19Z"
 started: "2026-11-03T00:49:01Z"
-completed: null
-current_stage: test
+completed: "2026-11-03T14:37:29Z"
+current_stage: null
 stages_completed:
   - name: domain-model
     completed: "2026-11-03T00:49:01Z"
@@ -51,9 +51,9 @@ Deliver FR-1, FR-2, FR-3, FR-4, FR-5 of intent 028-reservation-change-reconcilia
 
 ## Stories Included
 
-- [ ] US-226: Accept code-read reservation changes (001-accept-code-read-changes; Must)
-- [ ] US-227: Clear stale facts and hold (002-clear-stale-facts-and-hold; Must)
-- [ ] US-228: Read the total under a conversion line (003-read-total-under-conversion; Must)
+- [ ] US-233: Accept code-read reservation changes (001-accept-code-read-changes; Must)
+- [ ] US-234: Clear stale facts and hold (002-clear-stale-facts-and-hold; Must)
+- [ ] US-235: Read the total under a conversion line (003-read-total-under-conversion; Must)
 
 ## Bolt Type
 

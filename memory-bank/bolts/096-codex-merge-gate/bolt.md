@@ -34,4 +34,4 @@ Replace the Bugbot merge gate with a Codex merge gate.
 
 ## Stories Included
 
-- [ ] US-232: Require the Codex review before merge (001-require-codex-review; Must)
+- [ ] US-239: Require the Codex review before merge (001-require-codex-review; Must)

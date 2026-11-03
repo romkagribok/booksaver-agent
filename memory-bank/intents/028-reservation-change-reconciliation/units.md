@@ -13,20 +13,20 @@ updated: "2026-11-02T20:51:19Z"
 ### Unit 1: 001-reservation-change-sync
 
 Accept code-read changes, clear stale facts, read the total, invalidate savings. Bolt
-`093-reservation-change-sync`, stories US-226 to US-228. FR-1 to FR-5.
+`093-reservation-change-sync`, stories US-233 to US-235. FR-1 to FR-5.
 
 ### Unit 2: 002-jev-currency-pin
 
-Keep the Jev page in the booked currency. Bolt `094-jev-currency-pin`, story US-229. FR-6.
+Keep the Jev page in the booked currency. Bolt `094-jev-currency-pin`, story US-236. FR-6.
 
 ### Unit 3: 003-monitoring-stall-notice
 
 Tell a user when a reservation stops being monitored and when it recovers. Bolt
-`095-monitoring-stall-notice`, stories US-230 and US-231. FR-7 and FR-8.
+`095-monitoring-stall-notice`, stories US-237 and US-238. FR-7 and FR-8.
 
 ### Unit 4: 004-codex-merge-gate
 
-Replace the Bugbot merge gate with a Codex merge gate. Bolt `096-codex-merge-gate`, story US-232. FR-9.
+Replace the Bugbot merge gate with a Codex merge gate. Bolt `096-codex-merge-gate`, story US-239. FR-9.
 
 ## Unit Dependency Graph
 

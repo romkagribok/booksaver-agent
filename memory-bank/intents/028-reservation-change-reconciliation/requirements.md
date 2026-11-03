@@ -1,7 +1,7 @@
 ---
 intent: 028-reservation-change-reconciliation
 phase: inception
-status: construction
+status: complete
 created: "2026-11-02T20:51:19Z"
 updated: "2026-11-02T20:51:19Z"
 ---
@@ -110,3 +110,12 @@ Cursor reported on PR #90 that Bugbot is disabled for the owner's account. The o
 replaces Bugbot". **FR-9.** The required pull-request review is the Codex code review of the final
 head commit, enforced by `scripts/codex_merge_gate.py`, with the owner's existing waiver when Codex
 reports a usage limit. PR #90 was merged on this decision with no Bugbot review.
+
+### 2026-11-03T14:37:29Z: closure and descopes
+
+- Story IDs renumbered from US-226 to US-232 to US-233 to US-239: US-226 to US-228 were already
+  used by intent 023 unit 013 (the planning session did not check). No behaviour change.
+- Not proven live: the stall and recovery messages (FR-7, FR-8) have unit and integration tests
+  and a production-copy dry run, but no stall has occurred in production; the error-page reload
+  keeping the pinned currency (FR-6) is tested, not observed.
+- Descoped as planned: the dormant Claude price methods (left to the Jev-only cleanup).

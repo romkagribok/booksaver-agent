@@ -13,19 +13,19 @@ last_updated: "2026-11-03T01:23:31Z"
 
 | Bolt ID | Stories | Type |
 |---------|---------|------|
-| 096-codex-merge-gate | US-232 | simple-construction-bolt |
+| 096-codex-merge-gate | US-239 | simple-construction-bolt |
 
 ## Replanning History
 
 | Date | Action | Change | Reason | Approved |
 |------|--------|--------|--------|----------|
-| 2026-11-03T01:23:31Z | append | Unit 004, bolt 096, story US-232, FR-9 | Bugbot is disabled for the owner's account | Owner |
+| 2026-11-03T01:23:31Z | append | Unit 004, bolt 096, story US-239, FR-9 | Bugbot is disabled for the owner's account | Owner |
 
 ## Current Bolt Structure
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
-| 096-codex-merge-gate | US-232 | ⏳ in-progress | added |
+| 096-codex-merge-gate | US-239 | ⏳ in-progress | added |
 
 ## Execution History
 

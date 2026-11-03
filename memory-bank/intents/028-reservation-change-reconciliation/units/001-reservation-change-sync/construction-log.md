@@ -14,7 +14,7 @@ last_updated: "2026-11-03T00:49:01Z"
 
 | Bolt ID | Stories | Type |
 |---------|---------|------|
-| 093-reservation-change-sync | US-226, US-227, US-228 | ddd-construction-bolt |
+| 093-reservation-change-sync | US-233, US-234, US-235 | ddd-construction-bolt |
 
 ## Replanning History
 
@@ -25,7 +25,7 @@ last_updated: "2026-11-03T00:49:01Z"
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
-| 093-reservation-change-sync | US-226 to US-228 | ⏳ in-progress | - |
+| 093-reservation-change-sync | US-233 to US-235 | ⏳ in-progress | - |
 
 ## Execution History
 
@@ -41,3 +41,5 @@ encountered proceed to commit merge deploy and wait for codex review".
 | 2026-11-03T00:56:28Z | 093-reservation-change-sync | stage-complete | test: live replay passed on candidate `reschange-8faf528`; awaiting reviews, merge and release |
 | 2026-11-03T01:04:19Z | 093-reservation-change-sync | review | Codex (GitHub and a local run) found: unread room kept on a date change, provider total could release a hold, hotel not proven. All fixed with tests; suite 3,325 passed, 1 skipped. A live replay must be repeated on the final code |
 | 2026-11-03T03:45:20Z | 093-reservation-change-sync | released | merged PR #90 as fe1b457; released `reschange-f54b7b7` at 2026-11-03T01:22:09Z. Completion waits for the owner's production run |
+| 2026-11-03T14:37:29Z | 093-reservation-change-sync | evidence | Production read-back: sync complete on new dates at 05:39Z and 13:39Z, verified total USD 659.68. Owner confirmed the alert and asked to close the work |
+| 2026-11-03T14:37:29Z | 093-reservation-change-sync | completed | Closed with bolt-complete.cjs |

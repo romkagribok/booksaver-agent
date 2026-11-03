@@ -2,7 +2,7 @@
 unit: 002-jev-currency-pin
 intent: 028-reservation-change-reconciliation
 phase: inception
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-11-02T20:51:19Z"
@@ -23,4 +23,4 @@ FR-6. See ../../requirements.md.
 
 | Story | Title | Bolt |
 |---|---|---|
-| US-229 | Keep the Jev page in the booked currency | 094-jev-currency-pin |
+| US-236 | Keep the Jev page in the booked currency | 094-jev-currency-pin |

@@ -2,14 +2,14 @@
 id: 001-pin-page-currency
 unit: 002-jev-currency-pin
 intent: 028-reservation-change-reconciliation
-status: draft
+status: complete
 priority: must
 created: "2026-11-02T20:51:19Z"
 assigned_bolt: 094-jev-currency-pin
-implemented: false
+implemented: true
 ---
 
-# US-229: Keep the Jev page in the booked currency
+# US-236: Keep the Jev page in the booked currency
 
 ## User story
 

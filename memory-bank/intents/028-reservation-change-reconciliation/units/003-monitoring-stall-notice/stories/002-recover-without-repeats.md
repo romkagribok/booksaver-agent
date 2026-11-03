@@ -2,14 +2,14 @@
 id: 002-recover-without-repeats
 unit: 003-monitoring-stall-notice
 intent: 028-reservation-change-reconciliation
-status: draft
+status: complete
 priority: must
 created: "2026-11-02T20:51:19Z"
 assigned_bolt: 095-monitoring-stall-notice
-implemented: false
+implemented: true
 ---
 
-# US-231: Report recovery without repeats
+# US-238: Report recovery without repeats
 
 ## User story
 
