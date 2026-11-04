@@ -36,3 +36,4 @@ Owner, 2026-11-04: "Let's do it". No per-stage stops; one stop before commit, me
 | 2026-11-04T15:35:28Z | 098-jev-reservation-reader | stage-complete | domain-model, technical-design, adr-analysis (ADR-061 supersedes ADR-060) → implement. Documents before code |
 | 2026-11-04T15:47:58Z | 098-jev-reservation-reader | stage-complete | implement → test; parser test pruning by a worker. Live replay: all seven reservations correct. Stopped for the owner before commit |
 | 2026-11-04T15:49:57Z | 098-jev-reservation-reader | approved | Owner: "Yes please proceed"; commit, merge and deploy approved |
+| 2026-11-04T16:07:27Z | 098-jev-reservation-reader | released | Merged PR #97 as 3f5c2b1; promoted `jevreader-d0424de` at 2026-11-04T16:07:08Z. Completion waits for production read-back |
