@@ -624,16 +624,6 @@ def _make_reservation_facts_assistant(cfg: Config) -> tuple[Any, Any]:
     settings = cfg.jev_comparison_settings
     client = TypeSafeClient(typesafe_key, model=settings.model)
     db_path = cfg.data_directory.path / "booksaver.db"
-    owner_chat = cfg.telegram_bot_settings.owner_chat_id
-    bot_token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN", "").strip()
-
-    def _owner_notice(subject: str, body: str) -> None:
-        if not owner_chat or not bot_token:
-            return
-        from booksaver.infrastructure.notifications.telegram_notifier import TelegramNotifier
-
-        TelegramNotifier(bot_token=bot_token, chat_id=str(owner_chat)).send(subject, body)
-
     def _assistant() -> Any:
         now = datetime.now(UTC)
         return JevReservationFacts(
@@ -643,7 +633,6 @@ def _make_reservation_facts_assistant(cfg: Config) -> tuple[Any, Any]:
                 max_cost_nano_usd=remaining_daily_nano_usd(db_path, settings, now),
             ),
             observed_at=now,
-            notify_owner=_owner_notice,
         )
 
     def _record(assistant: Any, request: Any) -> None:

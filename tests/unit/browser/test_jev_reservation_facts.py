@@ -109,13 +109,11 @@ def _answers(total: str = "US$577.42", terms: str = "free_until_date",
     }
 
 
-def _reader(client: _Client, cap: int = 10**9, notices: list[Any] | None = None,
-            ) -> JevReservationFacts:
+def _reader(client: _Client, cap: int = 10**9) -> JevReservationFacts:
     return JevReservationFacts(
         client=client,  # type: ignore[arg-type]
         meter=JevArmMeter(max_calls=20, max_cost_nano_usd=cap),
         observed_at=NOW,
-        notify_owner=(lambda s, b: notices.append((s, b))) if notices is not None else None,
     )
 
 
@@ -123,24 +121,36 @@ _UNKNOWN = {"check_in": "2026-11-12", "check_out": "2026-11-15", "booked_total":
             "refundability": "unknown"}
 
 
-def test_jev_fills_what_code_could_not_read_and_marks_the_total() -> None:
-    facts, reasons = dict(_UNKNOWN), {"booked_total": "x", "refundability": "y"}
+def test_jev_reads_the_total_and_refund_terms() -> None:
+    facts, reasons = dict(_UNKNOWN), {}
     reader = _reader(_Client(_answers()))
     asyncio.run(reader(TEXT, facts, reasons))
     assert (facts["booked_total"], facts["currency"], facts["booked_total_source"]) == (
         "577.42", "USD", "jev")
     assert facts["refund_deadline"] == "2026-11-07"
     assert reasons == {}
-    assert reader.counts == {"filled_total": 1, "filled_refund": 1}
+    assert reader.counts == {"read_booked_total": 1, "read_refundability": 1}
 
 
-def test_code_facts_stand_and_disagreements_are_counted() -> None:
-    facts = {**_UNKNOWN, "booked_total": "500", "currency": "USD", "all_in": "explicit",
-             "refundability": "explicit_refundable", "refund_deadline": "2026-11-07"}
-    reader = _reader(_Client(_answers()))
-    asyncio.run(reader(TEXT, facts, {}))
-    assert facts["booked_total"] == "500" and "booked_total_source" not in facts
-    assert reader.counts == {"disagree": 1, "agree": 1}
+def test_a_dated_cost_line_gives_the_exact_deadline() -> None:
+    assert "until November 7, 2026 11:59 PM: US$0" in SENTENCES
+    facts = dict(_UNKNOWN)
+    asyncio.run(_reader(_Client(_answers(line="until November 7")))(TEXT, facts, {}))
+    assert facts["refund_deadline"] == "2026-11-07"
+
+
+def test_jev_replaces_whatever_the_page_had_before() -> None:
+    facts = {**_UNKNOWN, "booked_total": "500", "currency": "USD", "all_in": "explicit"}
+    asyncio.run(_reader(_Client(_answers()))(TEXT, facts, {}))
+    assert facts["booked_total"] == "577.42"
+
+
+def test_calendar_months_are_used_for_within() -> None:
+    result = check_refund(
+        "free_until_date", "Free cancellation within: 5 months 9 days", date(2027, 4, 15),
+        datetime(2026, 11, 4, 6, 8, tzinfo=UTC),
+    )
+    assert result is not None and result["refund_deadline"] == "2027-04-12"
 
 
 @pytest.mark.parametrize(
@@ -152,10 +162,10 @@ def test_code_facts_stand_and_disagreements_are_counted() -> None:
     ],
 )
 def test_unagreed_unconfident_or_failed_answers_change_nothing(client: _Client) -> None:
-    facts, reasons = dict(_UNKNOWN), {"booked_total": "x"}
+    facts, reasons = dict(_UNKNOWN), {}
     asyncio.run(_reader(client)(TEXT, facts, reasons))
     assert facts["booked_total"] == "unknown"
-    assert reasons == {"booked_total": "x"}
+    assert reasons["booked_total"] in {"jev_unread", "jev_unavailable"}
 
 
 def test_each_page_asks_twice_within_the_cap() -> None:
@@ -170,22 +180,6 @@ def test_an_exhausted_daily_cap_sends_nothing() -> None:
     client = _Client(_answers())
     asyncio.run(_reader(client, cap=0)(TEXT, dict(_UNKNOWN), {}))
     assert client.requests == []
-
-
-def test_first_disagreement_of_the_day_notifies_the_owner_once(tmp_path: Any) -> None:
-    from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
-
-    db = tmp_path / "booksaver.db"
-    with SqliteStore(db):
-        pass
-    notices: list[Any] = []
-    for _ in range(2):
-        reader = _reader(_Client(_answers()), notices=notices)
-        facts = {**_UNKNOWN, "booked_total": "500", "currency": "USD", "all_in": "explicit"}
-        asyncio.run(reader(TEXT, facts, {}))
-        reader.record(db, user_id=4, execution_id="sync")
-    assert len(notices) == 1
-    assert "Real Person" not in repr(notices) and "577" not in repr(notices)
 
 
 def test_a_call_cut_off_by_the_deadline_is_still_charged(tmp_path: Any) -> None:
@@ -205,7 +199,8 @@ def test_a_call_cut_off_by_the_deadline_is_still_charged(tmp_path: Any) -> None:
 @pytest.mark.parametrize(
     "page",
     [
-        [line for line in PAGE if "cancel" not in line.casefold()],  # price lines only
+        # Price lines only: no cancellation sentence and no dated deadline line.
+        [line for line in PAGE if not ("cancel" in line.casefold() or line.startswith("until"))],
         ["Cancellation policy Non-refundable", "Price", "(for 1 guest)"],  # no amounts
     ],
 )

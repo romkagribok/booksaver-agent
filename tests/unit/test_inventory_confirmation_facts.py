@@ -61,9 +61,12 @@ def test_complete_explicit_single_room_confirmation_facts():
     assert facts["check_out"] == "2026-10-24"
     assert facts["room_type"] == "Standard Double Room"
     assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
-    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == ("104", "EUR", "explicit")
-    assert facts["refundability"] == "explicit_refundable"
-    assert facts["refund_deadline"] == "2026-10-23"
+    # Price and cancellation facts belong to the Jev path; this parser leaves them unknown.
+    assert all(
+        facts[key] == "unknown"
+        for key in ("booked_total", "currency", "all_in", "refundability", "refund_deadline")
+    )
+    assert _reasons(_BODY) == {}
     assert all(isinstance(value, str) for value in facts.values())
 
 
@@ -154,23 +157,17 @@ def test_naive_observation_time_is_rejected():
 
 
 @pytest.mark.parametrize(
-    "now, lifecycle, scope, refundable",
+    "now, lifecycle, scope",
     [
-        (datetime(2026, 10, 22, 20, tzinfo=UTC), "upcoming", "upcoming", "explicit_refundable"),
-        (datetime(2026, 10, 23, 20, tzinfo=UTC), "current", "upcoming", "unknown"),
-        (datetime(2026, 10, 24, 20, tzinfo=UTC), "completed", "past", "explicit_nonrefundable"),
+        (datetime(2026, 10, 22, 20, tzinfo=UTC), "upcoming", "upcoming"),
+        (datetime(2026, 10, 23, 20, tzinfo=UTC), "current", "upcoming"),
+        (datetime(2026, 10, 24, 20, tzinfo=UTC), "completed", "past"),
     ],
 )
-def test_confirmed_dates_classify_lifecycle_and_local_deadline_boundary(
-    now, lifecycle, scope, refundable,
-):
+def test_confirmed_dates_classify_lifecycle(now, lifecycle, scope):
     facts = _parse(now=now)
     assert facts is not None
-    assert (facts["lifecycle"], facts["scope"], facts["refundability"]) == (
-        lifecycle, scope, refundable,
-    )
-    if refundable != "explicit_refundable":
-        assert facts["refund_deadline"] == "unknown"
+    assert (facts["lifecycle"], facts["scope"]) == (lifecycle, scope)
 
 
 @pytest.mark.parametrize(
@@ -247,115 +244,7 @@ def test_property_anchor_must_appear_before_check_in():
     assert facts["property_reference"] == "unknown"
 
 
-@pytest.mark.parametrize(
-    "change",
-    [
-        ("€ 104", "€ 100"),  # city tax excluded from displayed headline
-        ("€ 104", "€ 104.000"),
-        ("€ 104", "€ NaN"),
-        ("€ 104", "$ 104"),
-        ("€ 10.71", "€ 10.72"),
-        ("€ 2 City tax per person per night\t€ 4", "€ 2 City tax per person per night\t€ 3"),
-        ("Price\n", "Price\n€ 104\nPrice\n"),
-        ("(for 2 guests)", "(for 3 guests)"),
-        ("12 % VAT\t€ 10.71", "Service charge\t€ 10.71"),
-        ("The final price shown is the amount you'll pay to the property.", "Amount paid so far."),
-    ],
-)
-def test_unqualified_or_conflicting_price_is_unknown(change):
-    facts = _parse(_BODY.replace(*change))
-    assert facts is not None
-    assert facts["booked_total"] == facts["currency"] == facts["all_in"] == "unknown"
-
-
-@pytest.mark.parametrize(
-    "extra",
-    [
-        "City tax is not included in your total.",
-        "An extra cleaning fee is collected separately.",
-        "Additional charges\nCity tax € 4",
-        "This price is approximate.",
-        "A mandatory resort fee is paid at the property.",
-    ],
-)
-def test_mandatory_extra_or_approximate_charge_prevents_all_in(extra):
-    facts = _parse(_BODY + "\n" + extra)
-    assert facts is not None
-    assert facts["all_in"] == "unknown"
-
-
-@pytest.mark.parametrize("extra", [
-    "Mandatory cleaning fee €25",
-    "Resort fee €10",
-    "City tax €4",
-    "€ 2 City tax per person per night € 4",
-])
-@pytest.mark.parametrize("placement", ["before_price", "after_statement"])
-def test_simple_total_rejects_unreconciled_monetary_charge_outside_components(extra, placement):
-    body = (
-        _BODY.replace("1 room\t", extra + "\n1 room\t")
-        if placement == "before_price"
-        else _BODY + "\n" + extra
-    )
-    facts = _parse(body)
-    assert facts is not None
-    assert facts["booked_total"] == facts["currency"] == facts["all_in"] == "unknown"
-
-
-@pytest.mark.parametrize("extra", [
-    "Final Price\n€105",
-    "Final Price\n€105\nFinal Price\n€106",
-    "Final Price:\n€104\nFINAL PRICE\n€104",
-])
-def test_simple_price_rejects_any_extra_final_price_section_including_duplicates(extra):
-    facts = _parse(_BODY + "\n" + extra)
-    assert facts is not None
-    assert facts["booked_total"] == facts["currency"] == facts["all_in"] == "unknown"
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        ("until October 23, 2026 12:00 PM: € 0", "until October 23, 2026 12:00 PM: € 10"),
-        ("from October 23, 2026 12:00 PM: € 100", "from October 23, 2026 12:00 PM: € 0"),
-        ("from October 23, 2026 12:00 PM", "from October 24, 2026 12:00 PM"),
-        ("until October 23, 2026 12:00 PM: € 0", "until October 23, 2026 12:00 PM: € NaN"),
-        ("Cancellation cost", "Cancellation cost\nCancellation cost"),
-        ("until October 23, 2026 12:00 PM: € 0", ""),
-    ],
-)
-def test_relative_banner_without_unambiguous_free_then_paid_tiers_is_insufficient(change):
-    facts = _parse(_BODY.replace(*change))
-    assert facts is not None
-    assert facts["refundability"] == facts["refund_deadline"] == "unknown"
-
-
-def test_tomorrows_utc_date_does_not_prove_local_refund_deadline_is_future():
-    facts = _parse(now=datetime(2026, 10, 22, 23, tzinfo=UTC))
-    assert facts is not None
-    # At UTC+14 the local noon deadline has already passed.
-    assert facts["refundability"] == "unknown"
-
-
-def test_yesterdays_utc_date_does_not_prove_local_refund_deadline_expired():
-    facts = _parse(
-        _BODY.replace("12:00 PM", "11:59 PM"), now=datetime(2026, 10, 24, 1, tzinfo=UTC)
-    )
-    assert facts is not None
-    # At UTC-12 the previous local calendar day is still in progress before its cutoff.
-    assert facts["refundability"] == "unknown"
-
-
-def test_truncated_cancellation_section_cannot_hide_later_contradictory_tier():
-    body = _BODY.replace(
-        "1 room\t€ 89.29", "\n".join(["Unrecognized policy detail"] * 16) + "\n1 room\t€ 89.29"
-    )
-    facts = _parse(body)
-    assert facts is not None
-    assert facts["refundability"] == "unknown"
-
-
-def test_single_apartment_week_has_explicit_facts_but_approximate_extras_do_not_become_all_in():
+def test_single_apartment_week_has_explicit_guest_and_room_facts():
     body = (
         _BODY.replace("Sat, Oct 24, 2026", "Fri, Oct 30, 2026")
         .replace("2 adults - 1 night, 1 rooms", "2 adults - 1 week, 1 apartment")
@@ -363,50 +252,11 @@ def test_single_apartment_week_has_explicit_facts_but_approximate_extras_do_not_
             "Standard Double Room\nChange your room",
             "Entire apartment\nOne-Bedroom Apartment\nGuest name",
         )
-        .replace("1 room\t€ 89.29", "1 apartment\t€ 556.36")
-        .replace("12 % VAT\t€ 10.71", "10 % VAT\t€ 55.64")
-        .replace("€ 2 City tax per person per night\t€ 4\n", "")
-        .replace("€ 104", "€ 612")
-        + "\nAdditional charges\nThe price below is approximate and may include maximum occupancy."
-        "\nCity tax (€ 3.00 × 2 guests × 7 nights) € 24\nFinal Price (taxes included)\n€ 636"
     )
     facts = _parse(body)
     assert facts is not None
     assert facts["room_type"] == "One-Bedroom Apartment"
     assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
-    assert facts["refundability"] == "explicit_refundable"
-    assert facts["booked_total"] == facts["all_in"] == "unknown"
-
-
-_ADDITIONAL_PRICE = """1 room € 86.79
-12 % VAT € 10.41
-Price
-(for 2 guests)
-€ 97.20
-Additional charges
-The price you see below is an approximate that may include fees based on the maximum occupancy. This can include taxes set by local governments or charges set by the property.
-City tax (€2.00 × 2 guests × 1 night) €4
-Final Price
-(taxes included)
-€101.20
-The final price shown is the amount you'll pay to the property.
-"""  # noqa: E501
-_ADDITIONAL_BODY = _BODY[:_BODY.index("1 room\t")] + _ADDITIONAL_PRICE
-
-
-def test_additional_city_tax_is_all_in_only_after_exact_booked_party_calculation():
-    facts = _parse(_ADDITIONAL_BODY)
-    assert facts is not None
-    assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
-    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == (
-        "101.20", "EUR", "explicit",
-    )
-    assert facts["refundability"] == "explicit_refundable"
-
-
-def test_late_navigation_label_preserves_additional_tax_layout_facts():
-    body = _ADDITIONAL_BODY + "\nBooking Details\nCommunications"
-    assert _parse(body) == _parse(_ADDITIONAL_BODY)
 
 
 def test_five_night_apartment_guest_summary_survives_late_navigation_label():
@@ -424,120 +274,7 @@ def test_five_night_apartment_guest_summary_survives_late_navigation_label():
     assert facts is not None
     assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
     assert facts["room_type"] == "Standard Double Room"
-    assert (facts["booked_total"], facts["all_in"]) == ("120", "explicit")
 
-
-@pytest.mark.parametrize("change", [
-    ("× 2 guests", "× 3 guests"),
-    ("× 1 night", "× 2 nights"),
-    ("€2.00", "€3.00"),
-    (
-        "City tax (€2.00 × 2 guests × 1 night) €4",
-        "City tax (€2.00 × 2 guests × 1 night) €3",
-    ),
-    ("€101.20", "€100.20"),
-    ("€ 97.20", "€ 96.20"),
-    ("€ 10.41", "€ 10.42"),
-    ("€101.20", "€101.200"),
-    ("Final Price", "Service fee €5\nFinal Price"),
-    ("Final Price", "City tax (€2.00 × 2 guests × 1 night) €4\nFinal Price"),
-    ("Final Price", "Final Price\nFinal Price"),
-    ("Additional charges", "Additional charges\nAdditional charges"),
-    ("(taxes included)", "(taxes excluded)"),
-    ("City tax", "Resort fee"),
-    ("2 adults - 1 night, 1 rooms", "2 adults and 1 child - 1 night, 1 rooms"),
-    ("2 adults - 1 night, 1 rooms", "2 adults - 1 night, 2 rooms"),
-    ("The final price shown is the amount you'll pay to the property.", ""),
-    ("based on the maximum occupancy.", "based on the maximum occupancy and extra fees."),
-])
-def test_additional_charge_layout_rejects_ambiguity_or_unreconciled_components(change):
-    facts = _parse(_ADDITIONAL_BODY.replace(*change))
-    assert facts is not None
-    assert facts["booked_total"] == facts["currency"] == facts["all_in"] == "unknown"
-
-
-@pytest.mark.parametrize("extra", [
-    "This price is approximate.",
-    "A cleaning fee is payable separately.",
-    "Additional charges\nCity tax €4",
-    "The final price shown is the amount you'll pay to the property.",
-    "Service fee €5",
-    "City tax (€2.00 × 2 guests × 1 night) €4",
-])
-def test_qualified_charge_block_does_not_override_other_warnings_or_duplicate_statements(extra):
-    facts = _parse(_ADDITIONAL_BODY + extra)
-    assert facts is not None
-    assert facts["all_in"] == "unknown"
-
-
-def test_city_tax_cannot_be_counted_in_both_subtotal_and_additional_block():
-    body = _ADDITIONAL_BODY.replace(
-        "Price\n(for 2 guests)", "€2 City tax per person per night €4\nPrice\n(for 2 guests)",
-    ).replace("€ 97.20", "€ 101.20").replace("€101.20", "€105.20")
-    facts = _parse(body)
-    assert facts is not None
-    assert facts["all_in"] == "unknown"
-
-
-@pytest.mark.parametrize("include_final_statement", [False, True])
-def test_apartment_additional_tax_contradiction_remains_unknown(include_final_statement):
-    body = (
-        _ADDITIONAL_BODY.replace("Sat, Oct 24, 2026", "Fri, Oct 30, 2026")
-        .replace("2 adults - 1 night, 1 rooms", "2 adults - 1 week, 1 apartment")
-        .replace("1 room € 86.79", "1 apartment € 556.36")
-        .replace("12 % VAT € 10.41", "10 % VAT € 55.64")
-        .replace("€ 97.20", "€ 612")
-        .replace(
-            "City tax (€2.00 × 2 guests × 1 night) €4", "City tax (€3 × 2 guests × 7 nights) €24",
-        )
-        .replace("€101.20", "€636")
-    )
-    if not include_final_statement:
-        body = body.replace("The final price shown is the amount you'll pay to the property.", "")
-    facts = _parse(body)
-    assert facts is not None
-    assert facts["adults"] == "2"
-    assert facts["booked_total"] == facts["all_in"] == "unknown"
-
-
-_SPECIAL_REQUESTS_NOTICE = (
-    "Guests are required to show a photo ID and credit card upon check-in. "
-    "Please note that all Special Requests are subject to availability and additional charges "
-    "may apply."
-)
-
-
-def test_exact_optional_special_requests_notice_preserves_reconciled_final_total():
-    facts = _parse(_ADDITIONAL_BODY + "\n" + _SPECIAL_REQUESTS_NOTICE)
-    assert facts == _parse(_ADDITIONAL_BODY)
-    assert facts is not None
-    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == (
-        "101.20", "EUR", "explicit",
-    )
-
-
-@pytest.mark.parametrize("notice", [
-    _SPECIAL_REQUESTS_NOTICE.replace("may apply", "apply"),
-    _SPECIAL_REQUESTS_NOTICE.replace("all Special Requests", "all reservations"),
-    _SPECIAL_REQUESTS_NOTICE.replace("subject to availability", "mandatory"),
-    _SPECIAL_REQUESTS_NOTICE + " Additional charges of €5 are mandatory.",
-    _SPECIAL_REQUESTS_NOTICE + "\nService fee €5",
-    _SPECIAL_REQUESTS_NOTICE + "\nA mandatory resort fee is payable separately.",
-])
-def test_optional_notice_exemption_never_hides_other_or_modified_charge_warnings(notice):
-    facts = _parse(_ADDITIONAL_BODY + "\n" + notice)
-    assert facts is not None
-    assert facts["booked_total"] == facts["currency"] == facts["all_in"] == "unknown"
-
-
-@pytest.mark.parametrize("change", [
-    ("€101.20", "€100.20"), ("× 2 guests", "× 3 guests"),
-    ("× 1 night", "× 2 nights"), ("€ 10.41", "€ 10.42"),
-])
-def test_optional_notice_does_not_waive_price_math_or_party_evidence(change):
-    facts = _parse(_ADDITIONAL_BODY.replace(*change) + "\n" + _SPECIAL_REQUESTS_NOTICE)
-    assert facts is not None
-    assert facts["booked_total"] == facts["all_in"] == "unknown"
 
 @pytest.mark.parametrize('heading', [
     'Your booking is cancelled', 'Your reservation has been canceled.', 'Your stay is cancelled!',
@@ -681,224 +418,7 @@ def test_conflicting_labelled_rows_and_long_wording_stay_bounded():
     assert plan == "breakfast" and len(text) == 200
 
 
-# The dollar confirmation layout, shaped from the affected caller's real page: a refund schedule
-# sentence under its own label instead of cost tiers, "US$" amounts, a TAX row, and the total
-# closed by "Additional Info" with no final-price statement.
-_DOLLAR_BODY = (
-    _BODY.replace(
-        """Cancellation cost
-
-Free cancellation within: 1 month 9 days
-until October 23, 2026 12:00 PM: € 0
-from October 23, 2026 12:00 PM: € 100 – Changing the dates of your stay isn't possible.
-Cancellation deadlines are in the property's local time.
-""",
-        "Cancellation policy\tYou can cancel for free until 2 days before arrival.\n"
-        "Refund schedule\n"
-        "You'll get a full refund if you cancel before 11:59 PM on October 20, 2026. If you "
-        "cancel after 12:00 AM on October 21, 2026, you won't be eligible for a refund.\n",
-    )
-    .replace("1 room\t€ 89.29", "1 room\tUS$309")
-    .replace("12 % VAT\t€ 10.71", "12 % TAX\tUS$37.08")
-    .replace("€ 2 City tax per person per night\t€ 4\n", "")
-    .replace("€ 104", "US$346.08")
-    .replace("The final price shown is the amount you'll pay to the property.\n", "")
-    + "If you cancel, applicable taxes may still be charged by the property.\n"
-)
-
-
-# The owner's page while the session displays euros: a whole-euro breakdown and "approx." line above
-# the booked dollar total.
-_CONVERTED_BODY = (
-    _DOLLAR_BODY.replace("1 room\tUS$309", "1 room\t€ 526")
-    .replace("12 % TAX\tUS$37.08", "12 % TAX\t€ 63")
-    .replace("US$346.08", "approx. € 589\nUS$659.68")
-)
-
-
 def _reasons(body: str) -> dict[str, str]:
     reasons: dict[str, str] = {}
     assert parse_confirmation_facts(body, _ANCHORS, observed_at=_NOW, reasons=reasons) is not None
     return reasons
-
-
-def test_dollar_confirmation_records_its_own_currency_total_and_refund_schedule():
-    facts = _parse(_DOLLAR_BODY)
-    assert facts is not None
-    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == (
-        "346.08", "USD", "explicit",
-    )
-    assert facts["refundability"] == "explicit_refundable"
-    assert facts["refund_deadline"] == "2026-10-20"
-    assert _reasons(_DOLLAR_BODY) == _reasons(_BODY) == {}
-
-
-@pytest.mark.parametrize(
-    ("other", "currency"),
-    [("£", "GBP"), ("US$", "USD"), ("CAD ", "CAD"), ("PLN ", "PLN")],
-)
-def test_price_and_cancellation_tiers_follow_the_printed_currency(other, currency):
-    facts = _parse(_BODY.replace("€ ", other))
-    assert facts is not None
-    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == (
-        "104", currency, "explicit",
-    )
-    assert facts["refundability"] == "explicit_refundable"
-
-
-def test_grouped_thousands_total_is_read_as_one_amount():
-    body = (
-        _BODY.replace("1 room\t€ 89.29", "1 room\t€ 1,000.00")
-        .replace("12 % VAT\t€ 10.71", "12 % VAT\t€ 120.00")
-        .replace("€ 104", "€ 1,124.00")
-    )
-    facts = _parse(body)
-    assert facts is not None
-    assert (facts["booked_total"], facts["currency"]) == ("1124.00", "EUR")
-
-
-@pytest.mark.parametrize(
-    ("change", "reasons"),
-    [
-        (("US$346.08", "346.08"), {"booked_total": "total_not_money"}),
-        # A bare dollar sign names no single currency.
-        (("US$346.08", "$346.08"), {"booked_total": "total_not_money"}),
-        (("US$346.08", "XYZ 346.08"), {"booked_total": "total_not_money"}),
-        (("US$346.08", "US$346,08"), {"booked_total": "total_not_money"}),
-        (("1 room\tUS$309", "1 room\t€ 309"), {"booked_total": "mixed_currency"}),
-        (("12 % TAX\tUS$37.08", "12 % TAX\tCAD 37.08"), {"booked_total": "tax_row"}),
-        (("12 % TAX\tUS$37.08", "12 % TAX\tUS$37.00"), {"booked_total": "tax_row"}),
-        (("12 % TAX\tUS$37.08", "Resort fee\tUS$37.08"),
-         {"booked_total": "unrecognized_component_row"}),
-        # Without the page's final-price statement, only a reconciled tax row proves all-in.
-        (("1 room\tUS$309\n12 % TAX\tUS$37.08", "1 room\tUS$346.08"),
-         {"booked_total": "tax_inclusion_unproven"}),
-        (("(for 2 guests)\n", ""), {"booked_total": "final_price_statement"}),
-        (("Additional Info\n", "Good to know\n"), {"booked_total": "final_price_statement"}),
-        (("you won't be eligible for a refund.", "you'll get a partial refund."),
-         {"refundability": "refund_schedule_unrecognized"}),
-        (("cancel after 12:00 AM on October 21", "cancel after 12:00 AM on October 22"),
-         {"refundability": "cutoffs_not_adjacent"}),
-        (("before 11:59 PM", "before 13:59 PM"),
-         {"refundability": "refund_schedule_unrecognized"}),
-        (("Refund schedule\n", "Refund schedule\nRefund schedule\n"),
-         {"refundability": "refund_schedule_unrecognized"}),
-        (("Refund schedule\n", "Refund policy\n"),
-         {"refundability": "no_cancellation_evidence"}),
-    ],
-)
-def test_unknown_total_or_refundability_names_the_rule_that_stopped_it(change, reasons):
-    body = _DOLLAR_BODY.replace(*change)
-    assert body != _DOLLAR_BODY
-    facts = _parse(body)
-    assert facts is not None
-    assert _reasons(body) == reasons
-    if "booked_total" in reasons:
-        assert (facts["booked_total"], facts["all_in"]) == ("unknown", "unknown")
-    if "refundability" in reasons:
-        assert facts["refundability"] == "unknown"
-
-
-def test_unknown_fact_reasons_never_carry_page_content():
-    reasons = _reasons(_DOLLAR_BODY.replace("US$346.08", "346.08 secret"))
-    assert reasons and all(value.replace("_", "").isalpha() for value in reasons.values())
-
-
-def test_cancellation_tiers_in_two_currencies_are_insufficient():
-    assert _reasons(_BODY.replace("PM: € 100", "PM: US$100")) == {
-        "refundability": "cost_tiers_unrecognized",
-    }
-
-
-def test_refund_schedule_beside_its_label_and_expired_schedule():
-    inline = _parse(_DOLLAR_BODY.replace("Refund schedule\n", "Refund schedule\t"))
-    assert inline is not None and inline["refund_deadline"] == "2026-10-20"
-    expired = _parse(_DOLLAR_BODY, now=datetime(2026, 10, 22, 13, tzinfo=UTC))
-    assert expired is not None
-    assert expired["refundability"] == "explicit_nonrefundable"
-
-
-def test_rendered_cost_tiers_outrank_a_refund_schedule_sentence():
-    # A page that prints cost tiers is judged by them alone, even when they do not qualify.
-    body = _BODY.replace(
-        "from October 23, 2026 12:00 PM: € 100 – Changing the dates of your stay isn't possible.\n",
-        "",
-    ).replace(
-        "1 room\t€ 89.29",
-        "Refund schedule\nYou'll get a full refund if you cancel before 11:59 PM on "
-        "October 20, 2026. If you cancel after 12:00 AM on October 21, 2026, you won't be "
-        "eligible for a refund.\n1 room\t€ 89.29",
-    )
-    assert _reasons(body) == {"refundability": "cost_tiers_unrecognized"}
-
-
-def test_euro_page_without_its_statement_needs_the_same_closed_shape_and_tax_row():
-    without = _BODY.replace("The final price shown is the amount you'll pay to the property.\n", "")
-    facts = _parse(without)
-    assert facts is not None and (facts["booked_total"], facts["currency"]) == ("104", "EUR")
-    assert _reasons(without.replace("12 % VAT\t€ 10.71\n", "").replace("€ 89.29", "€ 100")) == {
-        "booked_total": "tax_inclusion_unproven",
-    }
-
-
-def test_converted_breakdown_records_the_printed_booked_total():
-    facts = _parse(_CONVERTED_BODY)
-    assert facts is not None
-    assert (facts["booked_total"], facts["currency"], facts["all_in"]) == (
-        "659.68", "USD", "explicit",
-    )
-    assert _reasons(_CONVERTED_BODY) == {}
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        ("€ 526", "€ 528"),  # rows miss the conversion by more than display rounding
-        ("€ 63", "€ 66"),  # tax does not match its stated rate
-        ("€ 526", "£ 526"),  # a third currency
-        ("approx. € 589", "approx. US$589"),  # no conversion at all
-        ("approx. € 589\nUS$659.68", "US$659.68\napprox. € 589"),  # not directly above the total
-        ("approx. € 589", "approx. € 589\napprox. € 589"),
-        ("approx. € 589", "about € 589"),
-        ("12 % TAX\t€ 63\n", ""),  # tax inclusion unproven
-        ("12 % TAX\t€ 63", "Service charge\t€ 63"),
-        (
-            "Additional Info",
-            "The final price shown is the amount you'll pay to the property.\nAdditional Info",
-        ),
-        ("12 % TAX\t€ 63", "€ 31.5 City tax per person per night\t€ 63"),
-    ],
-)
-def test_any_other_converted_shape_leaves_the_total_unknown(change):
-    assert change[0] in _CONVERTED_BODY
-    facts = _parse(_CONVERTED_BODY.replace(*change))
-    assert facts is not None
-    assert facts["booked_total"] == facts["currency"] == facts["all_in"] == "unknown"
-
-
-def test_conversion_rounding_is_not_tolerated_on_a_booked_total():
-    facts = _parse(_DOLLAR_BODY.replace("US$309", "US$309.50"))
-    assert facts is not None
-    assert facts["booked_total"] == "unknown"
-
-
-def test_a_charge_a_special_request_may_incur_is_not_a_hidden_fee():
-    notice = (
-        "Upon check-in photo identification and credit card are required. All special requests "
-        "are subject to availability upon check-in. Special requests cannot be guaranteed and may "
-        "incur additional charges."
-    )
-    facts = _parse(_BODY + notice + "\n")
-    assert facts is not None
-    assert facts["all_in"] == "explicit"
-
-
-def test_a_sentence_that_also_excludes_a_tax_still_blocks_the_total():
-    notice = (
-        "Special requests may incur additional charges; city tax is not included in the total "
-        "and is payable separately."
-    )
-    facts = _parse(_BODY + notice + "\n")
-    assert facts is not None
-    assert facts["all_in"] == "unknown"
-

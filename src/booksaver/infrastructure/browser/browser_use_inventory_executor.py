@@ -1822,9 +1822,7 @@ class LocalBrowserUseInventoryRuntime:
                         item.property_name is not None and item.property_reference is not None
                     ),
                     booked_total_verified=(
-                        item.booked_total is not None
-                        and item.all_in is AllInEvidence.EXPLICIT
-                        and item.booked_total_source != "jev"
+                        item.booked_total is not None and item.all_in is AllInEvidence.EXPLICIT
                     ),
                 )
                 for item in reservations

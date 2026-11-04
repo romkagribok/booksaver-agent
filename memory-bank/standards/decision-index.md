@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 60
+total_decisions: 61
 ---
 
 # Decision Index
@@ -579,4 +579,12 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/097-jev-reservation-facts/adr-060-jev-selects-code-proves.md`
 - **Summary**: Jev reads the booked total and refund terms on every upcoming confirmation (asked twice, layout-independent checks); code-read facts win and disagreements reach the owner daily; Jev-read totals fill gaps, never replace saved totals, and are labelled in alerts.
 - **Read when**: Changing how confirmation facts are read, what is sent to TypeSafe, or the trust given to model-assisted facts.
+
+### ADR-061: Jev is the only reader of booked totals and refund terms
+- **Status**: accepted
+- **Date**: 2026-11-04
+- **Bolt**: 098-jev-reservation-reader (jev-reservation-reader)
+- **Path**: `bolts/098-jev-reservation-reader/adr-061-jev-is-the-reservation-reader.md`
+- **Summary**: Supersedes ADR-060. Jev alone reads booked totals and refund terms (asked twice, layout-independent checks); its agreed total is page-verified; the code price/refund parsing, comparison, owner notice and alert label are removed.
+- **Read when**: Changing how confirmation totals or refund terms are read, or the trust given to Jev.
 

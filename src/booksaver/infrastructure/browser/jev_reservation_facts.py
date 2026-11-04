@@ -1,8 +1,7 @@
-"""Jev reads a confirmation's total and refund terms; code wins where it reads them (ADR-060).
+"""Jev is the only reader of a confirmation's booked total and refund terms (ADR-061).
 
 Jev is asked twice and both answers must agree. Code checks only rules that hold for any layout.
-Where the code reader also read a fact its value stands, and a disagreement is counted and reported
-to the owner. Only the price area's money lines and the cancellation sentences reach TypeSafe.
+Only the price area's money lines and the cancellation and deadline lines reach TypeSafe.
 """
 
 from __future__ import annotations
@@ -12,10 +11,8 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 
 from booksaver.domain.price_comparison import JevComparisonSettings
@@ -43,9 +40,11 @@ from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
 
 logger = logging.getLogger(__name__)
 
-ADAPTER = "jev-reservation-facts-v2"
+ADAPTER = "jev-reservation-facts-v3"
 _MAX_CALLS_PER_SYNC = 20
 _MIN_CONFIDENCE = 0.6
+# The deadline sentence is often one of several similar ones, so its confidence runs lower.
+_MIN_LINE_CONFIDENCE = 0.5
 _MAX_OPTIONS = 25
 _MAX_OPTION_CHARS = 300
 _CALL_SECONDS = 20.0
@@ -70,14 +69,17 @@ def price_area(lines: list[str]) -> list[str]:
 
 
 def cancellation_sentences(lines: list[str]) -> list[str]:
+    """Cancellation and refund sentences, and dated lines such as a cost table's "until <date>"."""
     sentences: list[str] = []
     for line in lines:
         for sentence in re.split(r"(?<=[.!?])\s+", line):
-            if re.search(r"cancel|refund", sentence, re.I) and sentence[:_MAX_OPTION_CHARS] not in (
-                sentences
+            candidate = sentence[:_MAX_OPTION_CHARS]
+            dated = _DATE.search(sentence) and re.match(r"(?:until|before)\b", sentence, re.I)
+            if (re.search(r"cancel|refund", sentence, re.I) or dated) and (
+                candidate not in sentences
             ):
-                sentences.append(sentence[:_MAX_OPTION_CHARS])
-    return sentences[:14]
+                sentences.append(candidate)
+    return sentences[:16]
 
 
 def check_total(line: str, area: list[str]) -> dict[str, str] | None:
@@ -114,7 +116,7 @@ def check_refund(
         window_end = datetime.combine(deadline, datetime.min.time(), UTC)
     elif not dates and within is not None and any(within.groups()):
         months, days, hours = (int(value or 0) for value in within.groups())
-        window_end = now.astimezone(UTC) + timedelta(days=30 * months + days, hours=hours)
+        window_end = _add_months(now.astimezone(UTC), months) + timedelta(days=days, hours=hours)
         deadline = (window_end - _TIMEZONE_MARGIN).date()
     else:
         return None
@@ -124,12 +126,22 @@ def check_refund(
             "refund_deadline": deadline.isoformat()}
 
 
-def _agreed(results: list[SystemOneResult], question: str) -> str | None:
+def _add_months(moment: datetime, months: int) -> datetime:
+    """Calendar months, clamped to the end of a shorter month."""
+    year, month = divmod(moment.month - 1 + months, 12)
+    target = date(moment.year + year, month + 1, 1)
+    last = ((target.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)).day
+    return moment.replace(year=target.year, month=target.month, day=min(moment.day, last))
+
+
+def _agreed(
+    results: list[SystemOneResult], question: str, minimum: float = _MIN_CONFIDENCE,
+) -> str | None:
     if any(question not in result.answers for result in results):
         return None
     answers = [result.choice(question) for result in results]
     choices = {answer.choice for answer in answers}
-    if len(choices) != 1 or min(answer.confidence for answer in answers) < _MIN_CONFIDENCE:
+    if len(choices) != 1 or min(answer.confidence for answer in answers) < minimum:
         return None
     return choices.pop()
 
@@ -140,12 +152,11 @@ def _known(facts: dict[str, str], name: str) -> bool:
 
 @dataclass
 class JevReservationFacts:
-    """One sync's reader: two Jev calls per upcoming page, applied under code's precedence."""
+    """One sync's reader: two Jev calls per upcoming page; agreed, checked answers are the facts."""
 
     client: TypeSafeClient
     meter: JevArmMeter
     observed_at: datetime
-    notify_owner: Callable[[str, str], None] | None = None
     pages: int = 0
     counts: dict[str, int] = field(default_factory=dict)
     started: float = field(default_factory=time.monotonic)
@@ -223,56 +234,35 @@ class JevReservationFacts:
                 results.append(outcome)
         if len(results) != 2:
             self._count("unavailable")
+            reasons.setdefault("booked_total", "jev_unavailable")
+            reasons.setdefault("refundability", "jev_unavailable")
             return
         total_choice = _agreed(results, "total")
         jev_total = check_total(totals[total_choice], area) if total_choice in totals else None
-        line_choice = _agreed(results, "refund_line")
+        line_choice = _agreed(results, "refund_line", _MIN_LINE_CONFIDENCE)
         terms = _agreed(results, "refund")
         check_in = date.fromisoformat(facts["check_in"]) if _known(facts, "check_in") else None
         jev_refund = (
             check_refund(terms, refund_lines.get(line_choice or ""), check_in, self.observed_at)
             if terms is not None else None
         )
-        self._settle_total(facts, reasons, jev_total)
-        self._settle_refund(facts, reasons, jev_refund)
+        self._apply(facts, reasons, "booked_total", jev_total)
+        self._apply(facts, reasons, "refundability", jev_refund)
 
-    def _settle_total(
-        self, facts: dict[str, str], reasons: dict[str, str], jev: dict[str, str] | None,
+    def _apply(
+        self, facts: dict[str, str], reasons: dict[str, str], name: str,
+        jev: dict[str, str] | None,
     ) -> None:
         if jev is None:
-            return
-        if _known(facts, "booked_total"):
-            same = (Decimal(facts["booked_total"]), facts.get("currency")) == (
-                Decimal(jev["booked_total"]), jev["currency"]
-            )
-            self._count("agree" if same else "disagree")
+            reasons[name] = "jev_unread"
+            self._count(f"unread_{name}")
             return
         facts.update(jev)
-        reasons.pop("booked_total", None)
-        self._count("filled_total")
-
-    def _settle_refund(
-        self, facts: dict[str, str], reasons: dict[str, str], jev: dict[str, str] | None,
-    ) -> None:
-        if jev is None:
-            return
-        if _known(facts, "refundability"):
-            same = facts["refundability"] == jev["refundability"] and (
-                jev["refundability"] != "explicit_refundable"
-                or abs(
-                    (date.fromisoformat(facts["refund_deadline"])
-                     - date.fromisoformat(jev["refund_deadline"])).days
-                ) <= 1
-                if _known(facts, "refund_deadline") else True
-            )
-            self._count("agree" if same else "disagree")
-            return
-        facts.update(jev)
-        reasons.pop("refundability", None)
-        self._count("filled_refund")
+        reasons.pop(name, None)
+        self._count(f"read_{name}")
 
     def record(self, db_path: Path, *, user_id: int, execution_id: str) -> None:
-        """Count this sync's spend toward the shared daily cap; tell the owner of disagreements."""
+        """Count this sync's spend toward the shared daily cap."""
         # A call cut off by the sync deadline may still be billed; charge it conservatively.
         self.meter.abandon_in_flight()
         usage = self.meter.snapshot()
@@ -282,22 +272,13 @@ class JevReservationFacts:
             [f"pages={self.pages}"]
             + [f"{name}={count}" for name, count in sorted(self.counts.items())]
         )
-        now = datetime.now(UTC)
-        first_disagreement_today = False
         try:
             with SqliteStore(db_path) as store:
-                if self.counts.get("disagree"):
-                    first_disagreement_today = not store.conn.execute(
-                        "SELECT 1 FROM jev_price_runs WHERE adapter = ? AND created_at >= ? "
-                        "AND diagnostic LIKE '%disagree=%' LIMIT 1",
-                        (ADAPTER, now.replace(hour=0, minute=0, second=0, microsecond=0)
-                         .isoformat()),
-                    ).fetchone()
                 SqliteJevPriceRunRepository(store).record(JevPriceRun(
                     execution_id=f"{execution_id}:facts:{uuid.uuid4().hex[:8]}",
                     user_id=user_id,
                     booking_id="",
-                    created_at=now,
+                    created_at=datetime.now(UTC),
                     status="observed",
                     usage=usage,
                     latency_ms=round((time.monotonic() - self.started) * 1_000),
@@ -306,19 +287,6 @@ class JevReservationFacts:
                 ))
         except Exception:
             logger.warning("Could not record Jev reservation-facts spend", exc_info=True)
-            return
-        if first_disagreement_today and self.notify_owner is not None:
-            try:
-                self.notify_owner(
-                    "BookSaver: Jev disagreed with the code reader",
-                    f"During an account sync today Jev read {self.counts['disagree']} reservation "
-                    "fact(s) differently from the code reader. The code reader's values were "
-                    "kept. If this keeps happening, Jev's answers may be drifting; the counts "
-                    "are in the jev_price_runs diagnostics. This notice is sent at most once a "
-                    "day.",
-                )
-            except Exception:
-                logger.warning("Could not send the Jev disagreement notice", exc_info=True)
 
 
 def remaining_daily_nano_usd(db_path: Path, settings: JevComparisonSettings, now: datetime) -> int:
