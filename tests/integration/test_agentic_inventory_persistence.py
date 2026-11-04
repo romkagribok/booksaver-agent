@@ -150,7 +150,7 @@ def test_schema_v17_migration_preserves_existing_sync_runs(tmp_path: Path) -> No
             "SELECT user_id FROM booking_sync_runs WHERE run_id = 'preserved-v16-run'"
         ).fetchone()
 
-        assert version == SCHEMA_VERSION == 22
+        assert version == SCHEMA_VERSION == 23
         assert preserved is not None
         assert preserved[0] == user_id
         assert (
@@ -1007,3 +1007,135 @@ def test_provider_output_cannot_release_a_hold(tmp_path: Path) -> None:
         assert held.observation.booked_total is None
         assert EligibilityReason.MISSING_BOOKED_TOTAL in held.eligibility.reasons
 
+
+
+def _source_columns(store: SqliteStore, user_id: int) -> tuple[str, str | None]:
+    reservation = store.conn.execute(
+        "SELECT booked_total_source, monitoring_booking_id FROM account_reservations "
+        "WHERE user_id = ?", (user_id,),
+    ).fetchone()
+    booking = (
+        store.conn.execute(
+            "SELECT baseline_source FROM bookings WHERE booking_id = ?", (reservation[1],),
+        ).fetchone()
+        if reservation[1]
+        else None
+    )
+    return reservation[0], booking[0] if booking else None
+
+
+def _seed_without_total(
+    store: SqliteStore,
+) -> tuple[SqliteAccountReservationRepository, int, ReservationObservation]:
+    owner = SqliteUserRepository(store).get_owner()
+    repo = SqliteAccountReservationRepository(store)
+    original = replace(
+        _reservation(), booked_total=None,
+        property_ref="https://www.booking.com/hotel/us/hotel-example.html",
+    )
+    repo.reconcile(
+        user_id=owner.user_id, run_id="seed-no-total",
+        trigger=SynchronizationTrigger.BOOKINGS, session_revision="session-1",
+        result=InventoryDiscoveryResult((original,), InventoryCompleteness.INCOMPLETE),
+        observed_at=NOW,
+    )
+    return repo, owner.user_id, original
+
+
+def test_jev_total_fills_a_missing_total_and_is_recorded_as_jev(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_without_total(store)
+        assert _source_columns(store, user_id) == ("code", None)
+        total = Money(Decimal("412.50"), "USD")
+
+        report = _sync_change(repo, user_id, _changed(
+            original, booked_total=total, booked_total_source="jev",
+        ))
+
+        after = repo.list_for_user(user_id)[0]
+        assert report.failure_code is None
+        assert after.observation.booked_total == total
+        assert after.observation.booked_total_source == "jev"
+        assert _source_columns(store, user_id) == ("jev", "jev")
+        assert repo.list_for_user(user_id)[0].eligibility.is_eligible
+
+
+@pytest.mark.parametrize("verified_stay", [True, False])
+def test_jev_total_never_replaces_a_saved_total_and_causes_no_conflict(
+    tmp_path: Path, verified_stay: bool,
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+
+        report = _sync_change(repo, user_id, replace(
+            _changed(original, booked_total=Money(Decimal("999"), "USD"),
+                     booked_total_source="jev"),
+            stay_facts_verified=verified_stay,
+        ))
+
+        after = repo.list_for_user(user_id)[0].observation
+        assert report.failure_code is None
+        assert after.booked_total == original.booked_total
+        assert after.booked_total_source == "code"
+        assert _source_columns(store, user_id) == ("code", "code")
+        assert _opportunities(store) == 1
+
+
+def test_jev_total_is_kept_with_its_source_until_a_code_total_replaces_it(
+    tmp_path: Path,
+) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_without_total(store)
+        jev = Money(Decimal("412.50"), "USD")
+        _sync_change(repo, user_id, _changed(
+            original, booked_total=jev, booked_total_source="jev",
+        ), "jev-fill")
+        _sync_change(repo, user_id, _changed(
+            original, booked_total=Money(Decimal("1"), "USD"), booked_total_source="jev",
+        ), "jev-again")
+        kept = repo.list_for_user(user_id)[0].observation
+        assert (kept.booked_total, kept.booked_total_source) == (jev, "jev")
+
+        code = Money(Decimal("430.00"), "USD")
+        report = _sync_change(repo, user_id, _changed(
+            original, booked_total=code, booked_total_verified=True,
+        ), "code-total")
+
+        after = repo.list_for_user(user_id)[0].observation
+        assert report.failure_code is None
+        assert (after.booked_total, after.booked_total_source) == (code, "code")
+        assert _source_columns(store, user_id) == ("code", "code")
+
+
+def test_jev_total_fills_a_total_cleared_by_a_changed_stay(tmp_path: Path) -> None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        repo, user_id, original = _seed_changeable(store)
+        new_in = original.check_in + timedelta(days=100)  # type: ignore[operator]
+        new_out = original.check_out + timedelta(days=100)  # type: ignore[operator]
+        total = Money(Decimal("659.68"), "USD")
+
+        _sync_change(repo, user_id, _changed(
+            original, check_in=new_in, check_out=new_out, booked_total=total,
+            booked_total_source="jev", refund_deadline=new_in - timedelta(days=3),
+        ))
+
+        after = repo.list_for_user(user_id)[0].observation
+        assert (after.booked_total, after.booked_total_source) == (total, "jev")
+        assert _source_columns(store, user_id) == ("jev", "jev")
+
+
+def test_schema_v23_migration_adds_the_source_columns_with_a_code_default(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "v22.db"
+    with SqliteStore(db_path) as store:
+        _seed_changeable(store)
+        store.conn.execute("ALTER TABLE account_reservations DROP COLUMN booked_total_source")
+        store.conn.execute("ALTER TABLE bookings DROP COLUMN baseline_source")
+        store.conn.execute("UPDATE schema_meta SET version = 22")
+        store.conn.commit()
+
+    with SqliteStore(db_path) as store:
+        assert store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0] == 23
+        user_id = SqliteUserRepository(store).get_owner().user_id
+        assert _source_columns(store, user_id) == ("code", "code")

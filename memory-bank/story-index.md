@@ -788,3 +788,15 @@ Accept code-read reservation changes, keep Jev on the booked currency, and repor
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-239` | Require the Codex review before merge | Merge gate | Complete | `004-codex-merge-gate/stories/001-require-codex-review.md` |
+
+## 029-jev-reservation-facts
+
+Jev selects and code proves booked totals and refund terms the code reader cannot read.
+
+### 001-jev-reservation-facts
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-240` | Prove a Jev-selected booked total | Jev sync | Planned | `001-jev-reservation-facts/stories/001-prove-selected-total.md` |
+| `US-241` | Prove Jev-selected refund terms | Jev sync | Planned | `001-jev-reservation-facts/stories/002-prove-selected-refund-terms.md` |
+| `US-242` | Keep assisted syncs bounded and visible | Jev sync | Planned | `001-jev-reservation-facts/stories/003-bound-and-surface-assisted-syncs.md` |

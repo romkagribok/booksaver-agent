@@ -101,6 +101,7 @@ from booksaver.domain.dom_incident import (
 from booksaver.domain.errors import UserKeyInvalidError
 from booksaver.domain.inventory_executor import (
     MAX_INVENTORY_ACTIONS,
+    MAX_INVENTORY_SECONDS,
     InventoryExecutionLimits,
     InventoryExecutionStatus,
     KnownInventoryReservation,
@@ -451,12 +452,11 @@ class AgenticBrowserJobContext:
     inventory_allowance: bool = False
     phase_deadline: datetime | None = None
 
-    def start_phase(self, *, now: datetime | None = None) -> None:
+    def start_phase(self, *, now: datetime | None = None, inventory: bool = False) -> None:
         """Freeze one capability's time cap inside the unchanged operation allowance."""
         current = now or datetime.now(UTC)
-        self.phase_deadline = min(
-            self.deadline, current + timedelta(seconds=MAX_EXECUTOR_SECONDS),
-        )
+        cap = MAX_INVENTORY_SECONDS if inventory else MAX_EXECUTOR_SECONDS
+        self.phase_deadline = min(self.deadline, current + timedelta(seconds=cap))
 
     def remaining_limits(
         self, *, now: datetime | None = None, inventory: bool = False,
@@ -467,7 +467,7 @@ class AgenticBrowserJobContext:
         assert self.phase_deadline is not None
         deadline = min(self.deadline, self.phase_deadline)
         remaining_seconds = min(
-            MAX_EXECUTOR_SECONDS,
+            MAX_INVENTORY_SECONDS if inventory else MAX_EXECUTOR_SECONDS,
             int((deadline - current).total_seconds()),
         )
         self.inventory_allowance |= inventory
@@ -768,9 +768,9 @@ class CheckCoordinator:
             job_kind=job_kind,
             job_id=f"agentic-{job_kind.value}-{uuid.uuid4().hex}",
             deadline=datetime.now(UTC) + timedelta(seconds=(
-                2 * MAX_EXECUTOR_SECONDS
+                MAX_INVENTORY_SECONDS + MAX_EXECUTOR_SECONDS
                 if job_kind in {BrowserJobKind.CHECK_NOW, BrowserJobKind.SCHEDULED_SLOT}
-                else MAX_EXECUTOR_SECONDS
+                else MAX_INVENTORY_SECONDS
             )),
             job_limit_micro_usd=settings.max_job_cost_micro_usd,
             daily_limit_micro_usd=settings.max_deployment_daily_cost_micro_usd,
@@ -876,7 +876,7 @@ class CheckCoordinator:
                 local_user_id=user_id,
                 job_kind=job_kind,
                 job_id=f"agentic-{job_kind.value}-{uuid.uuid4().hex}",
-                deadline=datetime.now(UTC) + timedelta(seconds=MAX_EXECUTOR_SECONDS),
+                deadline=datetime.now(UTC) + timedelta(seconds=MAX_INVENTORY_SECONDS),
                 job_limit_micro_usd=settings.max_job_cost_micro_usd,
                 daily_limit_micro_usd=settings.max_deployment_daily_cost_micro_usd,
             )
@@ -2301,7 +2301,7 @@ class CheckCoordinator:
             if current_agentic_job is not None
             else BrowserJobKind.BOOKINGS_SYNC,
         )
-        context.start_phase()
+        context.start_phase(inventory=True)
         limits = context.remaining_limits(inventory=True)
         if limits is None:
             return repository.reconcile(
@@ -3101,11 +3101,11 @@ class CheckCoordinator:
                 reservations = [
                     r for r in stalls.list_upcoming(user_id, now.date()) if is_monitored(r)
                 ]
-                for booking_id in notices.keys() - {r.booking_id for r in reservations}:
-                    stalls.delete(user_id, booking_id)
+                for key in notices.keys() - {r.reservation_key for r in reservations}:
+                    stalls.delete(user_id, key)
                 for reservation in reservations:
                     reason = stall_reason(reservation, now)
-                    notified_at = notices.get(reservation.booking_id)
+                    notified_at = notices.get(reservation.reservation_key)
                     conclusive_at = reservation.last_conclusive_at
                     # A result newer than the notice ended that stall, even if a new one began.
                     if notified_at is not None and (
@@ -3113,12 +3113,12 @@ class CheckCoordinator:
                         or (conclusive_at is not None and conclusive_at > notified_at)
                     ):
                         notifier.send(*recovery_message(reservation))
-                        stalls.delete(user_id, reservation.booking_id)
+                        stalls.delete(user_id, reservation.reservation_key)
                         notified_at = None
                     # Recorded only after delivery, so a failed send retries on the next run.
                     if reason is not None and notified_at is None:
                         notifier.send(*stall_message(reservation, reason))
-                        stalls.record(user_id, reservation.booking_id, reason, now)
+                        stalls.record(user_id, reservation.reservation_key, reason, now)
         except Exception:
             logger.warning("Could not report monitoring stalls for user %s", user_id, exc_info=True)
 

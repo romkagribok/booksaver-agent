@@ -1112,6 +1112,7 @@ def _map_reservation(
         check_out=check_out,
         room_type=_optional_extracted_text(raw.get("room_type"), maximum=500),
         booked_total=total,
+        booked_total_source="jev" if raw.get("booked_total_source") == "jev" else "code",
         all_in=_enum_value(AllInEvidence, raw.get("all_in")),
         refundability=refundability,
         refundability_text=_optional_extracted_text(

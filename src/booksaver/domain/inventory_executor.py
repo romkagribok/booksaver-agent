@@ -28,6 +28,7 @@ from .value_objects import Money, Occupancy
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MAX_INVENTORY_ACTIONS = 40
+MAX_INVENTORY_SECONDS = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,9 +36,12 @@ class InventoryExecutionLimits(ExecutionLimits):
     """Inventory may traverse multiple reservations within the same time and cost caps."""
 
     max_actions: int = MAX_INVENTORY_ACTIONS
+    timeout_seconds: int = MAX_INVENTORY_SECONDS
 
     def __post_init__(self) -> None:
-        self._validate(maximum_actions=MAX_INVENTORY_ACTIONS)
+        self._validate(
+            maximum_actions=MAX_INVENTORY_ACTIONS, maximum_seconds=MAX_INVENTORY_SECONDS,
+        )
 
 
 def _safe_id(value: str, field_name: str) -> str:
@@ -256,6 +260,8 @@ class ObservedReservation:
     # Set only by code-owned readers that reconciled the all-in total on the confirmation page.
     # Provider-submitted totals never set it, so they cannot replace a saved booked total.
     booked_total_verified: bool = field(default=False, repr=False)
+    # "jev" when Jev filled a total the code reader could not read (ADR-060); never verified.
+    booked_total_source: str = field(default="code", repr=False)
     # Set only by the grouped reader, whose stay, room, occupancy and refund facts are parsed by
     # code. Provider-submitted facts never set it, so they cannot change saved facts.
     stay_facts_verified: bool = field(default=False, repr=False)

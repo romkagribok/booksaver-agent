@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 59
+total_decisions: 60
 ---
 
 # Decision Index
@@ -571,3 +571,12 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/093-reservation-change-sync/adr-059-code-read-reservation-changes.md`
 - **Summary**: A real date change failed every sync. Facts read by the code-owned confirmation parser for the same confirmation and hotel now replace saved stay, room, occupancy and refund facts; dependent facts not re-read are cleared and a missing total holds the reservation. Provider-submitted facts still fail closed.
 - **Read when**: Changing the saved-fact conflict rules for agentic inventory, reservation eligibility, or how confirmation totals are read.
+
+### ADR-060: Jev reads reservation facts; code wins where it reads them
+- **Status**: accepted
+- **Date**: 2026-11-03
+- **Bolt**: 097-jev-reservation-facts (jev-reservation-facts)
+- **Path**: `bolts/097-jev-reservation-facts/adr-060-jev-selects-code-proves.md`
+- **Summary**: Jev reads the booked total and refund terms on every upcoming confirmation (asked twice, layout-independent checks); code-read facts win and disagreements reach the owner daily; Jev-read totals fill gaps, never replace saved totals, and are labelled in alerts.
+- **Read when**: Changing how confirmation facts are read, what is sent to TypeSafe, or the trust given to model-assisted facts.
+

@@ -79,7 +79,7 @@ from booksaver.domain.value_objects import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 _MACHINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
@@ -708,6 +708,24 @@ def _migrate_v21(conn: sqlite3.Connection) -> None:
                     raise
 
 
+def _migrate_v23(conn: sqlite3.Connection) -> None:
+    """Record whether a saved booked total was read by code or filled by Jev (ADR-060)."""
+
+    for table, name in (
+        ("account_reservations", "booked_total_source"),
+        ("bookings", "baseline_source"),
+    ):
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if columns and name not in columns:
+            try:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {name} TEXT NOT NULL DEFAULT 'code'"
+                )
+            except sqlite3.OperationalError as error:
+                if "duplicate column name" not in str(error):
+                    raise
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -728,6 +746,7 @@ def _migrate_v21(conn: sqlite3.Connection) -> None:
 # v18 -> v19: paired Jev price comparisons, purely additive (intent 026).
 # v19 -> v20: authoritative Jev price-run ledger, purely additive (ADR-056).
 # v20 -> v21: booked meal plan on reservations and bookings (intent 027).
+# v22 -> v23: booked total provenance (code or Jev) on reservations and bookings (ADR-060).
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -743,6 +762,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     17: _migrate_v17,
     18: _migrate_v18,
     21: _migrate_v21,
+    23: _migrate_v23,
 }
 
 
@@ -888,6 +908,7 @@ class SqliteBookingRepository:
             status=BookingStatus(row["status"]),
             occupancy=occupancy,
             meal_plan=MealPlan.parse(row["meal_plan"]),
+            baseline_source=row["baseline_source"],
         )
 
 
@@ -1351,6 +1372,7 @@ class SqliteAccountReservationRepository:
             else None
         )
         meal_plan, meal_plan_text = self._meal_plan_to_store(existing, observation)
+        total_source = observation.booked_total_source if observation.booked_total else "code"
         if decision.is_eligible:
             monitoring_booking_id = self._upsert_projection(
                 conn,
@@ -1359,11 +1381,12 @@ class SqliteAccountReservationRepository:
                 observation=observation,
                 observed_at=observed_at,
             )
-            # Kept out of the projection's change detection: recording a meal plan does not
-            # invalidate a saved opportunity.
+            # Kept out of the projection's change detection: recording a meal plan or the total's
+            # source does not invalidate a saved opportunity.
             conn.execute(
-                "UPDATE bookings SET meal_plan = ? WHERE booking_id = ? AND user_id = ?",
-                (meal_plan, monitoring_booking_id, user_id),
+                "UPDATE bookings SET meal_plan = ?, baseline_source = ? "
+                "WHERE booking_id = ? AND user_id = ?",
+                (meal_plan, total_source, monitoring_booking_id, user_id),
             )
         elif monitoring_booking_id is not None:
             self._archive_projection(conn, monitoring_booking_id)
@@ -1379,9 +1402,11 @@ class SqliteAccountReservationRepository:
                     refund_note, refund_deadline, occ_adults, occ_children, occ_rooms,
                     remote_lifecycle, eligibility_status, eligibility_reasons,
                     snapshot_revision, first_observed_at, last_observed_at,
-                    last_sync_run_id, monitoring_booking_id, meal_plan, meal_plan_text
+                    last_sync_run_id, monitoring_booking_id, meal_plan, meal_plan_text,
+                    booked_total_source
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
+                    ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -1395,6 +1420,7 @@ class SqliteAccountReservationRepository:
                     monitoring_booking_id,
                     meal_plan,
                     meal_plan_text,
+                    total_source,
                 ),
             )
             return
@@ -1421,9 +1447,9 @@ class SqliteAccountReservationRepository:
                 "eligibility_reasons",
             )
         )
-        changed = current != values or (existing["meal_plan"], existing["meal_plan_text"]) != (
-            meal_plan, meal_plan_text
-        )
+        changed = current != values or (
+            existing["meal_plan"], existing["meal_plan_text"], existing["booked_total_source"]
+        ) != (meal_plan, meal_plan_text, total_source)
         conn.execute(
             """
             UPDATE account_reservations SET
@@ -1436,7 +1462,8 @@ class SqliteAccountReservationRepository:
                 eligibility_reasons = ?,
                 snapshot_revision = snapshot_revision + ?,
                 last_observed_at = ?, last_sync_run_id = ?,
-                monitoring_booking_id = ?, meal_plan = ?, meal_plan_text = ?
+                monitoring_booking_id = ?, meal_plan = ?, meal_plan_text = ?,
+                booked_total_source = ?
             WHERE account_reservation_id = ?
             """,
             (
@@ -1447,6 +1474,7 @@ class SqliteAccountReservationRepository:
                 monitoring_booking_id,
                 meal_plan,
                 meal_plan_text,
+                total_source,
                 existing["account_reservation_id"],
             ),
         )
@@ -1562,7 +1590,11 @@ class SqliteAccountReservationRepository:
             )
         ):
             conflicts.append("remote_lifecycle")
-        if observation.booked_total is not None and not observation.booked_total_verified:
+        if (
+            observation.booked_total is not None
+            and not observation.booked_total_verified
+            and observation.booked_total_source != "jev"
+        ):
             stored_amount = existing["baseline_amount"]
             stored_currency = existing["baseline_currency"]
             if stored_amount is not None and Decimal(str(stored_amount)) != (
@@ -1646,6 +1678,13 @@ class SqliteAccountReservationRepository:
             else None
         )
         stored_lifecycle = ReservationLifecycle(existing["remote_lifecycle"])
+        stored_source = str(existing["booked_total_source"]) if stored_total else "code"
+        # A Jev total fills a gap only; it never replaces a saved total (ADR-060).
+        is_jev_total = (
+            observation.booked_total is not None
+            and not observation.booked_total_verified
+            and observation.booked_total_source == "jev"
+        )
         lifecycle = (
             observation.lifecycle
             if stored_lifecycle is ReservationLifecycle.UNKNOWN
@@ -1665,11 +1704,15 @@ class SqliteAccountReservationRepository:
                 or (observation.room_type or existing["room_type"]) != existing["room_type"]
                 or (observation.occupancy or stored_occupancy) != stored_occupancy
             )
-            booked_total = (
-                observation.booked_total
-                if observation.booked_total_verified and observation.booked_total is not None
-                else None if stay_changed else stored_total
-            )
+            booked_total: Money | None
+            if observation.booked_total_verified and observation.booked_total is not None:
+                booked_total, total_source = observation.booked_total, "code"
+            elif is_jev_total and (stay_changed or stored_total is None):
+                booked_total, total_source = observation.booked_total, "jev"
+            elif stay_changed:
+                booked_total, total_source = None, "code"
+            else:
+                booked_total, total_source = stored_total, stored_source
             stored_refundable = None if existing["refundable"] is None else bool(
                 existing["refundable"]
             )
@@ -1693,6 +1736,7 @@ class SqliteAccountReservationRepository:
                     None if dates_changed else existing["room_type"]
                 ),
                 booked_total=booked_total,
+                booked_total_source=total_source,
                 refundable=(
                     observation.refundable
                     if observation.refundable is not None
@@ -1717,6 +1761,14 @@ class SqliteAccountReservationRepository:
             if existing["monitoring_booking_id"]
             else observation
         )
+        fill_total: Money | None
+        if observation.booked_total_verified and observation.booked_total is not None:
+            fill_total, fill_source = observation.booked_total, "code"
+        elif stored_total is not None:
+            fill_total, fill_source = stored_total, stored_source
+        else:
+            fill_total = fill.booked_total
+            fill_source = observation.booked_total_source if fill_total else "code"
         return replace(
             observation,
             lifecycle=lifecycle,
@@ -1744,11 +1796,8 @@ class SqliteAccountReservationRepository:
             room_type=existing["room_type"] or fill.room_type,
             # A total reconciled on the confirmation page replaces the saved one; the conflict
             # check has already rejected every other difference.
-            booked_total=(
-                observation.booked_total
-                if observation.booked_total_verified and observation.booked_total is not None
-                else stored_total or fill.booked_total
-            ),
+            booked_total=fill_total,
+            booked_total_source=fill_source,
             refundable=(
                 bool(existing["refundable"])
                 if existing["refundable"] is not None
@@ -2006,6 +2055,7 @@ class SqliteAccountReservationRepository:
             extraction_method="persisted",
             meal_plan=MealPlan.parse(row["meal_plan"]),
             meal_plan_text=row["meal_plan_text"],
+            booked_total_source=row["booked_total_source"],
         )
         reasons = tuple(
             EligibilityReason(value) for value in json.loads(row["eligibility_reasons"])

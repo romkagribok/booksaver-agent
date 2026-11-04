@@ -880,3 +880,25 @@ def test_conversion_rounding_is_not_tolerated_on_a_booked_total():
     facts = _parse(_DOLLAR_BODY.replace("US$309", "US$309.50"))
     assert facts is not None
     assert facts["booked_total"] == "unknown"
+
+
+def test_a_charge_a_special_request_may_incur_is_not_a_hidden_fee():
+    notice = (
+        "Upon check-in photo identification and credit card are required. All special requests "
+        "are subject to availability upon check-in. Special requests cannot be guaranteed and may "
+        "incur additional charges."
+    )
+    facts = _parse(_BODY + notice + "\n")
+    assert facts is not None
+    assert facts["all_in"] == "explicit"
+
+
+def test_a_sentence_that_also_excludes_a_tax_still_blocks_the_total():
+    notice = (
+        "Special requests may incur additional charges; city tax is not included in the total "
+        "and is payable separately."
+    )
+    facts = _parse(_BODY + notice + "\n")
+    assert facts is not None
+    assert facts["all_in"] == "unknown"
+

@@ -491,17 +491,7 @@ def _price_facts(
     elif any(line.rstrip(":").casefold() == "final price" for line in lines):
         return "unexpected_final_price"
 
-    # These exact notices concern optional extras or special requests. Every other charge warning
-    # makes this narrowly qualified total insufficient, wherever it is rendered.
-    other_text = " ".join(
-        line for i, line in enumerate(lines)
-        if line not in _OPTIONAL_CHARGE_NOTICES and i not in qualified_notice_indexes
-    ).casefold()
-    if re.search(
-        r"additional charges|approximate|not included|excluded|not added|aren't added|"
-        r"payable separately|collected separately|paid separately|extra (?:tax|fee|charge)|"
-        r"(?:tax|fee).{0,80}(?:pay at|paid at|collected at)", other_text,
-    ):
+    if charge_warning(lines, qualified_notice_indexes):
         return "charge_warning"
     room_rows = [
         (i, re.fullmatch(r"1 (?:room|apartment) " + _MONEY, line))
@@ -564,6 +554,39 @@ def _price_facts(
     return {"booked_total": str(final_total), "currency": currency, "all_in": "explicit"}
 
 
+def _optional_request_charge(sentence: str) -> bool:
+    """This exact sentence only concerns optional special requests (observed on 2026-11-03)."""
+    return re.fullmatch(
+        r"special requests cannot be guaranteed and may incur additional charges\.?",
+        sentence.strip(),
+        re.I,
+    ) is not None
+
+
+def charge_warning(lines: list[str], skip: set[int] | frozenset[int] = frozenset()) -> bool:
+    """Whether the page warns of a charge outside the total, wherever it is rendered."""
+    # These exact notices concern optional extras or special requests. Every other charge warning
+    # makes a narrowly qualified total insufficient.
+    other_text = " ".join(
+        sentence
+        for i, line in enumerate(lines)
+        if line not in _OPTIONAL_CHARGE_NOTICES and i not in skip
+        for sentence in re.split(r"(?<=[.!?])\s+", line)
+        if not _optional_request_charge(sentence)
+    ).casefold()
+    return bool(re.search(
+        r"additional charges|approximate|not included|excluded|not added|aren't added|"
+        r"payable separately|collected separately|paid separately|extra (?:tax|fee|charge)|"
+        r"(?:tax|fee).{0,80}(?:pay at|paid at|collected at)", other_text,
+    ))
+
+
+def confirmation_lines(body_text: str) -> list[str]:
+    """The page's non-empty lines with whitespace collapsed, as every reader sees them."""
+    lines = [" ".join(line.split()) for line in body_text.replace("’", "'").splitlines()]
+    return [line for line in lines if line]
+
+
 def parse_confirmation_facts(
     body_text: str,
     hotel_anchors: tuple[tuple[str, str], ...],
@@ -580,8 +603,7 @@ def parse_confirmation_facts(
     """
     if not 0 < len(body_text) <= _MAX_TEXT or len(hotel_anchors) > 8 or observed_at.tzinfo is None:
         return None
-    lines = [" ".join(line.split()) for line in body_text.replace("’", "'").splitlines()]
-    lines = [line for line in lines if line]
+    lines = confirmation_lines(body_text)
     if len(lines) > _MAX_LINES or any(len(line) > 8_000 for line in lines):
         return None
     if lines.count("Your stay is confirmed") != 1:

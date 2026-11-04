@@ -900,3 +900,40 @@ def test_empty_final_proof_must_still_belong_to_root(monkeypatch):
     monkeypatch.setattr(reader, 'read_inventory_snapshot', read)
     assert not asyncio.run(worker.run())
     assert not result.active_coverage_complete
+
+
+def test_assist_reads_every_upcoming_page_before_the_reservation_is_kept(monkeypatch):
+    browser = Browser()
+    worker, result = harness(monkeypatch, browser)
+    calls: list[str] = []
+    def parse(*_args, reasons=None, **_kwargs):
+        return {**header_facts(), "lifecycle": "upcoming"}
+
+    async def assist(text, facts, reasons):
+        calls.append(facts["lifecycle"])
+        facts["booked_total"] = "102"
+
+    monkeypatch.setattr(reader, "parse_confirmation_facts", parse)
+    worker.assist = assist
+
+    assert asyncio.run(worker.run())
+
+    assert len(calls) == len(result.reservations) == 6
+    assert all(item["booked_total"] == "102" for item in result.reservations)
+
+
+def test_assist_skips_pages_that_are_not_upcoming(monkeypatch):
+    browser = Browser()
+    worker, _result = harness(monkeypatch, browser)
+    calls: list[str] = []
+
+    async def assist(text, facts, reasons):
+        calls.append("called")
+
+    monkeypatch.setattr(
+        reader, "parse_confirmation_facts",
+        lambda *a, **k: {**header_facts(), "lifecycle": "completed"},
+    )
+    worker.assist = assist
+    assert asyncio.run(worker.run())
+    assert calls == []

@@ -256,7 +256,9 @@ class ExecutionLimits:
     def __post_init__(self) -> None:
         self._validate(maximum_actions=MAX_EXECUTOR_ACTIONS)
 
-    def _validate(self, *, maximum_actions: int) -> None:
+    def _validate(
+        self, *, maximum_actions: int, maximum_seconds: int = MAX_EXECUTOR_SECONDS,
+    ) -> None:
         """Share time/cost/fallback checks while capability types own their action cap."""
         if self.deadline.tzinfo is None:
             raise ValueError("executor deadline must be timezone-aware")
@@ -270,8 +272,8 @@ class ExecutionLimits:
             raise ValueError(
                 "max_computer_use_actions cannot exceed the total action or approved fallback limit"
             )
-        if not 1 <= self.timeout_seconds <= MAX_EXECUTOR_SECONDS:
-            raise ValueError(f"timeout_seconds must be between 1 and {MAX_EXECUTOR_SECONDS}")
+        if not 1 <= self.timeout_seconds <= maximum_seconds:
+            raise ValueError(f"timeout_seconds must be between 1 and {maximum_seconds}")
         if not 1 <= self.max_job_cost.micro_usd <= MAX_JOB_COST_MICRO_USD:
             raise ValueError("max_job_cost must be positive and no greater than USD 1.00")
         if not 1 <= self.max_deployment_daily_cost.micro_usd <= MAX_DAILY_COST_MICRO_USD:

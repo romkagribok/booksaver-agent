@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS bookings (
     user_id          INTEGER NOT NULL REFERENCES users(user_id),
     -- v21: booked meal plan (US-220). NULL means it has not been read yet.
     meal_plan        TEXT,
+    -- v23: 'jev' when Jev filled the baseline total that code could not read (ADR-060).
+    baseline_source  TEXT NOT NULL DEFAULT 'code',
     UNIQUE(user_id, confirmation_id)
 );
 
@@ -145,6 +147,8 @@ CREATE TABLE IF NOT EXISTS account_reservations (
     -- has not been read yet; an empty text means no line on the page stated it.
     meal_plan               TEXT,
     meal_plan_text          TEXT NOT NULL DEFAULT '',
+    -- v23: 'jev' when Jev filled the booked total that code could not read (ADR-060).
+    booked_total_source     TEXT NOT NULL DEFAULT 'code',
     UNIQUE(user_id, remote_key_hash)
 );
 
@@ -538,7 +542,7 @@ CREATE INDEX IF NOT EXISTS idx_jev_price_runs_created
 
 -- v22: a user was told a monitored reservation has stalled; removed when it recovers.
 CREATE TABLE IF NOT EXISTS monitoring_stall_notices (
-    booking_id  TEXT PRIMARY KEY,
+    booking_id  TEXT PRIMARY KEY,  -- holds the account reservation id
     user_id     INTEGER NOT NULL,
     reason      TEXT NOT NULL,
     notified_at TEXT NOT NULL

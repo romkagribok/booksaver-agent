@@ -25,6 +25,7 @@ from booksaver.domain.browser_executor import (
     RefundabilityEvidence,
 )
 from booksaver.domain.inventory_executor import (
+    MAX_INVENTORY_SECONDS,
     REQUIRED_INVENTORY_SCOPES,
     ActiveInventoryCoverage,
     InventoryExecutionLimits,
@@ -329,7 +330,9 @@ class OwnerBoundAgenticInventoryExecution:
             execution_id=execution_id,
             owner_user_id=owner_user_id,
             session_lease=lease,
-            limits=limits or InventoryExecutionLimits(deadline=now + timedelta(seconds=180)),
+            limits=limits or InventoryExecutionLimits(
+                deadline=now + timedelta(seconds=MAX_INVENTORY_SECONDS),
+            ),
             known_confirmation_ids=known_confirmation_ids,
             known_reservations=known_reservations,
         )
@@ -541,6 +544,9 @@ def _merge_compatible(
         all_in=all_in,
         refundability=refundability,
         booked_total_verified=left.booked_total_verified and right.booked_total_verified,
+        booked_total_source=(
+            "jev" if "jev" in (left.booked_total_source, right.booked_total_source) else "code"
+        ),
         stay_facts_verified=left.stay_facts_verified and right.stay_facts_verified,
         property_anchor_verified=(
             left.property_anchor_verified and right.property_anchor_verified
@@ -613,5 +619,6 @@ def _to_reservation_observation(
         booked_total_verified=(
             observed.booked_total_verified and observed.all_in is AllInEvidence.EXPLICIT
         ),
+        booked_total_source=observed.booked_total_source,
         stay_facts_verified=observed.stay_facts_verified,
     )

@@ -53,6 +53,8 @@ class Booking:
     occupancy: Occupancy | None = None
     # Recorded by account synchronization; UNKNOWN until the reservation page has been read.
     meal_plan: MealPlan = MealPlan.UNKNOWN
+    # "jev" when the baseline total was read by Jev rather than by code (ADR-060).
+    baseline_source: str = "code"
 
     @classmethod
     def create(

@@ -327,8 +327,10 @@ class GroupedInventoryReader:
         observed_at: datetime,
         result: GroupedInventoryRead,
         refresh_root: Callable[[str], Awaitable[bool]] | None = None,
+        assist: Callable[[str, dict[str, str], dict[str, str]], Awaitable[None]] | None = None,
     ) -> None:
         self.session = session
+        self.assist = assist
         self.navigate = navigate
         self.back = back
         self.check = check
@@ -625,6 +627,12 @@ class GroupedInventoryReader:
                         cancellation_card and cancelled is None
                     ):
                         facts = None
+                    if (
+                        facts is not None and cancelled is None and self.assist is not None
+                        and facts.get("lifecycle") == "upcoming"
+                    ):
+                        # Jev reads every upcoming page; code's own facts stand (ADR-060).
+                        await self.assist(snapshot.text, facts, reasons)
                     if facts is not None:
                         for fact, reason in reasons.items():
                             code = f"{fact}:{reason}"
