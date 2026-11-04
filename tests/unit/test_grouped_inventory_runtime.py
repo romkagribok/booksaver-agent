@@ -248,7 +248,7 @@ def test_reconciled_confirmation_total_is_marked_as_page_verified(monkeypatch):
     assert reservation.stay_facts_verified is True
 
 
-def test_jev_filled_total_is_carried_but_never_marked_verified(monkeypatch):
+def test_jev_total_is_page_verified_and_keeps_its_source(monkeypatch):
     h = Harness(monkeypatch)
     h.payload = {
         **parsed_facts(), "booked_total": "346.08", "currency": "USD", "all_in": "explicit",
@@ -257,7 +257,7 @@ def test_jev_filled_total_is_carried_but_never_marked_verified(monkeypatch):
     reservation = h.run().reservations[0]
     assert reservation.booked_total is not None
     assert reservation.booked_total_source == "jev"
-    assert reservation.booked_total_verified is False
+    assert reservation.booked_total_verified is True
 
 
 def test_grouped_final_authentication_cannot_replace_initial_mobile_snapshot(monkeypatch):

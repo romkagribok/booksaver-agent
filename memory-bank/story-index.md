@@ -800,3 +800,15 @@ Jev selects and code proves booked totals and refund terms the code reader canno
 | `US-240` | Prove a Jev-selected booked total | Jev sync | Planned | `001-jev-reservation-facts/stories/001-prove-selected-total.md` |
 | `US-241` | Prove Jev-selected refund terms | Jev sync | Planned | `001-jev-reservation-facts/stories/002-prove-selected-refund-terms.md` |
 | `US-242` | Keep assisted syncs bounded and visible | Jev sync | Planned | `001-jev-reservation-facts/stories/003-bound-and-surface-assisted-syncs.md` |
+
+## 030-jev-only-booksaver
+
+Run BookSaver on Jev alone. Unit 1: Jev reads totals and refund terms; Claude removal units follow.
+
+### 001-jev-reservation-reader
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-243` | Read totals and refund terms with Jev alone | Jev only | Planned | `001-jev-reservation-reader/stories/001-read-with-jev-alone.md` |
+| `US-244` | Remove the code price and refund parsing | Jev only | Planned | `001-jev-reservation-reader/stories/002-remove-code-price-and-refund-parsing.md` |
+| `US-245` | Keep failures visible without notices | Jev only | Planned | `001-jev-reservation-reader/stories/003-keep-failures-visible.md` |

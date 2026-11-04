@@ -65,12 +65,6 @@ def render_alert(
             "matches your stay and room. We could not confirm which meals your booking "
             "includes, so compare meals before you rebook."
         )
-    jev_total_line = (
-        "Booked total : read automatically from your reservation page. "
-        "Check it before you rebook.\n"
-        if booking.baseline_source == "jev"
-        else ""
-    )
     body = (
         f"Savings opportunity found for your Booking.com reservation.\n"
         f"\n"
@@ -83,7 +77,7 @@ def render_alert(
         f"\n"
         f"You paid     : {opportunity.baseline_price.amount} "
         f"{opportunity.baseline_price.currency}\n"
-        f"{jev_total_line}"
+        f""
         f"{live_price_line}{source_lines}\n"
         f"You save     : {saved.amount} {saved.currency} ({opportunity.percent_saved}%)\n"
         f"\n"

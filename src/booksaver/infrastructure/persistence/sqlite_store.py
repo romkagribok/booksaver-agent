@@ -1593,7 +1593,6 @@ class SqliteAccountReservationRepository:
         if (
             observation.booked_total is not None
             and not observation.booked_total_verified
-            and observation.booked_total_source != "jev"
         ):
             stored_amount = existing["baseline_amount"]
             stored_currency = existing["baseline_currency"]
@@ -1679,12 +1678,6 @@ class SqliteAccountReservationRepository:
         )
         stored_lifecycle = ReservationLifecycle(existing["remote_lifecycle"])
         stored_source = str(existing["booked_total_source"]) if stored_total else "code"
-        # A Jev total fills a gap only; it never replaces a saved total (ADR-060).
-        is_jev_total = (
-            observation.booked_total is not None
-            and not observation.booked_total_verified
-            and observation.booked_total_source == "jev"
-        )
         lifecycle = (
             observation.lifecycle
             if stored_lifecycle is ReservationLifecycle.UNKNOWN
@@ -1706,9 +1699,8 @@ class SqliteAccountReservationRepository:
             )
             booked_total: Money | None
             if observation.booked_total_verified and observation.booked_total is not None:
-                booked_total, total_source = observation.booked_total, "code"
-            elif is_jev_total and (stay_changed or stored_total is None):
-                booked_total, total_source = observation.booked_total, "jev"
+                booked_total = observation.booked_total
+                total_source = observation.booked_total_source
             elif stay_changed:
                 booked_total, total_source = None, "code"
             else:
@@ -1763,7 +1755,7 @@ class SqliteAccountReservationRepository:
         )
         fill_total: Money | None
         if observation.booked_total_verified and observation.booked_total is not None:
-            fill_total, fill_source = observation.booked_total, "code"
+            fill_total, fill_source = observation.booked_total, observation.booked_total_source
         elif stored_total is not None:
             fill_total, fill_source = stored_total, stored_source
         else:
