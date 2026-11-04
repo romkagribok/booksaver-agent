@@ -6,7 +6,7 @@ bolt: 097-jev-reservation-facts
 amends: ADR-058
 ---
 
-# ADR-060: Code proves reservation facts; Jev only chooses between proven answers
+# ADR-060: Jev reads reservation facts; code wins where it reads them
 
 ## Context
 
@@ -16,23 +16,26 @@ only code-read facts, because model output must not set money or refund facts.
 
 ## Decision
 
-When the code reader leaves the total or refund terms unknown, code tries every candidate line or
-sentence from the page with its own proof: arithmetic for the total, explicit wording and a parsed
-date for refund terms. If the page proves exactly one answer, that is the fact. If it proves more
-than one different refund term, Jev chooses among the proven sentences only; two proven totals stay
-unknown. A proven fact is page-verified, the same as a code-read one. Only proven refund sentences
-are sent to TypeSafe. Jev spend counts toward the existing daily cap.
+Jev reads the booked total and refund terms on every upcoming confirmation page, asked twice, with
+only layout-independent checks (largest amount in its currency in the price area; deadline parsed
+from the chosen sentence with a timezone margin). Where the code reader also reads a fact, code wins
+and a disagreement is recorded and reported to the owner once a day. Where it cannot, Jev's fact is
+used and marked as Jev-read: it may fill a missing total but never replace a saved one, and alerts
+based on it say it was read automatically. Only price-area money lines and cancellation sentences
+reach TypeSafe; spend counts toward the shared daily cap.
 
 ## Consequences
 
-- New layouts are covered without a new code shape, as long as the page proves its own answer.
-- A model cannot introduce a value or a fact the page does not prove; it only breaks a tie.
-- On the pages seen so far no tie occurred, so Jev was not called; it is there for pages that
-  state two different refund terms.
-- Reservation-page lines (amounts and refund sentences, no names) now reach TypeSafe; the owner
-  approved this on 2026-11-03.
+- A new Booking.com layout needs no code change: Jev reads it, and the stall message covers a page
+  neither can read.
+- A wrong Jev total can cause a missed or a false saving; the alert label tells the user to check.
+- Code-read facts keep their exactness, and every page both read measures Jev's accuracy.
+- Reservation-page money lines and cancellation sentences reach TypeSafe for every upcoming
+  reservation (owner-approved 2026-11-03).
 
 ## Alternatives
 
 - New code shapes per layout: always one layout behind.
-- Model-read facts with a lower trust label: needs a second trust tier and alert caveats.
+- Code proofs per layout (the first two versions of this bolt): every safeguard duplicated;
+  nine review findings in five rounds.
+- Jev always with no comparison: no exactness where code reads, and no drift signal.

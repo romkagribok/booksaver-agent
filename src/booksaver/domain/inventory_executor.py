@@ -260,6 +260,8 @@ class ObservedReservation:
     # Set only by code-owned readers that reconciled the all-in total on the confirmation page.
     # Provider-submitted totals never set it, so they cannot replace a saved booked total.
     booked_total_verified: bool = field(default=False, repr=False)
+    # "jev" when Jev filled a total the code reader could not read (ADR-060); never verified.
+    booked_total_source: str = field(default="code", repr=False)
     # Set only by the grouped reader, whose stay, room, occupancy and refund facts are parsed by
     # code. Provider-submitted facts never set it, so they cannot change saved facts.
     stay_facts_verified: bool = field(default=False, repr=False)

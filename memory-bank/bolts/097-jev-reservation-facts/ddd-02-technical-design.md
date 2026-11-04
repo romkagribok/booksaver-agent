@@ -53,3 +53,17 @@ Jev only through `_choose_refund` when proven refund terms differ. `charge_warni
 function with the special-request exemption. Worker-made FR-7 and FR-8 changes: stall rows keyed by
 `account_reservation_id` (`reservation_key`); inventory limits validated against
 `MAX_INVENTORY_SECONDS = 300`; check-now and scheduled jobs 480 seconds.
+
+## Redesign 2026-11-04T00:10:38Z (supersedes the amendments above)
+
+- `jev_reservation_facts.py`: `JevReservationFacts` asks the three questions twice per upcoming
+  page; agreeing answers with confidence >= 0.6 pass the checks of FR-2. It compares with the code
+  reader's facts: code wins, disagreements counted; otherwise it fills facts, setting
+  `booked_total_source = "jev"` for a total. Records spend in `jev_price_runs` with the counts, and
+  sends the owner a content-free notice when the first disagreement of the UTC day is recorded.
+- The reader calls it for every non-cancelled upcoming confirmation page.
+- Provenance (schema v23, additive): `account_reservations.booked_total_source` and
+  `bookings.baseline_source` (default `code`), kept out of projection change detection like the meal
+  plan. Grouped mapping marks a Jev total unverified; reconciliation lets a Jev total fill a missing
+  or cleared total only and never raises a conflict for it. `Booking.baseline_source` drives the
+  alert label in `render_alert`.

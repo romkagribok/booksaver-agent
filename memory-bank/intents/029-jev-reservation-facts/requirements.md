@@ -105,3 +105,32 @@ exactly as today. No model-only fact is ever stored.
   cutoffs, fees, mixed currencies). Refund wording must be an affirmative construction with no
   negation; fee rows outside the breakdown and same-day cutoffs fail proof, as in the code reader.
 
+### 2026-11-04T00:10:38Z: redesign to "Jev reads, code cross-checks" (owner decision)
+
+Codex found nine gaps in five review rounds, all from re-implementing the code reader's
+layout-specific safeguards in a parallel proof. The owner's goal is near-zero maintenance ("constantly
+updating code on each case is definitely not the move"). Measured on the seven real reservations,
+three runs each: Jev chose the right total 21/21 and the right refundability 21/21, consistently; it
+was unreliable on whether taxes are included (confidence 0.19 to 0.61, one wrong). The owner chose
+the middle ground. **FR-1 to FR-6 are replaced by:**
+
+- **FR-1, Jev reads every upcoming confirmation page:** which line is the total, whether the
+  reservation is refundable, and which sentence states its deadline. It is asked twice; both answers
+  must agree, each with confidence of at least 0.6. No tax question.
+- **FR-2, layout-independent checks:** the chosen total is the largest amount in its currency in the
+  price area; a refundable deadline is a date in the chosen sentence, or "within N months/days/hours"
+  from the observation time, at least 14 hours ahead and not after check-in.
+- **FR-3, code wins where it reads:** a code-read total or refund term stands. Where Jev disagrees,
+  code's value is kept, the disagreement is recorded, and the owner gets one content-free Telegram
+  notice per UTC day.
+- **FR-4, Jev fills what code cannot read**, marked as Jev-read. A Jev total may fill a missing or
+  cleared total but never replaces a saved one; a later code-read total replaces a Jev one. Jev never
+  causes a sync conflict.
+- **FR-5, labelled alerts:** a savings alert whose booked total was Jev-read says the total was read
+  automatically and should be checked before rebooking.
+- **FR-6, data and cost:** only the price-area money lines and cancellation sentences are sent; Jev
+  calls count toward the existing daily cap, with at most two calls per page and 20 per sync.
+
+FR-7 and FR-8 are unchanged. The earlier amendments' code proofs (`prove_total`, refund templates)
+are removed; the code reader keeps its exact special-request exemption.
+

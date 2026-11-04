@@ -544,6 +544,9 @@ def _merge_compatible(
         all_in=all_in,
         refundability=refundability,
         booked_total_verified=left.booked_total_verified and right.booked_total_verified,
+        booked_total_source=(
+            "jev" if "jev" in (left.booked_total_source, right.booked_total_source) else "code"
+        ),
         stay_facts_verified=left.stay_facts_verified and right.stay_facts_verified,
         property_anchor_verified=(
             left.property_anchor_verified and right.property_anchor_verified
@@ -616,5 +619,6 @@ def _to_reservation_observation(
         booked_total_verified=(
             observed.booked_total_verified and observed.all_in is AllInEvidence.EXPLICIT
         ),
+        booked_total_source=observed.booked_total_source,
         stay_facts_verified=observed.stay_facts_verified,
     )

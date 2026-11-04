@@ -187,6 +187,7 @@ class BrowserUseReservationPayload(BaseModel):
     children: str = "unknown"
     rooms: str = "unknown"
     completeness: str = "incomplete"
+    booked_total_source: str = "code"
 
     @field_validator("*", mode="before")
     @classmethod
@@ -1595,6 +1596,10 @@ class LocalBrowserUseInventoryRuntime:
         self._host.failure_stage = "result_mapping"
         try:
             scopes, reservations = _map_browser_use_observation(self._state.observation)
+            # Only the grouped reader's Jev step may mark a total as Jev-read (ADR-060).
+            reservations = tuple(
+                replace(item, booked_total_source="code") for item in reservations
+            )
         except PermissionError:
             return BrowserUseRuntimeResult(InventoryExecutionStatus.SIGNED_OUT)
         except (TypeError, ValueError):
@@ -1817,7 +1822,9 @@ class LocalBrowserUseInventoryRuntime:
                         item.property_name is not None and item.property_reference is not None
                     ),
                     booked_total_verified=(
-                        item.booked_total is not None and item.all_in is AllInEvidence.EXPLICIT
+                        item.booked_total is not None
+                        and item.all_in is AllInEvidence.EXPLICIT
+                        and item.booked_total_source != "jev"
                     ),
                 )
                 for item in reservations

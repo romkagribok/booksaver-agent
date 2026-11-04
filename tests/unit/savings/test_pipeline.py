@@ -216,6 +216,26 @@ def test_render_alert_states_bookings_are_never_mutated() -> None:
     assert "could not confirm" not in body
 
 
+def test_render_alert_labels_a_jev_read_total_only_for_jev() -> None:
+    booking = make_booking()
+    opportunity = SavingsOpportunity(
+        opportunity_id="opp-1",
+        booking_id=booking.booking_id,
+        check_id="chk-1",
+        baseline_price=Money(amount=Decimal("400"), currency="EUR"),
+        live_price=Money(amount=Decimal("300"), currency="EUR"),
+        amount_saved=Money(amount=Decimal("100"), currency="EUR"),
+        percent_saved=Decimal("25.00"),
+        validated_at=datetime.now(UTC),
+    )
+    label = "Booked total : read automatically from your reservation page."
+    _, plain = render_alert(opportunity, booking)
+    _, jev = render_alert(opportunity, replace(booking, baseline_source="jev"))
+    assert label not in plain
+    assert label in jev
+    assert "Check it before you rebook." in jev
+
+
 def test_render_alert_labels_logged_out_price_as_public_rate() -> None:
     booking = make_booking()
     opportunity = SavingsOpportunity(

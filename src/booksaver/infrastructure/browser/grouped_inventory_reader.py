@@ -627,8 +627,11 @@ class GroupedInventoryReader:
                         cancellation_card and cancelled is None
                     ):
                         facts = None
-                    if facts is not None and cancelled is None and reasons and self.assist:
-                        # Fills only facts the code left unknown, and only with code's proof.
+                    if (
+                        facts is not None and cancelled is None and self.assist is not None
+                        and facts.get("lifecycle") == "upcoming"
+                    ):
+                        # Jev reads every upcoming page; code's own facts stand (ADR-060).
                         await self.assist(snapshot.text, facts, reasons)
                     if facts is not None:
                         for fact, reason in reasons.items():

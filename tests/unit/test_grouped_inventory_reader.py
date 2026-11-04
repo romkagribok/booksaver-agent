@@ -902,26 +902,38 @@ def test_empty_final_proof_must_still_belong_to_root(monkeypatch):
     assert not result.active_coverage_complete
 
 
-def test_assist_runs_only_for_unknown_facts_before_the_reservation_is_kept(monkeypatch):
+def test_assist_reads_every_upcoming_page_before_the_reservation_is_kept(monkeypatch):
     browser = Browser()
     worker, result = harness(monkeypatch, browser)
-    calls: list[dict[str, str]] = []
-
+    calls: list[str] = []
     def parse(*_args, reasons=None, **_kwargs):
-        if reasons is not None and len(calls) % 2 == 0:
-            reasons["booked_total"] = "guest_count_line"
-        return header_facts()
+        return {**header_facts(), "lifecycle": "upcoming"}
 
     async def assist(text, facts, reasons):
-        calls.append(dict(reasons))
+        calls.append(facts["lifecycle"])
         facts["booked_total"] = "102"
-        reasons.clear()
 
     monkeypatch.setattr(reader, "parse_confirmation_facts", parse)
     worker.assist = assist
 
     assert asyncio.run(worker.run())
 
-    assert calls and all(call == {"booked_total": "guest_count_line"} for call in calls)
-    assert all(item["booked_total"] == "102" for item in result.reservations[: len(calls)])
-    assert not any(code.startswith("booked_total") for code in result.unknown_facts)
+    assert len(calls) == len(result.reservations) == 6
+    assert all(item["booked_total"] == "102" for item in result.reservations)
+
+
+def test_assist_skips_pages_that_are_not_upcoming(monkeypatch):
+    browser = Browser()
+    worker, _result = harness(monkeypatch, browser)
+    calls: list[str] = []
+
+    async def assist(text, facts, reasons):
+        calls.append("called")
+
+    monkeypatch.setattr(
+        reader, "parse_confirmation_facts",
+        lambda *a, **k: {**header_facts(), "lifecycle": "completed"},
+    )
+    worker.assist = assist
+    assert asyncio.run(worker.run())
+    assert calls == []

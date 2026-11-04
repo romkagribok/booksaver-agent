@@ -310,6 +310,8 @@ class ReservationObservation:
     meal_plan_text: str = ""
     # True only when a code-owned reader reconciled the total on the confirmation page.
     booked_total_verified: bool = False
+    # "jev" when Jev filled a total the code reader could not read (ADR-060).
+    booked_total_source: str = "code"
     # True only when a code-owned reader parsed stay, room, occupancy and refund facts.
     stay_facts_verified: bool = False
 
