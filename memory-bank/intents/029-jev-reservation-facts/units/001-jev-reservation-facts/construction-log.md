@@ -48,3 +48,4 @@ and deploy.
 | 2026-11-04T00:26:40Z | 097-jev-reservation-facts | stage-complete | Redesign implemented (provenance chain by a worker; Jev module, reader hook and owner notice by the main agent). Live replay: all seven reservations correct, Jev agreed on all six cross-checked facts. Stopped for the owner before commit |
 | 2026-11-04T00:38:47Z | 097-jev-reservation-facts | approved | Owner: "Yea sounds good please proceed" for the redesign; commit, merge and deploy approved |
 | 2026-11-04T00:45:39Z | 097-jev-reservation-facts | review | Codex on the redesign: a page with only price lines or only cancellation sentences built a one-option question that the client rejects. Questions without candidates are now skipped; tests added |
+| 2026-11-04T01:00:01Z | 097-jev-reservation-facts | released | Merged PR #95 as d6ee51d; promoted `jevfacts-2938b8f` at 2026-11-04T00:59:30Z. Completion waits for production read-back |
