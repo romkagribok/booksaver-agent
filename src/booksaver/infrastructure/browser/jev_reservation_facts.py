@@ -125,6 +125,8 @@ def check_refund(
 
 
 def _agreed(results: list[SystemOneResult], question: str) -> str | None:
+    if any(question not in result.answers for result in results):
+        return None
     answers = [result.choice(question) for result in results]
     choices = {answer.choice for answer in answers}
     if len(choices) != 1 or min(answer.confidence for answer in answers) < _MIN_CONFIDENCE:
@@ -164,8 +166,9 @@ class JevReservationFacts:
         if _known(facts, "check_in") and _known(facts, "check_out"):
             nights = (date.fromisoformat(facts["check_out"])
                       - date.fromisoformat(facts["check_in"])).days
-        questions = {
-            "total": choice_question(
+        questions: dict[str, dict[str, object]] = {}
+        if totals:
+            questions["total"] = choice_question(
                 {
                     "question": f"These lines are from one Booking.com reservation confirmation "
                     f"for a stay of {nights} night(s). Which line is the total amount the guest "
@@ -177,8 +180,9 @@ class JevReservationFacts:
                     "rules": _RULES,
                 },
                 {**totals, "none": "No line is that total"},
-            ),
-            "refund": choice_question(
+            )
+        if refund_lines:
+            questions["refund"] = choice_question(
                 {"question": "What are this reservation's cancellation terms?", "rules": _RULES},
                 {
                     "free_until_date": "Free cancellation or a full refund until a stated date "
@@ -186,16 +190,15 @@ class JevReservationFacts:
                     "non_refundable": "Non-refundable, or no refund if cancelled",
                     "not_stated": "Not stated",
                 },
-            ),
-            "refund_line": choice_question(
+            )
+            questions["refund_line"] = choice_question(
                 {
                     "question": "Which sentence states this reservation's own free-cancellation "
                     "deadline, or says it is non-refundable?",
                     "rules": _RULES,
                 },
                 {**refund_lines, "none": "No sentence states this"},
-            ),
-        }
+            )
         state = {"price_area": area, "cancellation_sentences": sentences}
         try:
             for _ in range(2):

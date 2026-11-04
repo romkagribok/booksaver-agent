@@ -200,3 +200,20 @@ def test_a_call_cut_off_by_the_deadline_is_still_charged(tmp_path: Any) -> None:
     reader.record(db, user_id=1, execution_id="sync-1")
     with SqliteStore(db) as store:
         assert SqliteJevPriceRunRepository(store).cost_since(datetime(2026, 1, 1, tzinfo=UTC)) > 0
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        [line for line in PAGE if "cancel" not in line.casefold()],  # price lines only
+        ["Cancellation policy Non-refundable", "Price", "(for 1 guest)"],  # no amounts
+    ],
+)
+def test_a_page_missing_one_kind_of_candidate_asks_only_what_it_can(page: list[str]) -> None:
+    client = _Client({"total": ("m0", 0.9), "refund": ("non_refundable", 0.9),
+                      "refund_line": ("r0", 0.9)})
+    facts = dict(_UNKNOWN)
+    asyncio.run(_reader(client)("\n".join(page), facts, {}))
+    asked = set(client.requests[0][1])
+    assert asked in ({"total"}, {"refund", "refund_line"})
+
