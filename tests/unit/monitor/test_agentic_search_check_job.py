@@ -92,9 +92,7 @@ def _outcome(
         ),
         offers=(offer,),
         provenance=RedactedProvenance(
-            ObservationSource.COMPUTER_USE_SUBMISSION
-            if fallback
-            else ObservationSource.STAGEHAND_EXTRACT,
+            ObservationSource.JEV_PRICE_SUBMISSION,
             action_count=2,
             evidence_item_count=15,
         ),

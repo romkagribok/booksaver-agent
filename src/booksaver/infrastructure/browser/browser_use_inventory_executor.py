@@ -47,13 +47,6 @@ from booksaver.domain.inventory_executor import (
 )
 from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.mobile_web import MobileWebSettings
-from booksaver.infrastructure.browser.agentic_inventory_executor import (
-    _completeness_value,
-    _enum_value,
-    _map_reservation,
-    _navigation_terminal,
-    _tri_state_value,
-)
 from booksaver.infrastructure.browser.browser_use_normalization import (
     normalize_provider_scalar,
     normalize_provider_tri_state,
@@ -76,6 +69,13 @@ from booksaver.infrastructure.browser.inventory_history_resolution import (
     resolve_inventory_history_return,
 )
 from booksaver.infrastructure.browser.inventory_link_resolution import ResolvedInventoryLink
+from booksaver.infrastructure.browser.inventory_mapping import (
+    _completeness_value,
+    _enum_value,
+    _map_reservation,
+    _navigation_terminal,
+    _tri_state_value,
+)
 from booksaver.infrastructure.browser.inventory_traversal import (
     InventoryTraversal,
     inventory_page_kind,

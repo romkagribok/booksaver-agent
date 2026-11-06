@@ -1,18 +1,10 @@
-"""Paired price-method comparison contracts (intent 026).
-
-A comparison runs the existing price method (baseline) and the experimental Jev method against
-the same trusted booking inputs.  Only the baseline arm owns canonical effects; the Jev arm is
-recorded here and reported to the booking owner as experimental information.
-"""
+"""Jev price-method settings, usage, and cost contracts (intent 026)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-
-from .value_objects import Money
 
 JEV_MODEL = "jev-1.13.0"
 JEV_PRICE_TABLE_VERSION = "typesafe-2026-09-27"
@@ -25,22 +17,6 @@ JEV_ADAPTER_VERSION = "jev-price-v3"
 MAX_JEV_CALLS_PER_ARM = 120
 MAX_JEV_ARM_SECONDS = 180
 MAX_JEV_DAILY_COST_NANO_USD = 1_000_000_000  # USD 1.00
-
-
-class ComparisonArm(Enum):
-    BASELINE = "baseline"
-    JEV = "jev"
-
-
-class ComparisonTrigger(Enum):
-    CHECK_NOW = "check_now"
-    SCHEDULED = "scheduled"
-
-
-class ArmStatus(Enum):
-    SUCCESS = "success"
-    FAILURE = "failure"
-    NOT_RUN = "not_run"
 
 
 class CostCertainty(Enum):
@@ -114,49 +90,6 @@ def jev_cost_nano_usd(input_tokens: int) -> int:
     if isinstance(input_tokens, bool) or input_tokens < 0:
         raise ValueError("input_tokens must be a non-negative integer")
     return input_tokens * JEV_NANO_USD_PER_INPUT_TOKEN
-
-
-@dataclass(frozen=True, slots=True)
-class ArmResult:
-    """One method's terminal outcome.  Failures are never converted into "no savings"."""
-
-    arm: ComparisonArm
-    status: ArmStatus
-    outcome_code: str
-    started_at: datetime
-    finished_at: datetime
-    live_price: Money | None = None
-    room_label: str | None = None
-    refund_text: str | None = None
-    savings: Money | None = None
-    # Why a verified price is not reported as a saving (e.g. room_differs), when applicable.
-    savings_rejection: str | None = None
-    model_calls: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cost_nano_usd: int | None = None
-    cost_certainty: CostCertainty = CostCertainty.UNKNOWN
-    detail: str = ""
-
-    def __post_init__(self) -> None:
-        if self.status is ArmStatus.SUCCESS and self.live_price is None:
-            raise ValueError("a successful arm requires a validated live price")
-        if self.status is not ArmStatus.SUCCESS and (
-            self.live_price is not None or self.savings is not None
-        ):
-            raise ValueError("only a successful arm may carry a price or savings")
-        if self.finished_at < self.started_at:
-            raise ValueError("arm cannot finish before it started")
-        if self.cost_nano_usd is not None and self.cost_nano_usd < 0:
-            raise ValueError("arm cost cannot be negative")
-
-    @property
-    def elapsed_seconds(self) -> float:
-        return (self.finished_at - self.started_at).total_seconds()
-
-
-def micro_usd_to_nano(micro_usd: int) -> int:
-    return micro_usd * 1_000
 
 
 def format_usd_nano(nano_usd: int | None, certainty: CostCertainty) -> str:

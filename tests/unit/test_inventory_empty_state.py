@@ -40,9 +40,9 @@ def test_empty_claim_outside_initial_trips_page_is_not_accepted(url):
 
 
 def test_provider_cannot_claim_code_owned_empty_result():
-    from booksaver.infrastructure.browser.agentic_inventory_executor import _terminal_status
+    from booksaver.infrastructure.browser.browser_use_inventory_executor import _terminal_status
 
-    with pytest.raises(ValueError, match="cannot submit an observation"):
+    with pytest.raises(ValueError, match="cannot claim a code-owned outcome"):
         _terminal_status("empty_upcoming")
 
 

@@ -43,11 +43,6 @@ from booksaver.domain.price_comparison import (
     JevUsage,
     jev_cost_nano_usd,
 )
-from booksaver.infrastructure.browser.agentic_executor import (
-    TypedObservation,
-    _map_extracted_observation,
-)
-from booksaver.infrastructure.browser.browser_use_price_executor import _price_entry_url
 from booksaver.infrastructure.browser.browser_use_runtime import (
     BrowserUseActionGuard,
     BrowserUseRuntimeFailure,
@@ -61,6 +56,11 @@ from booksaver.infrastructure.browser.jev_page_snapshot import (
     OfferPageSnapshot,
     RoomSnapshot,
     parse_offer_snapshot,
+)
+from booksaver.infrastructure.browser.price_entry import (
+    TypedObservation,
+    _map_extracted_observation,
+    _price_entry_url,
 )
 from booksaver.infrastructure.llm.typesafe_client import (
     SystemOneResult,

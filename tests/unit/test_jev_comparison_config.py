@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 
 from booksaver.application.load_config import load_config
-from booksaver.cli.commands import _make_jev_executor_factory
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.price_comparison import ComparisonParticipants
 
@@ -65,16 +64,6 @@ def test_invalid_settings_fail_closed(section: dict[str, Any]) -> None:
         _load(section)
 
 
-def test_daemon_enables_jev_only_with_config_and_its_own_secret(monkeypatch: Any) -> None:
-    enabled = _load({"enabled": True})
-    monkeypatch.delenv("BOOKSAVER_TYPESAFE_API_KEY", raising=False)
-    monkeypatch.setenv("BOOKSAVER_LLM_API_KEY", "anthropic-key-is-not-reused")
-    assert _make_jev_executor_factory(enabled) is None
-    monkeypatch.setenv("BOOKSAVER_TYPESAFE_API_KEY", "typesafe-key")
-    assert _make_jev_executor_factory(_load()) is None
-    assert callable(_make_jev_executor_factory(enabled))
-
-
 def _load_with(agentic: dict[str, Any], jev: dict[str, Any] | None = None) -> Any:
     data: dict[str, Any] = {
         "storage": {"data_directory": "~/.booksaver-test"},
@@ -102,20 +91,15 @@ def test_jev_with_legacy_routing_is_rejected_because_jev_would_never_run() -> No
         _load_with({"price_executor": "jev"})
 
 
-def test_each_price_method_needs_only_its_own_credential(monkeypatch: Any) -> None:
+def test_jev_price_method_needs_only_the_typesafe_key(monkeypatch: Any) -> None:
+    from booksaver.application.browser_executor import InMemorySessionLeaseBroker
     from booksaver.cli.commands import _make_price_executor_factory
     from booksaver.infrastructure.browser.jev_primary_executor import JevPrimaryPriceExecutor
 
     jev = _load_with({"routing": "consented_users", "price_executor": "jev"})
-    llm = _load_with({"routing": "consented_users", "price_executor": "browser_use"})
     monkeypatch.delenv("BOOKSAVER_TYPESAFE_API_KEY", raising=False)
-    # The Anthropic key never stands in for the TypeSafe key, and vice versa.
-    assert _make_price_executor_factory(jev, "anthropic-key") is None
+    monkeypatch.setenv("BOOKSAVER_LLM_API_KEY", "anthropic-key-is-not-reused")
+    assert _make_price_executor_factory(jev) is None
     monkeypatch.setenv("BOOKSAVER_TYPESAFE_API_KEY", "typesafe-key")
-    assert _make_price_executor_factory(llm, None) is None
-
-    factory = _make_price_executor_factory(jev, None)
-    from booksaver.application.browser_executor import InMemorySessionLeaseBroker
-
+    factory = _make_price_executor_factory(jev)
     assert isinstance(factory(object(), InMemorySessionLeaseBroker()), JevPrimaryPriceExecutor)
-    assert callable(_make_price_executor_factory(llm, "anthropic-key"))

@@ -13,7 +13,7 @@ from booksaver.application.browser_executor import (
     InMemorySessionLeaseBroker,
 )
 from booksaver.application.load_config import load_config
-from booksaver.cli.commands import _make_agentic_price_executor, _make_check_coordinator
+from booksaver.cli.commands import _make_check_coordinator, _make_price_executor_factory
 from booksaver.domain.agent import LLMUsage
 from booksaver.domain.browser_executor import (
     AgenticBrowserSettings,
@@ -658,39 +658,20 @@ def test_config_rejects_owner_canary_inventory_routing() -> None:
         load_config(_ConfigSource(inventory_routing="owner_canary"))
 
 
-def test_config_accepts_stagehand_as_explicit_price_rollback() -> None:
-    settings = load_config(_ConfigSource(price_executor="stagehand")).agentic_browser_settings
-
-    assert settings.price_executor is PriceExecutorKind.STAGEHAND
-
-
 def test_config_rejects_unknown_price_executor() -> None:
     with pytest.raises(ConfigValidationError, match="agentic_browser.price_executor"):
         load_config(_ConfigSource(price_executor="automatic"))
 
 
-def test_shared_price_factory_defaults_browser_use_and_keeps_stagehand_rollback() -> None:
-    from booksaver.infrastructure.browser.agentic_executor import LocalAgenticPriceExecutor
-    from booksaver.infrastructure.browser.browser_use_price_executor import (
-        LocalBrowserUsePriceExecutor,
-    )
+def test_config_rejects_removed_stagehand_price_executor() -> None:
+    with pytest.raises(ConfigValidationError, match="agentic_browser.price_executor"):
+        load_config(_ConfigSource(price_executor="stagehand"))
 
-    broker = InMemorySessionLeaseBroker()
-    browser_use = _make_agentic_price_executor(
-        load_config(_ConfigSource()),
-        "test-key",
-        object(),
-        broker,
-    )
-    stagehand = _make_agentic_price_executor(
-        load_config(_ConfigSource(price_executor="stagehand")),
-        "test-key",
-        object(),
-        broker,
-    )
 
-    assert isinstance(browser_use, LocalBrowserUsePriceExecutor)
-    assert isinstance(stagehand, LocalAgenticPriceExecutor)
+def test_price_factory_is_jev_only_for_agentic_routing() -> None:
+    assert _make_price_executor_factory(load_config(_ConfigSource())) is None
+    with pytest.raises(ValueError, match='set it to "jev"'):
+        _make_price_executor_factory(load_config(_ConfigSource(routing="consented_users")))
 
 
 def test_production_composition_uses_browser_use_for_every_agentic_inventory_trigger(
