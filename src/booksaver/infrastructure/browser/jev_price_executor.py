@@ -813,10 +813,12 @@ class LocalJevPriceRuntime:
             entry_kind,
             len(snapshot.rooms),
             snapshot.rate_count,
-            len(observation.offers) if observation is not None else 0,
+            len(observation.offers) if isinstance(observation, TypedObservation) else 0,
         )
         if observation is None:
             return JevPriceRuntimeResult(PriceExecutionStatus.NO_VALID_OBSERVATION)
+        if isinstance(observation, PriceExecutionStatus):
+            return JevPriceRuntimeResult(observation)
         return JevPriceRuntimeResult(
             PriceExecutionStatus.OBSERVED,
             observation=observation,
@@ -1063,7 +1065,7 @@ class LocalJevPriceRuntime:
         request: PriceExecutionRequest,
         snapshot: OfferPageSnapshot,
         decider: JevDecisionPort,
-    ) -> TypedObservation | None:
+    ) -> TypedObservation | PriceExecutionStatus | None:
         query = request.query
         nights = (query.stay_dates.check_out - query.stay_dates.check_in).days
         headings = [*snapshot.headings]
@@ -1139,6 +1141,9 @@ class LocalJevPriceRuntime:
                 rate_jobs.append((room_label, room, rate, prices))
                 rate_tasks.append(decider.ask(state, questions))
         rate_answers = await _all_or_fail(rate_tasks)
+        if not rate_jobs and name_lines and await self._unavailable(query, name_lines, decider):
+            diagnostics.extraction += " availability=unavailable"
+            return PriceExecutionStatus.UNAVAILABLE
 
         offers: list[dict[str, object]] = []
         unpriced: dict[str, int] = {}
@@ -1207,6 +1212,42 @@ class LocalJevPriceRuntime:
             )
         except ValueError:
             return None
+
+    @staticmethod
+    async def _unavailable(
+        query: Any, name_lines: list[tuple[str, ...]], decider: JevDecisionPort
+    ) -> bool:
+        """Ask Jev whether a page with no named room shows only other dates or sold out (FR-1)."""
+
+        check_in, check_out = query.stay_dates.check_in, query.stay_dates.check_out
+        nights = (check_out - check_in).days
+        # Whole cards in the page's own date style: flattened lines read as partial matches.
+        answer = await decider.ask(
+            {
+                "requested_stay": f"{check_in:%b} {check_in.day} – {check_out:%b} "
+                f"{check_out.day}, {check_out.year} ({nights} night{'s' if nights != 1 else ''})",
+                "room_cards": [" | ".join(card[:6]) for card in name_lines[:15]],
+            },
+            {
+                "availability": choice_question(
+                    {
+                        "question": "This Booking.com property page was opened for the "
+                        "requested stay. Does it offer a room for that whole stay, with the "
+                        "same check-in and check-out?",
+                        "rules": _UNTRUSTED,
+                    },
+                    {
+                        "available": "Yes, it offers rooms for exactly the requested check-in "
+                        "and check-out",
+                        "unavailable": "No, it only suggests other or shorter date ranges, or "
+                        "says sold out or no availability",
+                        "unclear": "Cannot tell from these cards",
+                    },
+                )
+            },
+        )
+        choice = answer.choice("availability")
+        return choice.choice == "unavailable" and choice.confidence >= 0.8
 
     def _unsafe(self, *, non_allowlisted: bool = False) -> JevPriceRuntimeResult:
         return JevPriceRuntimeResult(
