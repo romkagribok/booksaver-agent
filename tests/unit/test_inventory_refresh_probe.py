@@ -128,17 +128,13 @@ def test_probe_preserves_caller_routing_and_consent_without_notifications(
         "inventory_refresh_probe", "--config", str(config_path), "--user-id", str(invitee_id),
     ])
 
-    if consent == "current":
-        assert probe.main() == 0
-        payload = json.loads(capsys.readouterr().out)
-        assert payload["user_id"] == invitee_id
-        assert payload["empty_upcoming"] is True
-        assert requested == [222222]
-        assert "PRIVATE" not in json.dumps(payload)
-    else:
-        with pytest.raises(ValueError, match="not admitted"):
-            probe.main()
-        assert requested == []
+    # ADR-062: disclosure no longer gates an invitee, so every consent state is admitted.
+    assert probe.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["user_id"] == invitee_id
+    assert payload["empty_upcoming"] is True
+    assert requested == [222222]
+    assert "PRIVATE" not in json.dumps(payload)
     assert admitted == [invitee_id]
     assert (cfg.data_directory.path / "booking_sessions" / "test.session").read_bytes() == (
         b"PRIVATE-ENCRYPTED-SESSION"

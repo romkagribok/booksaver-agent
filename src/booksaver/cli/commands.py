@@ -83,7 +83,7 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # routing = "legacy"           # price: legacy | owner_canary | consented_users | agentic
 # price_executor = "browser_use" # agentic price adapter: jev | browser_use | stagehand
 # inventory_routing = "agentic" # inventory: legacy | agentic
-# disclosure_version = "anthropic-visible-booking-page-v1"
+# disclosure_version = "typesafe-visible-booking-page-v1"
 
 [telegram_bot]
 # Private invite-only Telegram bot gateway. Token: export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
@@ -565,9 +565,8 @@ def _make_check_coordinator(
             LocalBrowserUseInventoryExecutor,
         )
 
-        assert api_key is not None
         return LocalBrowserUseInventoryExecutor(
-            api_key=api_key,
+            api_key=api_key or "",
             lease_broker=lease_broker,
             budget=budget,
             mobile_settings=cfg.mobile_web_settings,
@@ -599,12 +598,8 @@ def _make_check_coordinator(
         execution_gate=execution_gate,
         incident_recorder_factory=_incident_recorder,
         agentic_executor_factory=price_executor_factory,
-        agentic_inventory_executor_factory=(
-            _browser_use_inventory_executor if api_key else None
-        ),
-        bookings_inventory_executor_factory=(
-            _browser_use_inventory_executor if api_key else None
-        ),
+        agentic_inventory_executor_factory=_browser_use_inventory_executor,
+        bookings_inventory_executor_factory=_browser_use_inventory_executor,
         jev_executor_factory=jev_factory,
     )
 

@@ -83,6 +83,7 @@ from booksaver.domain.browser_executor import (
     ExecutorSafetyViolation,
     InventoryExecutionRoutingMode,
     PriceExecutionStatus,
+    PriceExecutorKind,
     RoutingContext,
     resolve_execution_route,
 )
@@ -1303,6 +1304,7 @@ class CheckCoordinator:
                         self._run_scheduled_user_locked(store, identity.user_id)
             finally:
                 self._report_monitoring_stalls(identity.user_id)
+                self._inform_provider_change(identity.user_id)
                 # Terminalize through a fresh connection so an unexpected
                 # browser/persistence transaction cannot strand this slot in
                 # RUNNING until the next process restart.
@@ -2163,16 +2165,8 @@ class CheckCoordinator:
         ):
             return False
         user = SqliteUserRepository(store).get_by_id(user_id)
-        if user is None or not user.is_active:
-            return False
-        if user.is_owner:
-            return True
-        consent = SqliteAgenticDisclosureConsentRepository(store).get(user_id)
-        return (
-            consent is not None
-            and consent.disclosure_version
-            == self._config.agentic_browser_settings.disclosure_version
-        )
+        # Every active user is served by the code reader with Jev (ADR-062).
+        return user is not None and user.is_active
 
     def _synchronize_user_job(
         self,
@@ -3078,6 +3072,43 @@ class CheckCoordinator:
                 detail=f"{prefix}: daily per-user check limit reached.",
             ),
         )
+
+    def _inform_provider_change(self, user_id: int) -> None:
+        """Tell an invitee once that TypeSafe's Jev now reads page content (ADR-062)."""
+        try:
+            settings = self._config.agentic_browser_settings
+            if settings.price_executor is not PriceExecutorKind.JEV:
+                return  # Only a Jev deployment has changed provider.
+            version = settings.disclosure_version
+            with SqliteStore(self._db_path) as store:
+                user = SqliteUserRepository(store).get_by_id(user_id)
+                consents = SqliteAgenticDisclosureConsentRepository(store)
+                record = consents.get(user_id)
+                if (
+                    user is None or user.is_owner or not user.is_active
+                    or (record is not None and record.disclosure_version == version)
+                    or self._session_repository.status(user_id).health
+                    is not UserSessionHealth.READY
+                ):
+                    return
+                chat_id = resolve_telegram_chat_id(user, self._config.telegram_bot_settings)
+                token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
+                if chat_id is None or not token:
+                    return
+                TelegramNotifier(bot_token=token, chat_id=str(chat_id)).send(
+                    "BookSaver: a change to how your bookings are read",
+                    "BookSaver now uses TypeSafe's Jev, instead of Anthropic's Claude, to read the "
+                    "Booking.com pages it checks for you: hotel offers, and the price and "
+                    "cancellation lines of your reservations. Your cookies and password stay on "
+                    "this server, and BookSaver still never books, pays or cancels anything. No "
+                    "action is needed.",
+                )
+                consents.acknowledge(
+                    user_id=user_id, disclosure_version=version, acknowledged_at=datetime.now(UTC),
+                )
+        except Exception:
+            logger.warning("Could not inform user %s of the provider change", user_id,
+                           exc_info=True)
 
     def _report_monitoring_stalls(self, user_id: int) -> None:
         """Tell one user about stalled or recovered reservations; never affects the slot."""

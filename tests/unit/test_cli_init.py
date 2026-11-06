@@ -25,7 +25,7 @@ def test_init_config_uses_requested_data_directory(tmp_path) -> None:
     assert '# routing = "legacy"' in config_text
     assert '# price_executor = "browser_use"' in config_text
     assert '# inventory_routing = "agentic"' in config_text
-    assert '# disclosure_version = "anthropic-visible-booking-page-v1"' in config_text
+    assert '# disclosure_version = "typesafe-visible-booking-page-v1"' in config_text
 
 
 def test_config_commands_show_effective_recovery_defaults(tmp_path, capsys) -> None:
@@ -57,4 +57,4 @@ def test_config_commands_show_effective_recovery_defaults(tmp_path, capsys) -> N
     assert "agentic_browser.routing      : legacy" in show_output
     assert "agentic_browser.price_executor: browser_use" in show_output
     assert "agentic_browser.inventory_routing: agentic" in show_output
-    assert "agentic_browser.disclosure   : anthropic-visible-booking-page-v1" in show_output
+    assert "agentic_browser.disclosure   : typesafe-visible-booking-page-v1" in show_output
