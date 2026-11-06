@@ -16,37 +16,23 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Protocol, cast
 from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from booksaver.application.browser_executor import ExecutionMeter
-from booksaver.application.model_policy import BrowserJobCostBudget
-from booksaver.domain.agent import LLMUsage
 from booksaver.domain.browser_executor import ExecutionLimits
 from booksaver.domain.browser_guard import ExecutorEgressKind, classify_executor_egress
 from booksaver.domain.mobile_web import MobileWebSettings
-from booksaver.domain.model_policy import (
-    AdaptiveModelPortfolio,
-    EscalationTrigger,
-    ModelAttemptOutcome,
-    ModelAttemptPlan,
-    ModelRole,
-    ModelStopReason,
-    TokenEnvelope,
-)
 from booksaver.domain.session_maintenance import (
     SessionVerificationOutcome,
     SessionVerificationResult,
 )
-from booksaver.infrastructure.browser.agentic_executor import CodeOwnedSessionBootstrap
+from booksaver.infrastructure.browser.session_bootstrap import CodeOwnedSessionBootstrap
 from booksaver.infrastructure.browser.session_maintenance import (
     unexpired_cookie_material,
     verify_saved_snapshot,
@@ -55,36 +41,7 @@ from booksaver.infrastructure.remote_auth.network_session import ACCOUNT_PROBE_U
 
 logger = logging.getLogger(__name__)
 
-ANTHROPIC_MODEL = "claude-sonnet-5"
-MODEL_ENVELOPE = TokenEnvelope(30_000, 4_096)
 ALLOWED_DOMAINS = ["booking.com", "*.booking.com"]
-SAFE_KEYS = frozenset({"PageUp", "PageDown", "Home", "End", "Escape"})
-STOCK_ACTIONS = (
-    "search",
-    "navigate",
-    "go_back",
-    "click",
-    "input",
-    "upload_file",
-    "switch",
-    "close",
-    "extract",
-    "search_page",
-    "find_elements",
-    "find_text",
-    "screenshot",
-    "save_as_pdf",
-    "dropdown_options",
-    "select_dropdown",
-    "send_keys",
-    "write_file",
-    "replace_file",
-    "read_file",
-    "read_long_content",
-    "evaluate",
-    "scroll",
-    "wait",
-)
 _ACCOUNT_AUTH_SETTLE_MILLISECONDS = (5_000, 3_000)
 _UNSAFE_WATCHDOG_PREFIXES = (
     "DownloadsWatchdog.",
@@ -214,113 +171,6 @@ class ClickChainDecision:
     depth: int
 
 
-@dataclass(frozen=True, slots=True)
-class AgentHistoryDiagnostic:
-    steps: int
-    actions: tuple[str, ...]
-    errors: tuple[str, ...]
-
-
-_DIAGNOSTIC_FIELDS = (
-    "remote_id",
-    "identity_evidence",
-    "scope",
-    "lifecycle",
-    "confirmation_id",
-    "property_name",
-    "property_reference",
-    "check_in",
-    "check_out",
-    "room_type",
-    "booked_total",
-    "currency",
-    "all_in",
-    "refundability",
-    "refundability_text",
-    "refund_deadline",
-    "adults",
-    "children",
-    "rooms",
-    "completeness",
-    "facts_json",
-    "status",
-    "authenticated",
-    "scopes",
-    "reservations",
-)
-_DIAGNOSTIC_VALIDATION_TYPES = (
-    "string_type",
-    "list_type",
-    "model_type",
-    "missing",
-    "extra_forbidden",
-    "literal_error",
-    "int_parsing",
-    "int_type",
-    "bool_type",
-    "value_error",
-)
-
-
-def validation_diagnostic(raw_error: object, expected_actions: frozenset[str]) -> str:
-    """Reduce one content-bearing dependency error to fixed schema/type identifiers."""
-
-    folded = str(raw_error).casefold()
-    action = next((name for name in sorted(expected_actions) if name in folded), "unknown")
-    field_name = next(
-        (
-            name
-            for name in _DIAGNOSTIC_FIELDS
-            if re.search(rf"(?<![a-z0-9_]){re.escape(name)}(?![a-z0-9_])", folded)
-        ),
-        "unknown",
-    )
-    error_type = next(
-        (name for name in _DIAGNOSTIC_VALIDATION_TYPES if name in folded), "unknown"
-    )
-    return f"validation:{action}:{field_name}:{error_type}"
-
-
-def agent_history_diagnostic(
-    history: object, expected_actions: frozenset[str]
-) -> AgentHistoryDiagnostic:
-    action_names: list[str] = []
-    error_codes: list[str] = []
-    items = getattr(history, "history", ())
-    if not isinstance(items, (list, tuple)):
-        return AgentHistoryDiagnostic(0, (), ("invalid_history",))
-    for item in items[:20]:
-        model_output = getattr(item, "model_output", None)
-        for action in tuple(getattr(model_output, "action", ()) or ())[:1]:
-            try:
-                dumped = action.model_dump(exclude_none=True, mode="json")
-            except Exception:
-                action_names.append("invalid_action")
-                continue
-            names = tuple(dumped) if isinstance(dumped, Mapping) else ()
-            name = names[0] if len(names) == 1 and names[0] in expected_actions else "unknown"
-            action_names.append(name)
-        for result in tuple(getattr(item, "result", ()) or ())[:1]:
-            raw_error = getattr(result, "error", None)
-            if not raw_error:
-                continue
-            folded = str(raw_error).casefold()
-            code = "unknown"
-            for candidate, marker in (
-                ("max_failures", "consecutive failure"),
-                ("timeout", "timeout"),
-                ("action", "action"),
-                ("element", "element"),
-            ):
-                if marker in folded:
-                    code = candidate
-                    break
-            if "validation" in folded:
-                code = validation_diagnostic(raw_error, expected_actions)
-            error_codes.append(code)
-    return AgentHistoryDiagnostic(len(items), tuple(action_names), tuple(error_codes))
-
-
 _INTERACTIVE_CLICK_ROLES = frozenset(
     {
         "a",
@@ -438,94 +288,6 @@ def coordinate_chain_click_decision(
     return ClickChainDecision(True, "allowed", len(chain))
 
 
-async def coordinate_hit_test_chain(
-    browser_session: Any,
-    *,
-    coordinate_x: int,
-    coordinate_y: int,
-) -> list[Mapping[str, object]]:
-    """Read one bounded element/ancestor chain at a screenshot coordinate through local CDP."""
-
-    page = await browser_session.get_current_page()
-    if page is None:
-        return []
-    session_id = await page._ensure_session()
-    expression = f"""
-(() => {{
-  const names = [
-    'href', 'src', 'action', 'formaction', 'target', 'type', 'role', 'download',
-    'contenteditable', 'disabled', 'aria-disabled', 'onclick'
-  ];
-  let element = document.elementFromPoint({coordinate_x}, {coordinate_y});
-  const chain = [];
-  while (element && chain.length < 16) {{
-    const attributes = {{}};
-    for (const name of names) {{
-      if (element.hasAttribute && element.hasAttribute(name)) {{
-        attributes[name] = String(element.getAttribute(name) || '').slice(0, 1000);
-      }}
-    }}
-    const rect = element.getBoundingClientRect();
-    const style = window.getComputedStyle(element);
-    chain.push({{
-      node_name: String(element.tagName || '').toLowerCase().slice(0, 100),
-      label: String(
-        (element.getAttribute && element.getAttribute('aria-label')) ||
-        element.innerText || element.textContent || ''
-      ).slice(0, 1000),
-      attributes,
-      visible: rect.width > 0 && rect.height > 0 &&
-        style.visibility !== 'hidden' && style.display !== 'none'
-    }});
-    element = element.parentElement;
-  }}
-  return chain;
-}})()
-"""
-    result = await browser_session.cdp_client.send.Runtime.evaluate(
-        params={"expression": expression, "returnByValue": True},
-        session_id=session_id,
-    )
-    value = result.get("result", {}).get("value")
-    if not isinstance(value, list):
-        return []
-    bounded: list[Mapping[str, object]] = []
-    for item in value[:16]:
-        if not isinstance(item, Mapping):
-            return []
-        bounded.append(item)
-    return bounded
-
-
-def viewport_coordinates(
-    browser_session: Any,
-    *,
-    coordinate_x: int,
-    coordinate_y: int,
-) -> tuple[int, int]:
-    """Convert model screenshot coordinates exactly as Browser Use's qualified click tool does."""
-
-    screenshot_size = getattr(browser_session, "llm_screenshot_size", None)
-    viewport_size = getattr(browser_session, "_original_viewport_size", None)
-    if (
-        isinstance(screenshot_size, tuple)
-        and len(screenshot_size) == 2
-        and isinstance(viewport_size, tuple)
-        and len(viewport_size) == 2
-        and all(
-            isinstance(value, int) and value > 0
-            for value in (*screenshot_size, *viewport_size)
-        )
-    ):
-        screenshot_width, screenshot_height = screenshot_size
-        viewport_width, viewport_height = viewport_size
-        return (
-            int(coordinate_x / screenshot_width * viewport_width),
-            int(coordinate_y / screenshot_height * viewport_height),
-        )
-    return coordinate_x, coordinate_y
-
-
 def same_tab_click_destination(
     guard: BrowserUseActionGuard,
     *,
@@ -554,33 +316,6 @@ def same_tab_click_destination(
             return destination if guard.observable_url(destination) else None
         current = getattr(current, "parent_node", None)
     return None
-
-
-class GuardedClick(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    index: int = Field(ge=1, le=100_000)
-
-
-class GuardedVisualClick(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    coordinate_x: int = Field(ge=0, le=4_000)
-    coordinate_y: int = Field(ge=0, le=4_000)
-
-
-class GuardedScroll(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    direction: Literal["up", "down"]
-
-
-class GuardedKey(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    key: Literal["PageUp", "PageDown", "Home", "End", "Escape"]
-
-
-class GuardedWait(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    milliseconds: int = Field(ge=100, le=2_000)
-
 
 
 async def remember_visible_semantic_state(
@@ -649,12 +384,6 @@ def screenshot_has_visible_content(screenshot: object) -> bool:
         return False
     minimum, maximum = extrema
     return maximum - minimum >= 8
-
-
-class BrowserUseCostStop(RuntimeError):
-    def __init__(self, reason: ModelStopReason) -> None:
-        self.reason = reason
-        super().__init__(reason.value)
 
 
 class BrowserUseRuntimeFailure(RuntimeError):
@@ -818,33 +547,6 @@ class BrowserUseActionGuard:
         return None
 
 
-class InMemoryScreenshotService:
-    def __init__(self) -> None:
-        self._screenshots: dict[str, str] = {}
-
-    async def store_screenshot(self, screenshot_b64: str, step_number: int) -> str:
-        token = f"memory://browser-use-step/{step_number}"
-        self._screenshots[token] = screenshot_b64
-        return token
-
-    async def get_screenshot(self, screenshot_path: str) -> str | None:
-        return self._screenshots.get(screenshot_path)
-
-    def clear(self) -> None:
-        self._screenshots.clear()
-
-
-def continued_action_result(action_result_type: type[Any], content: str) -> Any:
-    """Return a nonterminal correction compatible with Browser Use 0.11.13."""
-
-    return action_result_type(
-        is_done=False,
-        success=None,
-        extracted_content=content,
-        include_extracted_content_only_once=True,
-    )
-
-
 def hardened_session_type(base: type[Any]) -> type[Any]:
     class HardenedBrowserSession(base):  # type: ignore[misc]
         async def attach_all_watchdogs(self) -> None:
@@ -867,150 +569,6 @@ def hardened_session_type(base: type[Any]) -> type[Any]:
     return HardenedBrowserSession
 
 
-def qualified_output_format(output_format: type[BaseModel]) -> type[BaseModel]:
-    """Remove disabled planning fields before Browser Use's strict schema optimizer."""
-
-    class QualifiedBrowserUseOutput(output_format):  # type: ignore[misc, valid-type]
-        @classmethod
-        def model_json_schema(cls, **kwargs: Any) -> dict[str, Any]:
-            schema = cast(dict[str, Any], super().model_json_schema(**kwargs))
-            properties = schema.get("properties")
-            if isinstance(properties, dict):
-                properties.pop("current_plan_item", None)
-                properties.pop("plan_update", None)
-            required = schema.get("required")
-            if isinstance(required, list):
-                schema["required"] = [
-                    name
-                    for name in required
-                    if name not in {"current_plan_item", "plan_update"}
-                ]
-            return schema
-
-    QualifiedBrowserUseOutput.__name__ = output_format.__name__
-    QualifiedBrowserUseOutput.__qualname__ = output_format.__qualname__
-    return QualifiedBrowserUseOutput
-
-
-def budgeted_model_type(base: type[Any], prompt_version: str) -> type[Any]:
-    class BudgetedBrowserUseModel(base):  # type: ignore[misc]
-        def __init__(
-            self,
-            *,
-            api_key: str,
-            budget: BrowserJobCostBudget,
-            meter: ExecutionMeter,
-        ) -> None:
-            super().__init__(
-                model=ANTHROPIC_MODEL,
-                api_key=api_key,
-                max_tokens=4_096,
-                timeout=45,
-                max_retries=0,
-            )
-            self._booksaver_budget = budget
-            self._booksaver_meter = meter
-            self._booksaver_stop: ModelStopReason | None = None
-
-        def __repr__(self) -> str:
-            return "<BudgetedBrowserUseModel provider=anthropic model=claude-sonnet-5>"
-
-        __str__ = __repr__
-
-        async def ainvoke(
-            self,
-            messages: list[Any],
-            output_format: type[BaseModel] | None = None,
-            **kwargs: Any,
-        ) -> Any:
-            profile = AdaptiveModelPortfolio().primary(
-                ModelRole.INTERPRETATION,
-                prompt_version,
-            )
-            try:
-                admission = self._booksaver_budget.admit(
-                    ModelAttemptPlan(1, profile, EscalationTrigger.INITIAL_AMBIGUOUS),
-                    MODEL_ENVELOPE,
-                )
-            except Exception:
-                self._booksaver_stop = ModelStopReason.COST_ACCOUNTING_ERROR
-                raise BrowserUseCostStop(self._booksaver_stop) from None
-            if admission.attempt is None:
-                self._booksaver_stop = cast(ModelStopReason, admission.stop_reason)
-                raise BrowserUseCostStop(self._booksaver_stop)
-            admitted = admission.attempt
-            started = time.monotonic()
-            try:
-                qualified_format = (
-                    qualified_output_format(output_format)
-                    if output_format is not None
-                    and {
-                        "current_plan_item",
-                        "plan_update",
-                    }.issubset(output_format.model_fields)
-                    else output_format
-                )
-                response = await super().ainvoke(messages, qualified_format, **kwargs)
-            except BaseException:
-                try:
-                    reconciliation = self._booksaver_budget.reconcile(
-                        admitted,
-                        usage=None,
-                        latency_ms=max(0, round((time.monotonic() - started) * 1_000)),
-                        outcome=ModelAttemptOutcome.PROVIDER_FAILED,
-                    )
-                except Exception:
-                    self._booksaver_stop = ModelStopReason.COST_ACCOUNTING_ERROR
-                    raise BrowserUseCostStop(self._booksaver_stop) from None
-                try:
-                    self._booksaver_meter.record_model_call(
-                        LLMUsage(), reconciliation.charged_cost
-                    )
-                except RuntimeError:
-                    self._booksaver_stop = ModelStopReason.JOB_COST_LIMIT
-                    raise BrowserUseCostStop(self._booksaver_stop) from None
-                raise
-            raw_usage = response.usage
-            cache_read_tokens = (
-                int(raw_usage.prompt_cached_tokens or 0) if raw_usage is not None else 0
-            )
-            cache_creation_tokens = (
-                int(raw_usage.prompt_cache_creation_tokens or 0)
-                if raw_usage is not None
-                else 0
-            )
-            usage = (
-                LLMUsage(
-                    input_tokens=int(raw_usage.prompt_tokens) + cache_creation_tokens,
-                    output_tokens=int(raw_usage.completion_tokens),
-                )
-                if raw_usage is not None
-                else None
-            )
-            try:
-                reconciliation = self._booksaver_budget.reconcile(
-                    admitted,
-                    usage=usage,
-                    latency_ms=max(0, round((time.monotonic() - started) * 1_000)),
-                    outcome=ModelAttemptOutcome.COMPLETED,
-                    cache_read_input_tokens=cache_read_tokens,
-                    cache_creation_input_tokens=cache_creation_tokens,
-                )
-            except Exception:
-                self._booksaver_stop = ModelStopReason.COST_ACCOUNTING_ERROR
-                raise BrowserUseCostStop(self._booksaver_stop) from None
-            try:
-                self._booksaver_meter.record_model_call(
-                    usage or LLMUsage(), reconciliation.charged_cost
-                )
-            except RuntimeError:
-                self._booksaver_stop = ModelStopReason.JOB_COST_LIMIT
-                raise BrowserUseCostStop(self._booksaver_stop) from None
-            return response
-
-    return BudgetedBrowserUseModel
-
-
 class BrowserUseSessionStatus(Enum):
     TIMEOUT = "timeout"
     SIGNED_OUT = "signed_out"
@@ -1030,17 +588,13 @@ class BrowserUseDeadlineRequest(Protocol):
 
 
 class BrowserUseSessionHost:
-    """Own one confined Browser Use browser, session material, agent, and transient files."""
+    """Own one confined Browser Use browser, session material, and transient files."""
 
     def __init__(self, mobile_settings: MobileWebSettings | None = None) -> None:
         self._mobile_settings = mobile_settings or MobileWebSettings()
         self._bootstrap = CodeOwnedSessionBootstrap()
         self._session: Any | None = None
-        self._agent: Any | None = None
         self._root: Path | None = None
-        self._agent_directory: Path | None = None
-        self._agent_run_id: str | None = None
-        self._screenshots: InMemoryScreenshotService | None = None
         self._dialog_tasks: set[asyncio.Task[None]] = set()
         self._network_tasks: set[asyncio.Task[None]] = set()
         self._blocked_network_requests = 0
@@ -1417,72 +971,6 @@ class BrowserUseSessionHost:
         finally:
             await playwright.stop()
 
-    def create_agent(
-        self,
-        agent_type: Callable[..., Any],
-        *,
-        task: str,
-        task_id: str,
-        llm: Any,
-        browser_session: Any,
-        tools: Any,
-        viewport: Mapping[str, int],
-        file_system_dir: Path,
-        deadline: datetime,
-        register_done_callback: Callable[..., Any] | None = None,
-    ) -> Any:
-        """Construct one classic Browser Use agent with the qualified shared configuration."""
-
-        self.failure_stage = "agent_construction"
-        agent = agent_type(
-            task=task,
-            task_id=task_id,
-            llm=llm,
-            browser_session=browser_session,
-            tools=tools,
-            use_vision=True,
-            llm_screenshot_size=(int(viewport["width"]), int(viewport["height"])),
-            use_thinking=False,
-            max_actions_per_step=1,
-            max_failures=3,
-            use_judge=False,
-            calculate_cost=False,
-            directly_open_url=False,
-            generate_gif=False,
-            save_conversation_path=None,
-            message_compaction=False,
-            final_response_after_failure=False,
-            llm_timeout=45,
-            step_timeout=max(
-                1,
-                min(60, int((deadline - datetime.now(UTC)).total_seconds())),
-            ),
-            initial_actions=None,
-            available_file_paths=None,
-            sensitive_data=None,
-            fallback_llm=None,
-            page_extraction_llm=None,
-            judge_llm=None,
-            skills=[],
-            skill_ids=[],
-            file_system_path=str(file_system_dir),
-            include_recent_events=False,
-            enable_planning=False,
-            register_done_callback=register_done_callback,
-        )
-        self._agent = agent
-        self._agent_run_id = task_id
-        self._agent_directory = Path(agent.agent_directory)
-        expected_prefix = f"browser_use_agent_{task_id}_"
-        if (
-            self._agent_directory.parent.resolve() != Path(tempfile.gettempdir()).resolve()
-            or not self._agent_directory.name.startswith(expected_prefix)
-        ):
-            raise RuntimeError("Browser Use agent directory escaped the owned temp namespace")
-        self._screenshots = InMemoryScreenshotService()
-        cast(Any, agent).screenshot_service = self._screenshots
-        return agent
-
     async def close(self) -> None:
         self.verified_mobile_session = None
         if self._network_tasks:
@@ -1498,17 +986,7 @@ class BrowserUseSessionHost:
                     await session.kill()
             except Exception:
                 logger.warning("Browser Use transient browser cleanup failed", exc_info=False)
-        if self._screenshots is not None:
-            self._screenshots.clear()
-            self._screenshots = None
-        agent_run_id, self._agent_run_id = self._agent_run_id, None
-        paths = [self._agent_directory, self._root]
-        if agent_run_id is not None:
-            paths.extend(
-                Path(tempfile.gettempdir()).glob(f"browser_use_agent_{agent_run_id}_*")
-            )
-        self._agent_directory = None
-        self._agent = None
+        paths = [self._root]
         self._root = None
         temp_root = Path(tempfile.gettempdir()).resolve()
         for path in paths:

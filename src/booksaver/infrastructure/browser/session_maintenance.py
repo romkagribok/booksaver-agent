@@ -26,7 +26,7 @@ from booksaver.domain.session_maintenance import (
     SessionVerificationOutcome,
     SessionVerificationResult,
 )
-from booksaver.infrastructure.browser.agentic_executor import CodeOwnedSessionBootstrap
+from booksaver.infrastructure.browser.session_bootstrap import CodeOwnedSessionBootstrap
 from booksaver.infrastructure.remote_auth.network_session import (
     ACCOUNT_PROBE_URL,
     is_authenticated_account_probe_response,

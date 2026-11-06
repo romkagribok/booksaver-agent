@@ -4,9 +4,6 @@ import asyncio
 import base64
 import io
 import json
-import shutil
-import tempfile
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -16,7 +13,6 @@ from typing import Any
 
 import pytest
 from PIL import Image
-from pydantic import BaseModel
 
 import booksaver.infrastructure.browser.browser_use_runtime as runtime_adapter
 from booksaver.application.async_runner import AsyncLoopRunner
@@ -44,9 +40,7 @@ from booksaver.domain.model_policy import (
     CostReservation,
     ModelAttemptAudit,
     ModelCostEstimator,
-    ModelStopReason,
     ReservationStatus,
-    UsdAmount,
 )
 from booksaver.domain.session_maintenance import (
     SessionVerificationOutcome,
@@ -54,7 +48,6 @@ from booksaver.domain.session_maintenance import (
 )
 from booksaver.infrastructure.browser.browser_use_inventory_executor import (
     _BROWSER_USE_INVENTORY_ENTRY_URL,
-    _EXPECTED_ACTIONS,
     BrowserUseInventoryBrowserExecutor,
     BrowserUseObservationPayload,
     BrowserUseReservationFactsSubmission,
@@ -77,25 +70,17 @@ from booksaver.infrastructure.browser.browser_use_inventory_executor import (
 )
 from booksaver.infrastructure.browser.browser_use_runtime import (
     BrowserUseActionGuard,
-    BrowserUseCostStop,
     BrowserUseSessionHost,
     BrowserUseSessionStatus,
-    GuardedVisualClick,
-    agent_history_diagnostic,
     browser_request_allowed,
-    budgeted_model_type,
-    continued_action_result,
     coordinate_chain_click_decision,
     hardened_session_type,
     is_unsafe_watchdog_handler,
     node_chain_click_decision,
     prepare_browser_use_environment,
-    qualified_output_format,
     remember_visible_semantic_state,
     same_tab_click_destination,
     screenshot_has_visible_content,
-    validation_diagnostic,
-    viewport_coordinates,
 )
 
 
@@ -108,10 +93,6 @@ def _png_data(*, foreground: int | None = None) -> str:
     output = io.BytesIO()
     image.save(output, format="PNG")
     return base64.b64encode(output.getvalue()).decode("ascii")
-
-
-def _inventory_model_type(base: type[Any]) -> type[Any]:
-    return budgeted_model_type(base, "browser-use-inventory-v1")
 
 
 class _Ledger:
@@ -430,20 +411,6 @@ def test_visual_click_chain_reuses_generic_read_only_guard() -> None:
     assert safe.allowed is True
     assert unsafe.allowed is False
     assert unsafe.reason == "guard_unsafe_label"
-
-
-def test_visual_click_coordinates_are_bounded_and_scaled_to_css_viewport() -> None:
-    session = SimpleNamespace(
-        llm_screenshot_size=(824, 1678),
-        _original_viewport_size=(412, 839),
-    )
-
-    assert GuardedVisualClick(coordinate_x=412, coordinate_y=839)
-    assert viewport_coordinates(
-        session,
-        coordinate_x=412,
-        coordinate_y=839,
-    ) == (206, 419)
 
 
 def test_safe_popup_link_is_normalized_to_guarded_same_tab_destination() -> None:
@@ -1058,78 +1025,6 @@ def test_agent_semantic_match_requires_one_exact_saved_stay() -> None:
     assert ambiguous is None
 
 
-def test_qualified_output_removes_disabled_planning_fields_before_strict_optimizer() -> None:
-    from browser_use.llm.schema import SchemaOptimizer
-
-    class _Output(BaseModel):
-        evaluation_previous_goal: str
-        memory: str
-        next_goal: str
-        action: list[str]
-        current_plan_item: int | None = None
-        plan_update: list[str] | None = None
-
-    qualified = qualified_output_format(_Output)
-    schema = SchemaOptimizer.create_optimized_json_schema(qualified)
-
-    assert "current_plan_item" not in schema["properties"]
-    assert "plan_update" not in schema["properties"]
-    assert schema["required"] == [
-        "evaluation_previous_goal",
-        "memory",
-        "next_goal",
-        "action",
-    ]
-    assert isinstance(
-        qualified(
-            evaluation_previous_goal="ok",
-            memory="bounded",
-            next_goal="act",
-            action=["done"],
-        ),
-        _Output,
-    )
-
-
-def test_shared_host_constructs_agent_with_qualified_configuration() -> None:
-    captured: dict[str, Any] = {}
-
-    class _Agent:
-        def __init__(self, **kwargs: Any) -> None:
-            captured.update(kwargs)
-            self.agent_directory = (
-                Path(tempfile.gettempdir())
-                / f"browser_use_agent_{kwargs['task_id']}_constructor-spy"
-            )
-
-    def callback(*_args: Any, **_kwargs: Any) -> None:
-        return None
-
-    host = BrowserUseSessionHost()
-    agent = host.create_agent(
-        _Agent,
-        task="bounded task",
-        task_id="shared-config-test",
-        llm=object(),
-        browser_session=object(),
-        tools=object(),
-        viewport={"width": 412, "height": 839},
-        file_system_dir=Path(tempfile.gettempdir()) / "booksaver-agent-files",
-        deadline=datetime.now(UTC) + timedelta(minutes=3),
-        register_done_callback=callback,
-    )
-
-    assert agent is not None
-    assert captured["use_vision"] is True
-    assert captured["llm_screenshot_size"] == (412, 839)
-    assert captured["max_actions_per_step"] == 1
-    assert captured["calculate_cost"] is False
-    assert captured["directly_open_url"] is False
-    assert captured["enable_planning"] is False
-    assert captured["register_done_callback"] is callback
-    asyncio.run(host.close())
-
-
 def test_browser_use_mapping_downgrades_malformed_optional_facts_to_unknown() -> None:
     payload = BrowserUseObservationPayload.model_validate(
         {
@@ -1181,66 +1076,6 @@ def test_browser_use_mapping_downgrades_malformed_optional_facts_to_unknown() ->
 def test_provider_cannot_claim_code_owned_terminal_status(status: str) -> None:
     with pytest.raises(ValueError, match="code-owned"):
         _terminal_status(status)
-
-
-def test_continued_action_result_matches_qualified_browser_use_contract() -> None:
-    from browser_use import ActionResult
-
-    result = continued_action_result(ActionResult, "Content-free correction")
-
-    assert result.is_done is False
-    assert result.success is None
-    assert result.error is None
-    assert result.extracted_content == "Content-free correction"
-    assert result.include_extracted_content_only_once is True
-    with pytest.raises(ValueError, match="success=True can only be set when is_done=True"):
-        ActionResult(is_done=False, success=True, extracted_content="invalid")
-
-
-def test_agent_history_diagnostic_logs_only_bounded_categories() -> None:
-    class _Action:
-        def __init__(self, name: str) -> None:
-            self.name = name
-
-        def model_dump(self, **_kwargs: Any) -> dict[str, dict[str, str]]:
-            return {self.name: {"secret": "must-not-appear"}}
-
-    history = SimpleNamespace(
-        history=[
-            SimpleNamespace(
-                model_output=SimpleNamespace(action=[_Action("guarded_click")]),
-                result=[SimpleNamespace(error="content validation secret")],
-            ),
-            SimpleNamespace(
-                model_output=SimpleNamespace(action=[_Action("unregistered_secret_action")]),
-                result=[SimpleNamespace(error="page-content-secret")],
-            ),
-        ]
-    )
-
-    diagnostic = agent_history_diagnostic(history, _EXPECTED_ACTIONS)
-
-    assert diagnostic.steps == 2
-    assert diagnostic.actions == ("guarded_click", "unknown")
-    assert diagnostic.errors == (
-        "validation:unknown:unknown:unknown",
-        "unknown",
-    )
-
-
-def test_validation_diagnostic_exposes_only_closed_schema_categories() -> None:
-    raw = (
-        "Invalid parameters {'booked_total': {'amount': 'SECRET'}} for action "
-        "submit_inventory_observation: [type=string_type, input_value=SECRET]"
-    )
-
-    diagnostic = validation_diagnostic(raw, _EXPECTED_ACTIONS)
-
-    assert diagnostic == (
-        "validation:submit_inventory_observation:booked_total:string_type"
-    )
-    assert "SECRET" not in diagnostic
-    assert "secret" not in repr(diagnostic)
 
 
 def test_hardened_session_removes_unsafe_watchdogs() -> None:
@@ -1419,169 +1254,6 @@ def test_real_confirm_is_rejected_without_executing_mutation(tmp_path: Path) -> 
     assert fetch_result == "blocked"
     assert blocked_count == 1
     assert not runtime_root.exists()
-
-
-def test_budgeted_model_repr_never_contains_api_key() -> None:
-    class _Base:
-        def __init__(self, **_kwargs: Any) -> None:
-            return None
-
-    model = _inventory_model_type(_Base)(api_key="super-secret", budget=_budget(), meter=object())
-
-    assert "super-secret" not in repr(model)
-    assert "super-secret" not in str(model)
-
-
-class _ProviderUsage:
-    prompt_tokens = 100
-    completion_tokens = 10
-    prompt_cached_tokens = 20
-    prompt_cache_creation_tokens = 40
-
-
-class _ProviderResponse:
-    usage = _ProviderUsage()
-
-
-class _SuccessfulModelBase:
-    def __init__(self, **_kwargs: Any) -> None:
-        self.model = "claude-sonnet-5"
-
-    async def ainvoke(self, *_args: Any, **_kwargs: Any) -> _ProviderResponse:
-        return _ProviderResponse()
-
-
-class _FailingModelBase(_SuccessfulModelBase):
-    async def ainvoke(self, *_args: Any, **_kwargs: Any) -> _ProviderResponse:
-        raise RuntimeError("provider-content-must-not-be-logged")
-
-
-class _TimeoutModelBase(_SuccessfulModelBase):
-    async def ainvoke(self, *_args: Any, **_kwargs: Any) -> _ProviderResponse:
-        raise TimeoutError("provider-timeout-content")
-
-
-class _BlockingModelBase(_SuccessfulModelBase):
-    async def ainvoke(self, *_args: Any, **_kwargs: Any) -> _ProviderResponse:
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
-
-
-class _DeniedLedger(_Ledger):
-    def reserve_call(self, request: Any) -> AdmissionDecision:
-        self.reservations.append(request)
-        return AdmissionDecision(denied_reason=ModelStopReason.JOB_COST_LIMIT)
-
-
-class _ReconciliationFailureLedger(_Ledger):
-    def reconcile_call(self, request: Any) -> CostReconciliation:
-        self.reconciliations.append(request)
-        raise RuntimeError("ledger-sensitive-failure")
-
-
-def _budgeted_model(
-    model_base: type[Any],
-    *,
-    ledger: _Ledger | None = None,
-    max_job_cost: UsdAmount | None = None,
-) -> tuple[Any, ExecutionMeter, _Ledger]:
-    active_ledger = ledger if ledger is not None else _Ledger()
-    limit_options = {"max_job_cost": max_job_cost} if max_job_cost is not None else {}
-    meter = ExecutionMeter(
-        ExecutionLimits(
-            deadline=datetime.now(UTC) + timedelta(minutes=3),
-            **limit_options,
-        )
-    )
-    model = _inventory_model_type(model_base)(
-        api_key="test-key",
-        budget=_budget(active_ledger),
-        meter=meter,
-    )
-    return model, meter, active_ledger
-
-
-def test_budgeted_model_reconciles_cache_read_and_creation_pricing_exactly() -> None:
-    model, meter, ledger = _budgeted_model(_SuccessfulModelBase)
-
-    asyncio.run(model.ainvoke([]))
-
-    usage = meter.snapshot()
-    assert usage.tokens.input_tokens == 140
-    assert usage.tokens.output_tokens == 10
-    # Introductory Sonnet price: 80*2 + 20*0.2 + 40*2.5 + 10*10 micro-USD.
-    assert usage.cost.micro_usd == 364
-    assert ledger.reconciliations[0].charged_cost == UsdAmount(364)
-
-
-def test_budgeted_model_failure_reconciles_conservatively_without_logging_content(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    model, _, ledger = _budgeted_model(_FailingModelBase)
-
-    with pytest.raises(RuntimeError, match="provider-content"):
-        asyncio.run(model.ainvoke([]))
-
-    assert ledger.reconciliations[0].conservative is True
-    assert "provider-content-must-not-be-logged" not in caplog.text
-
-
-def test_budgeted_model_timeout_reconciles_conservatively() -> None:
-    model, _, ledger = _budgeted_model(_TimeoutModelBase)
-
-    with pytest.raises(TimeoutError, match="provider-timeout"):
-        asyncio.run(model.ainvoke([]))
-
-    assert ledger.reconciliations[0].conservative is True
-
-
-def test_budgeted_model_cancellation_reconciles_then_preserves_cancellation() -> None:
-    model, _, ledger = _budgeted_model(_BlockingModelBase)
-
-    async def cancel_call() -> None:
-        task = asyncio.create_task(model.ainvoke([]))
-        await asyncio.sleep(0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    asyncio.run(cancel_call())
-
-    assert ledger.reconciliations[0].conservative is True
-
-
-def test_budgeted_model_admission_denial_stops_before_provider_call() -> None:
-    model, _, ledger = _budgeted_model(_SuccessfulModelBase, ledger=_DeniedLedger())
-
-    with pytest.raises(BrowserUseCostStop) as stopped:
-        asyncio.run(model.ainvoke([]))
-
-    assert stopped.value.reason is ModelStopReason.JOB_COST_LIMIT
-    assert ledger.reconciliations == []
-
-
-def test_budgeted_model_reconciliation_failure_stops_fail_closed() -> None:
-    model, _, _ = _budgeted_model(
-        _SuccessfulModelBase,
-        ledger=_ReconciliationFailureLedger(),
-    )
-
-    with pytest.raises(BrowserUseCostStop) as stopped:
-        asyncio.run(model.ainvoke([]))
-
-    assert stopped.value.reason is ModelStopReason.COST_ACCOUNTING_ERROR
-
-
-def test_budgeted_model_stops_when_reconciled_cost_exceeds_execution_cap() -> None:
-    model, _, _ = _budgeted_model(
-        _SuccessfulModelBase,
-        max_job_cost=UsdAmount(1),
-    )
-
-    with pytest.raises(BrowserUseCostStop) as stopped:
-        asyncio.run(model.ainvoke([]))
-
-    assert stopped.value.reason is ModelStopReason.JOB_COST_LIMIT
 
 
 def test_initial_authentication_is_code_verified_before_agent_execution(
@@ -1810,21 +1482,6 @@ def test_local_runtime_cleanup_deletes_only_owned_transient_paths(tmp_path: Path
     asyncio.run(runtime.close())
 
     assert not owned.exists()
-
-
-def test_local_runtime_cleanup_removes_constructor_failure_namespace_only() -> None:
-    runtime = BrowserUseSessionHost()
-    run_id = f"booksaver-{uuid.uuid4().hex}"
-    owned = Path(tempfile.mkdtemp(prefix=f"browser_use_agent_{run_id}_"))
-    neighbor = Path(tempfile.mkdtemp(prefix="browser_use_agent_neighbor_"))
-    runtime._agent_run_id = run_id  # noqa: SLF001 - constructor-failure cleanup contract
-    try:
-        asyncio.run(runtime.close())
-
-        assert not owned.exists()
-        assert neighbor.exists()
-    finally:
-        shutil.rmtree(neighbor, ignore_errors=True)
 
 
 def test_job_teardown_preserves_process_wide_content_free_directories(

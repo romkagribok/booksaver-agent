@@ -81,7 +81,7 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # Price execution is legacy until the owner selects canary, consented rollout, or qualified mode.
 # Inventory execution is independently agentic by default; legacy is its rollback route.
 # routing = "legacy"           # price: legacy | owner_canary | consented_users | agentic
-# price_executor = "browser_use" # agentic price adapter: jev | browser_use | stagehand
+# price_executor = "browser_use" # "jev" is required for any non-legacy routing
 # inventory_routing = "agentic" # inventory: legacy | agentic
 # disclosure_version = "typesafe-visible-booking-page-v1"
 
@@ -558,7 +558,7 @@ def _make_check_coordinator(
     )
 
     api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
-    price_executor_factory = _make_price_executor_factory(cfg, api_key)
+    price_executor_factory = _make_price_executor_factory(cfg)
 
     def _browser_use_inventory_executor(budget: Any, lease_broker: Any) -> Any:
         from booksaver.infrastructure.browser.browser_use_inventory_executor import (
@@ -575,8 +575,6 @@ def _make_check_coordinator(
         )
 
     facts_assistant, record_assistant = _make_reservation_facts_assistant(cfg)
-
-    jev_factory = _make_jev_executor_factory(cfg)
 
     @contextmanager
     def _incident_recorder() -> Iterator[DomIncidentRecorder]:
@@ -600,7 +598,6 @@ def _make_check_coordinator(
         agentic_executor_factory=price_executor_factory,
         agentic_inventory_executor_factory=_browser_use_inventory_executor,
         bookings_inventory_executor_factory=_browser_use_inventory_executor,
-        jev_executor_factory=jev_factory,
     )
 
 
@@ -638,55 +635,23 @@ def _make_reservation_facts_assistant(cfg: Config) -> tuple[Any, Any]:
     return _assistant, _record
 
 
-def _make_jev_executor_factory(cfg: Config) -> Any:
-    """Enable the paired Jev arm only with explicit config and its own TypeSafe secret."""
-    import logging
+def _make_price_executor_factory(cfg: Config) -> Any:
+    """Build the Jev price method (ADR-056), or none when its TypeSafe key is missing.
 
-    settings = cfg.jev_comparison_settings
-    if not settings.enabled:
-        return None
-    typesafe_key = os.environ.get("BOOKSAVER_TYPESAFE_API_KEY", "").strip()
-    if not typesafe_key:
-        logging.getLogger(__name__).warning(
-            "jev_comparison is enabled but BOOKSAVER_TYPESAFE_API_KEY is not set; "
-            "price checks stay baseline-only"
-        )
-        return None
-    from booksaver.infrastructure.browser.jev_price_executor import LocalJevPriceExecutor
-    from booksaver.infrastructure.llm.typesafe_client import TypeSafeClient
-
-    client = TypeSafeClient(typesafe_key, model=settings.model)
-    logging.getLogger(__name__).info(
-        "Paired Jev price comparison enabled model=%s participants=%s",
-        settings.model,
-        settings.participants.value,
-    )
-
-    def _factory(lease_broker: Any, max_cost_nano_usd: int) -> Any:
-        return LocalJevPriceExecutor(
-            client=client,
-            lease_broker=lease_broker,
-            max_calls=settings.max_calls_per_arm,
-            max_cost_nano_usd=max_cost_nano_usd,
-            mobile_settings=cfg.mobile_web_settings,
-        )
-
-    return _factory
-
-
-def _make_price_executor_factory(cfg: Config, api_key: str | None) -> Any:
-    """Build the one configured price method, or none when its own credential is missing.
-
-    Jev (ADR-056) needs only the TypeSafe key; the LLM adapters need only the Anthropic key.
-    Neither silently substitutes for the other: a missing credential fails the check closed.
+    Jev is the only agentic price method; legacy routing never consults it. A missing key
+    fails the check closed rather than substituting another method.
     """
     import logging
 
-    if cfg.agentic_browser_settings.price_executor.value != "jev":
-        if not api_key:
-            return None
-        return lambda budget, lease_broker: _make_agentic_price_executor(
-            cfg, api_key, budget, lease_broker
+    from booksaver.domain.browser_executor import ExecutionRoutingMode, PriceExecutorKind
+
+    agentic = cfg.agentic_browser_settings
+    if agentic.routing is ExecutionRoutingMode.LEGACY:
+        return None
+    if agentic.price_executor is not PriceExecutorKind.JEV:
+        raise ValueError(
+            f'agentic_browser.price_executor = "{agentic.price_executor.value}" is no longer '
+            'supported; set it to "jev" (the only agentic price method)'
         )
     typesafe_key = os.environ.get("BOOKSAVER_TYPESAFE_API_KEY", "").strip()
     if not typesafe_key:
@@ -719,37 +684,6 @@ def _make_price_executor_factory(cfg: Config, api_key: str | None) -> Any:
         )
 
     return _factory
-
-
-def _make_agentic_price_executor(
-    cfg: Config,
-    api_key: str,
-    budget: Any,
-    lease_broker: Any,
-) -> Any:
-    """Select one explicit adapter behind the shared manual/scheduled price port."""
-
-    if cfg.agentic_browser_settings.price_executor.value == "stagehand":
-        from booksaver.infrastructure.browser.agentic_executor import (
-            LocalAgenticPriceExecutor,
-        )
-
-        return LocalAgenticPriceExecutor(
-            api_key=api_key,
-            lease_broker=lease_broker,
-            budget=budget,
-            mobile_settings=cfg.mobile_web_settings,
-        )
-    from booksaver.infrastructure.browser.browser_use_price_executor import (
-        LocalBrowserUsePriceExecutor,
-    )
-
-    return LocalBrowserUsePriceExecutor(
-        api_key=api_key,
-        lease_broker=lease_broker,
-        budget=budget,
-        mobile_settings=cfg.mobile_web_settings,
-    )
 
 
 def _notify_invalid_user_keys(user_repo: Any, results: list[Any]) -> None:
@@ -1127,13 +1061,12 @@ def cmd_incidents_list(args: argparse.Namespace) -> int:
 
 
 def cmd_comparison_report(args: argparse.Namespace) -> int:
-    """Summarize paired baseline/Jev price-check outcomes and model spend (intent 026)."""
+    """Summarize Jev price-run outcomes, timings, and model spend."""
     from datetime import timedelta
 
     from booksaver.domain.price_comparison import CostCertainty, format_usd_nano
     from booksaver.infrastructure.persistence.price_comparison import (
         SqliteJevPriceRunRepository,
-        SqlitePriceComparisonRepository,
     )
 
     _cfg, db_path = _db_path_for(args)
@@ -1142,78 +1075,31 @@ def cmd_comparison_report(args: argparse.Namespace) -> int:
         print("No price comparisons recorded yet.")
         return 0
     with SqliteStore(db_path) as store:
-        repository = SqlitePriceComparisonRepository(store)
-        rows = repository.summary(since)
-        both, agreeing = repository.agreement_counts(since)
-        unverified = repository.unverified_jev_runs(since)
         primary = SqliteJevPriceRunRepository(store)
         primary_rows = primary.summary(since)
         primary_unobserved = primary.unobserved(since)
-    if primary_rows:
-        runs = sum(row[1] for row in primary_rows)
-        cost = sum(row[2] for row in primary_rows)
-        print(f"Jev-only price runs since {since:%Y-%m-%d %H:%M} UTC: {runs}")
-        for status, count, status_cost, mean_seconds in primary_rows:
-            average = f"{mean_seconds:.0f}s avg" if mean_seconds is not None else "-"
-            print(
-                f"  {status:22} {count:5}  "
-                f"{format_usd_nano(status_cost, CostCertainty.EXACT):>10}  {average}"
-            )
-        print(f"  total AI cost {format_usd_nano(cost, CostCertainty.EXACT)}")
-        if primary_unobserved:
-            print("  Runs that produced no observation (newest first):")
-            for started_at, execution_id, status, calls, took, diagnostic in primary_unobserved:
-                print(
-                    f"    {started_at[:19]}Z  {execution_id[-8:]}  {status}  {calls} calls  "
-                    f"{took:.0f}s"
-                )
-                if diagnostic:
-                    print(f"      {diagnostic}")
-        print()
-    if not rows:
-        if not primary_rows:
-            print("No price comparisons recorded yet.")
+    if not primary_rows:
+        print("No price comparisons recorded yet.")
         return 0
-    print(f"Paired price checks since {since:%Y-%m-%d %H:%M} UTC")
-    header = f"{'METHOD':9}  {'OUTCOME':9}  {'RUNS':>5}  {'AI COST':>22}  {'AVG SECONDS':>11}"
-    print(header)
-    print("-" * len(header))
-    for arm in ("baseline", "jev"):
-        arm_rows = [row for row in rows if row.arm == arm]
-        runs = sum(row.count for row in arm_rows)
-        successes = sum(row.count for row in arm_rows if row.status == "success")
-        for row in arm_rows:
-            seconds = f"{row.average_seconds:.0f}" if row.average_seconds is not None else "-"
-            certainty = (
-                CostCertainty.CONSERVATIVE if row.conservative_cost_count else CostCertainty.EXACT
-            )
-            print(
-                f"{arm:9}  {row.status:9}  {row.count:5}  "
-                f"{format_usd_nano(row.cost_nano_usd, certainty):>22}  {seconds:>11}"
-            )
-        total = sum(row.cost_nano_usd for row in arm_rows)
-        total_certainty = (
-            CostCertainty.CONSERVATIVE
-            if any(row.conservative_cost_count for row in arm_rows)
-            else CostCertainty.EXACT
-        )
-        unknown = sum(row.unknown_cost_count for row in arm_rows)
-        per_success = (
-            format_usd_nano(total // successes, CostCertainty.EXACT) if successes else "n/a"
-        )
+    runs = sum(row[1] for row in primary_rows)
+    cost = sum(row[2] for row in primary_rows)
+    print(f"Jev-only price runs since {since:%Y-%m-%d %H:%M} UTC: {runs}")
+    for status, count, status_cost, mean_seconds in primary_rows:
+        average = f"{mean_seconds:.0f}s avg" if mean_seconds is not None else "-"
         print(
-            f"  {arm}: {successes}/{runs} verified; total AI cost "
-            f"{format_usd_nano(total, total_certainty)}; per verified result {per_success}"
-            + (f"; {unknown} run(s) with unknown cost" if unknown else "")
+            f"  {status:22} {count:5}  "
+            f"{format_usd_nano(status_cost, CostCertainty.EXACT):>10}  {average}"
         )
-    print(f"Both methods verified a price in {both} pair(s); {agreeing} reported the same price.")
-    if unverified:
-        print("\nRecent Jev runs without a verified price (newest first):")
-        for created_at, comparison_id, outcome, calls, run_seconds, detail in unverified:
-            elapsed = f"{run_seconds:.0f}s" if run_seconds is not None else "-"
-            print(f"  {created_at[:19]}Z  {comparison_id[:8]}  {outcome}  {calls} calls  {elapsed}")
-            if detail:
-                print(f"    {detail}")
+    print(f"  total AI cost {format_usd_nano(cost, CostCertainty.EXACT)}")
+    if primary_unobserved:
+        print("  Runs that produced no observation (newest first):")
+        for started_at, execution_id, status, calls, took, diagnostic in primary_unobserved:
+            print(
+                f"    {started_at[:19]}Z  {execution_id[-8:]}  {status}  {calls} calls  "
+                f"{took:.0f}s"
+            )
+            if diagnostic:
+                print(f"      {diagnostic}")
     return 0
 
 
@@ -1872,12 +1758,12 @@ def create_parser() -> argparse.ArgumentParser:
     p_incidents_inspect.add_argument("incident_id", metavar="INCIDENT_ID")
     p_incidents_inspect.set_defaults(func=cmd_incidents_inspect)
 
-    # paired Jev price comparison (intent 026)
-    p_cmp = sub.add_parser("comparison", help="Paired baseline/Jev price-check comparison")
+    # Jev price-run report (intent 026)
+    p_cmp = sub.add_parser("comparison", help="Jev price-run outcomes and AI cost")
     p_cmp.set_defaults(func=_no_subcommand(p_cmp))
     cmp_sub = p_cmp.add_subparsers(dest="comparison_command")
     p_cmp_report = cmp_sub.add_parser(
-        "report", help="Summarize paired outcomes, timings, and AI cost per method"
+        "report", help="Summarize Jev price-run outcomes, timings, and AI cost"
     )
     p_cmp_report.add_argument(
         "--days", type=int, choices=range(1, 91), default=7, metavar="N"

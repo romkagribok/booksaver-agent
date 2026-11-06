@@ -439,17 +439,9 @@ def forbidden_model_calls(monkeypatch):
     import browser_use
 
     from booksaver.application.model_policy import BrowserJobCostBudget
-    from booksaver.infrastructure.browser.agentic_executor import AnthropicComputerUseModel
-    from booksaver.infrastructure.browser.agentic_inventory_executor import (
-        AnthropicInventoryComputerUseModel,
-    )
     from booksaver.infrastructure.browser.browser_use_inventory_executor import (
         BrowserUseInventoryBrowserExecutor,
         LocalBrowserUseInventoryRuntime,
-    )
-    from booksaver.infrastructure.browser.browser_use_price_executor import (
-        BrowserUsePriceBrowserExecutor,
-        LocalBrowserUsePriceRuntime,
     )
     from booksaver.infrastructure.llm.adaptive_execution import AdaptiveRoleExecutor
     from booksaver.infrastructure.llm.anthropic_adapter import (
@@ -471,12 +463,8 @@ def forbidden_model_calls(monkeypatch):
     monkeypatch.setattr(AnthropicLLMClientFactory, "__init__", calls)
     monkeypatch.setattr(CallerBoundAnthropicFactory, "__init__", calls)
     monkeypatch.setattr(LazyAdaptiveAnthropicRuntimeFactory, "__init__", calls)
-    monkeypatch.setattr(AnthropicComputerUseModel, "__init__", calls)
-    monkeypatch.setattr(AnthropicInventoryComputerUseModel, "__init__", calls)
     monkeypatch.setattr(BrowserUseInventoryBrowserExecutor, "__init__", calls)
-    monkeypatch.setattr(BrowserUsePriceBrowserExecutor, "__init__", calls)
     monkeypatch.setattr(LocalBrowserUseInventoryRuntime, "__init__", calls)
-    monkeypatch.setattr(LocalBrowserUsePriceRuntime, "__init__", calls)
     monkeypatch.setattr(AnthropicPageStateClassifier, "__init__", calls)
     monkeypatch.setattr(BrowserJobCostBudget, "__init__", calls)
     monkeypatch.setattr(BrowserJobCostBudget, "admit", calls)
@@ -487,8 +475,6 @@ def forbidden_model_calls(monkeypatch):
     monkeypatch.setattr(AnthropicExtractor, "extract_offers", calls)
     monkeypatch.setattr(AnthropicInventoryInterpreter, "interpret", calls)
     monkeypatch.setattr(AnthropicPageStateClassifier, "classify", calls)
-    monkeypatch.setattr(AnthropicComputerUseModel, "next_turn", calls)
-    monkeypatch.setattr(AnthropicInventoryComputerUseModel, "next_turn", calls)
     yield calls
     calls.assert_not_called()
 

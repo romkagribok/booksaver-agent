@@ -24,7 +24,6 @@ MAX_EXECUTOR_SECONDS = 180
 MAX_JOB_COST_MICRO_USD = 1_000_000
 MAX_DAILY_COST_MICRO_USD = 10_000_000
 BROWSER_USE_PRICE_POLICY_VERSION = "browser-use-price-v1"
-STAGEHAND_PRICE_POLICY_VERSION = "agentic-price-v1"
 JEV_PRICE_POLICY_VERSION = "jev-price-v3"
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -82,12 +81,7 @@ class RefundabilityEvidence(Enum):
 
 
 class ObservationSource(Enum):
-    STAGEHAND_EXTRACT = "stagehand_extract"
-    COMPUTER_USE_SUBMISSION = "computer_use_submission"
-    STAGEHAND_INVENTORY_EXTRACT = "stagehand_inventory_extract"
-    COMPUTER_USE_INVENTORY_SUBMISSION = "computer_use_inventory_submission"
     BROWSER_USE_INVENTORY_SUBMISSION = "browser_use_inventory_submission"
-    BROWSER_USE_PRICE_SUBMISSION = "browser_use_price_submission"
     JEV_PRICE_SUBMISSION = "jev_price_submission"
     FAKE = "fake"
 
@@ -127,10 +121,9 @@ class InventoryExecutionRoutingMode(Enum):
 class PriceExecutorKind(Enum):
     """Configured implementation behind the provider-neutral price-executor port."""
 
+    # Accepted only with legacy routing, where no agentic price method runs.
     BROWSER_USE = "browser_use"
-    STAGEHAND = "stagehand"
-    # TypeSafe Jev as the authoritative price method (ADR-056). The two LLM adapters above
-    # stay selectable as the rollback path.
+    # TypeSafe Jev, the only agentic price method (ADR-056).
     JEV = "jev"
 
     @classmethod
@@ -147,11 +140,7 @@ class PriceExecutorKind(Enum):
     def qualification_policy_version(self) -> str:
         if self is PriceExecutorKind.JEV:
             return JEV_PRICE_POLICY_VERSION
-        return (
-            BROWSER_USE_PRICE_POLICY_VERSION
-            if self is PriceExecutorKind.BROWSER_USE
-            else STAGEHAND_PRICE_POLICY_VERSION
-        )
+        return BROWSER_USE_PRICE_POLICY_VERSION
 
 
 class RoutingReason(Enum):

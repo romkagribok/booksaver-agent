@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test -f /usr/share/novnc/core/input/keysymdef.js \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user the daemon and Chromium run as. Playwright and Stagehand use
+# Non-root user the daemon and Chromium run as. Playwright and Browser Use use
 # Chromium's container-compatible --no-sandbox mode in this image; the process
 # still stays unprivileged, and BookSaver's action/destination guards remain
 # the browser authority boundary.
