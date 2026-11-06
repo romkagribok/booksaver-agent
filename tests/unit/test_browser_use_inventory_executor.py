@@ -18,7 +18,6 @@ import pytest
 from PIL import Image
 from pydantic import BaseModel
 
-import booksaver.infrastructure.browser.browser_use_inventory_executor as inventory_adapter
 import booksaver.infrastructure.browser.browser_use_runtime as runtime_adapter
 from booksaver.application.async_runner import AsyncLoopRunner
 from booksaver.application.browser_executor import ExecutionMeter, InMemorySessionLeaseBroker
