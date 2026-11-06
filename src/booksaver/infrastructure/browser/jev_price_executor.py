@@ -34,6 +34,7 @@ from booksaver.domain.browser_executor import (
     PriceExecutionResult,
     PriceExecutionStatus,
     RedactedProvenance,
+    query_identity_rejection,
 )
 from booksaver.domain.meal_plan import mentions_meals
 from booksaver.domain.mobile_web import MobileWebSettings
@@ -1141,7 +1142,12 @@ class LocalJevPriceRuntime:
                 rate_jobs.append((room_label, room, rate, prices))
                 rate_tasks.append(decider.ask(state, questions))
         rate_answers = await _all_or_fail(rate_tasks)
-        if not rate_jobs and name_lines and await self._unavailable(query, name_lines, decider):
+        if (
+            not rate_jobs
+            and name_lines
+            and _is_requested_page(query, snapshot.url, property_name)
+            and await self._unavailable(query, name_lines, decider)
+        ):
             diagnostics.extraction += " availability=unavailable"
             return PriceExecutionStatus.UNAVAILABLE
 
@@ -1280,6 +1286,35 @@ async def _all_or_fail(
             first = first.exceptions[0]
         raise first from None
     return [task.result() for task in tasks]
+
+
+def _is_requested_page(query: Any, url: str, property_name: str | None) -> bool:
+    """Only the requested property, stay and party may be declared unavailable (FR-1)."""
+
+    facts = _url_query_facts(url)
+    if facts is None or property_name is None:
+        return False
+    parsed = urlsplit(url)
+    try:
+        observed = _map_extracted_observation(
+            {
+                "property_name": property_name,
+                "property_reference": f"{parsed.scheme}://{parsed.netloc}{parsed.path}",
+                "check_in": facts["checkin"],
+                "check_out": facts["checkout"],
+                "adults": facts["adults"],
+                "children": facts["children"],
+                "rooms": facts["rooms"],
+                "currency": query.currency,
+                "authenticated": True,
+                "genius": None,
+                "completeness": "complete",
+                "offers": [],
+            }
+        )
+    except ValueError:
+        return False
+    return query_identity_rejection(query, observed.facts) is None
 
 
 def _url_query_facts(url: str) -> dict[str, str] | None:

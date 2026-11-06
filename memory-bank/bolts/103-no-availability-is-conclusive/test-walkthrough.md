@@ -15,3 +15,7 @@ created: 2026-11-06T17:10:30Z
 - Live replay on cloned data (kit `noavail-20261106`, daemon paused 17:03–17:08Z and restored
   healthy): Kalipè (2c711962) now `no_equivalent_offer`, Jev "unavailable" 0.94; AIRINN
   (032be4a7) unchanged, `no_equivalent_offer` room_mismatch=26.
+- After the Codex fix: another property, check-out, adult count or a URL without stay facts never
+  asks the question or returns unavailable. Full suite 2,610 passed, 1 skipped. Live replay again
+  (daemon paused 17:15–17:20Z, restored healthy): Kalipè passes identity, "unavailable" 0.91,
+  detail "The property shows no availability for these dates."; AIRINN unchanged.

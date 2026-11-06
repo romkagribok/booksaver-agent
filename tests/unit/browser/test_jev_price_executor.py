@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -1188,5 +1189,23 @@ def test_only_a_confident_no_availability_answer_is_conclusive(
 def test_named_rooms_never_trigger_the_availability_question() -> None:
     jev = ScriptedJev()
     _extract(jev)
+    assert all("room_cards" not in state for state in jev.states)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        URL.replace("hotel-test", "other-hotel"),
+        URL.replace("checkout=2026-11-25", "checkout=2026-11-26"),
+        URL.replace("group_adults=2", "group_adults=1"),
+        URL.split("?")[0],
+    ],
+)
+def test_a_page_for_another_property_stay_or_party_is_never_declared_unavailable(
+    url: str,
+) -> None:
+    snapshot = replace(_snapshot(ALTERNATIVE_DATES), url=url)
+    jev = ScriptedJev(room_name="none")
+    assert _extract(jev, snapshot) is None
     assert all("room_cards" not in state for state in jev.states)  # type: ignore[operator]
 

@@ -489,6 +489,24 @@ def observed_offer_rejection_reasons(offer: ObservedOffer, currency: str) -> tup
     return tuple(reasons)
 
 
+def query_identity_rejection(
+    query: TrustedPriceQuery, facts: ObservedQueryFacts
+) -> ValidationRejection | None:
+    """The page must be the requested property, stay and party before any result counts."""
+
+    if (
+        not _property_reference_matches(query, facts)
+        or facts.property_name is None
+        or _normalized_name(facts.property_name) != _normalized_name(query.property_name)
+    ):
+        return ValidationRejection.PROPERTY_MISMATCH
+    if facts.check_in != query.stay_dates.check_in or facts.check_out != query.stay_dates.check_out:
+        return ValidationRejection.DATE_MISMATCH
+    if facts.occupancy != query.occupancy:
+        return ValidationRejection.OCCUPANCY_MISMATCH
+    return None
+
+
 def validate_price_observation(
     request: PriceExecutionRequest, result: PriceExecutionResult
 ) -> PriceObservationValidation:
@@ -501,16 +519,9 @@ def validate_price_observation(
     if facts.completeness is not EvidenceCompleteness.COMPLETE:
         return PriceObservationValidation(rejection=ValidationRejection.QUERY_EVIDENCE_INCOMPLETE)
     query = request.query
-    if (
-        not _property_reference_matches(query, facts)
-        or facts.property_name is None
-        or _normalized_name(facts.property_name) != _normalized_name(query.property_name)
-    ):
-        return PriceObservationValidation(rejection=ValidationRejection.PROPERTY_MISMATCH)
-    if facts.check_in != query.stay_dates.check_in or facts.check_out != query.stay_dates.check_out:
-        return PriceObservationValidation(rejection=ValidationRejection.DATE_MISMATCH)
-    if facts.occupancy != query.occupancy:
-        return PriceObservationValidation(rejection=ValidationRejection.OCCUPANCY_MISMATCH)
+    identity = query_identity_rejection(query, facts)
+    if identity is not None:
+        return PriceObservationValidation(rejection=identity)
     if facts.authenticated is not True:
         return PriceObservationValidation(rejection=ValidationRejection.AUTHENTICATION_REQUIRED)
     if facts.currency != query.currency:

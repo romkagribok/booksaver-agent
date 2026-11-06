@@ -15,3 +15,7 @@ The call goes through the same metered decider, so it counts toward the Jev cap 
 
 A first wording that sent de-duplicated lines and ISO dates got "available" at 0.19 on Kalipè's
 page; whole cards and the page's date style fixed it (see test walkthrough).
+
+Codex review (PR #105): the unavailable shortcut skipped query identity. The property, stay and
+party checks moved out of `validate_price_observation` into `query_identity_rejection`; the
+availability question is asked only when the page URL and Jev's property heading pass it.
