@@ -480,9 +480,20 @@ class GroupedInventoryReader:
         # A separate management link may carry another token for a listed reservation.
         # Only the observed group's exact booking count plus explicit card statuses can
         # qualify that distinction. Otherwise unknown targets still require inspection.
-        if expected is not None and len(cards) + cls.nonhotels(snapshot) == expected:
+        if expected is not None and cls.count_matches(snapshot, expected):
             return cards
         return links
+
+    @classmethod
+    def count_matches(cls, snapshot: InventorySnapshot, expected: int) -> bool:
+        """Cards match the trip's count, with or without cancelled ones (Booking.com omits them)."""
+        cards = cls.targets(snapshot, "reservation_detail", status_only=True)
+        active = [
+            card for card in cards
+            if not {line.strip() for line in card.text.splitlines()} & _INACTIVE_CARD_STATUSES
+        ]
+        nonhotels = cls.nonhotels(snapshot)
+        return expected in {len(cards) + nonhotels, len(active) + nonhotels}
 
     @staticmethod
     def nonhotels(snapshot: InventorySnapshot) -> int:
@@ -541,9 +552,7 @@ class GroupedInventoryReader:
             group = await self.snapshot()
             if expected_count is not None:
                 for _ in range(20):
-                    if group is not None and len(
-                        self.targets(group, "reservation_detail", status_only=True)
-                    ) + self.nonhotels(group) == expected_count:
+                    if group is not None and self.count_matches(group, expected_count):
                         break
                     await asyncio.sleep(0.2)
                     group = await self.snapshot()
@@ -551,9 +560,8 @@ class GroupedInventoryReader:
                 self.unresolved("trip_snapshot")
                 return True
             nonhotel_count = self.nonhotels(group)
-            count_verified = expected_count is not None and (
-                len(self.targets(group, "reservation_detail", status_only=True)) + nonhotel_count
-                == expected_count
+            count_verified = expected_count is not None and self.count_matches(
+                group, expected_count,
             )
             if count_verified:
                 self.result.verified_trip_counts += 1

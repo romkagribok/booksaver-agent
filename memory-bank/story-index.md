@@ -812,3 +812,13 @@ Run BookSaver on Jev alone. Unit 1: Jev reads totals and refund terms; Claude re
 | `US-243` | Read totals and refund terms with Jev alone | Jev only | Planned | `001-jev-reservation-reader/stories/001-read-with-jev-alone.md` |
 | `US-244` | Remove the code price and refund parsing | Jev only | Planned | `001-jev-reservation-reader/stories/002-remove-code-price-and-refund-parsing.md` |
 | `US-245` | Keep failures visible without notices | Jev only | Planned | `001-jev-reservation-reader/stories/003-keep-failures-visible.md` |
+
+## 031-cancelled-card-trip-count
+
+A trip with a cancelled card can be verified.
+
+### 001-trip-count-ignores-cancelled
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-254` | Verify a trip that contains a cancelled card | Account sync | Planned | `001-trip-count-ignores-cancelled/stories/001-verify-trip-with-cancelled-card.md` |
