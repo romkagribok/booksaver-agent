@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 61
+total_decisions: 62
 ---
 
 # Decision Index
@@ -587,4 +587,12 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/098-jev-reservation-reader/adr-061-jev-is-the-reservation-reader.md`
 - **Summary**: Supersedes ADR-060. Jev alone reads booked totals and refund terms (asked twice, layout-independent checks); its agreed total is page-verified; the code price/refund parsing, comparison, owner notice and alert label are removed.
 - **Read when**: Changing how confirmation totals or refund terms are read, or the trust given to Jev.
+
+### ADR-062: No disclosure gate; invitees are informed once of TypeSafe
+- **Status**: accepted
+- **Date**: 2026-11-06
+- **Bolt**: 099-no-anthropic-key (no-anthropic-key)
+- **Path**: `bolts/099-no-anthropic-key/adr-062-no-consent-gate-inform-once.md`
+- **Summary**: Routing no longer depends on disclosure acceptance; every active user is served by Jev. Invitees are informed once that TypeSafe's Jev reads page content; new invites see the TypeSafe disclosure.
+- **Read when**: Changing disclosure, consent or routing between price or inventory methods.
 

@@ -49,6 +49,7 @@ from booksaver.domain.browser_executor import (
     EvidenceCompleteness,
     ExecutionRoutingMode,
     ExecutionUsage,
+    InventoryExecutionRoutingMode,
     ObservationSource,
     QualificationStatus,
     RedactedProvenance,
@@ -215,6 +216,16 @@ def _config(tmp_path: Path, *, checks: int = 3, llm_calls: int = 5) -> Config:
             max_llm_calls_per_user_per_day=llm_calls,
         ),
     )
+
+
+def _legacy_inventory_config(tmp_path: Path) -> Config:
+    """Select the legacy interpreter inventory path, which stays until ADR-062 unit 3."""
+    config = _config(tmp_path)
+    config.agentic_browser_settings = replace(
+        config.agentic_browser_settings,
+        inventory_routing=InventoryExecutionRoutingMode.LEGACY,
+    )
+    return config
 
 
 def _build_coordinator(
@@ -459,7 +470,7 @@ def test_check_now_shares_one_lazy_adaptive_job_across_sync_and_search(
             return runtime
 
     coordinator = _build_coordinator(
-        _config(tmp_path),
+        _legacy_inventory_config(tmp_path),
         llm_factory_builder=lambda _cfg, _store: AdaptiveFactory(),
         browser_factory=BrowserContext,
     )
@@ -1256,7 +1267,7 @@ def test_bookings_request_discovers_and_projects_authenticated_inventory(
             return b"[]"
 
     coordinator = _build_coordinator(
-        _config(tmp_path),
+        _legacy_inventory_config(tmp_path),
         browser_factory=lambda: ExistingBrowserContext(InventoryBrowser()),
         session_repository=sessions,
     )
@@ -1637,7 +1648,7 @@ def test_inventory_interpreter_call_is_charged_to_requesting_user(
             return Interpreter()
 
     coordinator = _build_coordinator(
-        _config(tmp_path),
+        _legacy_inventory_config(tmp_path),
         llm_factory_builder=lambda _cfg, _store: Factory(),
         browser_factory=lambda: ExistingBrowserContext(InventoryBrowser()),
         session_repository=sessions,
@@ -1672,7 +1683,7 @@ def test_inventory_with_no_daily_allowance_stays_deterministic_only(
     with SqliteStore(tmp_path / "booksaver.db") as store:
         user = SqliteUserRepository(store).get_or_create_by_telegram_id(101, UserRole.USER)
     _seed_session(sessions, user.user_id)
-    cfg = _config(tmp_path)
+    cfg = _legacy_inventory_config(tmp_path)
     calls = DailyCounter()
     daily_limit = cfg.limits_settings.max_llm_calls_per_user_per_day
     calls.increment(user.user_id, by=daily_limit)
@@ -1749,7 +1760,7 @@ def test_inventory_personal_key_failure_is_preserved_with_setkey_guidance(
     completed = threading.Event()
     outcomes: list[InventoryCompletion] = []
     coordinator = _build_coordinator(
-        _config(tmp_path),
+        _legacy_inventory_config(tmp_path),
         llm_factory_builder=lambda _cfg, _store: Factory(),
         browser_factory=lambda: ExistingBrowserContext(Browser()),
         session_repository=sessions,
@@ -1977,38 +1988,38 @@ def test_bookings_uses_browser_use_factory_while_other_inventory_keeps_stagehand
     assert legacy_browser_opens == []
 
 
-def test_undisclosed_invitee_stays_on_legacy_inventory_route(tmp_path: Path) -> None:
+def test_undisclosed_invitee_uses_agentic_inventory_route(tmp_path: Path) -> None:
+    sessions = _session_repo(tmp_path)
     with SqliteStore(tmp_path / "booksaver.db") as store:
         invitee = SqliteUserRepository(store).get_or_create_by_telegram_id(202, UserRole.USER)
-    executor = FakeInventoryBrowserExecutor([_agentic_inventory_result()])
+    _seed_session(sessions, invitee.user_id)
+    executor = FakeInventoryBrowserExecutor(
+        [InventoryExecutionResult(InventoryExecutionStatus.PROVIDER_FAILURE)]
+    )
+    legacy_opens: list[None] = []
+
+    def legacy_browser_factory() -> BrowserContext:
+        legacy_opens.append(None)
+        return BrowserContext()
+
     coordinator = _build_coordinator(
         _config(tmp_path),
-        browser_factory=BrowserContext,
+        browser_factory=legacy_browser_factory,
+        session_repository=sessions,
         agentic_inventory_executor_factory=lambda _budget, _leases: executor,
+        bookings_inventory_executor_factory=lambda _budget, _leases: executor,
     )
-    legacy_calls: list[tuple[int, SynchronizationTrigger]] = []
-
-    def legacy_sync(
-        self: CheckCoordinator,
-        store: SqliteStore,
-        _browser: Any,
-        user_id: int,
-        trigger: SynchronizationTrigger,
-    ) -> SynchronizationReport:
-        legacy_calls.append((user_id, trigger))
-        return _complete_sync(store, _browser, user_id, trigger)
-
-    coordinator._synchronize_user = MethodType(legacy_sync, coordinator)  # type: ignore[method-assign]
     completed = threading.Event()
 
+    # ADR-062: no disclosure record is needed; every active user is served by the agentic route.
     assert (
         coordinator.request_inventory(202, lambda _outcome: completed.set())
         is ImmediateAdmission.ACCEPTED
     )
     assert completed.wait(1)
 
-    assert legacy_calls == [(invitee.user_id, SynchronizationTrigger.BOOKINGS)]
-    assert executor.requests == []
+    assert len(executor.requests) == 1
+    assert legacy_opens == []
 
 
 def test_agentic_inventory_terminal_failure_never_falls_back_to_legacy_in_same_job(
@@ -2995,6 +3006,7 @@ def test_a_failing_stall_report_cannot_strand_the_scheduled_slot(
 ) -> None:
     coordinator = _coordinator(tmp_path)
     run_slot, sent, _booking_id, user_id = _stalled_slot(tmp_path, coordinator, monkeypatch)
+    coordinator._inform_provider_change = lambda _user_id: None  # type: ignore[method-assign]  # noqa: SLF001
     monkeypatch.setattr(
         "booksaver.daemon.check_coordinator.SqliteMonitoringStallRepository.list_upcoming",
         MagicMock(side_effect=sqlite3.OperationalError("broken")),
@@ -3096,3 +3108,106 @@ def test_stall_reason_reflects_whether_the_latest_sync_blocks_checks(
 
     assert ("can't read this reservation" in sent[0][1]) is blocked
 
+
+
+def _inform_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, telegram_id: int = 101,
+    role: UserRole = UserRole.USER, health: UserSessionHealth = UserSessionHealth.READY,
+    recorded: str | None = "old-disclosure",
+) -> tuple[CheckCoordinator, list[tuple[str, str]], int]:
+    monkeypatch.setenv("BOOKSAVER_TELEGRAM_BOT_TOKEN", "token")
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.TelegramNotifier.send",
+        lambda _self, subject, body: sent.append((subject, body)),
+    )
+    status = MagicMock()
+    status.return_value.health = health
+    monkeypatch.setattr(EncryptedUserSessionRepository, "status", status)
+    coordinator = _coordinator(tmp_path)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        users = SqliteUserRepository(store)
+        if role is UserRole.OWNER:
+            user = users.get_owner()
+            users.link_telegram_id(user.user_id, telegram_id)
+        else:
+            user = users.get_or_create_by_telegram_id(telegram_id, role)
+        if recorded is not None:
+            SqliteAgenticDisclosureConsentRepository(store).acknowledge(
+                user_id=user.user_id, disclosure_version=recorded,
+                acknowledged_at=datetime.now(UTC),
+            )
+    return coordinator, sent, user.user_id
+
+
+def _recorded_version(tmp_path: Path, user_id: int) -> str | None:
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        record = SqliteAgenticDisclosureConsentRepository(store).get(user_id)
+    return None if record is None else record.disclosure_version
+
+
+@pytest.mark.parametrize("recorded", ["old-disclosure", None])
+def test_invitee_is_informed_of_the_provider_change_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded: str | None,
+) -> None:
+    coordinator, sent, user_id = _inform_setup(tmp_path, monkeypatch, recorded=recorded)
+
+    coordinator._inform_provider_change(user_id)  # noqa: SLF001
+
+    assert len(sent) == 1
+    assert "Jev" in sent[0][1]
+    assert _recorded_version(tmp_path, user_id) == (
+        coordinator._config.agentic_browser_settings.disclosure_version  # noqa: SLF001
+    )
+
+    coordinator._inform_provider_change(user_id)  # noqa: SLF001
+
+    assert len(sent) == 1
+
+
+def test_owner_is_never_informed_of_the_provider_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, sent, owner_id = _inform_setup(tmp_path, monkeypatch, role=UserRole.OWNER)
+
+    coordinator._inform_provider_change(owner_id)  # noqa: SLF001
+
+    assert sent == []
+    assert _recorded_version(tmp_path, owner_id) == "old-disclosure"
+
+
+@pytest.mark.parametrize(
+    "health", [h for h in UserSessionHealth if h is not UserSessionHealth.READY],
+)
+def test_invitee_without_a_ready_session_is_not_informed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, health: UserSessionHealth,
+) -> None:
+    coordinator, sent, user_id = _inform_setup(tmp_path, monkeypatch, health=health)
+
+    coordinator._inform_provider_change(user_id)  # noqa: SLF001
+
+    assert sent == []
+    assert _recorded_version(tmp_path, user_id) == "old-disclosure"
+
+
+def test_failed_provider_change_message_records_nothing_and_is_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, sent, user_id = _inform_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.TelegramNotifier.send",
+        MagicMock(side_effect=RuntimeError("telegram down")),
+    )
+
+    coordinator._inform_provider_change(user_id)  # noqa: SLF001
+
+    assert _recorded_version(tmp_path, user_id) == "old-disclosure"
+    monkeypatch.setattr(
+        "booksaver.daemon.check_coordinator.TelegramNotifier.send",
+        lambda _self, subject, body: sent.append((subject, body)),
+    )
+
+    coordinator._inform_provider_change(user_id)  # noqa: SLF001
+
+    assert len(sent) == 1
+    assert _recorded_version(tmp_path, user_id) != "old-disclosure"

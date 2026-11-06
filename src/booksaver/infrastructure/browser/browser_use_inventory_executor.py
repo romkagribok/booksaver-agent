@@ -1042,6 +1042,14 @@ class LocalBrowserUseInventoryRuntime:
         grouped = await self._read_grouped_inventory(request, session, meter)
         if grouped is not None:
             return grouped
+        if not api_key:
+            # No model navigates when the code reader cannot read the page (ADR-062, FR-9): the
+            # sync fails visibly and the stall message covers it.
+            logger.warning(
+                "Grouped inventory reader could not read execution_id=%s; no model fallback",
+                request.execution_id,
+            )
+            return BrowserUseRuntimeResult(InventoryExecutionStatus.PROVIDER_FAILURE)
 
         # Only a code-observed empty initial page may produce this informational result.
         # A model cannot report it, and it never authorizes removal of saved reservations.
@@ -1940,8 +1948,6 @@ class BrowserUseInventoryBrowserExecutor:
         runner: AsyncLoopRunner,
         runtime_factory: Callable[[], BrowserUseRuntimePort] = LocalBrowserUseInventoryRuntime,
     ) -> None:
-        if not api_key.strip():
-            raise ValueError("BOOKSAVER_LLM_API_KEY is required for Browser Use inventory")
         self._api_key = api_key
         self._leases = lease_broker
         self._budget = budget

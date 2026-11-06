@@ -813,6 +813,29 @@ Run BookSaver on Jev alone. Unit 1: Jev reads totals and refund terms; Claude re
 | `US-244` | Remove the code price and refund parsing | Jev only | Planned | `001-jev-reservation-reader/stories/002-remove-code-price-and-refund-parsing.md` |
 | `US-245` | Keep failures visible without notices | Jev only | Planned | `001-jev-reservation-reader/stories/003-keep-failures-visible.md` |
 
+### 002-no-anthropic-key
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-246` | Route every user to Jev | Jev only | Planned | `002-no-anthropic-key/stories/001-route-everyone-to-jev.md` |
+| `US-247` | Drop the Claude discovery fallback | Jev only | Planned | `002-no-anthropic-key/stories/002-drop-claude-discovery-fallback.md` |
+| `US-248` | Start without the Anthropic key | Jev only | Planned | `002-no-anthropic-key/stories/003-start-without-anthropic-key.md` |
+
+### 003-delete-claude-code
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-249` | Move shared helpers out of Claude modules | Jev only | Planned | `003-delete-claude-code/stories/001-extract-shared-helpers.md` |
+| `US-250` | Delete the Claude-only code | Jev only | Planned | `003-delete-claude-code/stories/002-delete-claude-only-code.md` |
+
+### 004-claude-data-config-docs
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-251` | Drop the Claude tables | Jev only | Planned | `004-claude-data-config-docs/stories/001-drop-claude-tables.md` |
+| `US-252` | Retire the Claude config keys | Jev only | Planned | `004-claude-data-config-docs/stories/002-retire-claude-config.md` |
+| `US-253` | Update docs and close the issues | Jev only | Planned | `004-claude-data-config-docs/stories/003-update-docs-and-issues.md` |
+
 ## 031-cancelled-card-trip-count
 
 A trip with a cancelled card can be verified.

@@ -188,7 +188,7 @@ class ValidationRejection(Enum):
 @dataclass(frozen=True, slots=True)
 class AgenticBrowserSettings:
     routing: ExecutionRoutingMode = ExecutionRoutingMode.LEGACY
-    disclosure_version: str = "anthropic-visible-booking-page-v1"
+    disclosure_version: str = "typesafe-visible-booking-page-v1"
     inventory_routing: InventoryExecutionRoutingMode = InventoryExecutionRoutingMode.AGENTIC
     price_executor: PriceExecutorKind = PriceExecutorKind.BROWSER_USE
 
@@ -508,8 +508,7 @@ def resolve_execution_route(
     if configured is ExecutionRoutingMode.CONSENTED_USERS:
         if context.is_owner:
             return RoutingDecision(True, RoutingReason.OWNER_CONSENTED_ROLLOUT)
-        if context.acknowledged_disclosure_version != context.disclosure_version:
-            return RoutingDecision(False, RoutingReason.DISCLOSURE_REQUIRED)
+        # Invitees are informed, not gated (ADR-062): nobody falls back to the legacy method.
         return RoutingDecision(True, RoutingReason.INVITEE_CONSENTED_ROLLOUT)
     if context.qualification.policy_version != context.qualification_policy_version:
         return RoutingDecision(False, RoutingReason.QUALIFICATION_REQUIRED)

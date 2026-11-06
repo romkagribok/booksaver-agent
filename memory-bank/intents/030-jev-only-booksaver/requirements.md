@@ -56,3 +56,48 @@ The owner wants BookSaver to run on Jev alone with near-zero maintenance. Two st
 ## Out of scope (unit 1)
 
 Navigation and the other confirmation facts; the Claude removal (units 2 to 4).
+
+## Units 2 to 4: remove Claude (2026-11-04T16:13:23Z)
+
+Owner decisions of 2026-11-04: invitees keep being checked and are informed once (no new accept
+step); drop reservation discovery's Claude fallback; drop the Claude spend and qualification tables
+after a backup; close issue #3. Start before unit 1's read-back; deploy only after it.
+
+### Unit 2: no Anthropic key needed (release A)
+
+- **FR-7, everyone on Jev.** Every active user's price checks use Jev and account sync uses the
+  code reader with Jev, whatever their disclosure record; the scripted price path and the legacy
+  inventory source are no longer selected for anyone.
+- **FR-8, inform once.** Each invitee with a Booking.com session gets one Telegram message that page
+  content is now read by TypeSafe's Jev, not Anthropic; recorded so it is never repeated. New invites
+  see the updated disclosure text naming TypeSafe at `/connect`.
+- **FR-9, no Claude fallback in discovery.** When the code reader cannot read an account's trip list,
+  the sync fails visibly (existing stall message after 24 hours); no model navigates.
+- **FR-10, starts without the key.** The daemon, bot and syncs run with `BOOKSAVER_LLM_API_KEY`
+  unset; after release the key is removed from the VPS and the owner revokes it at Anthropic.
+
+### Unit 3: delete the Claude code (release B)
+
+- **FR-11.** Remove the Claude price methods (Stagehand and Browser Use agents), the paired
+  comparison mode, the scripted price path with its Claude recovery and browser agent, the page-state
+  classifier, the model-policy and adaptive-execution layer, the Anthropic adapter and client factory,
+  the legacy inventory source, the Stagehand inventory executor, `/setkey` and `/deletekey`, and the
+  Claude-only evaluation CLI. Helpers that Jev or the code reader use move to neutral modules first.
+  Drop the `stagehand` dependency; `anthropic` stays only as browser-use's own dependency.
+- **FR-12.** Behaviour for every user is unchanged from unit 2 (Jev price checks, code reader plus
+  Jev syncs); the full suite and a live replay prove it.
+
+### Unit 4: data, config and docs (release C)
+
+- **FR-13.** After a backup, drop `llm_spend_days`, `llm_cost_reservations` and
+  `llm_profile_qualifications`; users' stored personal keys are cleared.
+- **FR-14.** Old config keys for Claude models and model-call limits are ignored with one warning, so
+  existing configs load; they are removed from the example config.
+- **FR-15.** README, `AGENTS.md` (secrets list), the example config and the standards name TypeSafe
+  as the only model provider. Issues #79 and #3 are closed; #4 and #5 are reviewed.
+
+### Non-functional (units 2 to 4)
+
+- Each release ships and rolls back on its own; unit 3 is a pure deletion with no behaviour change.
+- No new dependency; source shrinks substantially (estimated 12,000+ lines, measured in unit 3).
+

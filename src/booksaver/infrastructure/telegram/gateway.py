@@ -215,10 +215,10 @@ def build_bot_runner(
         if consent is not None and consent.disclosure_version == version:
             return None
         return (
-            f"Privacy disclosure ({version}): if agentic checks are enabled for you, "
-            "the deployment owner's configured Anthropic account may process visible "
-            "Booking.com page content and escalation screenshots. Cookies and passwords "
-            "remain local, and BookSaver keeps execution read-only."
+            f"Privacy disclosure ({version}): the deployment owner's TypeSafe account (Jev) "
+            "reads Booking.com page content for your checks: hotel offers, and the price and "
+            "cancellation lines of your reservations. Cookies and passwords remain local, and "
+            "BookSaver keeps execution read-only."
         )
 
     def _acknowledge_agentic_disclosure(telegram_user_id: int) -> None:

@@ -1991,3 +1991,32 @@ def test_submission_diagnostic_reports_progress_without_private_content(
     assert "terminal=provider_failure" in caplog.text
     for private_value in ("PRIVATE-CONFIRMATION", "PRIVATE-HOTEL", "987.65", "PRIVATE-PAGE-TEXT"):
         assert private_value not in caplog.text
+
+
+def test_executor_accepts_an_empty_api_key_and_passes_it_to_the_runtime() -> None:
+    # ADR-062: the code reader needs no model key; the runtime refuses any model fallback.
+    broker = InMemorySessionLeaseBroker()
+    request = _request(broker)
+    seen: list[str] = []
+
+    class KeyRecordingRuntime(_Runtime):
+        async def execute(
+            self, *_args: Any, api_key: str, **_kwargs: Any,
+        ) -> BrowserUseRuntimeResult:
+            seen.append(api_key)
+            return self.result
+
+    runtime = KeyRecordingRuntime(
+        BrowserUseRuntimeResult(InventoryExecutionStatus.PROVIDER_FAILURE)
+    )
+    with AsyncLoopRunner() as runner:
+        result = BrowserUseInventoryBrowserExecutor(
+            api_key="",
+            lease_broker=broker,
+            budget=_budget(),
+            runner=runner,
+            runtime_factory=lambda: runtime,
+        ).execute(request)
+
+    assert seen == [""]
+    assert result.status is InventoryExecutionStatus.PROVIDER_FAILURE
