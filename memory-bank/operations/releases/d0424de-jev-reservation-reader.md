@@ -2,7 +2,7 @@
 version: jevreader-d0424de
 commit: d0424de0624
 created: "2026-11-04T16:07:08Z"
-status: deployed-awaiting-readback
+status: deployed-verified
 recorded: "2026-11-04T16:07:27Z"
 ---
 
@@ -33,4 +33,10 @@ produced a false disagreement on 2026-11-04 from its own date arithmetic.
 
 ## Production read-back
 
-Pending: owner's scheduled run 2026-11-04T19:58Z, the dad's 23:23Z.
+- 2026-11-04T20:00Z to 2026-11-05T14:00Z: nine production syncs with Jev reading every upcoming page
+  (owner 3, dad 6); totals read on every page, refund terms on all but one page per dad sync (the
+  saved value kept). Savings alerts delivered: Best Western USD 17.11, Union Club USD 11.48.
+- The dad acted on the alerts: rebooked Best Western at USD 503.65 and cancelled Hampton; both
+  picked up automatically. The resulting incomplete syncs were a separate reader defect, fixed in
+  intent 031.
+- Kalipè's Jev price check fails with `execution_not_observed` (open follow-up; no false alert).

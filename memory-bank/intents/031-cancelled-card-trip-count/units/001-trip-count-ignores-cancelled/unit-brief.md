@@ -2,7 +2,7 @@
 unit: 001-trip-count-ignores-cancelled
 intent: 031-cancelled-card-trip-count
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-05T23:59:59Z"

@@ -2,11 +2,11 @@
 id: 001-verify-trip-with-cancelled-card
 unit: 001-trip-count-ignores-cancelled
 intent: 031-cancelled-card-trip-count
-status: draft
+status: complete
 priority: must
 created: "2026-11-05T23:59:59Z"
 assigned_bolt: 102-trip-count-ignores-cancelled
-implemented: false
+implemented: true
 ---
 
 # US-254: Verify a trip that contains a cancelled card

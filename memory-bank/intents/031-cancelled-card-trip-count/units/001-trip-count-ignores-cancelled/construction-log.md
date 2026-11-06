@@ -34,3 +34,5 @@ last_updated: "2026-11-05T23:59:59Z"
 | 2026-11-05T23:59:59Z | 102-trip-count-ignores-cancelled | started | Owner: "Fix that first". Plan written before code |
 | 2026-11-06T00:21:42Z | 102-trip-count-ignores-cancelled | stage-complete | implement and test; live replay passed |
 | 2026-11-06T00:21:42Z | 102-trip-count-ignores-cancelled | approved | Owner: "yes please proceed sounds good"; commit, merge and deploy approved |
+| 2026-11-06T01:23:40Z | 102-trip-count-ignores-cancelled | evidence | Production read-back: dad sync 2026-11-06T01:10Z complete; superseded reservation absent |
+| 2026-11-06T01:23:40Z | 102-trip-count-ignores-cancelled | completed | Closed with bolt-complete.cjs |

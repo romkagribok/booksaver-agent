@@ -2,11 +2,11 @@
 id: 002-remove-code-price-and-refund-parsing
 unit: 001-jev-reservation-reader
 intent: 030-jev-only-booksaver
-status: draft
+status: complete
 priority: must
 created: "2026-11-04T15:34:52Z"
 assigned_bolt: 098-jev-reservation-reader
-implemented: false
+implemented: true
 ---
 
 # US-244: Remove the code price and refund parsing

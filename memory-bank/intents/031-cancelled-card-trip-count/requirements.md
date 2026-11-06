@@ -1,7 +1,7 @@
 ---
 intent: 031-cancelled-card-trip-count
 phase: construction
-status: construction
+status: complete
 created: "2026-11-05T23:59:59Z"
 updated: "2026-11-05T23:59:59Z"
 ---
