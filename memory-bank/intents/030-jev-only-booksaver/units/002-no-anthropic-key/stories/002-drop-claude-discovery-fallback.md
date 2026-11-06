@@ -2,11 +2,11 @@
 id: 002-drop-claude-discovery-fallback
 unit: 002-no-anthropic-key
 intent: 030-jev-only-booksaver
-status: draft
+status: complete
 priority: must
 created: "2026-11-04T16:13:23Z"
 assigned_bolt: 099-no-anthropic-key
-implemented: false
+implemented: true
 ---
 
 # US-247: Drop the Claude discovery fallback

@@ -2,7 +2,7 @@
 version: releasea-4b9a108
 commit: 4b9a108
 created: "2026-11-06T01:22:32Z"
-status: deployed-awaiting-readback
+status: deployed-verified
 recorded: "2026-11-06T01:23:40Z"
 ---
 
@@ -34,4 +34,7 @@ from discovery); inventory executors need no key.
 
 ## Production read-back
 
-Pending: the next scheduled syncs and the inform-once messages to invitees.
+- 2026-11-06T07:15Z to 10:57Z: five scheduled syncs (owner 2, dad 1, third invitee 2) complete; owner's
+  Jev checks succeeded at USD 581 (twice), the dad's new Best Western at USD 504; 0 Anthropic calls.
+- Inform-once: both invitees' records moved to `typesafe-visible-booking-page-v1` (07:15Z, 10:57Z),
+  so each received the TypeSafe message once.

@@ -2,7 +2,7 @@
 unit: 002-no-anthropic-key
 intent: 030-jev-only-booksaver
 phase: inception
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-11-04T16:13:23Z"

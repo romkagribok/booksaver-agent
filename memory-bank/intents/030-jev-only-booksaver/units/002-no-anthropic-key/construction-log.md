@@ -41,3 +41,5 @@ choice. No per-stage stops; one stop before commit, merge and deploy.
 | 2026-11-06T01:05:29Z | 099-no-anthropic-key | review | Codex: the TypeSafe disclosure must match the configured price executor. The disclosure text and the inform-once message now name TypeSafe only when price_executor is jev; test added for the message |
 | 2026-11-06T01:11:07Z | 099-no-anthropic-key | review | Codex: the agentic routing mode still required disclosure. Removed there too, test updated |
 | 2026-11-06T01:23:40Z | 099-no-anthropic-key | released | Merged PR #100 as 28a9a8f; promoted `releasea-4b9a108` at 2026-11-06T01:22:32Z; key removed from the VPS. Completion waits for production read-back |
+| 2026-11-06T16:24:00Z | 099-no-anthropic-key | evidence | Production read-back: five syncs complete, Jev checks succeeded, both invitees informed once, 0 Anthropic calls |
+| 2026-11-06T16:24:00Z | 099-no-anthropic-key | completed | Closed with bolt-complete.cjs |

@@ -817,9 +817,9 @@ Run BookSaver on Jev alone. Unit 1: Jev reads totals and refund terms; Claude re
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-246` | Route every user to Jev | Jev only | Planned | `002-no-anthropic-key/stories/001-route-everyone-to-jev.md` |
-| `US-247` | Drop the Claude discovery fallback | Jev only | Planned | `002-no-anthropic-key/stories/002-drop-claude-discovery-fallback.md` |
-| `US-248` | Start without the Anthropic key | Jev only | Planned | `002-no-anthropic-key/stories/003-start-without-anthropic-key.md` |
+| `US-246` | Route every user to Jev | Jev only | Complete | `002-no-anthropic-key/stories/001-route-everyone-to-jev.md` |
+| `US-247` | Drop the Claude discovery fallback | Jev only | Complete | `002-no-anthropic-key/stories/002-drop-claude-discovery-fallback.md` |
+| `US-248` | Start without the Anthropic key | Jev only | Complete | `002-no-anthropic-key/stories/003-start-without-anthropic-key.md` |
 
 ### 003-delete-claude-code
 

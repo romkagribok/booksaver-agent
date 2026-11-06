@@ -34,3 +34,4 @@ last_updated: "2026-11-06T03:03:29Z"
 |------|------|-------|---------|
 | 2026-11-06T03:03:29Z | 101-claude-data-config-docs | process-note | Code written with bolt 100 step 2 before these stage documents; ADR-063 and the standards updates were written by the main agent |
 | 2026-11-06T03:03:29Z | 101-claude-data-config-docs | stage-complete | All stages recorded; live replay passed; awaiting commit, review and deploy after release A read-back |
+| 2026-11-06T16:24:00Z | 101-claude-data-config-docs | released | PRs #102 and #103 merged; promoted `releaseb-58e2113` at 2026-11-06T16:23:03Z; production config cleaned. Completion waits for read-back |
