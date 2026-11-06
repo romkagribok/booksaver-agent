@@ -37,3 +37,5 @@ Owner, 2026-11-04: "Let's do it". No per-stage stops; one stop before commit, me
 | 2026-11-04T15:47:58Z | 098-jev-reservation-reader | stage-complete | implement → test; parser test pruning by a worker. Live replay: all seven reservations correct. Stopped for the owner before commit |
 | 2026-11-04T15:49:57Z | 098-jev-reservation-reader | approved | Owner: "Yes please proceed"; commit, merge and deploy approved |
 | 2026-11-04T16:07:27Z | 098-jev-reservation-reader | released | Merged PR #97 as 3f5c2b1; promoted `jevreader-d0424de` at 2026-11-04T16:07:08Z. Completion waits for production read-back |
+| 2026-11-06T01:23:40Z | 098-jev-reservation-reader | evidence | Production read-back: nine syncs, totals read on every page, two savings alerts delivered; owner confirmed by acting on them |
+| 2026-11-06T01:23:40Z | 098-jev-reservation-reader | completed | Closed with bolt-complete.cjs |

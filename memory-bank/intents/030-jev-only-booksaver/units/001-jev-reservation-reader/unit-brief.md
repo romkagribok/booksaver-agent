@@ -2,7 +2,7 @@
 unit: 001-jev-reservation-reader
 intent: 030-jev-only-booksaver
 phase: inception
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-11-04T15:34:52Z"

@@ -3,13 +3,13 @@ id: 102-trip-count-ignores-cancelled
 unit: 001-trip-count-ignores-cancelled
 intent: 031-cancelled-card-trip-count
 type: simple-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-verify-trip-with-cancelled-card
 created: "2026-11-05T23:59:59Z"
 started: "2026-11-05T23:59:59Z"
-completed: null
-current_stage: test
+completed: "2026-11-06T01:23:40Z"
+current_stage: null
 stages_completed:
   - name: plan
     completed: "2026-11-05T23:59:59Z"
