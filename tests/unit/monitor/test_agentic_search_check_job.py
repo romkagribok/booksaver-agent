@@ -199,6 +199,17 @@ def test_agentic_provider_failure_is_terminal_without_legacy_retry() -> None:
     assert result.failure_reason.code is FailureCode.PROVIDER_UNAVAILABLE
 
 
+def test_no_availability_for_the_dates_is_a_conclusive_no_equivalent_offer() -> None:
+    check = _AgenticCheck(_outcome(status=PriceExecutionStatus.UNAVAILABLE))
+    monitor, _history = _monitor(check)
+
+    result = monitor.run_authenticated(make_booking(), _snapshot())
+
+    assert result.failure_reason is not None
+    assert result.failure_reason.code is FailureCode.NO_EQUIVALENT_OFFER
+    assert result.failure_reason.detail == "The property shows no availability for these dates."
+
+
 def test_room_only_offer_is_not_reported_for_a_reservation_with_breakfast() -> None:
     booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
     for meal_text, reason in (("none", "meal_plan_worse=1"), (None, "meal_plan_unknown=1")):

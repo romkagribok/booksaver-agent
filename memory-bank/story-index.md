@@ -845,3 +845,13 @@ A trip with a cancelled card can be verified.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-254` | Verify a trip that contains a cancelled card | Account sync | Complete | `001-trip-count-ignores-cancelled/stories/001-verify-trip-with-cancelled-card.md` |
+
+## 032-jev-no-availability
+
+"No availability for your dates" is a conclusive result.
+
+### 001-no-availability-is-conclusive
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-255` | Record "no availability for your dates" as conclusive | Jev price | Planned | `001-no-availability-is-conclusive/stories/001-record-no-availability.md` |

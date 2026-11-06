@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -101,9 +102,18 @@ def _option(options: Mapping[str, object], predicate: Any) -> str:
 class ScriptedJev:
     """Answer like a sensible Jev would, from the offered options only."""
 
-    def __init__(self, *, taxes: str = "included", fail_on: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        taxes: str = "included",
+        fail_on: str | None = None,
+        room_name: str = "l0",
+        availability: tuple[str, float] = ("unavailable", 1.0),
+    ) -> None:
         self.taxes = taxes
         self.fail_on = fail_on
+        self.room_name = room_name
+        self.availability = availability
         self.states: list[object] = []
 
     async def ask(
@@ -118,7 +128,11 @@ class ScriptedJev:
             if question_id == "property":
                 chosen = _option(options, lambda v: v == PROPERTY)
             elif question_id == "room_name":
-                chosen = "l0"
+                chosen = self.room_name
+            elif question_id == "availability":
+                chosen, confidence = self.availability
+                answers[question_id] = ChoiceAnswer(chosen, confidence, {chosen: confidence})
+                continue
             elif question_id == "total":
                 chosen = _option(options, lambda v: v.startswith("Price $"))
             elif question_id == "refund":
@@ -1145,3 +1159,53 @@ def test_off_site_page_after_the_pin_is_unsafe() -> None:
     assert result.status is PriceExecutionStatus.UNSAFE_ACTION
     assert len(session.navigations) == 2 and entries == []
     assert "end=currency_invariant" in runtime.diagnostic
+
+
+ALTERNATIVE_DATES = ("Feb 1 - Feb 3", "2 nights", "From \u20ac 186")
+
+
+@pytest.mark.parametrize(
+    ("availability", "expected"),
+    [
+        (("unavailable", 1.0), PriceExecutionStatus.UNAVAILABLE),
+        (("unavailable", 0.6), None),
+        (("unclear", 1.0), None),
+        (("available", 1.0), None),
+    ],
+)
+def test_only_a_confident_no_availability_answer_is_conclusive(
+    availability: tuple[str, float], expected: PriceExecutionStatus | None
+) -> None:
+    jev = ScriptedJev(room_name="none", availability=availability)
+    runtime = LocalJevPriceRuntime()
+    result = asyncio.run(runtime._extract(_request(), _snapshot(ALTERNATIVE_DATES), jev))
+    assert result is expected
+    asked = jev.states[-1]
+    assert asked["requested_stay"] == "Nov 24 – Nov 25, 2026 (1 night)"  # type: ignore[index]
+    assert asked["room_cards"] == ["Feb 1 - Feb 3 | 2 nights | From \u20ac 186"]  # type: ignore[index]
+    assert ("availability=unavailable" in runtime.diagnostic) is (expected is not None)
+
+
+def test_named_rooms_never_trigger_the_availability_question() -> None:
+    jev = ScriptedJev()
+    _extract(jev)
+    assert all("room_cards" not in state for state in jev.states)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        URL.replace("hotel-test", "other-hotel"),
+        URL.replace("checkout=2026-11-25", "checkout=2026-11-26"),
+        URL.replace("group_adults=2", "group_adults=1"),
+        URL.split("?")[0],
+    ],
+)
+def test_a_page_for_another_property_stay_or_party_is_never_declared_unavailable(
+    url: str,
+) -> None:
+    snapshot = replace(_snapshot(ALTERNATIVE_DATES), url=url)
+    jev = ScriptedJev(room_name="none")
+    assert _extract(jev, snapshot) is None
+    assert all("room_cards" not in state for state in jev.states)  # type: ignore[operator]
+

@@ -174,7 +174,9 @@ class BookingComSearchMonitor:
                 now,
                 FailureReason(
                     code,
-                    "This check could not verify a matching offer: "
+                    "The property shows no availability for these dates."
+                    if outcome.result.status is PriceExecutionStatus.UNAVAILABLE
+                    else "This check could not verify a matching offer: "
                     f"{rejection}. See the check trace for evidence rejection reasons.",
                 ),
             )
