@@ -2,11 +2,11 @@
 id: 001-route-everyone-to-jev
 unit: 002-no-anthropic-key
 intent: 030-jev-only-booksaver
-status: draft
+status: complete
 priority: must
 created: "2026-11-04T16:13:23Z"
 assigned_bolt: 099-no-anthropic-key
-implemented: false
+implemented: true
 ---
 
 # US-246: Route every user to Jev
