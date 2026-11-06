@@ -445,7 +445,7 @@ def test_consented_users_routes_invitee_agentic_whatever_the_disclosure_record(
     assert decision.reason is RoutingReason.INVITEE_CONSENTED_ROLLOUT
 
 
-def test_invitee_agentic_requires_qualification_and_current_disclosure() -> None:
+def test_invitee_agentic_requires_qualification_but_not_disclosure() -> None:
     unqualified = resolve_execution_route(
         ExecutionRoutingMode.AGENTIC, _route_context(acknowledged="disclosure-v1")
     )
@@ -460,7 +460,8 @@ def test_invitee_agentic_requires_qualification_and_current_disclosure() -> None
         ),
     )
     assert unqualified.reason is RoutingReason.QUALIFICATION_REQUIRED
-    assert no_consent.reason is RoutingReason.DISCLOSURE_REQUIRED
+    # ADR-062: invitees are informed, not gated, so no disclosure record is needed.
+    assert no_consent.use_agentic
     assert admitted.use_agentic
 
 

@@ -516,8 +516,7 @@ def resolve_execution_route(
         return RoutingDecision(False, RoutingReason.QUALIFICATION_REQUIRED)
     if context.is_owner:
         return RoutingDecision(True, RoutingReason.OWNER_AGENTIC)
-    if context.acknowledged_disclosure_version != context.disclosure_version:
-        return RoutingDecision(False, RoutingReason.DISCLOSURE_REQUIRED)
+    # Invitees are informed, not gated, in every mode (ADR-062).
     return RoutingDecision(True, RoutingReason.INVITEE_QUALIFIED_AND_CONSENTED)
 
 
