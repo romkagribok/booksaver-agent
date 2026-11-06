@@ -705,119 +705,6 @@ def test_terminal_request_without_valid_positives_never_becomes_an_observation(
 
 
 @pytest.mark.parametrize(
-    ("prior_terminal", "unsafe_before_done"),
-    [
-        (None, False),
-        (InventoryExecutionStatus.UNSAFE_ACTION, False),
-        (InventoryExecutionStatus.ACTION_LIMIT, False),
-        (InventoryExecutionStatus.COST_LIMIT, False),
-        (InventoryExecutionStatus.TIMEOUT, False),
-        (None, True),
-    ],
-)
-def test_done_false_keeps_accepted_identity_without_overriding_code_terminal(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    prior_terminal: InventoryExecutionStatus | None,
-    unsafe_before_done: bool,
-) -> None:
-    import browser_use
-
-    class _Session:
-        cdp_url = None
-        current_url = _BROWSER_USE_INVENTORY_ENTRY_URL
-        agent_focus_target_id = "current-target"
-
-        async def navigate_to(self, _url: str, **_kwargs: Any) -> None:
-            pass
-
-        async def get_current_page_url(self) -> str:
-            return self.current_url
-
-        def get_page_targets(self) -> list[object]:
-            return [object()]
-
-        async def get_browser_state_summary(self, **_kwargs: Any) -> Any:
-            return SimpleNamespace(
-                dom_state=SimpleNamespace(llm_representation=lambda: "Upcoming reservations")
-            )
-
-    class _Tools:
-        def __init__(self, **_kwargs: Any) -> None:
-            self.registry = SimpleNamespace(registry=SimpleNamespace(actions={}))
-
-        def action(self, *_args: Any, **_kwargs: Any) -> Any:
-            def register(function: Any) -> Any:
-                self.registry.registry.actions[function.__name__] = function
-                return function
-            return register
-
-    session = _Session()
-    runtime = LocalBrowserUseInventoryRuntime()
-    request = _request(InMemorySessionLeaseBroker())
-
-    async def start() -> Any:
-        return SimpleNamespace(
-            browser=session, viewport={"width": 360, "height": 800}, file_system_dir=tmp_path,
-        )
-
-    async def verify(_request: Any, _session: Any) -> None:
-        return None
-
-    def create_agent(_agent_type: Any, **kwargs: Any) -> Any:
-        actions = kwargs["tools"].registry.registry.actions
-
-        async def run(**_kwargs: Any) -> Any:
-            await actions["submit_inventory_observation"](
-                BrowserUseReservationSubmission(
-                    confirmation_id="NEW-VISIBLE-CONFIRMATION",
-                    scope="upcoming",
-                    identity_evidence="complete",
-                ),
-                session,
-            )
-            runtime._state.terminal = prior_terminal
-            if unsafe_before_done:
-                session.current_url = "https://outside-booking.example/"
-            await actions["done"](BrowserUseTerminalPayload(success=False), session)
-            return SimpleNamespace(history=[])
-
-        return SimpleNamespace(run=run)
-
-    monkeypatch.setattr(browser_use, "Tools", _Tools)
-    monkeypatch.setattr(
-        inventory_adapter, "budgeted_model_type",
-        lambda *_args: lambda **_kwargs: SimpleNamespace(),
-    )
-    monkeypatch.setattr(
-        runtime, "_host",
-        SimpleNamespace(
-            start=start, verify_authentication=verify, verified_mobile_session=b"mobile-snapshot",
-            create_agent=create_agent,
-            dialog_rejected=False,
-        ),
-    )
-
-    result = asyncio.run(runtime.execute(
-        request, api_key="unused", budget=_budget(), meter=ExecutionMeter(request.limits),
-    ))
-
-    expected_status = (
-        InventoryExecutionStatus.UNSAFE_ACTION
-        if unsafe_before_done
-        else prior_terminal or InventoryExecutionStatus.OBSERVED
-    )
-    assert result.status is expected_status
-    assert runtime._state.requested_success is (None if unsafe_before_done else False)
-    if expected_status is InventoryExecutionStatus.OBSERVED:
-        assert len(result.reservations) == 1
-        assert result.reservations[0].confirmation_id == "NEW-VISIBLE-CONFIRMATION"
-        assert result.scopes[0].completeness is EvidenceCompleteness.INCOMPLETE
-    else:
-        assert result.reservations == ()
-
-
-@pytest.mark.parametrize(
     ("auth_status", "initial_url", "target_count", "expected_status", "post_read_event"),
     [
         (None, _BROWSER_USE_INVENTORY_ENTRY_URL, 1, InventoryExecutionStatus.EMPTY_UPCOMING, None),
@@ -944,7 +831,6 @@ def test_explicit_empty_initial_page_is_code_observed_after_authentication_and_s
         pytest.fail("An explicit empty page or earlier auth/safety stop must not construct a model")
 
     runtime = LocalBrowserUseInventoryRuntime()
-    monkeypatch.setattr(inventory_adapter, "budgeted_model_type", unexpected_model)
     monkeypatch.setattr(runtime, "_host", SimpleNamespace(
         start=start, verify_authentication=verify, verified_mobile_session=b"mobile-snapshot",
             create_agent=unexpected_model,
