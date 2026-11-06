@@ -937,3 +937,27 @@ def test_assist_skips_pages_that_are_not_upcoming(monkeypatch):
     worker.assist = assist
     assert asyncio.run(worker.run())
     assert calls == []
+
+
+def _with_cancelled_card(page):
+    first = reader.GroupedInventoryReader.targets(page, "reservation_detail", status_only=True)[0]
+    cancelled = reader.RenderedLink(
+        first.url.replace(first.url[-1], "9" if first.url[-1] != "9" else "8"),
+        "Hampton Inn\nNov 12 – Nov 15\nCanceled",
+    )
+    assert reader.inventory_page_kind(cancelled.url) == "reservation_detail"
+    return replace(page, links=page.links + (cancelled,))
+
+
+def test_a_trip_count_that_leaves_out_cancelled_cards_is_verified():
+    browser = Browser()
+    page = _with_cancelled_card(browser.pages[TRIPS[0]])
+    reading = reader.GroupedInventoryReader
+    cards = reading.targets(page, "reservation_detail", status_only=True)
+    active = len(cards) - 1
+    # Booking.com's count omits cancelled bookings; the full count still verifies too.
+    assert reading.count_matches(page, active)
+    assert reading.count_matches(page, len(cards))
+    assert not reading.count_matches(page, active - 1)
+    # The cancelled card is still read, so its cancellation is recorded.
+    assert any("Canceled" in link.text for link in reading.reservation_targets(page, active))
