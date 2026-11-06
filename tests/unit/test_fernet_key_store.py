@@ -1,4 +1,4 @@
-"""US-027 / ADR-019: Fernet-encrypted personal Anthropic keys at rest."""
+"""ADR-019: Fernet encryption of local secrets (sessions, diagnostics) at rest."""
 
 import pytest
 from cryptography.fernet import Fernet

@@ -86,44 +86,10 @@ class ObservationSource(Enum):
     FAKE = "fake"
 
 
-class ExecutionRoutingMode(Enum):
-    LEGACY = "legacy"
-    OWNER_CANARY = "owner_canary"
-    CONSENTED_USERS = "consented_users"
-    AGENTIC = "agentic"
-
-    @classmethod
-    def parse(cls, raw: object) -> ExecutionRoutingMode:
-        try:
-            return cls(str(raw).strip().lower())
-        except ValueError as exc:
-            allowed = ", ".join(mode.value for mode in cls)
-            raise ValueError(f"agentic_browser.routing must be one of: {allowed}") from exc
-
-
-class InventoryExecutionRoutingMode(Enum):
-    """Capability-specific inventory route, independent from price qualification."""
-
-    LEGACY = "legacy"
-    AGENTIC = "agentic"
-
-    @classmethod
-    def parse(cls, raw: object) -> InventoryExecutionRoutingMode:
-        try:
-            return cls(str(raw).strip().lower())
-        except ValueError as exc:
-            allowed = ", ".join(mode.value for mode in cls)
-            raise ValueError(
-                f"agentic_browser.inventory_routing must be one of: {allowed}"
-            ) from exc
-
-
 class PriceExecutorKind(Enum):
     """Configured implementation behind the provider-neutral price-executor port."""
 
-    # Accepted only with legacy routing, where no agentic price method runs.
-    BROWSER_USE = "browser_use"
-    # TypeSafe Jev, the only agentic price method (ADR-056).
+    # TypeSafe Jev, the only price method (ADR-056).
     JEV = "jev"
 
     @classmethod
@@ -138,22 +104,7 @@ class PriceExecutorKind(Enum):
 
     @property
     def qualification_policy_version(self) -> str:
-        if self is PriceExecutorKind.JEV:
-            return JEV_PRICE_POLICY_VERSION
-        return BROWSER_USE_PRICE_POLICY_VERSION
-
-
-class RoutingReason(Enum):
-    CONFIGURED_LEGACY = "configured_legacy"
-    OWNER_CANARY = "owner_canary"
-    INVITEE_EXCLUDED_FROM_CANARY = "invitee_excluded_from_canary"
-    OWNER_CONSENTED_ROLLOUT = "owner_consented_rollout"
-    INVITEE_CONSENTED_ROLLOUT = "invitee_consented_rollout"
-    OWNER_AGENTIC = "owner_agentic"
-    INVITEE_QUALIFIED_AND_CONSENTED = "invitee_qualified_and_consented"
-    QUALIFICATION_REQUIRED = "qualification_required"
-    DISCLOSURE_REQUIRED = "disclosure_required"
-    REGRESSION_ROLLBACK = "regression_rollback"
+        return JEV_PRICE_POLICY_VERSION
 
 
 class QualificationStatus(Enum):
@@ -176,10 +127,8 @@ class ValidationRejection(Enum):
 
 @dataclass(frozen=True, slots=True)
 class AgenticBrowserSettings:
-    routing: ExecutionRoutingMode = ExecutionRoutingMode.LEGACY
     disclosure_version: str = "typesafe-visible-booking-page-v1"
-    inventory_routing: InventoryExecutionRoutingMode = InventoryExecutionRoutingMode.AGENTIC
-    price_executor: PriceExecutorKind = PriceExecutorKind.BROWSER_USE
+    price_executor: PriceExecutorKind = PriceExecutorKind.JEV
 
     def __post_init__(self) -> None:
         _require_safe_id(self.disclosure_version, "agentic_browser.disclosure_version")
@@ -455,58 +404,6 @@ class QualificationState:
             raise ValueError("qualified_at must be timezone-aware")
         if self.status is QualificationStatus.QUALIFIED and self.qualified_at is None:
             raise ValueError("qualified status requires qualified_at")
-
-
-@dataclass(frozen=True, slots=True)
-class RoutingContext:
-    is_owner: bool
-    qualification: QualificationState
-    disclosure_version: str
-    acknowledged_disclosure_version: str | None = None
-    qualification_policy_version: str = BROWSER_USE_PRICE_POLICY_VERSION
-
-    def __post_init__(self) -> None:
-        _require_safe_id(self.disclosure_version, "disclosure_version")
-        _require_safe_id(
-            self.qualification_policy_version,
-            "qualification_policy_version",
-        )
-        if self.acknowledged_disclosure_version is not None:
-            _require_safe_id(
-                self.acknowledged_disclosure_version, "acknowledged_disclosure_version"
-            )
-
-
-@dataclass(frozen=True, slots=True)
-class RoutingDecision:
-    use_agentic: bool
-    reason: RoutingReason
-
-
-def resolve_execution_route(
-    configured: ExecutionRoutingMode, context: RoutingContext
-) -> RoutingDecision:
-    if configured is ExecutionRoutingMode.LEGACY:
-        return RoutingDecision(False, RoutingReason.CONFIGURED_LEGACY)
-    if context.qualification.status is QualificationStatus.REGRESSED:
-        return RoutingDecision(False, RoutingReason.REGRESSION_ROLLBACK)
-    if configured is ExecutionRoutingMode.OWNER_CANARY:
-        if context.is_owner:
-            return RoutingDecision(True, RoutingReason.OWNER_CANARY)
-        return RoutingDecision(False, RoutingReason.INVITEE_EXCLUDED_FROM_CANARY)
-    if configured is ExecutionRoutingMode.CONSENTED_USERS:
-        if context.is_owner:
-            return RoutingDecision(True, RoutingReason.OWNER_CONSENTED_ROLLOUT)
-        # Invitees are informed, not gated (ADR-062): nobody falls back to the legacy method.
-        return RoutingDecision(True, RoutingReason.INVITEE_CONSENTED_ROLLOUT)
-    if context.qualification.policy_version != context.qualification_policy_version:
-        return RoutingDecision(False, RoutingReason.QUALIFICATION_REQUIRED)
-    if context.qualification.status is not QualificationStatus.QUALIFIED:
-        return RoutingDecision(False, RoutingReason.QUALIFICATION_REQUIRED)
-    if context.is_owner:
-        return RoutingDecision(True, RoutingReason.OWNER_AGENTIC)
-    # Invitees are informed, not gated, in every mode (ADR-062).
-    return RoutingDecision(True, RoutingReason.INVITEE_QUALIFIED_AND_CONSENTED)
 
 
 def _normalized_name(value: str) -> str:

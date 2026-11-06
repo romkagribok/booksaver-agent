@@ -224,14 +224,14 @@ def test_help_lists_all_commands(tmp_path: Path) -> None:
         "/bookings",
         "/savings",
         "/checks",
-        "/setkey",
-        "/deletekey",
         "/admin",
         "/cancelflow",
     ):
         assert cmd in text
     assert "/register" not in text
     assert "/rebook" not in text
+    assert "/setkey" not in text
+    assert "/deletekey" not in text
 
 
 def test_status_with_no_database_refuses_unrecognized_sender(tmp_path: Path) -> None:
@@ -809,7 +809,6 @@ def test_bookings_keeps_incomplete_warning_for_ambiguous_positive_run(
 @pytest.mark.parametrize(
     "failure_code, expected_action",
     [
-        (SynchronizationFailureCode.USER_KEY_INVALID, "/setkey"),
         (SynchronizationFailureCode.AUTH_REQUIRED, "/connect"),
         (SynchronizationFailureCode.NAVIGATION_FAILED, "/bookings"),
         (SynchronizationFailureCode.PERSISTENCE_CONFLICT, "kept your saved copy"),
@@ -859,8 +858,6 @@ def test_bookings_failure_shows_plain_guidance_without_internal_details(
 
     text = "\n".join(message for _chat_id, message in sent)
     assert expected_action in text
-    if failure_code is SynchronizationFailureCode.USER_KEY_INVALID:
-        assert "/deletekey" in text
     if failure_code is SynchronizationFailureCode.NAVIGATION_FAILED:
         assert "/connect" not in text
     if failure_code is SynchronizationFailureCode.PERSISTENCE_CONFLICT:

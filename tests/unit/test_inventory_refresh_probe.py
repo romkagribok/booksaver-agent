@@ -31,8 +31,7 @@ def _production(tmp_path: Path) -> tuple[Path, Config, int]:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         f'[storage]\ndata_directory = "{data}"\n'
-        '[agentic_browser]\nrouting = "consented_users"\n'
-        'inventory_routing = "agentic"\nprice_executor = "browser_use"\n',
+        '[agentic_browser]\nprice_executor = "jev"\n',
     )
     cfg = load_config(TomlEnvConfigSource(config_path))
     with SqliteStore(data / "booksaver.db") as store:
@@ -96,9 +95,9 @@ def test_probe_preserves_caller_routing_and_consent_without_notifications(
             self._config = isolated_cfg
             self._inventory_synchronizer = None
 
-        def _uses_agentic_inventory(self, store: SqliteStore, user_id: int) -> bool:
+        def _is_active_user(self, store: SqliteStore, user_id: int) -> bool:
             admitted.append(user_id)
-            return CheckCoordinator._uses_agentic_inventory(self, store, user_id)
+            return CheckCoordinator._is_active_user(store, user_id)
 
         def request_inventory(self, telegram_user_id: int, callback: Any) -> ImmediateAdmission:
             requested.append(telegram_user_id)

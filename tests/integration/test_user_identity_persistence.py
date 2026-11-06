@@ -63,17 +63,18 @@ class TestSchemaV9Migration:
             owner = SqliteUserRepository(store).get_owner()
             version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
 
-        assert version[0] == SCHEMA_VERSION == 23
+        assert version[0] == SCHEMA_VERSION == 24
         assert "telegram_username" in columns
         assert owner.telegram_username is None
 
-    def test_v8_migration_preserves_users_keys_and_invites(self, tmp_path: Path) -> None:
+    def test_v8_migration_preserves_users_and_invites_and_clears_keys(self, tmp_path: Path) -> None:
         db_path = tmp_path / "v8.db"
         _make_v8_db(db_path)
 
         with SqliteStore(db_path) as store:
             repo = SqliteUserRepository(store)
             invited = repo.get_by_id(2)
+            key = store.conn.execute("SELECT encrypted_key FROM users WHERE user_id = 2").fetchone()
             invite = store.conn.execute(
                 "SELECT code, used_by FROM invite_codes WHERE code = 'preserved-code'"
             ).fetchone()
@@ -87,9 +88,9 @@ class TestSchemaV9Migration:
         assert invited is not None
         assert invited.telegram_user_id == 222
         assert invited.telegram_username is None
-        assert invited.encrypted_key == b"ciphertext"
+        assert key[0] is None  # v24 clears retired personal Anthropic keys
         assert tuple(invite) == ("preserved-code", 2)
-        assert versions == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+        assert versions == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
 
     def test_v9_migration_is_guarded_and_idempotent(self, tmp_path: Path) -> None:
         db_path = tmp_path / "partial-v9.db"
@@ -110,7 +111,7 @@ class TestSchemaV9Migration:
             ]
 
         assert columns.count("telegram_username") == 1
-        assert versions == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+        assert versions == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
 
 
 class TestTelegramUsernameRepository:

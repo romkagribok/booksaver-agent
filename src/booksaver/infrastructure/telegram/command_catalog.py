@@ -24,8 +24,6 @@ COMMANDS = (
     CommandDefinition("savings", "List detected savings opportunities"),
     CommandDefinition("checks", "Choose a booking and view recent checks"),
     CommandDefinition("checknow", "Run a live price check now"),
-    CommandDefinition("setkey", "Set a personal Anthropic API key"),
-    CommandDefinition("deletekey", "Remove the personal Anthropic API key"),
     CommandDefinition("admin", "Manage users, invites, and access mode", owner_only=True),
     CommandDefinition("cancelflow", "Cancel the current dialog"),
 )

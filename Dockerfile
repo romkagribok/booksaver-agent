@@ -52,7 +52,7 @@ COPY scripts/price_check_probe.py ./scripts/price_check_probe.py
 RUN pip install --no-cache-dir --requirement requirements.lock \
     && pip install --no-cache-dir --no-deps . \
     && pip check \
-    && python -c "from importlib.metadata import version; expected = {'anthropic': '0.125.0', 'browser-use': '0.11.13', 'browser-use-sdk': '3.10.0', 'bubus': '1.5.6', 'cdp-use': '1.4.5', 'playwright': '1.62.0', 'pydantic': '2.13.5', 'pydantic-settings': '2.15.0'}; assert all(version(name) == wanted for name, wanted in expected.items()); from browser_use import ActionResult, Agent, BrowserProfile, BrowserSession, ChatAnthropic, Tools"
+    && python -c "from importlib.metadata import version; expected = {'browser-use': '0.11.13', 'browser-use-sdk': '3.10.0', 'bubus': '1.5.6', 'cdp-use': '1.4.5', 'playwright': '1.62.0', 'pydantic': '2.13.5', 'pydantic-settings': '2.15.0'}; assert all(version(name) == wanted for name, wanted in expected.items()); from browser_use import ActionResult, Agent, BrowserProfile, BrowserSession, Tools"
 
 # The qualified import above initializes Browser Use's process-wide config/cache paths while the
 # image still builds as root. Remove any build-time state and recreate both empty directories for

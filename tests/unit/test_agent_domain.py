@@ -3,9 +3,7 @@ import pytest
 from booksaver.domain.agent import (
     AgentAction,
     AgentActionType,
-    AgentBudget,
     AgentSettings,
-    BudgetExceeded,
     ElementInfo,
     Observation,
     blocked_action_reason,
@@ -18,75 +16,11 @@ def _obs(elements: tuple[ElementInfo, ...] = ()) -> Observation:
 
 
 class TestAgentSettings:
-    def test_defaults(self):
-        s = AgentSettings()
-        assert (s.max_steps, s.max_llm_calls, s.check_timeout_seconds) == (15, 20, 180)
-        assert (
-            s.max_recovery_calls_per_step,
-            s.recovery_timeout_seconds,
-            s.screenshot_after_no_progress,
-            s.max_semantic_action_executions,
-        ) == (4, 60, 2, 2)
-        assert s.recovery_policy.max_llm_calls == 4
-
-    def test_invalid_steps_rejected(self):
-        with pytest.raises(ValueError, match="max_steps"):
-            AgentSettings(max_steps=0)
-
-    def test_invalid_llm_calls_rejected(self):
-        with pytest.raises(ValueError, match="max_llm_calls"):
-            AgentSettings(max_llm_calls=0)
-
-    def test_timeout_bounds(self):
-        with pytest.raises(ValueError, match="check_timeout_seconds"):
-            AgentSettings(check_timeout_seconds=10)
-        with pytest.raises(ValueError, match="check_timeout_seconds"):
-            AgentSettings(check_timeout_seconds=7200)
-
-    @pytest.mark.parametrize(
-        "field",
-        [
-            "max_recovery_calls_per_step",
-            "recovery_timeout_seconds",
-            "screenshot_after_no_progress",
-            "max_semantic_action_executions",
-        ],
-    )
-    def test_invalid_recovery_policy_rejected(self, field: str):
-        with pytest.raises(ValueError, match=field):
-            AgentSettings(**{field: 0})
-
-
-class TestAgentBudget:
-    def test_steps_cap(self):
-        budget = AgentBudget(AgentSettings(max_steps=2))
-        budget.consume_step()
-        budget.consume_step()
-        with pytest.raises(BudgetExceeded, match="step cap"):
-            budget.consume_step()
-
-    def test_screenshot_turn_counts_double(self):
-        budget = AgentBudget(AgentSettings(max_steps=2))
-        with pytest.raises(BudgetExceeded):
-            budget.consume_step(tier2=True)
-            budget.consume_step(tier2=True)
-        assert budget.steps_used >= 3
-
-    def test_llm_call_cap(self):
-        budget = AgentBudget(AgentSettings(max_llm_calls=1))
-        budget.consume_llm_call()
-        with pytest.raises(BudgetExceeded, match="LLM call cap"):
-            budget.consume_llm_call()
-
-    def test_wall_clock_with_injected_clock(self):
-        now = [0.0]
-        budget = AgentBudget(
-            AgentSettings(check_timeout_seconds=60), clock=lambda: now[0]
-        )
-        budget.check_time()  # fine at t=0
-        now[0] = 61.0
-        with pytest.raises(BudgetExceeded, match="timeout"):
-            budget.check_time()
+    def test_job_cost_cap_defaults_to_one_dollar_and_is_bounded(self):
+        assert AgentSettings().max_job_cost_micro_usd == 1_000_000
+        for invalid in (0, 1_000_001):
+            with pytest.raises(ValueError, match="max_job_cost_usd"):
+                AgentSettings(max_job_cost_micro_usd=invalid)
 
 
 class TestActionGuard:

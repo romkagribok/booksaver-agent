@@ -19,7 +19,6 @@ class BrowserActionType(Enum):
 
 class ExecutorEgressKind(Enum):
     BOOKING = "booking"
-    ANTHROPIC = "anthropic"
     LOOPBACK = "loopback"
 
 
@@ -163,12 +162,6 @@ def classify_executor_egress(url: str) -> ExecutorEgressKind | None:
         # Booking.com serves the page's own scripts, styles, and images from bstatic.com.
         # This is page-delivery egress only; it is never an approved top-level destination.
         return ExecutorEgressKind.BOOKING
-    if (
-        parsed.scheme.casefold() == "https"
-        and host == "api.anthropic.com"
-        and port in {None, 443}
-    ):
-        return ExecutorEgressKind.ANTHROPIC
     if (
         parsed.scheme.casefold() in {"http", "https", "ws", "wss"}
         and host in {"127.0.0.1", "localhost", "::1"}

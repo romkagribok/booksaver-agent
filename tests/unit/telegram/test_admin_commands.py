@@ -184,22 +184,16 @@ class TestUsersListing:
             )
             store.conn.commit()
             owner = SqliteUserRepository(store).get_owner()
-        usage_by_user[owner.user_id] = AdminUsageSnapshot(0, 0)
-        usage_by_user[user.user_id] = AdminUsageSnapshot(3, 7)
+        usage_by_user[owner.user_id] = AdminUsageSnapshot(0)
+        usage_by_user[user.user_id] = AdminUsageSnapshot(3)
 
         router.dispatch(_cmd(chat_id=OWNER_CHAT_ID, args="users"))
 
         assert len(sent) == 1
         assert "Users:" in sent[0][1]
         assert "@alice · role=user · access=active · active bookings=0" in sent[0][1]
-        assert "checks=3, LLM calls=7" in sent[0][1]
-        assert (
-            sent[0][1].count(
-                "API funding: Browser Use=deployment owner; "
-                "personal legacy key=not configured"
-            )
-            == 2
-        )
+        assert "checks=3" in sent[0][1]
+        assert "API funding" not in sent[0][1] and "LLM calls" not in sent[0][1]
         assert "42" not in sent[0][1]
         assert "tg=" not in sent[0][1]
 
@@ -212,10 +206,6 @@ class TestUsersListing:
 
         assert f"User #{user.user_id} (no @username)" in sent[0][1]
         assert "99112233" not in sent[0][1]
-        assert (
-            "API funding: Browser Use=deployment owner; "
-            "personal legacy key=not configured"
-        ) in sent[0][1]
         assert "Usage today (resets at UTC midnight and daemon restart): unavailable" in sent[0][1]
         assert "checks=0" not in sent[0][1]
 
@@ -230,7 +220,6 @@ class TestUsersListing:
             users = SqliteUserRepository(store)
             user = users.get_or_create_by_telegram_id(8675309)
             users.set_telegram_username(user.user_id, "alice")
-            users.set_encrypted_key(user.user_id, b"PRIVATE KEY SENTINEL")
             owner = users.get_owner()
             seed_booking(
                 store,
@@ -267,8 +256,8 @@ class TestUsersListing:
             )
             store.conn.commit()
 
-        usage_by_user[owner.user_id] = AdminUsageSnapshot(0, 0)
-        usage_by_user[user.user_id] = AdminUsageSnapshot(12, 34)
+        usage_by_user[owner.user_id] = AdminUsageSnapshot(0)
+        usage_by_user[user.user_id] = AdminUsageSnapshot(12)
 
         def materialization_forbidden(*_args, **_kwargs):
             raise AssertionError("Admin aggregates must not materialize Booking records")
@@ -283,24 +272,9 @@ class TestUsersListing:
 
         output = sent[0][1]
         assert "@alice · role=user · access=active · active bookings=1" in output
-        assert "checks=12, LLM calls=34" in output
-        assert (
-            output.count(
-                "API funding: Browser Use=deployment owner; "
-                "personal legacy key=not configured"
-            )
-            == 1
-        )
-        assert (
-            output.count(
-                "API funding: Browser Use=deployment owner; "
-                "personal legacy key=configured"
-            )
-            == 1
-        )
+        assert "checks=12" in output
         for sentinel in (
             "8675309",
-            "PRIVATE KEY SENTINEL",
             "private-booking-id-sentinel",
             "PRIVATE-CONFIRMATION-SENTINEL",
             "PRIVATE PROPERTY SENTINEL",
@@ -323,10 +297,6 @@ class TestUsersListing:
         router.dispatch(_cmd(chat_id=OWNER_CHAT_ID, args="users"))
 
         assert "Usage today (resets at UTC midnight and daemon restart): unavailable" in sent[0][1]
-        assert (
-            "API funding: Browser Use=deployment owner; "
-            "personal legacy key=not configured"
-        ) in sent[0][1]
 
 
 class TestRevoke:
@@ -695,18 +665,12 @@ class TestInteractiveAdmin:
     def test_users_callback_uses_runtime_aggregate_provider(self, tmp_path):
         _router, callbacks, client, _sent, _db, _access = _interactive_wire(
             tmp_path,
-            usage_provider=lambda _user_id: AdminUsageSnapshot(
-                checks_today=4, llm_calls_today=9
-            ),
+            usage_provider=lambda _user_id: AdminUsageSnapshot(checks_today=4),
         )
 
         callbacks.dispatch(_callback("admin:users"))
 
-        assert "checks=4, LLM calls=9" in client.edits[-1]["text"]
-        assert (
-            "API funding: Browser Use=deployment owner; "
-            "personal legacy key=not configured"
-        ) in client.edits[-1]["text"]
+        assert "checks=4" in client.edits[-1]["text"]
         assert "sk-ant-" not in client.edits[-1]["text"]
 
     def test_revoke_picker_excludes_owner_and_requires_confirmation(self, tmp_path):

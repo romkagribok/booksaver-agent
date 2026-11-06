@@ -6,27 +6,20 @@ Use a single-process, local-first daemon architecture. Keep components modular i
 
 ```mermaid
 flowchart TB
-    Config["LocalConfig (+ agent caps)"] --> Coordinator["CheckCoordinator"]
+    Config["LocalConfig"] --> Coordinator["CheckCoordinator"]
     Scheduler["Scheduler"] --> Coordinator
     Telegram["Telegram /checknow"] --> Coordinator
     Telegram --> Connect["Telegram /connect"]
     Connect --> AuthGateway["HTTPS Mini App gateway"]
     AuthGateway --> LoginBrowser["Transient device-adaptive Chromium"]
     LoginBrowser --> SessionVault["Encrypted per-user session vault"]
-    SessionVault --> Inventory["Booking.com Account Inventory"]
+    SessionVault --> Inventory["Grouped account reader (code) + Jev facts"]
     Inventory --> Store["LocalPersistence (+ sync audit/check traces)"]
     Coordinator --> Monitor["BookingComSearchMonitor"]
     SessionVault --> Monitor
     Monitor --> PricePort["PriceBrowserExecutor"]
-    PricePort --> BrowserUse["Browser Use (default agentic)"]
-    PricePort --> Stagehand["Stagehand (explicit rollback)"]
-    BrowserUse --> Validation["BookSaver validation/equivalence"]
-    Stagehand --> Validation
-    Monitor --> Journey["SearchJourney (trusted results query → verified property)"]
-    Journey --> Browser["BrowserAutomation"]
-    Journey -- "step failed" --> Agent["BrowserAgent (LLM, guarded)"]
-    Agent --> Browser
-    Monitor --> LLM["LLMClient (offer extraction + agent brain)"]
+    PricePort --> Jev["Jev price executor (TypeSafe)"]
+    Jev --> Validation["BookSaver validation/equivalence"]
     Monitor --> Store
     Store --> Savings["SavingsDetection"]
     Savings --> Notify["Notifications"]
@@ -39,22 +32,16 @@ flowchart TB
   availability/rate readiness, and room-rate extraction (ADR-013 amended by ADR-020); property loading
   does not depend on a legacy room-table selector, and the homepage form, manage page, registered-
   property deep link, and result-card headline price are not price sources.
-- The LLM is used for extraction and reasoning when DOM parsing is insufficient, and as a
-  guarded browser agent when a scripted journey step fails (ADR-015/016): bounded action
-  vocabulary, adapter-level denylist against reserve/checkout/payment/cancel, hard
-  per-check cost caps (ADR-017).
+- TypeSafe's Jev is the only model. It reads the price page and a reservation's total and refund
+  terms by choosing among page lines that code extracted; code validates every answer and fails
+  closed (ADR-056, ADR-061, ADR-063). No model navigates the account or the booking flow.
 - Scheduled and Telegram-triggered live checks enter one daemon-lifetime coordinator. It serializes
   Playwright work, shares per-user daily check/actual-LLM counters, and reuses the complete monitor,
   trace, savings, and notification pipeline (ADR-021); do not add a second scheduler or browser path.
-- The agentic price route selects one replaceable adapter behind `PriceBrowserExecutor`. Browser Use
-  is the default for both manual and scheduled jobs; Stagehand is an explicit future-job rollback.
-  Both restore the owner session only through local CDP and return untrusted typed evidence.
-  BookSaver alone verifies query identity, dates, occupancy, authentication, currency, all-in total,
-  refundability, equivalence, and savings. Never chain adapters within one job (ADR-043).
-- Price admission supports an explicit `consented_users` mode that routes the active owner and
-  currently disclosed active invitees through Browser Use before statistical qualification without
-  mutating qualification evidence. Missing/stale invitee consent and global regression still fail
-  closed; owner-canary and qualification-gated modes retain their original meaning (ADR-045).
+- Every active user's price checks use the Jev executor behind `PriceBrowserExecutor`. It restores
+  the owner session only through local CDP and returns untrusted typed evidence; BookSaver alone
+  verifies query identity, dates, occupancy, authentication, currency, all-in total, refundability,
+  equivalence, and savings (ADR-056). Invitees are informed of the provider, not gated (ADR-062).
 - Telegram-owned checks resolve the booking owner's encrypted session and create a fresh Android
   Chromium mobile-web context; missing, stale, rendered-signed-out, or mismatched state fails closed
   as `auth_required` (ADRs 024–025). Never substitute a global, public, or another user's session.

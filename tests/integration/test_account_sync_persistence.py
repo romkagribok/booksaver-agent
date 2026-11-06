@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from booksaver.application.account_sync import SynchronizeBookingAccount
-from booksaver.application.ports import PageContent
 from booksaver.domain.account_sync import (
     EligibilityReason,
     InventoryCompleteness,
@@ -22,9 +20,6 @@ from booksaver.domain.account_sync import (
 from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.user import UserAccessState
 from booksaver.domain.value_objects import Money, Occupancy
-from booksaver.infrastructure.browser.booking_account_inventory import (
-    BookingComAccountInventorySource,
-)
 from booksaver.infrastructure.persistence.sqlite_store import (
     SCHEMA_VERSION,
     SqliteAccountReservationRepository,
@@ -189,65 +184,6 @@ def test_failed_run_preserves_last_confirmed_inventory(tmp_path: Path) -> None:
         assert repo.latest_run_for_user(user.user_id).failure_code is (
             SynchronizationFailureCode.NAVIGATION_FAILED
         )
-
-
-def test_contradictory_llm_candidate_cannot_overwrite_existing_eligible_reservation(
-    tmp_path: Path,
-) -> None:
-    class Browser:
-        def open_page(self, url: str) -> PageContent:
-            return PageContent(url, "<main>Changed layout</main>", "Cancelled")
-
-        def is_authenticated(self) -> bool:
-            return True
-
-    class Interpreter:
-        def interpret(
-            self, _page_text: str, source_url: str
-        ) -> tuple[ReservationObservation, ...]:
-            return (
-                replace(
-                    _eligible(),
-                    lifecycle=ReservationLifecycle.CANCELLED,
-                    refundable=False,
-                    source_url=source_url,
-                    extraction_method="llm_inventory",
-                ),
-            )
-
-    with SqliteStore(tmp_path / "booksaver.db") as store:
-        user = SqliteUserRepository(store).get_owner()
-        repo = SqliteAccountReservationRepository(store)
-        _reconcile(
-            repo,
-            user.user_id,
-            "run-1",
-            InventoryDiscoveryResult((_eligible(),), InventoryCompleteness.COMPLETE),
-        )
-
-        report = SynchronizeBookingAccount(
-            BookingComAccountInventorySource(
-                interpreter=Interpreter(),
-                consume_interpreter_call=lambda: None,
-                llm_calls_used=lambda: 1,
-            ),
-            repo,
-            clock=lambda: NOW,
-        ).execute(
-            browser=Browser(),
-            user_id=user.user_id,
-            trigger=SynchronizationTrigger.BOOKINGS,
-            session_revision="session-2",
-        )
-
-        reservation = repo.list_for_user(user.user_id)[0]
-        projected = SqliteBookingRepository(store).list_active_for_user(user.user_id)
-
-    assert report.completeness is InventoryCompleteness.FAILED
-    assert reservation.observation.lifecycle is ReservationLifecycle.UPCOMING
-    assert reservation.observation.refundable is True
-    assert reservation.eligibility.is_eligible
-    assert len(projected) == 1
 
 
 def test_incomplete_llm_positive_preserves_existing_authoritative_projection(
@@ -612,7 +548,7 @@ def test_schema_v13_migration_preserves_v12_sync_runs(tmp_path: Path) -> None:
         repo = SqliteAccountReservationRepository(store)
         legacy = repo.latest_run_for_user(1)
 
-        assert version == SCHEMA_VERSION == 23
+        assert version == SCHEMA_VERSION == 24
         assert {
             "recovery_outcome",
             "recovery_step",
@@ -756,7 +692,7 @@ def test_schema_v21_migration_adds_unknown_meal_plans_to_existing_rows(tmp_path:
         (reservation,) = SqliteAccountReservationRepository(store).list_for_user(user.user_id)
         (booking,) = SqliteBookingRepository(store).list_active_for_user(user.user_id)
 
-    assert version == SCHEMA_VERSION == 23
+    assert version == SCHEMA_VERSION == 24
     assert reservation.observation.meal_plan is MealPlan.UNKNOWN
     assert reservation.observation.meal_plan_text == ""
     assert booking.meal_plan is MealPlan.UNKNOWN

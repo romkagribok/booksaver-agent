@@ -62,10 +62,6 @@ def test_fast_completion_is_after_progress_and_reports_success(completeness):
             failure=SynchronizationFailureCode.NAVIGATION_FAILED,
         ),
         report(
-            InventoryCompleteness.FAILED, count=0,
-            failure=SynchronizationFailureCode.USER_KEY_INVALID,
-        ),
-        report(
             InventoryCompleteness.INCOMPLETE,
             failure=SynchronizationFailureCode.EXTRACTION_AMBIGUOUS,
         ),
@@ -85,9 +81,6 @@ def test_incomplete_or_failed_refresh_is_not_mislabeled_success(result):
     code = result.failure_code if result is not None else None
     if code is SynchronizationFailureCode.AUTH_REQUIRED:
         assert "Send /connect" in messages[-1]
-    elif code is SynchronizationFailureCode.USER_KEY_INVALID:
-        assert "/setkey" in messages[-1]
-        assert "/deletekey" in messages[-1]
     else:
         assert "Try /bookings" in messages[-1]
         assert "/connect" not in messages[-1]

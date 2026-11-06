@@ -104,7 +104,6 @@ def test_jev_as_the_only_price_method_owns_every_canonical_effect(
     from booksaver.domain.browser_executor import (
         JEV_PRICE_POLICY_VERSION,
         AgenticBrowserSettings,
-        ExecutionRoutingMode,
         PriceExecutorKind,
     )
 
@@ -130,15 +129,13 @@ def test_jev_as_the_only_price_method_owns_every_canonical_effect(
 
     executors: list[RefreshingJev] = []
 
-    def factory(_anthropic_budget: Any, broker: InMemorySessionLeaseBroker) -> RefreshingJev:
+    def factory(broker: InMemorySessionLeaseBroker) -> RefreshingJev:
         executors.append(RefreshingJev(broker))
         return executors[-1]
 
     config = replace(
         _config(tmp_path),
-        agentic_browser_settings=AgenticBrowserSettings(
-            routing=ExecutionRoutingMode.CONSENTED_USERS, price_executor=PriceExecutorKind.JEV
-        ),
+        agentic_browser_settings=AgenticBrowserSettings(price_executor=PriceExecutorKind.JEV),
     )
     coordinator = _build_coordinator(
         config,

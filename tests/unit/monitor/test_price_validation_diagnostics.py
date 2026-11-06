@@ -14,8 +14,6 @@ from booksaver.domain.browser_executor import (
     PriceExecutionStatus,
     PriceObservationValidation,
     RefundabilityEvidence,
-    RoutingDecision,
-    RoutingReason,
     ValidatedObservedOffer,
     ValidationRejection,
     observed_offer_rejection_reasons,
@@ -27,11 +25,10 @@ from booksaver.monitor.search_check_job import BookingComSearchMonitor
 
 from .fakes import (
     FakeCheckHistoryRepository,
-    FakeInteractiveBrowser,
+    FakeCheckTraceRepository,
     make_booking,
 )
 from .test_agentic_search_check_job import _AgenticCheck, _outcome, _snapshot
-from .test_monitor_agent_wiring import FakeCheckTraceRepository
 
 
 def _with_offers(offers: tuple[ObservedOffer, ...]) -> PriceExecutionOutcome:
@@ -60,13 +57,11 @@ def _run(
     traces = FakeCheckTraceRepository()
     history = FakeCheckHistoryRepository()
     monitor = BookingComSearchMonitor(
-        browser=FakeInteractiveBrowser(),
         check_history=history,
         failure_tracker=FailureTracker(history),
         trace_repo=traces,
         agentic_price_check=_AgenticCheck(outcome),  # type: ignore[arg-type]
         agentic_owner_user_id=7,
-        agentic_route=RoutingDecision(True, RoutingReason.OWNER_CANARY),
         room_equivalence_policy=policy,
     )
     result = monitor.run_authenticated(make_booking(), _snapshot())

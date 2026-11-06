@@ -7,12 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from booksaver.domain.agent import AgentSettings
-from booksaver.domain.browser_executor import (
-    AgenticBrowserSettings,
-    ExecutionRoutingMode,
-    InventoryExecutionRoutingMode,
-    PriceExecutorKind,
-)
+from booksaver.domain.browser_executor import AgenticBrowserSettings, PriceExecutorKind
 from booksaver.domain.errors import ConfigValidationError
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.models import Config
@@ -29,16 +24,38 @@ from booksaver.domain.value_objects import (
 
 from .ports import ConfigSource
 
+# Keys that configured the removed Claude model path or legacy routing (FR-14). Existing
+# config files keep loading; one warning names whichever of these a file still sets.
+_IGNORED_KEYS: dict[str, frozenset[str]] = {
+    "agent": frozenset({
+        "primary_model",
+        "model",
+        "escalation_model",
+        "max_steps",
+        "max_llm_calls",
+        "check_timeout_seconds",
+        "max_recovery_calls_per_step",
+        "recovery_timeout_seconds",
+        "max_deployment_daily_cost_usd",
+        "reserve_opus_diagnostic_for_ambiguous_episode",
+        "screenshot_after_no_progress",
+        "max_semantic_action_executions",
+    }),
+    "limits": frozenset({"max_llm_calls_per_user_per_day"}),
+    "agentic_browser": frozenset({"routing", "inventory_routing"}),
+}
 
-def _approved_model(raw: object, *, field: str, primary: bool) -> str:
-    value = str(raw)
-    approved = "claude-sonnet-5" if primary else "claude-opus-5"
-    legacy = {"claude-sonnet-4-6", "claude-haiku-4-5"} if primary else set()
-    if value == approved or value in legacy:
-        return approved
-    raise ValueError(
-        f"{field} must be {approved}; Fable and arbitrary model profiles are not approved"
-    )
+
+def _ignored_keys(raw: dict[str, Any]) -> list[str]:
+    ignored = [
+        f"{section}.{key}"
+        for section, keys in _IGNORED_KEYS.items()
+        for key in raw.get(section, {})
+        if key in keys
+    ]
+    if "extraction" in raw:
+        ignored += [f"extraction.{key}" for key in raw["extraction"]] or ["[extraction]"]
+    return sorted(ignored)
 
 
 def _usd_micro(raw: object, *, field: str, maximum: str) -> int:
@@ -58,6 +75,14 @@ def _usd_micro(raw: object, *, field: str, maximum: str) -> int:
 def load_config(source: ConfigSource) -> Config:
     raw: dict[str, Any] = source.read()
     errors: list[str] = []
+    ignored = _ignored_keys(raw)
+    if ignored:
+        warnings.warn(
+            "Ignoring config keys that no longer have any effect (TypeSafe Jev is the only "
+            f"model provider): {', '.join(ignored)}",
+            UserWarning,
+            stacklevel=2,
+        )
 
     schedule_raw = raw.get("schedule", {})
     check_interval: CheckInterval | None = None
@@ -109,61 +134,11 @@ def load_config(source: ConfigSource) -> Config:
     agent_settings: AgentSettings | None = None
     agent_raw = raw.get("agent", {})
     try:
-        defaults = AgentSettings()
-        primary_raw = agent_raw.get(
-            "primary_model", agent_raw.get("model", defaults.primary_model)
-        )
         agent_settings = AgentSettings(
-            max_steps=int(agent_raw.get("max_steps", defaults.max_steps)),
-            max_llm_calls=int(agent_raw.get("max_llm_calls", defaults.max_llm_calls)),
-            check_timeout_seconds=int(
-                agent_raw.get("check_timeout_seconds", defaults.check_timeout_seconds)
-            ),
-            model=_approved_model(
-                primary_raw, field="agent.primary_model", primary=True
-            ),
-            escalation_model=_approved_model(
-                agent_raw.get("escalation_model", defaults.escalation_model),
-                field="agent.escalation_model",
-                primary=False,
-            ),
             max_job_cost_micro_usd=_usd_micro(
                 agent_raw.get("max_job_cost_usd", "1.00"),
                 field="agent.max_job_cost_usd",
                 maximum="1.00",
-            ),
-            max_deployment_daily_cost_micro_usd=_usd_micro(
-                agent_raw.get("max_deployment_daily_cost_usd", "10.00"),
-                field="agent.max_deployment_daily_cost_usd",
-                maximum="10.00",
-            ),
-            reserve_opus_diagnostic_for_ambiguous_episode=agent_raw.get(
-                "reserve_opus_diagnostic_for_ambiguous_episode",
-                defaults.reserve_opus_diagnostic_for_ambiguous_episode,
-            ),
-            max_recovery_calls_per_step=int(
-                agent_raw.get(
-                    "max_recovery_calls_per_step",
-                    defaults.max_recovery_calls_per_step,
-                )
-            ),
-            recovery_timeout_seconds=int(
-                agent_raw.get(
-                    "recovery_timeout_seconds",
-                    defaults.recovery_timeout_seconds,
-                )
-            ),
-            screenshot_after_no_progress=int(
-                agent_raw.get(
-                    "screenshot_after_no_progress",
-                    defaults.screenshot_after_no_progress,
-                )
-            ),
-            max_semantic_action_executions=int(
-                agent_raw.get(
-                    "max_semantic_action_executions",
-                    defaults.max_semantic_action_executions,
-                )
             ),
         )
     except (ValueError, TypeError) as e:
@@ -203,12 +178,6 @@ def load_config(source: ConfigSource) -> Config:
             max_checks_per_user_per_day=int(
                 limits_raw.get(
                     "max_checks_per_user_per_day", limits_defaults.max_checks_per_user_per_day
-                )
-            ),
-            max_llm_calls_per_user_per_day=int(
-                limits_raw.get(
-                    "max_llm_calls_per_user_per_day",
-                    limits_defaults.max_llm_calls_per_user_per_day,
                 )
             ),
             messages_per_minute_per_chat=int(
@@ -288,14 +257,6 @@ def load_config(source: ConfigSource) -> Config:
     try:
         agentic_defaults = AgenticBrowserSettings()
         agentic_browser_settings = AgenticBrowserSettings(
-            routing=ExecutionRoutingMode.parse(
-                agentic_browser_raw.get("routing", agentic_defaults.routing.value)
-            ),
-            inventory_routing=InventoryExecutionRoutingMode.parse(
-                agentic_browser_raw.get(
-                    "inventory_routing", agentic_defaults.inventory_routing.value
-                )
-            ),
             price_executor=PriceExecutorKind.parse(
                 agentic_browser_raw.get(
                     "price_executor", agentic_defaults.price_executor.value
@@ -348,16 +309,6 @@ def load_config(source: ConfigSource) -> Config:
             "jev_comparison.enabled cannot be true when agentic_browser.price_executor is "
             '"jev": the comparison would run Jev against itself'
         )
-    if (
-        agentic_browser_settings is not None
-        and agentic_browser_settings.price_executor is PriceExecutorKind.JEV
-        and agentic_browser_settings.routing is ExecutionRoutingMode.LEGACY
-    ):
-        errors.append(
-            'agentic_browser.price_executor = "jev" needs a non-legacy agentic_browser.routing: '
-            "with legacy routing the scripted method would run and Jev never would"
-        )
-
     if errors:
         raise ConfigValidationError(errors)
 
@@ -384,25 +335,11 @@ def load_config(source: ConfigSource) -> Config:
         smtp_username=notifications_raw.get("smtp_username"),
     )
 
-    extraction_settings = {
-        str(k): str(v) for k, v in raw.get("extraction", {}).items() if v is not None
-    }
-    if "model" in extraction_settings:
-        try:
-            extraction_settings["model"] = _approved_model(
-                extraction_settings["model"], field="extraction.model", primary=True
-            )
-        except ValueError as exc:
-            raise ConfigValidationError([str(exc)]) from exc
-    else:
-        extraction_settings["model"] = agent_settings.primary_model
-
     return Config(
         check_interval=check_interval,
         data_directory=data_directory,
         notification_settings=notification_settings,
         loaded_at=datetime.now(UTC),
-        extraction_settings=extraction_settings,
         agent_settings=agent_settings,
         telegram_bot_settings=telegram_bot_settings,
         limits_settings=limits_settings,

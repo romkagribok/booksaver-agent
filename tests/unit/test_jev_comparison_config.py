@@ -33,17 +33,16 @@ def test_paired_mode_is_disabled_by_default() -> None:
     assert settings.max_daily_cost_nano_usd == 250_000_000
 
 
-def test_explicit_activation_parses_caps() -> None:
+def test_explicit_caps_parse() -> None:
     settings = _load(
         {
-            "enabled": True,
             "participants": "all",
             "max_daily_cost_usd": "0.10",
             "max_calls_per_arm": 60,
             "arm_timeout_seconds": 120,
         }
     ).jev_comparison_settings
-    assert settings.enabled and settings.admits(is_owner=False)
+    assert settings.participants is ComparisonParticipants.ALL
     assert settings.max_daily_cost_nano_usd == 100_000_000
     assert (settings.max_calls_per_arm, settings.arm_timeout_seconds) == (60, 120)
 
@@ -75,20 +74,15 @@ def _load_with(agentic: dict[str, Any], jev: dict[str, Any] | None = None) -> An
 
 
 def test_jev_can_be_the_configured_price_executor() -> None:
-    cfg = _load_with({"routing": "consented_users", "price_executor": "jev"})
+    cfg = _load_with({"price_executor": "jev"})
     assert cfg.agentic_browser_settings.price_executor.value == "jev"
 
 
 def test_jev_cannot_be_compared_with_itself() -> None:
     with pytest.raises(ConfigValidationError, match="against itself"):
         _load_with(
-            {"routing": "consented_users", "price_executor": "jev"}, {"enabled": True}
+            {"price_executor": "jev"}, {"enabled": True}
         )
-
-
-def test_jev_with_legacy_routing_is_rejected_because_jev_would_never_run() -> None:
-    with pytest.raises(ConfigValidationError, match="needs a non-legacy"):
-        _load_with({"price_executor": "jev"})
 
 
 def test_jev_price_method_needs_only_the_typesafe_key(monkeypatch: Any) -> None:
@@ -96,10 +90,9 @@ def test_jev_price_method_needs_only_the_typesafe_key(monkeypatch: Any) -> None:
     from booksaver.cli.commands import _make_price_executor_factory
     from booksaver.infrastructure.browser.jev_primary_executor import JevPrimaryPriceExecutor
 
-    jev = _load_with({"routing": "consented_users", "price_executor": "jev"})
+    jev = _load_with({"price_executor": "jev"})
     monkeypatch.delenv("BOOKSAVER_TYPESAFE_API_KEY", raising=False)
-    monkeypatch.setenv("BOOKSAVER_LLM_API_KEY", "anthropic-key-is-not-reused")
     assert _make_price_executor_factory(jev) is None
     monkeypatch.setenv("BOOKSAVER_TYPESAFE_API_KEY", "typesafe-key")
     factory = _make_price_executor_factory(jev)
-    assert isinstance(factory(object(), InMemorySessionLeaseBroker()), JevPrimaryPriceExecutor)
+    assert isinstance(factory(InMemorySessionLeaseBroker()), JevPrimaryPriceExecutor)

@@ -23,12 +23,10 @@ from booksaver.domain.account_sync import (
     SynchronizationFailureCode,
 )
 from booksaver.domain.browser_executor import (
-    AgenticBrowserSettings,
     AllInEvidence,
     EvidenceCompleteness,
     ExecutionLimits,
     ExecutionUsage,
-    InventoryExecutionRoutingMode,
     ObservationSource,
     PriceExecutionResult,
     PriceExecutionStatus,
@@ -220,16 +218,6 @@ def test_inventory_request_requires_exact_account_subject_and_scopes() -> None:
 def test_session_reference_requires_a_neutral_subject() -> None:
     lease = _lease()
     assert lease.subject_id == "account:7"
-
-
-def test_inventory_routing_defaults_agentic_and_is_independent_from_price() -> None:
-    settings = AgenticBrowserSettings()
-    assert settings.inventory_routing is InventoryExecutionRoutingMode.AGENTIC
-    assert InventoryExecutionRoutingMode.parse("legacy") is (
-        InventoryExecutionRoutingMode.LEGACY
-    )
-    with pytest.raises(ValueError, match="inventory_routing"):
-        InventoryExecutionRoutingMode.parse("owner_canary")
 
 
 def test_validator_maps_only_positive_facts_and_never_authorizes_absence() -> None:

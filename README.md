@@ -19,12 +19,12 @@ See the [story index](memory-bank/story-index.md) for delivery and qualification
 [decision index](memory-bank/standards/decision-index.md) for accepted architecture.
 The implementation includes:
 
-- bounded Browser Use price/inventory execution and an explicit deterministic/Stagehand rollback;
+- bounded Browser Use browser execution with TypeSafe's Jev as the only model provider;
 - same-property, dates, occupancy, room-type, currency, and refundability checks;
 - local SQLite history, redacted traces, and savings alerts;
 - automatic authenticated-account reservation discovery with visible eligibility reasons;
 - a private Telegram interface with owner-issued, single-use invites and per-user isolation;
-- encrypted, user-scoped Booking.com sessions and optional personal Anthropic keys;
+- encrypted, user-scoped Booking.com sessions;
 - Docker/systemd deployment and an opt-in HTTPS `/connect` login flow for a trusted VPS;
 - a noVNC-compatible, deny-by-default login viewer with native mobile-keyboard controls;
 - immediate same-user `/connect` recovery after a viewer is closed or abandoned;
@@ -42,12 +42,10 @@ work. Qualification and live acceptance remain explicit gates in the lifecycle a
    broad part of the day. At each slot it synchronizes that user's account once, then opens a fresh
    authenticated mobile Chromium context for every eligible booking. `/checknow` remains available
    for an immediate check.
-3. Price routing defaults to the `legacy` deterministic journey. `owner_canary`, explicit
-   `consented_users`, or qualified `agentic` routing admits the pinned local Browser Use classic
-   agent in a fresh local Chromium profile. Every physical action is code-authorized; reservation,
-   checkout, payment, cancellation, credential, MFA/captcha, arbitrary navigation, shell,
-   clipboard, upload, and download capabilities are absent. Stagehand remains an explicit rollback
-   adapter for a future job, never an automatic second attempt.
+3. Every price check runs the pinned local Browser Use classic agent in a fresh local Chromium
+   profile, with TypeSafe's Jev as the model. Every physical action is code-authorized;
+   reservation, checkout, payment, cancellation, credential, MFA/captcha, arbitrary navigation,
+   shell, clipboard, upload, and download capabilities are absent.
 4. Only a cheaper, currency-aligned, still-refundable equivalent offer becomes a savings result.
 5. Telegram or email reports the result. You independently review and make any change in
    Booking.com; the next synchronization observes the updated account state.
@@ -69,81 +67,39 @@ inspect its content-free provider/call/token/action/timing audit with
 Randomized slots are persisted locally, so restarts do not reroll or replay completed work. Send
 `/status` to see your own next planned UTC slot.
 
-The `[agent]` section uses a fixed Sonnet 5 primary and one measured Opus 5 escalation. Fable and
-arbitrary model IDs are rejected. Model calls share persisted USD 1 per-browser-job and USD 10 per
-deployment UTC-day ceilings; predictable outcomes such as a confirmed reconnect requirement use no
-model call. The section also keeps the existing outer per-check limits (`max_steps`,
-`max_llm_calls`, and `check_timeout_seconds`) and tighter recovery defaults:
-
-```toml
-primary_model = "claude-sonnet-5"
-escalation_model = "claude-opus-5"
-max_job_cost_usd = "1.00"
-max_deployment_daily_cost_usd = "10.00"
-reserve_opus_diagnostic_for_ambiguous_episode = true
-max_recovery_calls_per_step = 4
-recovery_timeout_seconds = 60
-screenshot_after_no_progress = 2
-max_semantic_action_executions = 2
-```
-
-Older config files remain valid and receive these defaults automatically. The inner limits cannot
-expand the outer per-check or per-user daily LLM budgets.
-
-Inventory and price use independent browser-executor routes. Agentic inventory is the default;
-the agentic price executor remains disabled by default:
+TypeSafe's Jev (`BOOKSAVER_TYPESAFE_API_KEY`) is the only model provider and is required for
+price checks and for the reservation-facts part of account syncs. The only `[agent]` setting is
+`max_job_cost_usd` (USD 1.00 by default); other `[agent]` keys, `[extraction]`, `routing`, and
+`inventory_routing` from older config files are ignored with one warning, and the files still
+load. Every active user uses Jev:
 
 ```toml
 [agentic_browser]
-routing = "legacy" # price: legacy | owner_canary | consented_users | agentic
-price_executor = "browser_use" # price method: jev | browser_use | stagehand
-inventory_routing = "agentic" # inventory: legacy | agentic
-disclosure_version = "anthropic-visible-booking-page-v1"
+price_executor = "jev"
+disclosure_version = "typesafe-visible-booking-page-v1"
 ```
-
-`inventory_routing = "agentic"` uses the pinned Browser Use classic agent for every read-only
-inventory trigger, including `/bookings`, `/checknow`, scheduled checks, and post-connect sync. It
-runs locally in a fresh browser, receives only a closed set of code-guarded read-only actions, and
-uses the deployment's Anthropic key. BookSaver accepts only positively observed reservations from
-that run and never lets model output mark an unseen saved reservation absent. Set it to `legacy` as a
-capability-specific rollback; this setting does not promote the price executor.
 
 The Docker build installs the exact resolved runtime graph from `requirements.lock`; this is
 intentional because Browser Use 0.11.13 has broad transitive dependency ranges. Telemetry, cloud
 sync, external version checks, downloads, persistent screenshots, and stock Browser Use actions are
 disabled by the BookSaver adapter.
 
-For price execution, `owner_canary` routes only the deployment owner. An owner may explicitly select
-`consented_users` to route the owner and every active invitee with current `/connect` disclosure
-consent through Browser Use before statistical qualification completes. This choice does not mark
-the canary qualified; qualification remains useful for monitoring and rollback. The default adapter
-runs Browser Use 0.11.13 in-process against the installed
-Playwright Chromium, injects encrypted Booking.com cookies through a code-owned local CDP
-connection, and sends the exact transient browser's semantic view and screenshots to Sonnet 5 using
-`BOOKSAVER_LLM_API_KEY`. BookSaver constructs the trusted search URL, removes Browser Use's stock
-actions, exposes only guarded read-only clicks/scrolls/keys/waits and typed submissions, and proves
-authentication independently. USD 1 per-check, USD 10 deployment-day, 15-action, six visual-click,
-and 180-second limits remain hard. Set `price_executor = "stagehand"` only to roll a future job back
-to the prior Stagehand semantic/computer-use adapter.
-
-The executor returns observations only. BookSaver still verifies property, dates, occupancy,
-authentication, Genius evidence, currency, all-in totals, explicit refundability, room equivalence,
-and the cheapest valid offer before any savings alert. Agentic failure is terminal for that check;
-the legacy browser is a configured rollback route, not an automatic second attempt. Invited users
-always require current versioned `/connect` disclosure consent. They may be admitted either by the
-explicit `consented_users` route or by the statistically qualified `agentic` route.
-
 ### Jev as the price method
 
-`[agentic_browser] price_executor = "jev"` (ADR-056) makes TypeSafe's Jev the only price method.
-It runs behind the same provider-neutral port and the same validators, so its result is what
-check history, session refresh, and savings alerts are based on; no Anthropic call is made for
-price checks. It needs `BOOKSAVER_TYPESAFE_API_KEY` and is bounded by the model pin, per-check
-call cap, and daily cost cap in `[jev_comparison]`, whose `enabled` flag must stay false in this
-mode. Each run's provider cost and a content-free diagnostic are kept in `jev_price_runs`
-(`booksaver comparison report`). The Browser Use and Stagehand LLM adapters remain in the code as
-the rollback path: set `price_executor = "browser_use"` and restart. Reservation discovery is
-unaffected and still uses the Anthropic key when it needs a model.
+`[agentic_browser] price_executor = "jev"` (ADR-056) runs Jev behind the provider-neutral port and
+the validators below. Browser Use drives a fresh local Chromium, injects encrypted Booking.com
+cookies through a code-owned local CDP connection, and exposes only guarded read-only
+clicks/scrolls/keys/waits and typed submissions; BookSaver constructs the trusted search URL and
+proves authentication independently. The executor returns observations only. BookSaver still
+verifies property, dates, occupancy, authentication, Genius evidence, currency, all-in totals,
+explicit refundability, room equivalence, and the cheapest valid offer before any savings alert,
+and an executor failure is terminal for that check. Invited users always require current
+versioned `/connect` disclosure consent.
+
+The result is what check history, session refresh, and savings alerts are based on. Jev needs
+`BOOKSAVER_TYPESAFE_API_KEY` and is bounded by the model pin, per-check call cap, and daily cost
+cap in `[jev_comparison]`, whose `enabled` flag must stay false in this mode. Each run's provider
+cost and a content-free diagnostic are kept in `jev_price_runs` (`booksaver comparison report`).
 
 ### Jev price comparison (paired mode)
 
@@ -158,43 +114,6 @@ Telegram report with both results, timings, and AI costs. Only the existing meth
 history, sessions, and savings alerts. `participants = "all"` includes invitees; their booking
 page text is then sent to TypeSafe, so tell them first.
 
-All Browser Use inventory and price calls use the deployment owner's
-`BOOKSAVER_LLM_API_KEY`, including calls initiated by invitees. `/admin users` shows that funding
-policy and only whether an optional personal key is configured for legacy LLM work; it never prints,
-decrypts, fingerprints, or validates a key.
-
-The owner governs that release entirely from the local VPS:
-
-```bash
-booksaver agentic status
-booksaver agentic compare <CHECK_ID> --correct   # or --incorrect
-booksaver agentic promote
-booksaver agentic regress <MACHINE_CODE>
-```
-
-Promotion reads the persisted evidence itself and cannot be supplied a fabricated verdict. It
-requires 30 owner checks over at least 14 days, ten correct manual comparisons, at least 95% valid
-eligible observations, average cost at most USD 0.10, p95 cost at most USD 0.50, p95 duration at
-most 180 seconds, fallback use at most 20%, zero critical violations, and explicit owner execution
-of `promote`. During the 30-day rollback window, a critical violation or three consecutive eligible
-failures automatically regresses routing to `legacy`. Offline fixtures qualify the adapter and
-safety boundary; they do not substitute for this live owner evidence.
-
-Model behavior can be measured without opening Booking.com or reading local sessions/database.
-The explicit qualification command replays the packaged synthetic corpus ten times per fixture for
-both approved profiles and requires at least nine correct runs per fixture with zero prohibited
-executions. It reports aggregate correctness, safety, calls, actions, latency, token use, and exact
-estimated cost without printing prompts or page content. Live execution requires an explicit cost
-cap and is admitted call-by-call under the same deployment ceiling:
-
-```bash
-booksaver evaluate recovery --live --qualify --persist --max-cost-usd 10.00
-booksaver evaluate qualification
-```
-
-It requires `BOOKSAVER_LLM_API_KEY`. Custom fixtures are exploratory only and cannot create a
-recordable production qualification result.
-
 If adaptive assistance indicates likely DOM drift, BookSaver correlates a content-free maintenance
 incident and alerts only the configured owner. Inspect encrypted local evidence with
 `booksaver incidents list` and `booksaver incidents inspect <INCIDENT_ID>`; bundles expire after
@@ -206,8 +125,7 @@ seven days and are never sent through Telegram.
 
 - a Linux host with Docker Compose v2, 2 GB RAM minimum, and a DNS name if `/connect` is enabled;
 - a private Telegram bot token from BotFather and your numeric Telegram chat ID;
-- an Anthropic API key for Browser Use price/inventory execution, Stagehand rollback routes, and
-  legacy LLM extraction/recovery (without one, use only the configured scripted routes);
+- a TypeSafe API key (`BOOKSAVER_TYPESAFE_API_KEY`), required for price checks and account syncs;
 - acceptance of the trust boundary: the VPS runs the temporary login browser and must be under
   your control.
 
@@ -269,11 +187,10 @@ and `auth status|delete|import`. Run any command with `--help` for its full argu
 - Configuration, SQLite data, encrypted sessions, traces, and snapshots stay in the configured
   local data directory. Backups contain sensitive booking data and must be protected.
 - Secrets are read from environment variables, never from committed configuration:
-  `BOOKSAVER_TELEGRAM_BOT_TOKEN`, `BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SECRET_KEY`, and optional
-  `BOOKSAVER_SMTP_PASSWORD` and `BOOKSAVER_TYPESAFE_API_KEY`.
+  `BOOKSAVER_TELEGRAM_BOT_TOKEN`, `BOOKSAVER_TYPESAFE_API_KEY`, `BOOKSAVER_SECRET_KEY`, and
+  optional `BOOKSAVER_SMTP_PASSWORD`.
 - BookSaver does not intentionally send cookies, passwords, MFA codes, or raw API keys to the LLM.
-  When LLM features are enabled, it may send bounded rendered page text and, during escalation,
-  screenshots to the configured Anthropic model. Rendered content can include account or booking
+  It sends bounded rendered page text to TypeSafe's Jev. Rendered content can include account or booking
   details; use a provider/data policy you accept.
 - `/connect` keeps credentials out of Telegram and BookSaver forms, but the browser executes on the
   VPS. A compromised root account could still observe login input. This is the known hardening

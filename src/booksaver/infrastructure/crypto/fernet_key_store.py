@@ -12,22 +12,20 @@ _SECRET_ENV_VAR = "BOOKSAVER_SECRET_KEY"
 
 
 class FernetKeyStore:
-    """Encrypts/decrypts personal Anthropic API keys at rest (ADR-019, US-027).
+    """Encrypts/decrypts local secrets at rest: sessions and diagnostics (ADR-019).
 
     The encryption key comes only from the ``BOOKSAVER_SECRET_KEY`` env var
     (ADR-002 — secrets never in config/git). It is read lazily, on first use,
     not at construction — so building this object is always safe (e.g. as a
     default dependency wired at daemon startup); only an actual encrypt/
-    decrypt call on a real personal-key operation can raise, and only then.
-    This means an owner-only/laptop deployment that never sets
-    ``BOOKSAVER_SECRET_KEY`` and never receives a `/setkey` still runs fine.
+    decrypt call can raise, and only then.
     """
 
     def __init__(
         self,
         secret_key: str | None = None,
         *,
-        purpose: str = "personal API key",
+        purpose: str = "local secret",
     ) -> None:
         self._explicit_secret_key = secret_key
         self._purpose = purpose
@@ -41,7 +39,7 @@ class FernetKeyStore:
                 f"{_SECRET_ENV_VAR} is not set — cannot encrypt/decrypt {self._purpose}. "
                 "Generate one with `python -c \"from cryptography.fernet "
                 "import Fernet; print(Fernet.generate_key().decode())\"` and set it "
-                "as an env var on the VPS before using /setkey."
+                "as an env var on the VPS."
             )
         try:
             return Fernet(secret.encode("utf-8") if isinstance(secret, str) else secret)

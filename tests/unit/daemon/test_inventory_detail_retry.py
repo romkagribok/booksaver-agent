@@ -74,8 +74,8 @@ def test_incomplete_saved_booking_retries_details_instead_of_identity_shortcut(
         _config(tmp_path),
         browser_factory=BrowserContext,
         session_repository=sessions,
-        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
-        bookings_inventory_executor_factory=lambda _budget, _leases: executor,
+        agentic_inventory_executor_factory=lambda _leases: executor,
+        bookings_inventory_executor_factory=lambda _leases: executor,
     )
     completed = threading.Event()
     assert (

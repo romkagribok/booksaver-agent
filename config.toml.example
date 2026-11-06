@@ -1,3 +1,7 @@
+# Removed keys (the old [agent] model and step settings, [extraction], routing,
+# inventory_routing, max_llm_calls_per_user_per_day) are ignored with one warning
+# at startup; existing config files still load.
+
 [schedule]
 # Every eligible booking participates in one random slot per broad UTC window.
 checks_per_booking_per_day = 3
@@ -14,34 +18,13 @@ locale = "en-US"
 timezone_id = "UTC"
 
 [agentic_browser]
-# Price execution remains legacy until the owner intentionally selects a rollout mode.
-# Inventory execution is independent and uses Browser Use for all authorized, disclosed triggers.
-# Switch only inventory back to legacy for rollback.
-routing = "legacy" # price: legacy | owner_canary | consented_users | agentic
-price_executor = "browser_use" # price method; "jev" is required for any non-legacy routing
-inventory_routing = "agentic" # inventory: legacy | agentic
-disclosure_version = "anthropic-visible-booking-page-v1"
-
-[extraction]
-# Legacy extraction model settings normalize to the fixed primary profile below.
+# TypeSafe's Jev is the only price executor and every active user uses it.
+price_executor = "jev"
+disclosure_version = "typesafe-visible-booking-page-v1"
 
 [agent]
-# The adaptive portfolio is closed: Sonnet 5 handles normal ambiguous DOM work,
-# Opus 5 receives at most one measured quality escalation, and Fable is rejected.
-primary_model = "claude-sonnet-5"
-escalation_model = "claude-opus-5"
+# Per-job spend cap in USD.
 max_job_cost_usd = "1.00"
-max_deployment_daily_cost_usd = "10.00"
-reserve_opus_diagnostic_for_ambiguous_episode = true
-# Outer per-check limits. Recovery episodes stop sooner at the nested limits below.
-max_steps = 15
-max_llm_calls = 20
-check_timeout_seconds = 180
-# Backward-compatible defaults for one failed browser step (ADR-030).
-max_recovery_calls_per_step = 4
-recovery_timeout_seconds = 60
-screenshot_after_no_progress = 2
-max_semantic_action_executions = 2
 
 [telegram_bot]
 enabled = true
@@ -55,7 +38,6 @@ session_timeout_seconds = 600
 
 [limits]
 max_checks_per_user_per_day = 48
-max_llm_calls_per_user_per_day = 200
 messages_per_minute_per_chat = 20
 
 # Experimental paired Jev price comparison (intent 026). When enabled and
@@ -67,10 +49,8 @@ messages_per_minute_per_chat = 20
 # told that their booking page text is sent to TypeSafe.
 #
 # With [agentic_browser] price_executor = "jev", Jev is the only price method
-# (ADR-056): its validated result is saved and can trigger savings alerts, no
-# Anthropic price call is made, and `enabled` here must stay false. The model
-# pin and the caps below then bound every Jev price check. Set price_executor
-# back to "browser_use" to return to the LLM method.
+# (ADR-056): its validated result is saved and can trigger savings alerts, and
+# `enabled` here must stay false. The caps below then bound every Jev price check.
 [jev_comparison]
 enabled = false
 participants = "owner"          # owner | all

@@ -50,9 +50,7 @@ class FailureCode(Enum):
     AGENT_NO_PROGRESS = "agent_no_progress"
     BLOCKED_ACTION = "blocked_action"
     BUDGET_EXCEEDED = "budget_exceeded"
-    # Hybrid billing (bolt 009, US-027): the booking owner's personal Anthropic
-    # key could not be used (missing encryption key, corrupt ciphertext, or the
-    # decrypted key itself was rejected).
+    # Retired with personal model keys (schema v24); kept so old history rows load.
     USER_KEY_INVALID = "user_key_invalid"
     # Per-user fair-scheduling code (bolt 010, US-031)
     USER_CHECK_LIMIT_REACHED = "user_check_limit_reached"

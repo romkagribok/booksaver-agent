@@ -11,9 +11,7 @@ aiosignal==1.4.0
 annotated-types==0.8.0
     # via pydantic
 anthropic==0.125.0
-    # via
-    #   booksaver-agent (pyproject.toml)
-    #   browser-use
+    # via browser-use
 anyio==4.14.2
     # via
     #   anthropic

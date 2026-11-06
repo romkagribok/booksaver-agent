@@ -340,8 +340,8 @@ def test_coordinator_fills_sparse_saved_facts_without_accepting_status_contradic
         _config(tmp_path),
         browser_factory=BrowserContext,
         session_repository=sessions,
-        agentic_inventory_executor_factory=lambda _budget, _leases: executor,
-        bookings_inventory_executor_factory=lambda _budget, _leases: executor,
+        agentic_inventory_executor_factory=lambda _leases: executor,
+        bookings_inventory_executor_factory=lambda _leases: executor,
     )
     done = threading.Event()
     completions: list[InventoryCompletion] = []

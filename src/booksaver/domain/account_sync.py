@@ -61,7 +61,7 @@ class SynchronizationTrigger(Enum):
 class SynchronizationFailureCode(Enum):
     AUTH_REQUIRED = "auth_required"
     VERIFICATION_PENDING = "verification_pending"
-    USER_KEY_INVALID = "user_key_invalid"
+    USER_KEY_INVALID = "user_key_invalid"  # Retired; kept so old sync runs load.
     BOT_WALL = "bot_wall"
     NAVIGATION_FAILED = "navigation_failed"
     UNSUPPORTED_LAYOUT = "unsupported_layout"

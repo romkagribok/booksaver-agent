@@ -44,7 +44,6 @@ def test_schema_v12_migration_is_additive_and_preserves_v11_state(tmp_path: Path
     with SqliteStore(db_path) as store:
         users = SqliteUserRepository(store)
         owner = users.get_owner()
-        users.set_encrypted_key(owner.user_id, b"preserved-encrypted-key")
         store.conn.execute(
             """
             INSERT INTO bookings (
@@ -87,8 +86,7 @@ def test_schema_v12_migration_is_additive_and_preserves_v11_state(tmp_path: Path
             "PRAGMA foreign_key_list(scheduled_check_slots)"
         ).fetchall()
 
-    assert version == SCHEMA_VERSION == 23
-    assert owner.encrypted_key == b"preserved-encrypted-key"
+    assert version == SCHEMA_VERSION == 24
     assert tuple(booking) == ("CONF-V11", owner.user_id)
     assert {"idx_scheduled_slots_due", "idx_scheduled_slots_user_next"} <= indexes
     assert any(row[2] == "users" and row[6] == "CASCADE" for row in foreign_keys)
