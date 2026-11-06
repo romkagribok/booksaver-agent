@@ -51,6 +51,7 @@ from booksaver.domain.browser_executor import (
     ExecutionUsage,
     InventoryExecutionRoutingMode,
     ObservationSource,
+    PriceExecutorKind,
     QualificationStatus,
     RedactedProvenance,
     RefundabilityEvidence,
@@ -3113,7 +3114,7 @@ def test_stall_reason_reflects_whether_the_latest_sync_blocks_checks(
 def _inform_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, telegram_id: int = 101,
     role: UserRole = UserRole.USER, health: UserSessionHealth = UserSessionHealth.READY,
-    recorded: str | None = "old-disclosure",
+    recorded: str | None = "old-disclosure", executor: PriceExecutorKind = PriceExecutorKind.JEV,
 ) -> tuple[CheckCoordinator, list[tuple[str, str]], int]:
     monkeypatch.setenv("BOOKSAVER_TELEGRAM_BOT_TOKEN", "token")
     sent: list[tuple[str, str]] = []
@@ -3125,6 +3126,9 @@ def _inform_setup(
     status.return_value.health = health
     monkeypatch.setattr(EncryptedUserSessionRepository, "status", status)
     coordinator = _coordinator(tmp_path)
+    coordinator._config.agentic_browser_settings = replace(  # noqa: SLF001
+        coordinator._config.agentic_browser_settings, price_executor=executor,  # noqa: SLF001
+    )
     with SqliteStore(tmp_path / "booksaver.db") as store:
         users = SqliteUserRepository(store)
         if role is UserRole.OWNER:
@@ -3211,3 +3215,13 @@ def test_failed_provider_change_message_records_nothing_and_is_retried(
 
     assert len(sent) == 1
     assert _recorded_version(tmp_path, user_id) != "old-disclosure"
+
+
+def test_a_deployment_not_on_jev_informs_nobody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, sent, user_id = _inform_setup(
+        tmp_path, monkeypatch, executor=PriceExecutorKind.BROWSER_USE,
+    )
+    coordinator._inform_provider_change(user_id)  # noqa: SLF001
+    assert sent == []

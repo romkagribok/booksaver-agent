@@ -83,6 +83,7 @@ from booksaver.domain.browser_executor import (
     ExecutorSafetyViolation,
     InventoryExecutionRoutingMode,
     PriceExecutionStatus,
+    PriceExecutorKind,
     RoutingContext,
     resolve_execution_route,
 )
@@ -3075,7 +3076,10 @@ class CheckCoordinator:
     def _inform_provider_change(self, user_id: int) -> None:
         """Tell an invitee once that TypeSafe's Jev now reads page content (ADR-062)."""
         try:
-            version = self._config.agentic_browser_settings.disclosure_version
+            settings = self._config.agentic_browser_settings
+            if settings.price_executor is not PriceExecutorKind.JEV:
+                return  # Only a Jev deployment has changed provider.
+            version = settings.disclosure_version
             with SqliteStore(self._db_path) as store:
                 user = SqliteUserRepository(store).get_by_id(user_id)
                 consents = SqliteAgenticDisclosureConsentRepository(store)
