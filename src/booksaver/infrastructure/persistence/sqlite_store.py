@@ -79,7 +79,7 @@ from booksaver.domain.value_objects import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 _MACHINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
@@ -93,7 +93,6 @@ class AdminUserAggregate:
     role: UserRole
     access_state: UserAccessState
     active_booking_count: int
-    personal_key_configured: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,14 +643,6 @@ def _migrate_v13(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE booking_sync_runs ADD COLUMN {name} {declaration}")
 
 
-def _migrate_v14(conn: sqlite3.Connection) -> None:
-    """Add restart-safe adaptive-model spend and qualification ledgers."""
-    schema = _SCHEMA_SQL.read_text()
-    start = schema.index("CREATE TABLE IF NOT EXISTS llm_spend_days")
-    end = schema.index("-- v15: content-free DOM-drift", start)
-    conn.executescript(schema[start:end])
-
-
 def _migrate_v15(conn: sqlite3.Connection) -> None:
     """Add content-free DOM-drift incidents and encrypted diagnostics."""
     schema = _SCHEMA_SQL.read_text()
@@ -726,6 +717,15 @@ def _migrate_v23(conn: sqlite3.Connection) -> None:
                     raise
 
 
+def _migrate_v24(conn: sqlite3.Connection) -> None:
+    """Remove the retired Claude spend ledgers and personal Anthropic keys (intent 030)."""
+
+    # The reservation table references llm_spend_days, so it goes first.
+    for table in ("llm_cost_reservations", "llm_spend_days", "llm_profile_qualifications"):
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+    conn.execute("UPDATE users SET encrypted_key = NULL WHERE encrypted_key IS NOT NULL")
+
+
 # v2 -> v3: savings_opportunities is purely additive (CREATE IF NOT EXISTS covers it).
 # v3 -> v4: rebook_sessions + rebook_events, also purely additive.
 # v5 -> v6: check_traces, also purely additive.
@@ -738,7 +738,7 @@ def _migrate_v23(conn: sqlite3.Connection) -> None:
 # v10 -> v11: destructive booking cutover + authoritative synchronized inventory.
 # v11 -> v12: persisted per-user randomized schedule slots (ADR-029), additive.
 # v12 -> v13: caller-scoped inventory recovery audit columns, additive.
-# v13 -> v14: model spend/qualification ledgers, additive.
+# v13 -> v14: model spend/qualification ledgers, additive (dropped again in v24).
 # v14 -> v15: DOM-drift incidents, alert state, and encrypted diagnostics.
 # v15 -> v16: redacted agentic canary, promotion, and disclosure consent.
 # v16 -> v17: content-free agentic inventory execution metrics.
@@ -747,6 +747,7 @@ def _migrate_v23(conn: sqlite3.Connection) -> None:
 # v19 -> v20: authoritative Jev price-run ledger, purely additive (ADR-056).
 # v20 -> v21: booked meal plan on reservations and bookings (intent 027).
 # v22 -> v23: booked total provenance (code or Jev) on reservations and bookings (ADR-060).
+# v23 -> v24: drop the Claude spend/qualification ledgers and clear personal Anthropic keys.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -756,13 +757,13 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migrate_v11,
     12: _migrate_v12,
     13: _migrate_v13,
-    14: _migrate_v14,
     15: _migrate_v15,
     16: _migrate_v16,
     17: _migrate_v17,
     18: _migrate_v18,
     21: _migrate_v21,
     23: _migrate_v23,
+    24: _migrate_v24,
 }
 
 
@@ -2881,9 +2882,7 @@ class SqliteUserRepository:
                 u.telegram_username,
                 u.role,
                 u.access_state,
-                COUNT(CASE WHEN b.status = 'active' THEN 1 END) AS active_booking_count,
-                MAX(CASE WHEN u.encrypted_key IS NULL THEN 0 ELSE 1 END)
-                    AS personal_key_configured
+                COUNT(CASE WHEN b.status = 'active' THEN 1 END) AS active_booking_count
             FROM users AS u
             LEFT JOIN bookings AS b ON b.user_id = u.user_id
             GROUP BY
@@ -2902,7 +2901,6 @@ class SqliteUserRepository:
                 role=UserRole(row["role"]),
                 access_state=UserAccessState(row["access_state"]),
                 active_booking_count=int(row["active_booking_count"]),
-                personal_key_configured=bool(row["personal_key_configured"]),
             )
             for row in rows
         ]
@@ -2952,29 +2950,14 @@ class SqliteUserRepository:
         return True
 
     def get_owner_of_booking(self, booking_id: str) -> User | None:
-        """US-027: resolve a booking's owning user, for per-booking LLM key
-        resolution (`LLMClientFactory.for_booking`). Joins through
-        `bookings.user_id` rather than adding a `User` field to `Booking`
-        (see ddd-02 rationale)."""
+        """Resolve a booking's owning user through `bookings.user_id` rather
+        than adding a `User` field to `Booking` (see ddd-02 rationale)."""
         row = self._store.conn.execute(
             "SELECT u.* FROM users u JOIN bookings b ON b.user_id = u.user_id "
             "WHERE b.booking_id = ?",
             (booking_id,),
         ).fetchone()
         return self._row_to_user(row) if row else None
-
-    def set_encrypted_key(self, user_id: int, encrypted_key: bytes | None) -> None:
-        """US-027: store (or clear, when `encrypted_key` is None) a user's
-        Fernet-encrypted personal Anthropic key. `/setkey` rotates by calling
-        this again; `/deletekey` calls it with None to revert to owner-billed
-        checks."""
-        cursor = self._store.conn.execute(
-            "UPDATE users SET encrypted_key = ? WHERE user_id = ?",
-            (encrypted_key, user_id),
-        )
-        self._store.conn.commit()
-        if cursor.rowcount == 0:
-            raise KeyError(f"No user with id '{user_id}'")
 
     def purge(self, user_id: int) -> None:
         """US-028 `/admin purge`: irreversibly deletes a non-owner user and
@@ -3004,9 +2987,6 @@ class SqliteUserRepository:
         # CASCADE: purge must remain safe if a legacy connection disabled
         # foreign-key enforcement.
         conn.execute("DELETE FROM scheduled_check_slots WHERE user_id = ?", (user_id,))
-        # Remove caller-linked detail but retain deployment-day aggregates so
-        # privacy purge cannot reopen already consumed allowance.
-        conn.execute("DELETE FROM llm_cost_reservations WHERE caller_user_id = ?", (user_id,))
         conn.execute(
             "DELETE FROM price_comparison_arms WHERE comparison_id IN "
             "(SELECT comparison_id FROM price_comparisons WHERE user_id = ?)",
@@ -3026,7 +3006,6 @@ class SqliteUserRepository:
             role=UserRole(row["role"]),
             access_state=UserAccessState(row["access_state"]),
             created_at=datetime.fromisoformat(row["created_at"]),
-            encrypted_key=row["encrypted_key"],
             telegram_username=row["telegram_username"],
         )
 

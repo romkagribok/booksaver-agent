@@ -165,7 +165,7 @@ class TestV7Migration:
                 users[0].user_id
             )
 
-        assert versions[-1] == SCHEMA_VERSION == 23
+        assert versions[-1] == SCHEMA_VERSION == 24
         assert len(users) == 1
         assert users[0].role is UserRole.OWNER
         assert users[0].access_state is UserAccessState.ACTIVE
@@ -188,7 +188,7 @@ class TestV7Migration:
         with SqliteStore(tmp_path / "fresh.db") as store:
             row = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
             users = SqliteUserRepository(store).list_all()
-        assert row[0] == SCHEMA_VERSION == 23
+        assert row[0] == SCHEMA_VERSION == 24
         assert len(users) == 1
         assert users[0].role is UserRole.OWNER
 
@@ -348,27 +348,6 @@ class TestGetOwnerOfBooking:
     def test_unknown_booking_returns_none(self, tmp_path):
         with SqliteStore(tmp_path / "t.db") as store:
             assert SqliteUserRepository(store).get_owner_of_booking("nope") is None
-
-
-class TestSetEncryptedKey:
-    """US-027: storing/clearing a user's encrypted personal key."""
-
-    def test_set_and_clear_round_trips(self, tmp_path):
-        with SqliteStore(tmp_path / "t.db") as store:
-            users = SqliteUserRepository(store)
-            user = users.get_or_create_by_telegram_id(101)
-            users.set_encrypted_key(user.user_id, b"ciphertext")
-            with_key = users.get_by_id(user.user_id)
-            users.set_encrypted_key(user.user_id, None)
-            without_key = users.get_by_id(user.user_id)
-
-        assert with_key is not None and with_key.encrypted_key == b"ciphertext"
-        assert without_key is not None and without_key.encrypted_key is None
-
-    def test_unknown_user_raises(self, tmp_path):
-        with SqliteStore(tmp_path / "t.db") as store:
-            with pytest.raises(KeyError):
-                SqliteUserRepository(store).set_encrypted_key(9999, b"x")
 
 
 class TestPurgeUser:

@@ -338,15 +338,6 @@ def _handle_users(
             f"access={user.access_state.value} · "
             f"active bookings={user.active_booking_count}"
         )
-        personal_key = (
-            "configured (legacy only)"
-            if user.personal_key_configured
-            else "not configured"
-        )
-        lines.append(
-            "  API funding: Browser Use=deployment owner; "
-            f"personal legacy key={personal_key}"
-        )
         usage = None
         if usage_provider is not None:
             try:
@@ -357,10 +348,7 @@ def _handle_users(
         if usage is None:
             lines.append(f"  {usage_label}: unavailable")
         else:
-            lines.append(
-                f"  {usage_label}: checks={usage.checks_today}, "
-                f"LLM calls={usage.llm_calls_today}"
-            )
+            lines.append(f"  {usage_label}: checks={usage.checks_today}")
     reply(cmd.chat_id, "\n".join(lines))
 
 

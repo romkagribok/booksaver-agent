@@ -17,7 +17,6 @@ from PIL import Image
 import booksaver.infrastructure.browser.browser_use_runtime as runtime_adapter
 from booksaver.application.async_runner import AsyncLoopRunner
 from booksaver.application.browser_executor import ExecutionMeter, InMemorySessionLeaseBroker
-from booksaver.application.model_policy import BrowserJobCostBudget
 from booksaver.domain.browser_executor import (
     EvidenceCompleteness,
     ExecutionLimits,
@@ -31,16 +30,6 @@ from booksaver.domain.inventory_executor import (
     KnownInventoryReservation,
     ObservedInventoryScope,
     inventory_session_subject,
-)
-from booksaver.domain.model_policy import (
-    AdmissionDecision,
-    BrowserJobKind,
-    CallerKeyRef,
-    CostReconciliation,
-    CostReservation,
-    ModelAttemptAudit,
-    ModelCostEstimator,
-    ReservationStatus,
 )
 from booksaver.domain.session_maintenance import (
     SessionVerificationOutcome,
@@ -93,48 +82,6 @@ def _png_data(*, foreground: int | None = None) -> str:
     output = io.BytesIO()
     image.save(output, format="PNG")
     return base64.b64encode(output.getvalue()).decode("ascii")
-
-
-class _Ledger:
-    def __init__(self) -> None:
-        self.reservations: list[Any] = []
-        self.reconciliations: list[Any] = []
-
-    def reserve_call(self, request: Any) -> AdmissionDecision:
-        self.reservations.append(request)
-        return AdmissionDecision(
-            reservation=CostReservation(
-                request.reservation_id,
-                request.job_id,
-                request.utc_date,
-                request.profile,
-                request.reserved_cost,
-                ReservationStatus.RESERVED,
-            )
-        )
-
-    def reconcile_call(self, request: Any) -> CostReconciliation:
-        self.reconciliations.append(request)
-        return CostReconciliation(
-            request.reservation_id,
-            request.charged_cost,
-            ReservationStatus.CHARGED,
-        )
-
-    def list_attempts(self, _job_id: str) -> tuple[ModelAttemptAudit, ...]:
-        return ()
-
-
-def _budget(ledger: _Ledger | None = None) -> BrowserJobCostBudget:
-    return BrowserJobCostBudget(
-        job_id="browser-use-job",
-        job_kind=BrowserJobKind.BOOKINGS_SYNC,
-        caller_key_ref=CallerKeyRef(7, "owner", "deployment_key"),
-        ledger=ledger or _Ledger(),
-        estimator=ModelCostEstimator(),
-        preserve_opus_diagnostic=False,
-        clock=lambda: datetime(2026, 8, 30, 12, tzinfo=UTC),
-    )
 
 
 def _request(broker: InMemorySessionLeaseBroker) -> InventoryExecutionRequest:
@@ -805,7 +752,7 @@ def test_explicit_empty_initial_page_is_code_observed_after_authentication_and_s
     request = _request(InMemorySessionLeaseBroker())
 
     result = asyncio.run(runtime.execute(
-        request, api_key="unused", budget=_budget(), meter=ExecutionMeter(request.limits),
+        request, meter=ExecutionMeter(request.limits),
     ))
 
     assert result.status is expected_status
@@ -1399,9 +1346,7 @@ def test_executor_uses_existing_contract_provenance_and_always_closes_runtime() 
     )
     with AsyncLoopRunner() as runner:
         result = BrowserUseInventoryBrowserExecutor(
-            api_key="test-key",
             lease_broker=broker,
-            budget=_budget(),
             runner=runner,
             runtime_factory=lambda: runtime,
         ).execute(request)
@@ -1431,9 +1376,7 @@ def test_executor_logs_content_free_runtime_stage_on_failure(
     )
     with AsyncLoopRunner() as runner:
         result = BrowserUseInventoryBrowserExecutor(
-            api_key="test-key",
             lease_broker=broker,
-            budget=_budget(),
             runner=runner,
             runtime_factory=lambda: runtime,
         ).execute(request)
@@ -1458,9 +1401,7 @@ def test_executor_preserves_safety_terminal_and_closes_runtime() -> None:
     )
     with AsyncLoopRunner() as runner:
         result = BrowserUseInventoryBrowserExecutor(
-            api_key="test-key",
             lease_broker=broker,
-            budget=_budget(),
             runner=runner,
             runtime_factory=lambda: runtime,
         ).execute(request)
@@ -1535,30 +1476,3 @@ def test_submission_diagnostic_reports_progress_without_private_content(
         assert private_value not in caplog.text
 
 
-def test_executor_accepts_an_empty_api_key_and_passes_it_to_the_runtime() -> None:
-    # ADR-062: the code reader needs no model key; the runtime refuses any model fallback.
-    broker = InMemorySessionLeaseBroker()
-    request = _request(broker)
-    seen: list[str] = []
-
-    class KeyRecordingRuntime(_Runtime):
-        async def execute(
-            self, *_args: Any, api_key: str, **_kwargs: Any,
-        ) -> BrowserUseRuntimeResult:
-            seen.append(api_key)
-            return self.result
-
-    runtime = KeyRecordingRuntime(
-        BrowserUseRuntimeResult(InventoryExecutionStatus.PROVIDER_FAILURE)
-    )
-    with AsyncLoopRunner() as runner:
-        result = BrowserUseInventoryBrowserExecutor(
-            api_key="",
-            lease_broker=broker,
-            budget=_budget(),
-            runner=runner,
-            runtime_factory=lambda: runtime,
-        ).execute(request)
-
-    assert seen == [""]
-    assert result.status is InventoryExecutionStatus.PROVIDER_FAILURE

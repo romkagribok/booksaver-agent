@@ -19,15 +19,11 @@ decisions indexed in `standards/decision-index.md`.
   migrations, plus Fernet-encrypted, atomic, mode-0600 per-user Booking.com session bundles under a
   mode-0700 vault (ADRs 019 and 024). Legacy global session state is explicit migration input only.
 - **Config**: `config.toml` via stdlib `tomllib`; secrets exclusively from environment variables (ADR-002).
-- **Browser automation**: Playwright + bundled Chromium remains the legacy and `/connect` runtime
-  (ADR-007, ADR-008). Every admitted manual and scheduled agentic price check defaults to
-  exact-pinned Browser Use 0.11.13 in-process; Stagehand 4.0.1 remains an explicit adapter rollback
-  and is never an automatic same-job fallback (ADR-043). Agentic inventory uses Browser Use for
-  every trigger behind provider-neutral contracts and BookSaver-owned validation boundaries
-  (ADR-044). An explicit `consented_users` route admits the owner and currently disclosed active
-  invitees before statistical qualification without changing stored evidence (ADR-045). No
-  Browserbase service, cross-run cache,
-  selector learning, generated repair, or self-heal persistence is enabled.
+- **Browser automation**: Playwright + bundled Chromium for `/connect` login and session
+  verification (ADR-007, ADR-008); exact-pinned Browser Use 0.11.13 as the in-process browser
+  session host for Jev price checks and the grouped account reader. No model drives the browser
+  except Jev's bounded choices on the price page (ADR-056, ADR-063). No Browserbase service,
+  cross-run cache, selector learning, generated repair, or self-heal persistence is enabled.
 - **Authenticated mobile web**: each check uses a fresh Android Chromium context with the exact
   booking owner's session and records authenticated/Genius provenance (ADR-025).
 - **Remote authentication (opt-in)**: stdlib `http.server` application behind a Caddy TLS sidecar;
@@ -36,21 +32,17 @@ decisions indexed in `standards/decision-index.md`.
   or the configured Android Chromium login profile; unknown hints default to mobile (ADR-047).
   Server-session verification and checks retain the configured mobile profile.
   Only Caddy publishes ports 80/443.
-- **LLM integration**: official `anthropic` SDK with the fixed adaptive Sonnet 5/diagnostic Opus 5
-  portfolio and `BOOKSAVER_LLM_API_KEY` (ADRs 009 and 031). The agentic executor permits Sonnet 5
-  only for semantic and computer-use control; Opus never controls the browser. Calls share exact
-  persisted USD admission/reconciliation and the existing hard job/day/time/action limits.
-  Agentic Browser Use always uses the deployment owner's environment key; the owner-only Telegram
-  aggregate may show that policy and boolean personal legacy-key presence, never key material
-  (ADR-046).
+- **Model provider**: TypeSafe's Jev (System One) only, through `llm/typesafe_client.py` and
+  `BOOKSAVER_TYPESAFE_API_KEY` (ADR-056, ADR-061, ADR-063). Jev picks among page lines that code
+  extracts; code checks every answer. Spend is metered per run and capped per day in
+  `jev_price_runs`. There is no Anthropic or other model dependency.
 - **Notifications**: stdlib `smtplib` (STARTTLS) for email, stdlib `urllib` against the Telegram Bot API (ADR-011); no BookSaver cloud relay.
 - **Reservation authority**: authenticated Booking.com inventory is synchronized read-only;
   BookSaver reports savings but never creates or guides a rebooking workflow (ADR-027).
 
 ## Dependency Policy
 
-Python runtime dependencies remain deliberate: `playwright`, `anthropic`, exact-pinned `stagehand`,
-exact-pinned `browser-use` plus its explicit `pydantic-settings` compatibility dependency, and
+Python runtime dependencies remain deliberate: `playwright`, exact-pinned `browser-use` plus its explicit `pydantic-settings` compatibility dependency, and
 `cryptography`. Production images install the exact resolved graph in `requirements.lock`. The
 optional Docker remote-auth profile also uses distribution packages Xvfb/x11vnc/websockify/noVNC
 and a Caddy image. Add a dependency only when stdlib cannot satisfy the need and record the decision

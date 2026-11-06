@@ -26,14 +26,6 @@ def _downgrade_fixture(db_path: Path, version: int) -> None:
         DROP TABLE dom_drift_incidents;
         """
     )
-    if version == 13:
-        conn.executescript(
-            """
-            DROP TABLE llm_profile_qualifications;
-            DROP TABLE llm_cost_reservations;
-            DROP TABLE llm_spend_days;
-            """
-        )
     conn.execute("DELETE FROM schema_meta WHERE version > ?", (version,))
     conn.execute(
         "INSERT OR IGNORE INTO schema_meta (version, applied_at) VALUES (?, ?)",
@@ -67,64 +59,58 @@ def test_v13_to_v18_is_additive_and_preserves_existing_data(tmp_path: Path) -> N
             ).fetchall()
         }
 
-    assert versions[-10:] == [14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    assert versions[-11:] == [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     assert owner[0] == 111
     assert invite[0] == "preserve-me"
-    assert SCHEMA_VERSION == 23
-    assert {
-        "llm_spend_days",
-        "llm_cost_reservations",
-        "llm_profile_qualifications",
-        "dom_drift_incidents",
-        "dom_drift_alerts",
-        "dom_drift_diagnostics",
-    } <= tables
+    assert SCHEMA_VERSION == 24
+    assert {"dom_drift_incidents", "dom_drift_alerts", "dom_drift_diagnostics"} <= tables
+    assert not {t for t in tables if t.startswith("llm_")}
 
 
-def test_v14_to_v15_preserves_spend_and_qualification_rows(tmp_path: Path) -> None:
-    db_path = tmp_path / "v14.db"
-    _downgrade_fixture(db_path, 14)
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "INSERT INTO llm_spend_days VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            "2026-08-13",
-            100,
-            200,
-            10_000_000,
-            "anthropic-2026-08-12",
-            "2026-08-13T00:00:00+00:00",
-        ),
-    )
-    conn.execute(
-        """
-        INSERT INTO llm_profile_qualifications (
-            qualification_id, profile_identity, fixture_version, runs,
-            correct_runs, diagnosis_runs, diagnosis_correct_runs,
-            schema_valid_runs, prohibited_action_proposals,
-            prohibited_action_executions, escalation_count, total_calls,
-            total_actions, input_tokens, output_tokens, latency_ms,
-            estimated_micro_usd, gate_result, completed_at
-        ) VALUES (
-            'qualification-1', 'anthropic:sonnet-opus-v1', 'curated-v1',
-            10, 10, 10, 10, 10, 0, 0, 1, 11, 2, 1000, 100, 500,
-            3000, 'passed', '2026-08-13T00:00:00+00:00'
+def test_v23_to_v24_drops_claude_ledgers_and_clears_keys(tmp_path: Path) -> None:
+    db_path = tmp_path / "v23.db"
+    with SqliteStore(db_path) as store:
+        store.conn.execute(
+            "INSERT INTO invite_codes "
+            "(code, issued_by, issued_at, expires_at, used_by, used_at) "
+            "VALUES ('preserve-me', 1, '2026-08-13T00:00:00+00:00', NULL, NULL, NULL)"
         )
+        store.conn.commit()
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.executescript(
+        """
+        CREATE TABLE llm_spend_days (utc_date TEXT PRIMARY KEY);
+        CREATE TABLE llm_cost_reservations (
+            reservation_id TEXT PRIMARY KEY,
+            utc_date TEXT NOT NULL REFERENCES llm_spend_days(utc_date)
+        );
+        CREATE INDEX idx_llm_reservations_day ON llm_cost_reservations(utc_date);
+        CREATE TABLE llm_profile_qualifications (qualification_id TEXT PRIMARY KEY);
+        INSERT INTO llm_spend_days VALUES ('2026-08-13');
+        INSERT INTO llm_cost_reservations VALUES ('r-1', '2026-08-13');
+        INSERT INTO llm_profile_qualifications VALUES ('q-1');
+        UPDATE users SET encrypted_key = X'00ff' WHERE role = 'owner';
+        DELETE FROM schema_meta WHERE version > 23;
+        INSERT INTO schema_meta (version, applied_at) VALUES (23, '2026-08-23T00:00:00+00:00');
         """
     )
     conn.commit()
     conn.close()
 
-    with SqliteStore(db_path) as store:
-        spend = store.conn.execute(
-            "SELECT reserved_micro_usd, charged_micro_usd FROM llm_spend_days"
-        ).fetchone()
-        qualification = store.conn.execute(
-            "SELECT gate_result FROM llm_profile_qualifications "
-            "WHERE qualification_id = 'qualification-1'"
-        ).fetchone()
-        version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
+    for _ in range(2):  # the second open must be a no-op
+        with SqliteStore(db_path) as store:
+            tables = {
+                row[0]
+                for row in store.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table', 'index')"
+                ).fetchall()
+            }
+            keys = store.conn.execute("SELECT encrypted_key FROM users").fetchall()
+            invite = store.conn.execute("SELECT code FROM invite_codes").fetchone()
+            version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
 
-    assert tuple(spend) == (100, 200)
-    assert qualification[0] == "passed"
-    assert version[0] == SCHEMA_VERSION == 23
+        assert not {name for name in tables if "llm_" in name}
+        assert [tuple(row) for row in keys] == [(None,)]
+        assert invite[0] == "preserve-me"
+        assert version[0] == SCHEMA_VERSION == 24

@@ -185,22 +185,20 @@ _LEGACY_ACCESS_MODES = ("owner", "invite")
 
 @dataclass(frozen=True)
 class LimitsSettings:
-    """`[limits]` config (US-031). Per-user booking cap, daily check/LLM-call
-    ceilings, and outbound message rate limiting — defends the bot against one
-    user's bookings starving another's checks and against unbounded LLM spend
-    or reply-loop abuse. Every field has a generous default so an unconfigured
-    `[limits]` section behaves like today (small personal deployments)."""
+    """`[limits]` config (US-031). Per-user booking cap, daily check ceiling,
+    and outbound message rate limiting — defends the bot against one user's
+    bookings starving another's checks and against reply-loop abuse. Every
+    field has a generous default so an unconfigured `[limits]` section behaves
+    like today (small personal deployments)."""
 
     max_bookings_per_user: int = 3
     max_checks_per_user_per_day: int = 48
-    max_llm_calls_per_user_per_day: int = 200
     messages_per_minute_per_chat: int = 20
 
     def __post_init__(self) -> None:
         for name in (
             "max_bookings_per_user",
             "max_checks_per_user_per_day",
-            "max_llm_calls_per_user_per_day",
             "messages_per_minute_per_chat",
         ):
             value = getattr(self, name)

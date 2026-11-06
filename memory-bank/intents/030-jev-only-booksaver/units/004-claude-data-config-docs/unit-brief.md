@@ -2,7 +2,7 @@
 unit: 004-claude-data-config-docs
 intent: 030-jev-only-booksaver
 phase: inception
-status: stories-defined
+status: in-progress
 unit_type: backend
 default_bolt_type: ddd-construction-bolt
 created: "2026-11-04T16:13:23Z"

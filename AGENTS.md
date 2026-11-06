@@ -3,8 +3,8 @@
 ## Product and current state
 
 BookSaver Agent is a self-hosted Python daemon/CLI and private Telegram bot. It monitors refundable
-Booking.com hotel reservations, detects cheaper equivalent offers through scripted browser
-automation with bounded LLM assistance, and reports savings while users manage reservations directly
+Booking.com hotel reservations, detects cheaper equivalent offers through browser
+automation with bounded Jev model assistance, and reports savings while users manage reservations directly
 in Booking.com.
 
 Current scope and delivery status are recorded in `memory-bank/story-index.md`; accepted decisions
@@ -38,9 +38,9 @@ production in `requirements.lock`, and explained in `memory-bank/standards/tech-
 - Never orchestrate a rebooking workflow; users act independently in Booking.com.
 - Self-hosted owner/invite access only; no public bot or BookSaver-operated backend.
 - Keep config, SQLite, cookies, encrypted keys, traces, and snapshots locally controlled.
-- Secrets come only from `BOOKSAVER_LLM_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`,
-  `BOOKSAVER_TELEGRAM_BOT_TOKEN`, `BOOKSAVER_SECRET_KEY`, and (for the Jev price method and
-  its paired comparison only) `BOOKSAVER_TYPESAFE_API_KEY`.
+- Secrets come only from `BOOKSAVER_TYPESAFE_API_KEY`, `BOOKSAVER_SMTP_PASSWORD`,
+  `BOOKSAVER_TELEGRAM_BOT_TOKEN`, and `BOOKSAVER_SECRET_KEY`. TypeSafe's Jev is the only model
+  provider; its key is required for price checks and account syncs.
 - Preserve per-user booking, session, alert, usage, and admin-visibility boundaries.
 - Browser-agent actions remain bounded and adapter-guarded; provider output is untrusted.
 

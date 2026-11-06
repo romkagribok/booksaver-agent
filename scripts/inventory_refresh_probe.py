@@ -1,7 +1,7 @@
 """Replay one caller's inventory with isolated state and no Telegram notifications.
 
 Run only after the production daemon has been stopped and its data volume mounted read-only.
-Unlike the price canary probe, this keeps the selected caller, production routing, disclosure,
+Like the daemon, this keeps the selected caller, production config, disclosure,
 and session. The deployment must use its usual single coordinator again after replay completes.
 """
 
@@ -64,8 +64,8 @@ def main() -> int:
             notifier_builder_override=lambda _cfg: [],
         )
         with SqliteStore(isolated_data / "booksaver.db") as store:
-            if not coordinator._uses_agentic_inventory(store, args.user_id):
-                raise ValueError("Caller is not admitted to production agentic inventory")
+            if not coordinator._is_active_user(store, args.user_id):
+                raise ValueError("Caller is not an active user")
         admission = coordinator.request_inventory(telegram_user_id, capture)
         if admission is not ImmediateAdmission.ACCEPTED:
             print(json.dumps({"admission": admission.value}))

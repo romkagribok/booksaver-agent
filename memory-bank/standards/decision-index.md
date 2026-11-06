@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 62
+total_decisions: 63
 ---
 
 # Decision Index
@@ -19,7 +19,7 @@ Use this to find relevant prior decisions when working on related features.
 ## Decisions
 
 ### ADR-046: Secret-safe admin API funding provenance
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-09-03
 - **Bolt**: 065-shared-browser-use-access (shared-browser-use-access)
 - **Path**: `bolts/065-shared-browser-use-access/adr-046-secret-safe-admin-api-funding-provenance.md`
@@ -30,7 +30,7 @@ Use this to find relevant prior decisions when working on related features.
   Browser Use funding, hybrid billing, or API-key privacy boundaries.
 
 ### ADR-045: Explicit consented-user Browser Use rollout
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-09-03
 - **Bolt**: 065-shared-browser-use-access (shared-browser-use-access)
 - **Path**: `bolts/065-shared-browser-use-access/adr-045-explicit-consented-user-browser-use-rollout.md`
@@ -41,7 +41,7 @@ Use this to find relevant prior decisions when working on related features.
   qualification semantics, regression rollback, or manual-versus-scheduled parity.
 
 ### ADR-043: Browser Use default price execution with explicit rollback
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-09-03
 - **Bolt**: 064-browser-use-price-executor (browser-use-price-executor)
 - **Path**: `bolts/064-browser-use-price-executor/adr-043-browser-use-default-price-executor.md`
@@ -75,7 +75,7 @@ Use this to find relevant prior decisions when working on related features.
   routing, Browser Use tools/dialogs/telemetry, provider SDK compatibility, or Stagehand coexistence.
 
 ### ADR-044: Browser Use for all agentic inventory triggers
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-09-03
 - **Bolt**: 064-browser-use-price-executor (browser-use-price-executor)
 - **Path**: `bolts/064-browser-use-price-executor/adr-044-browser-use-all-agentic-inventory-triggers.md`
@@ -121,7 +121,7 @@ Use this to find relevant prior decisions when working on related features.
   promotion, rollback, or legacy price-path retirement.
 
 ### ADR-037: Local Stagehand with guarded Anthropic computer use
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-08-16
 - **Bolt**: 051-local-agentic-price-executor (local-agentic-price-executor)
 - **Path**: `bolts/051-local-agentic-price-executor/adr-037-local-stagehand-and-guarded-computer-use.md`
@@ -189,7 +189,7 @@ Use this to find relevant prior decisions when working on related features.
   mapping.
 
 ### ADR-031: Adaptive Sonnet/Opus routing and dollar admission
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-08-13
 - **Bolt**: 041-adaptive-model-policy (adaptive-model-policy)
 - **Path**: `bolts/041-adaptive-model-policy/adr-031-adaptive-sonnet-opus-routing-and-dollar-admission.md`
@@ -338,7 +338,7 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Working on deployment artifacts, the Telegram gateway, multi-user features, or anything that reads the "local-only" product constraint.
 
 ### ADR-017: Hard per-check cost caps now; adaptive budgeting is named future work
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-07-06
 - **Bolt**: 007-agentic-escalation (agentic-escalation)
 - **Path**: `bolts/007-agentic-escalation/adr-017-hard-caps-now-adaptive-later.md`
@@ -346,7 +346,7 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Touching agent/LLM cost controls, adding LLM calls to the check path, tuning cap defaults, or picking up the adaptive-budgeting follow-up.
 
 ### ADR-016: Bounded action vocabulary via SDK tool-use, guarded at the adapter
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-07-06
 - **Bolt**: 007-agentic-escalation (agentic-escalation)
 - **Path**: `bolts/007-agentic-escalation/adr-016-bounded-action-vocabulary.md`
@@ -354,7 +354,7 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Modifying the agent loop or its tools, the ActionGuard rules, considering computer-use, or any change that lets a model influence browser actions.
 
 ### ADR-015: Tiered agent observations — text/DOM first, screenshot on demand
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-07-06
 - **Bolt**: 007-agentic-escalation (agentic-escalation)
 - **Path**: `bolts/007-agentic-escalation/adr-015-tiered-agent-observations.md`
@@ -402,7 +402,7 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Working on session persistence, reauth flows, Unit 4 browser reuse, or adding a second platform's session storage.
 
 ### ADR-009: Anthropic SDK with a small default model for LLM extraction
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Date**: 2026-07-05
 - **Bolt**: 003-booking-com-price-monitor (booking-com-price-monitor)
 - **Path**: `bolts/003-booking-com-price-monitor/adr-009-anthropic-sdk-llm-extraction.md`
@@ -536,14 +536,14 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Changing remote login window geometry, device profiles for login, or the viewer's scaling and chrome.
 
 ### ADR-055: Paired Jev price comparison with baseline-only authority
-- **Status**: accepted
+- **Status**: superseded by ADR-063
 - **Bolt**: 086-paired-price-execution
 - **Path**: `bolts/086-paired-price-execution/adr-055-paired-jev-price-comparison.md`
 - **Summary**: In explicit paired mode run an independent Jev-only price arm beside the existing method (never a fallback); only the existing method owns canonical effects; the Jev arm's own run time extends the job allowance; own TypeSafe secret and nano-USD daily cap.
 - **Read when**: Changing price execution routing, the check job deadline, Jev/TypeSafe access, or comparison reporting.
 
 ### ADR-056: Jev as the authoritative price method, LLM price path retained as rollback
-- **Status**: accepted
+- **Status**: accepted, amended by ADR-063 (no LLM rollback)
 - **Bolt**: 089-jev-price-promotion
 - **Path**: `bolts/089-jev-price-promotion/adr-056-jev-authoritative-price-method.md`
 - **Summary**: `price_executor = "jev"` makes Jev's validated observation the canonical price result with its own key, caps and run ledger; paired mode is excluded; Browser Use and Stagehand price adapters stay selectable as rollback.
@@ -595,4 +595,12 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/099-no-anthropic-key/adr-062-no-consent-gate-inform-once.md`
 - **Summary**: Routing no longer depends on disclosure acceptance; every active user is served by Jev. Invitees are informed once that TypeSafe's Jev reads page content; new invites see the TypeSafe disclosure.
 - **Read when**: Changing disclosure, consent or routing between price or inventory methods.
+
+### ADR-063: TypeSafe's Jev is BookSaver's only model provider
+- **Status**: accepted
+- **Date**: 2026-11-06
+- **Bolt**: 101-claude-data-config-docs (claude-data-config-docs)
+- **Path**: `bolts/101-claude-data-config-docs/adr-063-typesafe-jev-is-the-only-model-provider.md`
+- **Summary**: All Anthropic, Stagehand and Browser Use agent code, Claude tables, personal Anthropic keys and Claude-era config keys are removed; Jev via `BOOKSAVER_TYPESAFE_API_KEY` is the only model. Supersedes ADRs 009, 015-017, 031, 037, 043-046, 055; amends ADR-056.
+- **Read when**: Adding any model provider, model call, or LLM-related configuration.
 

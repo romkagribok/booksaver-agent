@@ -11,7 +11,6 @@ from typing import Any, cast
 from booksaver.application.remote_auth import RemoteAuthenticationManager
 from booksaver.daemon.check_coordinator import CheckCoordinator
 from booksaver.daemon.scheduler import Scheduler
-from booksaver.domain.browser_executor import PriceExecutorKind
 from booksaver.domain.models import Config
 from booksaver.infrastructure.persistence.dom_incident import (
     SqliteDomIncidentRepository,
@@ -37,8 +36,6 @@ from .client import TelegramBotClient
 from .command_catalog import api_commands
 from .commands_readonly import IncidentStatusProjection, register_readonly_commands
 from .connect_command import register_connect_command
-from .key_dialogs import KeyIntakeFlow, handle_deletekey
-from .key_validator import AnthropicKeyValidator
 from .offset_store import TelegramOffsetStore
 from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCommand
 
@@ -133,22 +130,7 @@ def build_bot_runner(
         incident_status_provider=_incident_status,
     )
 
-    # ── US-026/US-027/US-028: access modes, personal-key intake, admin ────────
-    key_flow = KeyIntakeFlow(
-        db_path=db_path,
-        validator=AnthropicKeyValidator(),
-        delete_message=client.delete_message,
-    )
-
-    def _setkey(cmd: IncomingCommand) -> None:
-        _reply(cmd.chat_id, key_flow.start(cmd.chat_id))
-
-    def _deletekey(cmd: IncomingCommand) -> None:
-        _reply(cmd.chat_id, handle_deletekey(cmd, db_path))
-
-    router.register("/setkey", _setkey)
-    router.register("/deletekey", _deletekey)
-
+    # ── US-026/US-028: access modes, admin ─────────────────────────────────────
     def _notify_access_loss(chat_id: int, text: str) -> None:
         client.send_message(chat_id, text)
 
@@ -157,7 +139,6 @@ def build_bot_runner(
             return None
         return AdminUsageSnapshot(
             checks_today=check_coordinator.checks_today.get(user_id, 0),
-            llm_calls_today=check_coordinator.llm_calls_today.get(user_id, 0),
         )
 
     user_sessions = EncryptedUserSessionRepository(config.data_directory)
@@ -215,13 +196,6 @@ def build_bot_runner(
         version = config.agentic_browser_settings.disclosure_version
         if consent is not None and consent.disclosure_version == version:
             return None
-        if config.agentic_browser_settings.price_executor is not PriceExecutorKind.JEV:
-            return (
-                f"Privacy disclosure ({version}): if agentic checks are enabled for you, "
-                "the deployment owner's configured Anthropic account may process visible "
-                "Booking.com page content and escalation screenshots. Cookies and passwords "
-                "remain local, and BookSaver keeps execution read-only."
-            )
         return (
             f"Privacy disclosure ({version}): the deployment owner's TypeSafe account (Jev) "
             "reads Booking.com page content for your checks: hotel offers, and the price and "
@@ -252,18 +226,9 @@ def build_bot_runner(
     )
 
     def _cancelflow(cmd: IncomingCommand) -> None:
-        if key_flow.cancel(cmd.chat_id):
-            _reply(cmd.chat_id, "Cancelled the current dialog.")
-        else:
-            _reply(cmd.chat_id, "No active dialog to cancel.")
+        _reply(cmd.chat_id, "No active dialog to cancel.")
 
     router.register("/cancelflow", _cancelflow)
-
-    def _dialog_handler(cmd: IncomingCommand) -> bool:
-        if key_flow.is_pending(cmd.chat_id):
-            _reply(cmd.chat_id, key_flow.handle(cmd))
-            return True
-        return False
 
     def _access_guard(cmd: IncomingCommand) -> bool:
         if cmd.chat_type != "private":
@@ -343,7 +308,6 @@ def build_bot_runner(
         poll_timeout_seconds=settings.poll_timeout_seconds,
         access_guard=_access_guard,
         on_refused=_on_refused,
-        dialog_handler=_dialog_handler,
         callback_handler=_callback_handler,
     )
 

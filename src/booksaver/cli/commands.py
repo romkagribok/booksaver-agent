@@ -57,32 +57,14 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 # smtp_username = "your@email.com"   # SMTP login + From; pw: export BOOKSAVER_SMTP_PASSWORD=...
 # telegram_chat_id = "123456789"     # token:    export BOOKSAVER_TELEGRAM_BOT_TOKEN=...
 
-[extraction]
-# Legacy extraction model values normalize to the fixed primary profile.
-# primary selection is controlled by the approved [agent] portfolio below.
-
 [agent]
-# Outer cost caps per price check (ADR-017) plus tighter per-step recovery limits
-# (ADR-030). Existing config files may omit the recovery keys and receive these defaults.
-# primary_model = "claude-sonnet-5"  # normal ambiguous DOM assistance
-# escalation_model = "claude-opus-5" # one measured quality escalation; Fable prohibited
-# max_job_cost_usd = "1.00"           # one coordinator browser admission
-# max_deployment_daily_cost_usd = "10.00" # persisted deployment-wide UTC cap
-# reserve_opus_diagnostic_for_ambiguous_episode = true
-# max_steps = 15              # LLM browser-agent turns (screenshot turns count double)
-# max_llm_calls = 20          # all LLM calls in one check (agent + extraction)
-# check_timeout_seconds = 180 # wall-clock limit per booking check
-# max_recovery_calls_per_step = 4      # actual LLM calls for one failed browser step
-# recovery_timeout_seconds = 60        # wall-clock limit for that recovery episode
-# screenshot_after_no_progress = 2     # force fresh visual evidence after no progress
-# max_semantic_action_executions = 2   # never execute an equivalent target a third time
+# One coordinator job (sync plus price check) may spend at most this on Jev (ADR-017).
+# max_job_cost_usd = "1.00"
 
 [agentic_browser]
-# Price execution is legacy until the owner selects canary, consented rollout, or qualified mode.
-# Inventory execution is independently agentic by default; legacy is its rollback route.
-# routing = "legacy"           # price: legacy | owner_canary | consented_users | agentic
-# price_executor = "browser_use" # "jev" is required for any non-legacy routing
-# inventory_routing = "agentic" # inventory: legacy | agentic
+# TypeSafe's Jev reads every price check and the price/refund lines of every sync.
+# Its key: export BOOKSAVER_TYPESAFE_API_KEY=...
+# price_executor = "jev"
 # disclosure_version = "typesafe-visible-booking-page-v1"
 
 [telegram_bot]
@@ -101,7 +83,6 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 [limits]
 # Per-user abuse/fairness limits for multi-user Telegram deployments (US-031).
 # max_checks_per_user_per_day = 48   # price checks per user per day before skipping
-# max_llm_calls_per_user_per_day = 200  # shared scheduled/manual daily LLM ceiling
 # messages_per_minute_per_chat = 20  # outbound bot replies per chat per minute
 """
 
@@ -187,24 +168,10 @@ def cmd_config_validate(args: argparse.Namespace) -> int:
     print(f"  missed_run_grace           : {schedule.missed_run_grace}")
     print(f"  data_directory : {cfg.data_directory.path}")
     agent = cfg.agent_settings
-    print(f"  agent_recovery_calls/step  : {agent.max_recovery_calls_per_step}")
-    print(f"  agent_recovery_timeout_s   : {agent.recovery_timeout_seconds}")
-    print(f"  screenshot_after_no_progress: {agent.screenshot_after_no_progress}")
-    print(f"  semantic_action_executions: {agent.max_semantic_action_executions}")
-    print(f"  agent_primary_model         : {agent.primary_model}")
-    print(f"  agent_escalation_model      : {agent.escalation_model}")
     print(f"  agent_job_cost_usd         : {agent.max_job_cost_micro_usd / 1_000_000:.2f}")
-    print(
-        f"  deployment_daily_cost_usd : {agent.max_deployment_daily_cost_micro_usd / 1_000_000:.2f}"
-    )
-    print(f"  agentic_browser.routing    : {cfg.agentic_browser_settings.routing.value}")
     print(
         "  agentic_browser.price_executor: "
         f"{cfg.agentic_browser_settings.price_executor.value}"
-    )
-    print(
-        "  agentic_browser.inventory_routing: "
-        f"{cfg.agentic_browser_settings.inventory_routing.value}"
     )
     print(
         "  agentic_browser.disclosure: "
@@ -247,37 +214,21 @@ def cmd_config_show(args: argparse.Namespace) -> int:
     print(f"telegram_bot.owner_chat_id   : {tb.owner_chat_id or '(not set)'}")
     print(f"telegram_bot.poll_timeout_s  : {tb.poll_timeout_seconds}")
     print(f"limits.max_checks_per_user/day: {lim.max_checks_per_user_per_day}")
-    print(f"limits.max_llm_calls_per_user/day: {lim.max_llm_calls_per_user_per_day}")
     print(f"limits.messages_per_min/chat : {lim.messages_per_minute_per_chat}")
     print(f"browser.device_profile       : {mobile.profile_id.value}")
     print(f"browser.locale               : {mobile.locale}")
     print(f"browser.timezone_id          : {mobile.timezone_id}")
-    print(f"agent.primary_model          : {agent.primary_model}")
-    print(f"agent.escalation_model       : {agent.escalation_model}")
     print(f"agent.max_job_cost_usd       : {agent.max_job_cost_micro_usd / 1_000_000:.2f}")
-    print(
-        "agent.max_deployment_daily_cost_usd: "
-        f"{agent.max_deployment_daily_cost_micro_usd / 1_000_000:.2f}"
-    )
-    print(f"agent.max_steps              : {agent.max_steps}")
-    print(f"agent.max_llm_calls          : {agent.max_llm_calls}")
-    print(f"agent.check_timeout_s        : {agent.check_timeout_seconds}")
-    print(f"agent.recovery_calls/step   : {agent.max_recovery_calls_per_step}")
-    print(f"agent.recovery_timeout_s     : {agent.recovery_timeout_seconds}")
-    print(f"agent.screenshot_after_no_progress: {agent.screenshot_after_no_progress}")
-    print(f"agent.semantic_action_executions: {agent.max_semantic_action_executions}")
-    print(f"agentic_browser.routing      : {agentic.routing.value}")
     print(f"agentic_browser.price_executor: {agentic.price_executor.value}")
-    print(f"agentic_browser.inventory_routing: {agentic.inventory_routing.value}")
     print(f"agentic_browser.disclosure   : {agentic.disclosure_version}")
     print(f"remote_auth.enabled          : {remote_auth.enabled}")
     print(f"remote_auth.public_url       : {remote_auth.public_url or '(not set)'}")
     smtp = "(set)" if os.environ.get("BOOKSAVER_SMTP_PASSWORD") else "(not set)"
     tg = "(set)" if os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN") else "(not set)"
-    llm = "(set)" if os.environ.get("BOOKSAVER_LLM_API_KEY") else "(not set)"
+    typesafe = "(set)" if os.environ.get("BOOKSAVER_TYPESAFE_API_KEY") else "(not set)"
     print(f"BOOKSAVER_SMTP_PASSWORD      : {smtp}")
     print(f"BOOKSAVER_TELEGRAM_BOT_TOKEN : {tg}")
-    print(f"BOOKSAVER_LLM_API_KEY        : {llm}")
+    print(f"BOOKSAVER_TYPESAFE_API_KEY   : {typesafe}")
     return 0
 
 
@@ -557,18 +508,15 @@ def _make_check_coordinator(
         EncryptedDiagnosticStore,
     )
 
-    api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
     price_executor_factory = _make_price_executor_factory(cfg)
 
-    def _browser_use_inventory_executor(budget: Any, lease_broker: Any) -> Any:
+    def _browser_use_inventory_executor(lease_broker: Any) -> Any:
         from booksaver.infrastructure.browser.browser_use_inventory_executor import (
             LocalBrowserUseInventoryExecutor,
         )
 
         return LocalBrowserUseInventoryExecutor(
-            api_key=api_key or "",
             lease_broker=lease_broker,
-            budget=budget,
             mobile_settings=cfg.mobile_web_settings,
             facts_assistant=facts_assistant,
             record_assistant=record_assistant,
@@ -589,9 +537,7 @@ def _make_check_coordinator(
     return CheckCoordinator(
         cfg,
         stop_event,
-        llm_factory_builder=lambda config, store: _make_llm_client_factory(config, store=store),
         notifier_builder=notifier_builder_override or _make_notifiers,
-        invalid_key_notifier=_notify_invalid_user_keys,
         auth_required_notifier=auth_required_notifier,
         execution_gate=execution_gate,
         incident_recorder_factory=_incident_recorder,
@@ -638,26 +584,16 @@ def _make_reservation_facts_assistant(cfg: Config) -> tuple[Any, Any]:
 def _make_price_executor_factory(cfg: Config) -> Any:
     """Build the Jev price method (ADR-056), or none when its TypeSafe key is missing.
 
-    Jev is the only agentic price method; legacy routing never consults it. A missing key
-    fails the check closed rather than substituting another method.
+    Jev is the only price method. A missing key fails every check closed rather than
+    substituting another method.
     """
     import logging
 
-    from booksaver.domain.browser_executor import ExecutionRoutingMode, PriceExecutorKind
-
-    agentic = cfg.agentic_browser_settings
-    if agentic.routing is ExecutionRoutingMode.LEGACY:
-        return None
-    if agentic.price_executor is not PriceExecutorKind.JEV:
-        raise ValueError(
-            f'agentic_browser.price_executor = "{agentic.price_executor.value}" is no longer '
-            'supported; set it to "jev" (the only agentic price method)'
-        )
     typesafe_key = os.environ.get("BOOKSAVER_TYPESAFE_API_KEY", "").strip()
     if not typesafe_key:
         logging.getLogger(__name__).warning(
-            'agentic_browser.price_executor is "jev" but BOOKSAVER_TYPESAFE_API_KEY is not '
-            "set; price checks will fail closed until it is configured"
+            "BOOKSAVER_TYPESAFE_API_KEY is not set; price checks will fail closed until "
+            "it is configured"
         )
         return None
     from booksaver.infrastructure.browser.jev_primary_executor import JevPrimaryPriceExecutor
@@ -667,14 +603,12 @@ def _make_price_executor_factory(cfg: Config) -> Any:
     client = TypeSafeClient(typesafe_key, model=settings.model)
     db_path = cfg.data_directory.path / "booksaver.db"
     logging.getLogger(__name__).warning(
-        "Jev is the configured price method model=%s daily_cap_nano_usd=%s routing=%s; users "
-        "the routing policy does not admit still use the scripted legacy method",
+        "Jev is the price method model=%s daily_cap_nano_usd=%s",
         settings.model,
         settings.max_daily_cost_nano_usd,
-        cfg.agentic_browser_settings.routing.value,
     )
 
-    def _factory(_anthropic_budget: Any, lease_broker: Any) -> Any:
+    def _factory(lease_broker: Any) -> Any:
         return JevPrimaryPriceExecutor(
             client=client,
             lease_broker=lease_broker,
@@ -684,55 +618,6 @@ def _make_price_executor_factory(cfg: Config) -> Any:
         )
 
     return _factory
-
-
-def _notify_invalid_user_keys(user_repo: Any, results: list[Any]) -> None:
-    """US-027: when a check failed with USER_KEY_INVALID, tell the booking's
-    owner via a direct Telegram message (best-effort — a missing bot token or
-    a user with no Telegram identity just means no message is sent, never a
-    raised error). Kept self-contained here rather than routed through the
-    general savings/alert notifier, which only handles savings opportunities.
-    """
-    import logging
-
-    from booksaver.domain.check_result import FailureCode
-
-    invalid = [
-        r
-        for r in results
-        if r.failure_reason is not None and r.failure_reason.code is FailureCode.USER_KEY_INVALID
-    ]
-    if not invalid:
-        return
-
-    token = os.environ.get("BOOKSAVER_TELEGRAM_BOT_TOKEN")
-    if not token:
-        return
-
-    from booksaver.infrastructure.telegram.client import TelegramBotClient
-
-    client = TelegramBotClient(bot_token=token)
-    notified_users: set[int] = set()
-    for result in invalid:
-        owner = user_repo.get_owner_of_booking(result.booking_id)
-        if (
-            owner is None
-            or not owner.is_active
-            or owner.telegram_user_id is None
-            or owner.user_id in notified_users
-        ):
-            continue
-        notified_users.add(owner.user_id)
-        try:
-            client.send_message(
-                owner.telegram_user_id,
-                "Your personal Anthropic key failed on a recent price check. "
-                "Send /setkey to replace it, or /deletekey to revert to the shared key.",
-            )
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "Could not notify user %s about an invalid personal key", owner.user_id
-            )
 
 
 def _make_notifiers(cfg: Config) -> list[Any]:
@@ -773,23 +658,6 @@ def _make_notifiers(cfg: Config) -> list[Any]:
         )
 
     return notifiers
-
-
-def _make_llm_client_factory(cfg: Config, store: Any = None) -> Any:
-    """The LLMClientFactory seam (US-029/US-027). Without `store` (the CLI
-    paths below that don't have a `Booking` in hand yet), this resolves only
-    the owner env-var key — unchanged pre-US-027 behavior. With `store` (the
-    scheduler's check job), it also resolves each booking's owning user and,
-    if they have a personal key, decrypts and uses it instead (hybrid
-    billing).
-    """
-    from booksaver.infrastructure.crypto.fernet_key_store import FernetKeyStore
-    from booksaver.infrastructure.llm.client_factory import AnthropicLLMClientFactory
-    from booksaver.infrastructure.persistence.sqlite_store import SqliteUserRepository
-
-    user_repo = SqliteUserRepository(store) if store is not None else None
-    key_store = FernetKeyStore() if store is not None else None
-    return AnthropicLLMClientFactory(cfg, user_repo=user_repo, key_store=key_store)
 
 
 # ── auth import ──────────────────────────────────────────────────────────────
@@ -1187,297 +1055,6 @@ def cmd_incidents_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-# ── privacy-safe recovery evaluation ────────────────────────────────────────
-
-
-def cmd_evaluate_recovery(args: argparse.Namespace) -> int:
-    """Run an explicit live-model replay without opening a browser."""
-    if not args.live:
-        print(
-            "Refusing to call the configured model without --live. "
-            "Replay never opens Booking.com or reads the BookSaver database.",
-            file=sys.stderr,
-        )
-        return 2
-    api_key = os.environ.get("BOOKSAVER_LLM_API_KEY")
-    if not api_key:
-        print("BOOKSAVER_LLM_API_KEY is required for live replay.", file=sys.stderr)
-        return 2
-
-    from booksaver.domain.model_policy import (
-        AdaptiveModelPortfolio,
-        BrowserJobKind,
-        CallerKeyRef,
-        ModelCostEstimator,
-        ModelProfile,
-        ModelRole,
-        UsdAmount,
-    )
-
-    try:
-        evaluation_cost_limit = UsdAmount.from_decimal_string(args.max_cost_usd or "")
-    except ValueError:
-        print(
-            "An explicit --max-cost-usd decimal limit is required for live replay.",
-            file=sys.stderr,
-        )
-        return 2
-    if evaluation_cost_limit.micro_usd == 0:
-        print("--max-cost-usd must be greater than zero.", file=sys.stderr)
-        return 2
-    if args.persist and not args.qualify:
-        print("--persist is only valid with --qualify.", file=sys.stderr)
-        return 2
-    if args.qualify and args.fixture:
-        print(
-            "Qualification only accepts the packaged fixture corpus; custom fixtures "
-            "are exploratory and cannot be recorded.",
-            file=sys.stderr,
-        )
-        return 2
-    if args.qualify and args.runs != 10:
-        print("Qualification requires exactly 10 runs per packaged fixture.", file=sys.stderr)
-        return 2
-
-    from booksaver.evaluation import (
-        PACKAGED_QUALIFICATION_VERSION,
-        ReplayFixtureError,
-        ReplayRunner,
-        approved_recovery_profiles,
-        curated_fixture_directory,
-        load_fixture,
-        load_fixture_directory,
-        plan_packaged_qualification,
-        plan_profile_replay,
-        run_packaged_qualification,
-    )
-    from booksaver.infrastructure.llm.anthropic_adapter import AnthropicAgentBrain
-
-    fixture_path = (
-        Path(args.fixture).expanduser().resolve() if args.fixture else curated_fixture_directory()
-    )
-    try:
-        fixtures = (
-            load_fixture_directory(fixture_path)
-            if fixture_path.is_dir()
-            else (load_fixture(fixture_path),)
-        )
-    except ReplayFixtureError as exc:
-        print(f"Replay fixture rejected: {exc}", file=sys.stderr)
-        return 2
-    cfg = _load_config_for_args(args)
-    portfolio = AdaptiveModelPortfolio()
-    profiles: tuple[ModelProfile, ...]
-    if args.qualify:
-        profiles = approved_recovery_profiles()
-    else:
-        profiles = (portfolio.primary(ModelRole.RECOVERY, "booking-browser-recovery-v5"),)
-    maximum_calls = sum(fixture.max_calls for fixture in fixtures) * args.runs
-    if not args.qualify and maximum_calls > 250:
-        print(
-            "Replay plan rejected: the corpus and run count could make more than "
-            "250 provider calls.",
-            file=sys.stderr,
-        )
-        return 2
-    plan = (
-        plan_packaged_qualification(fixtures)
-        if args.qualify
-        else plan_profile_replay(fixtures, profiles, runs_per_fixture=args.runs)
-    )
-    if not args.qualify and plan.maximum_cost > evaluation_cost_limit:
-        print(
-            "Replay plan rejected before provider access: conservative maximum is "
-            f"{plan.maximum_cost.micro_usd} microUSD, above the explicit "
-            f"{evaluation_cost_limit.micro_usd} microUSD limit.",
-            file=sys.stderr,
-        )
-        return 2
-
-    if args.qualify:
-        from booksaver.application.model_policy import BrowserJobCostBudget
-        from booksaver.infrastructure.persistence.model_policy import (
-            SqliteQualificationRepository,
-            SqliteSpendLedger,
-        )
-
-        daily_limit = UsdAmount(cfg.agent_settings.max_deployment_daily_cost_micro_usd)
-        if evaluation_cost_limit > daily_limit:
-            print(
-                "--max-cost-usd cannot exceed the configured deployment UTC-day "
-                f"limit ({daily_limit.micro_usd} microUSD).",
-                file=sys.stderr,
-            )
-            return 2
-        db_path = cfg.data_directory.path / "booksaver.db"
-        with SqliteStore(db_path) as store:
-            owner = SqliteUserRepository(store).get_owner()
-            budget = BrowserJobCostBudget(
-                job_id=f"qualification-{uuid.uuid4().hex}",
-                job_kind=BrowserJobKind.QUALIFICATION,
-                caller_key_ref=CallerKeyRef(
-                    caller_user_id=owner.user_id,
-                    funding_mode="shared",
-                    provenance="owner_env",
-                ),
-                ledger=SqliteSpendLedger(store),
-                estimator=ModelCostEstimator(),
-                job_limit=evaluation_cost_limit,
-                day_limit=daily_limit,
-                preserve_opus_diagnostic=False,
-            )
-            report = run_packaged_qualification(
-                fixtures,
-                lambda profile: AnthropicAgentBrain(api_key=api_key, model=profile.model_id),
-                evaluation_cost_limit=evaluation_cost_limit,
-                budget=budget,
-            )
-            qualification_ids = (
-                tuple(
-                    SqliteQualificationRepository(store).save(profile.result)
-                    for profile in report.profiles
-                )
-                if args.persist
-                else ()
-            )
-        print(
-            "qualification-plan: "
-            f"corpus={PACKAGED_QUALIFICATION_VERSION}; "
-            f"fixtures={report.plan.fixture_count}; "
-            f"runs_per_fixture={report.plan.runs_per_fixture}; "
-            f"max_calls={report.plan.maximum_provider_calls}; "
-            f"max_cost_micro_usd={report.plan.maximum_cost.micro_usd}"
-        )
-        if report.plan.maximum_cost > evaluation_cost_limit:
-            print(
-                "qualification-plan-warning: conservative full-plan maximum exceeds "
-                "the explicit allowance; per-call admission will stop with a partial "
-                "failed report if actual progress consumes the allowance."
-            )
-        if report.stopped_reason is not None:
-            print(f"qualification-stopped: {report.stopped_reason}")
-        for profile in report.profiles:
-            metrics = profile.result.metrics
-            print(
-                f"{profile.model}: duty={profile.duty.value}; "
-                f"gate={profile.result.gate.value}; "
-                f"accuracy={metrics.correct_runs}/{metrics.runs}; "
-                f"diagnosis={metrics.diagnosis_correct_runs}/"
-                f"{metrics.diagnosis_runs}; "
-                f"schema={metrics.schema_valid_runs}/{metrics.runs}; "
-                f"prohibited={metrics.prohibited_action_executions}; "
-                f"calls={metrics.total_calls}; actions={metrics.total_actions}; "
-                f"latency_ms={metrics.latency_ms}; "
-                f"tokens={metrics.input_tokens}in/{metrics.output_tokens}out; "
-                f"estimated_cost_micro_usd={metrics.estimated_cost.micro_usd}"
-            )
-            for fixture_metrics in profile.fixtures:
-                outcomes = ",".join(
-                    f"{category}:{count}" for category, count in fixture_metrics.outcome_categories
-                )
-                print(
-                    f"  {fixture_metrics.fixture_id}: "
-                    f"accuracy={fixture_metrics.correct_runs}/"
-                    f"{fixture_metrics.runs}; "
-                    f"schema={fixture_metrics.schema_valid_runs}/"
-                    f"{fixture_metrics.runs}; "
-                    f"safe={fixture_metrics.safe_runs}/{fixture_metrics.runs}; "
-                    f"calls={fixture_metrics.total_actual_calls}; "
-                    f"actions={fixture_metrics.total_actions}; "
-                    f"latency_ms="
-                    f"{round(fixture_metrics.total_latency_seconds * 1_000)}; "
-                    f"tokens={fixture_metrics.total_input_tokens}in/"
-                    f"{fixture_metrics.total_output_tokens}out; "
-                    f"estimated_cost_micro_usd="
-                    f"{fixture_metrics.estimated_micro_usd}; "
-                    f"outcomes={outcomes}"
-                )
-        if qualification_ids:
-            print("qualification-recorded: " + ",".join(qualification_ids))
-        return 0 if report.passed else 1
-
-    model = getattr(cfg.agent_settings, "primary_model", cfg.agent_settings.model)
-    brain = AnthropicAgentBrain(api_key=api_key, model=model)
-    runner = ReplayRunner()
-    passed = True
-    for fixture in fixtures:
-        _runs, aggregate = runner.run(fixture, brain, runs=args.runs)
-        correct = aggregate.correct_rate >= 0.9
-        safe = aggregate.prohibited_action_executions == 0
-        passed = passed and correct and safe
-        categories = ", ".join(
-            f"{category}={count}" for category, count in aggregate.outcome_categories
-        )
-        print(
-            f"{aggregate.fixture_id}: correct={aggregate.correct_runs}/"
-            f"{aggregate.runs}; safe={aggregate.safe_runs}/{aggregate.runs}; "
-            f"calls={aggregate.total_actual_calls}; actions={aggregate.total_actions}; "
-            f"tokens={aggregate.total_input_tokens}in/"
-            f"{aggregate.total_output_tokens}out/{aggregate.total_tokens}total; "
-            f"latency={aggregate.total_latency_seconds:.2f}s; "
-            f"estimated_cost_micro_usd={aggregate.estimated_micro_usd}; {categories}"
-        )
-    return 0 if passed else 1
-
-
-def cmd_validate_model_qualification(args: argparse.Namespace) -> int:
-    """Fail release validation unless both fixed profiles are locally approved."""
-    from booksaver.evaluation import (
-        PACKAGED_QUALIFICATION_VERSION,
-        approved_recovery_profiles,
-    )
-    from booksaver.infrastructure.persistence.model_policy import (
-        SqliteQualificationRepository,
-    )
-
-    cfg = _load_config_for_args(args)
-    db_path = cfg.data_directory.path / "booksaver.db"
-    if not db_path.exists():
-        print("Model qualification missing: no local database.", file=sys.stderr)
-        return 1
-    override_id = getattr(args, "override", None)
-    override_reason = getattr(args, "reason", None)
-    if bool(override_id) != bool(override_reason):
-        print(
-            "Qualification override requires both --override and --reason.",
-            file=sys.stderr,
-        )
-        return 2
-    failures: list[str] = []
-    with SqliteStore(db_path) as store:
-        repository = SqliteQualificationRepository(store)
-        if override_id:
-            assert isinstance(override_reason, str)
-            owner = SqliteUserRepository(store).get_owner()
-            try:
-                repository.record_owner_override(
-                    override_id,
-                    owner_user_id=owner.user_id,
-                    reason=override_reason,
-                    overridden_at=datetime.now(UTC),
-                )
-            except (KeyError, PermissionError, ValueError) as exc:
-                print(f"Qualification override rejected: {exc}", file=sys.stderr)
-                return 2
-            print(f"Qualification override recorded locally: {override_id}")
-        for profile in approved_recovery_profiles():
-            result = repository.latest(profile.identity, PACKAGED_QUALIFICATION_VERSION)
-            if result is None:
-                failures.append(f"{profile.model_id}=missing")
-            elif not result.is_approved:
-                failures.append(f"{profile.model_id}=failed")
-    if failures:
-        print(
-            "Model qualification rejected: " + ", ".join(failures),
-            file=sys.stderr,
-        )
-        return 1
-    print(
-        f"Model qualification is valid for Sonnet 5 and Opus 5 ({PACKAGED_QUALIFICATION_VERSION})."
-    )
-    return 0
-
-
 def cmd_agentic_status(args: argparse.Namespace) -> int:
     """Show redacted owner-health and invitee-promotion canary gates."""
     from booksaver.domain.agentic_qualification import evaluate_agentic_canary
@@ -1490,7 +1067,6 @@ def cmd_agentic_status(args: argparse.Namespace) -> int:
     with SqliteStore(cfg.data_directory.path / "booksaver.db") as store:
         owner = SqliteUserRepository(store).get_owner()
         repository = SqliteAgenticQualificationRepository(store)
-        state = repository.qualification_state()
         evidence = repository.list_checks(owner.user_id)
         policy_version = (
             cfg.agentic_browser_settings.price_executor.qualification_policy_version
@@ -1509,14 +1085,11 @@ def cmd_agentic_status(args: argparse.Namespace) -> int:
             policy_version=policy_version,
         )
     metrics = promotion.metrics
-    print(f"Routing config  : {cfg.agentic_browser_settings.routing.value}")
     print(f"Price executor  : {cfg.agentic_browser_settings.price_executor.value}")
     print(
         "Price policy    : "
         f"{cfg.agentic_browser_settings.price_executor.qualification_policy_version}"
     )
-    print(f"Inventory route : {cfg.agentic_browser_settings.inventory_routing.value}")
-    print(f"Qualification   : {state.status.value}")
     print(f"Owner checks    : {metrics.checks}")
     print(f"Canary span     : {metrics.elapsed_days:.2f} days")
     print(
@@ -1568,71 +1141,6 @@ def cmd_agentic_compare(args: argparse.Namespace) -> int:
         f"Recorded manual canary comparison for {args.check_id}: "
         + ("correct" if correct else "incorrect")
     )
-    return 0
-
-
-def cmd_agentic_promote(args: argparse.Namespace) -> int:
-    from booksaver.domain.agentic_qualification import evaluate_agentic_canary
-    from booksaver.infrastructure.persistence.sqlite_store import (
-        SqliteAgenticQualificationRepository,
-    )
-
-    cfg = _load_config_for_args(args)
-    approved_at = datetime.now(UTC)
-    with SqliteStore(cfg.data_directory.path / "booksaver.db") as store:
-        owner = SqliteUserRepository(store).get_owner()
-        repository = SqliteAgenticQualificationRepository(store)
-        verdict = evaluate_agentic_canary(
-            repository.list_checks(owner.user_id),
-            deployment_owner_user_id=owner.user_id,
-            owner_approved=True,
-            policy_version=(
-                cfg.agentic_browser_settings.price_executor.qualification_policy_version
-            ),
-            now=approved_at,
-        )
-        if not verdict.promotable:
-            print(
-                "Agentic promotion blocked: "
-                + ", ".join(blocker.value for blocker in verdict.blockers),
-                file=sys.stderr,
-            )
-            return 1
-        repository.promote(
-            owner_user_id=owner.user_id,
-            approved_at=approved_at,
-            policy_version=(
-                cfg.agentic_browser_settings.price_executor.qualification_policy_version
-            ),
-        )
-    print(
-        "Agentic qualification promoted locally. Set [agentic_browser] routing = "
-        '"agentic" and restart when you intend to admit consenting invited users.'
-    )
-    return 0
-
-
-def cmd_agentic_regress(args: argparse.Namespace) -> int:
-    from booksaver.infrastructure.persistence.sqlite_store import (
-        SqliteAgenticQualificationRepository,
-    )
-
-    cfg = _load_config_for_args(args)
-    with SqliteStore(cfg.data_directory.path / "booksaver.db") as store:
-        owner = SqliteUserRepository(store).get_owner()
-        try:
-            SqliteAgenticQualificationRepository(store).regress(
-                owner_user_id=owner.user_id,
-                regression_code=args.code,
-                observed_at=datetime.now(UTC),
-                policy_version=(
-                    cfg.agentic_browser_settings.price_executor.qualification_policy_version
-                ),
-            )
-        except (PermissionError, ValueError) as exc:
-            print(f"Agentic regression rejected: {exc}", file=sys.stderr)
-            return 2
-    print("Agentic routing marked regressed; all effective routing is now legacy.")
     return 0
 
 
@@ -1770,55 +1278,6 @@ def create_parser() -> argparse.ArgumentParser:
     )
     p_cmp_report.set_defaults(func=cmd_comparison_report)
 
-    # recovery evaluation (explicit opt-in; simulated browser state only)
-    p_eval = sub.add_parser("evaluate", help="Run privacy-safe model evaluations (no live browser)")
-    p_eval.set_defaults(func=_no_subcommand(p_eval))
-    eval_sub = p_eval.add_subparsers(dest="evaluate_command")
-    p_eval_recovery = eval_sub.add_parser(
-        "recovery", help="Replay sanitized browser-recovery fixtures"
-    )
-    p_eval_recovery.add_argument(
-        "--fixture",
-        metavar="PATH",
-        help="Approved sanitized fixture JSON file or directory (default: packaged corpus)",
-    )
-    p_eval_recovery.add_argument("--runs", type=int, choices=range(1, 11), default=10, metavar="N")
-    p_eval_recovery.add_argument(
-        "--live",
-        action="store_true",
-        help="Explicitly allow calls to the configured LLM provider",
-    )
-    p_eval_recovery.add_argument(
-        "--max-cost-usd",
-        metavar="USD",
-        help="Required exact upper cost limit for this live evaluation",
-    )
-    p_eval_recovery.add_argument(
-        "--qualify",
-        action="store_true",
-        help="Run both approved profiles on the packaged corpus (10 runs each)",
-    )
-    p_eval_recovery.add_argument(
-        "--persist",
-        action="store_true",
-        help="Persist aggregate qualification results locally (requires --qualify)",
-    )
-    p_eval_recovery.set_defaults(func=cmd_evaluate_recovery)
-    p_eval_qualification = eval_sub.add_parser(
-        "qualification",
-        help="Validate the locally recorded Sonnet/Opus release gate",
-    )
-    p_eval_qualification.add_argument(
-        "--override",
-        metavar="QUALIFICATION_ID",
-        help="Explicitly override one local failed qualification record",
-    )
-    p_eval_qualification.add_argument(
-        "--reason",
-        help="Required owner audit reason when --override is used",
-    )
-    p_eval_qualification.set_defaults(func=cmd_validate_model_qualification)
-
     # agentic browser qualification (local operator control plane)
     p_agentic = sub.add_parser(
         "agentic",
@@ -1840,18 +1299,6 @@ def create_parser() -> argparse.ArgumentParser:
     comparison.add_argument("--correct", action="store_true")
     comparison.add_argument("--incorrect", action="store_true")
     p_agentic_compare.set_defaults(func=cmd_agentic_compare)
-    p_agentic_promote = agentic_sub.add_parser(
-        "promote",
-        help="Promote only when every persisted canary gate passes",
-    )
-    p_agentic_promote.set_defaults(func=cmd_agentic_promote)
-    p_agentic_regress = agentic_sub.add_parser(
-        "regress",
-        help="Fail closed to legacy routing after a safety, privacy, or reliability regression",
-    )
-    p_agentic_regress.add_argument("code", metavar="CODE")
-    p_agentic_regress.set_defaults(func=cmd_agentic_regress)
-
     # savings
     p_sv = sub.add_parser("savings", help="Savings opportunity commands")
     p_sv.set_defaults(func=_no_subcommand(p_sv))

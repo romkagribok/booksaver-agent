@@ -23,7 +23,6 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from booksaver.application.async_runner import AsyncLoopRunner
 from booksaver.application.browser_executor import ExecutionMeter, InMemorySessionLeaseBroker
-from booksaver.application.model_policy import BrowserJobCostBudget
 from booksaver.application.ports import SessionRestoreTarget
 from booksaver.domain.account_sync import ReservationLifecycle
 from booksaver.domain.browser_executor import (
@@ -171,7 +170,7 @@ class BrowserUseReservationPayload(BaseModel):
     @field_validator("*", mode="before")
     @classmethod
     def normalize_provider_scalar(cls, value: object) -> object:
-        # Anthropic occasionally emits JSON numbers/nulls for fields described as strings.  Keep
+        # Models occasionally emit JSON numbers/nulls for fields described as strings.  Keep
         # the provider action schema permissive; BookSaver's later mapping and application
         # validator remain the only authority for identities, dates, money and eligibility.
         # Structured provider guesses (for example ``{"amount": 301}``) carry no more
@@ -590,8 +589,6 @@ class BrowserUseRuntimePort(SessionRestoreTarget, Protocol):
         self,
         request: InventoryExecutionRequest,
         *,
-        api_key: str,
-        budget: BrowserJobCostBudget,
         meter: ExecutionMeter,
     ) -> BrowserUseRuntimeResult: ...
 
@@ -927,8 +924,6 @@ class LocalBrowserUseInventoryRuntime:
         self,
         request: InventoryExecutionRequest,
         *,
-        api_key: str,
-        budget: BrowserJobCostBudget,
         meter: ExecutionMeter,
     ) -> BrowserUseRuntimeResult:
         hosted = await self._host.start()
@@ -1368,15 +1363,11 @@ class BrowserUseInventoryBrowserExecutor:
     def __init__(
         self,
         *,
-        api_key: str,
         lease_broker: InMemorySessionLeaseBroker,
-        budget: BrowserJobCostBudget,
         runner: AsyncLoopRunner,
         runtime_factory: Callable[[], BrowserUseRuntimePort] = LocalBrowserUseInventoryRuntime,
     ) -> None:
-        self._api_key = api_key
         self._leases = lease_broker
-        self._budget = budget
         self._runner = runner
         self._runtime_factory = runtime_factory
 
@@ -1434,8 +1425,6 @@ class BrowserUseInventoryBrowserExecutor:
             try:
                 result = await runtime.execute(
                     request,
-                    api_key=self._api_key,
-                    budget=self._budget,
                     meter=meter,
                 )
             except Exception as exc:
@@ -1501,17 +1490,13 @@ class LocalBrowserUseInventoryExecutor:
     def __init__(
         self,
         *,
-        api_key: str,
         lease_broker: InMemorySessionLeaseBroker,
-        budget: BrowserJobCostBudget,
         mobile_settings: MobileWebSettings | None = None,
         facts_assistant: Callable[[], JevReservationFacts | None] | None = None,
         record_assistant: Callable[[JevReservationFacts, InventoryExecutionRequest], None]
         | None = None,
     ) -> None:
-        self._api_key = api_key
         self._leases = lease_broker
-        self._budget = budget
         self._mobile_settings = mobile_settings or MobileWebSettings()
         self._facts_assistant = facts_assistant
         self._record_assistant = record_assistant
@@ -1521,9 +1506,7 @@ class LocalBrowserUseInventoryExecutor:
         try:
             with AsyncLoopRunner() as runner:
                 return BrowserUseInventoryBrowserExecutor(
-                    api_key=self._api_key,
                     lease_broker=self._leases,
-                    budget=self._budget,
                     runner=runner,
                     runtime_factory=lambda: LocalBrowserUseInventoryRuntime(
                         self._mobile_settings, assist=assist,

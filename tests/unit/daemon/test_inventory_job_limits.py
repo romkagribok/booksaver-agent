@@ -13,7 +13,6 @@ def context(now):
         job_id="job",
         deadline=now + timedelta(seconds=180),
         job_limit_micro_usd=1_000_000,
-        daily_limit_micro_usd=10_000_000,
     )
 
 

@@ -11,9 +11,8 @@ services:
       # memory-bank/operations/vps-deployment-runbook.md for the full list
       # and how to generate BOOKSAVER_SECRET_KEY.
       - BOOKSAVER_TELEGRAM_BOT_TOKEN=${BOOKSAVER_TELEGRAM_BOT_TOKEN:?set in .env}
-      - BOOKSAVER_LLM_API_KEY=${BOOKSAVER_LLM_API_KEY:-}
-      # TypeSafe key for the Jev price method (price_executor = "jev") and its
-      # paired comparison ([jev_comparison]). Unused by the LLM price adapters.
+      # TypeSafe key for Jev, the only model provider: required for price checks
+      # and account syncs.
       - BOOKSAVER_TYPESAFE_API_KEY=${BOOKSAVER_TYPESAFE_API_KEY:-}
       - BOOKSAVER_SECRET_KEY=${BOOKSAVER_SECRET_KEY:?set in .env}
       # Optional: email notifications alongside/instead of Telegram.

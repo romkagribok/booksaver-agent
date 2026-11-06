@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
-from booksaver.domain.account_sync import ReservationObservation
-from booksaver.domain.agent import AgentAction, AgentTurnContext, CheckTrace, Observation
+from booksaver.domain.agent import AgentAction, CheckTrace, Observation
 from booksaver.domain.browser_executor import (
     PriceExecutionRequest,
     PriceExecutionResult,
@@ -13,7 +12,6 @@ from booksaver.domain.browser_executor import (
 )
 from booksaver.domain.browser_resilience import (
     DomStepId,
-    PageStateResolution,
     PopupAdoptionResult,
 )
 from booksaver.domain.check_result import CheckResult
@@ -21,12 +19,9 @@ from booksaver.domain.inventory_executor import (
     InventoryExecutionRequest,
     InventoryExecutionResult,
 )
-from booksaver.domain.model_policy import EscalationTrigger
 from booksaver.domain.models import Booking
-from booksaver.domain.offer import OfferCandidate
 from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.user import InviteCode, User, UserAccessState, UserRole
-from booksaver.domain.value_objects import Money
 
 
 @runtime_checkable
@@ -50,7 +45,6 @@ class UserRepository(Protocol):
     def set_access_state(self, user_id: int, access_state: UserAccessState) -> None: ...
     def link_telegram_id(self, user_id: int, telegram_user_id: int) -> None: ...
     def get_owner_of_booking(self, booking_id: str) -> User | None: ...
-    def set_encrypted_key(self, user_id: int, encrypted_key: bytes | None) -> None: ...
     def purge(self, user_id: int) -> None: ...
 
 
@@ -77,14 +71,6 @@ class PageContent:
     url: str
     html: str
     text: str
-
-
-@dataclass(frozen=True)
-class ExtractionResult:
-    price: Money | None
-    is_refundable: bool | None
-    cancellation_deadline_raw: str | None
-    confidence: float  # 0.0 - 1.0; below threshold treated as failed extraction
 
 
 @dataclass(frozen=True)
@@ -183,49 +169,9 @@ class PopupAdoptingBrowser(Protocol):
 
 
 @runtime_checkable
-class AgentBrain(Protocol):
-    """One LLM decision per agent turn (ADR-016)."""
-
-    def decide(self, context: AgentTurnContext) -> AgentAction: ...
-
-
-@runtime_checkable
-class EscalatingAgentBrain(Protocol):
-    """Optional single-turn Opus capability after code-measured quality failure."""
-
-    def decide_with_escalation(
-        self, context: AgentTurnContext, trigger: EscalationTrigger
-    ) -> AgentAction: ...
-
-
-@runtime_checkable
-class RegisteredPageStateResolver(Protocol):
-    """Resolve one registered current-page state without browser authority."""
-
-    def resolve(
-        self, step_id: DomStepId, observation: Observation
-    ) -> PageStateResolution: ...
-
-
-@runtime_checkable
 class CheckTraceRepository(Protocol):
     def add(self, trace: CheckTrace) -> None: ...
     def get(self, check_id: str) -> CheckTrace | None: ...
-
-
-@runtime_checkable
-class LLMExtractor(Protocol):
-    def extract_price(self, page_text: str, booking: Booking) -> ExtractionResult: ...
-    def extract_offers(self, page_text: str, booking: Booking) -> list[OfferCandidate]: ...
-
-
-@runtime_checkable
-class InventoryInterpreter(Protocol):
-    """Positive-only reservation interpretation; never conveys completeness."""
-
-    def interpret(
-        self, page_text: str, source_url: str
-    ) -> tuple[ReservationObservation, ...]: ...
 
 
 @runtime_checkable
@@ -250,24 +196,3 @@ class SavingsRepository(Protocol):
 @runtime_checkable
 class ConfigSource(Protocol):
     def read(self) -> dict[str, Any]: ...
-
-
-@runtime_checkable
-class LLMClientFactory(Protocol):
-    """Per-user LLM client resolution seam (US-029).
-
-    Today every implementation resolves the single owner env-var key for
-    every booking, matching pre-multi-user behavior exactly. The seam exists
-    so a later slice (US-027, `/setkey`) can resolve booking -> owning user
-    -> decrypted personal key (falling back to the owner key under per-user
-    caps) without changing any call site.
-    """
-
-    def for_booking(self, booking: Booking | None) -> LLMExtractor | None: ...
-    def agent_brain_for_booking(self, booking: Booking | None) -> AgentBrain | None: ...
-    def agent_brain_for_user(
-        self, user_id: int, role: str = "navigation_agent"
-    ) -> AgentBrain | None: ...
-    def inventory_interpreter_for_user(
-        self, user_id: int, role: str = "inventory_interpreter"
-    ) -> InventoryInterpreter | None: ...

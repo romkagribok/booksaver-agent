@@ -14,21 +14,18 @@ def test_init_config_uses_requested_data_directory(tmp_path) -> None:
     config_text = (data_dir / "config.toml").read_text()
     config = tomllib.loads(config_text)
     assert config["storage"]["data_directory"] == str(data_dir.resolve())
-    assert "# max_recovery_calls_per_step = 4" in config_text
-    assert "# recovery_timeout_seconds = 60" in config_text
-    assert "# screenshot_after_no_progress = 2" in config_text
-    assert "# max_semantic_action_executions = 2" in config_text
-    assert '# primary_model = "claude-sonnet-5"' in config_text
-    assert '# escalation_model = "claude-opus-5"' in config_text
     assert '# max_job_cost_usd = "1.00"' in config_text
     assert '[agentic_browser]' in config_text
-    assert '# routing = "legacy"' in config_text
-    assert '# price_executor = "browser_use"' in config_text
-    assert '# inventory_routing = "agentic"' in config_text
+    assert '# price_executor = "jev"' in config_text
     assert '# disclosure_version = "typesafe-visible-booking-page-v1"' in config_text
+    for retired in ("claude", "routing", "max_llm_calls", "max_steps", "[extraction]"):
+        assert retired not in config_text.lower()
 
 
-def test_config_commands_show_effective_recovery_defaults(tmp_path, capsys) -> None:
+def test_config_commands_show_jev_settings_for_a_legacy_file(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    monkeypatch.setenv("BOOKSAVER_TYPESAFE_API_KEY", "typesafe-key")
     config_path = tmp_path / "legacy-config.toml"
     config_path.write_text(
         '[storage]\n'
@@ -42,19 +39,15 @@ def test_config_commands_show_effective_recovery_defaults(tmp_path, capsys) -> N
 
     assert cmd_config_validate(args) == 0
     validate_output = capsys.readouterr().out
-    assert "agent_recovery_calls/step  : 4" in validate_output
-    assert "agent_recovery_timeout_s   : 60" in validate_output
-    assert "agentic_browser.routing    : legacy" in validate_output
-    assert "agentic_browser.price_executor: browser_use" in validate_output
-    assert "agentic_browser.inventory_routing: agentic" in validate_output
+    assert "agent_job_cost_usd         : 1.00" in validate_output
+    assert "agentic_browser.price_executor: jev" in validate_output
+    assert "routing" not in validate_output
 
     assert cmd_config_show(args) == 0
     show_output = capsys.readouterr().out
-    assert "agent.recovery_calls/step   : 4" in show_output
-    assert "agent.recovery_timeout_s     : 60" in show_output
-    assert "agent.screenshot_after_no_progress: 2" in show_output
-    assert "agent.semantic_action_executions: 2" in show_output
-    assert "agentic_browser.routing      : legacy" in show_output
-    assert "agentic_browser.price_executor: browser_use" in show_output
-    assert "agentic_browser.inventory_routing: agentic" in show_output
+    assert "agent.max_job_cost_usd       : 1.00" in show_output
+    assert "agentic_browser.price_executor: jev" in show_output
     assert "agentic_browser.disclosure   : typesafe-visible-booking-page-v1" in show_output
+    assert "BOOKSAVER_TYPESAFE_API_KEY   : (set)" in show_output
+    assert "LLM_API_KEY" not in show_output
+    assert "routing" not in show_output

@@ -60,7 +60,6 @@ def harness(tmp_path, *, outcome=SessionVerificationOutcome.AUTHENTICATED):
         _config(tmp_path), session_repository=repo, session_verifier=verify,
         auth_required_notifier=notices.append, session_uncertain_notifier=uncertain.append,
         session_clock=lambda: clock[0],
-        llm_factory_builder=lambda *_: pytest.fail("Maintenance cannot use a model"),
         notifier_builder=lambda *_: pytest.fail("Maintenance cannot use savings notifiers"),
     )
     return coordinator, repo, caller.user_id, owner.user_id, clock, calls, notices, uncertain
@@ -215,16 +214,10 @@ def test_late_success_is_not_accepted_past_absolute_deadline(tmp_path):
     assert notices == uncertain == []
 
 
-@pytest.mark.parametrize("agentic", [False, True])
-def test_legacy_local_expiry_foreground_defers_without_reconnect(tmp_path, agentic):
+def test_local_expiry_foreground_defers_without_reconnect(tmp_path):
     c, repo, caller, _owner, _clock, calls, notices, uncertain = harness(tmp_path)
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        if agentic:
-            report = c._synchronize_agentic_inventory(
-                store, caller, SynchronizationTrigger.BOOKINGS,
-            )
-        else:
-            report = c._synchronize_user(store, object(), caller, SynchronizationTrigger.BOOKINGS)
+        report = c._synchronize_agentic_inventory(store, caller, SynchronizationTrigger.BOOKINGS)
         assert report.failure_code is SynchronizationFailureCode.VERIFICATION_PENDING
         assert "/connect" not in report.failure_detail
         price = c._session_unavailable_result(SqliteUserRepository(store), caller,
@@ -285,18 +278,12 @@ def test_missing_or_undecryptable_bundle_still_prompts_reconnect(tmp_path, state
     assert repo.load_for_maintenance(owner) is not None
 
 
-@pytest.mark.parametrize("agentic", [False, True])
-def test_explicit_expired_session_requires_reconnect_not_automatic_recovery(tmp_path, agentic):
+def test_explicit_expired_session_requires_reconnect_not_automatic_recovery(tmp_path):
     c, repo, caller, _owner, _clock, calls, notices, uncertain = harness(tmp_path)
     old = repo.load_for_maintenance(caller)
     repo.save(replace(old, metadata=replace(old.metadata, status=SessionStatus.EXPIRED)))
     with SqliteStore(tmp_path / "booksaver.db") as store:
-        if agentic:
-            report = c._synchronize_agentic_inventory(
-                store, caller, SynchronizationTrigger.BOOKINGS,
-            )
-        else:
-            report = c._synchronize_user(store, object(), caller, SynchronizationTrigger.BOOKINGS)
+        report = c._synchronize_agentic_inventory(store, caller, SynchronizationTrigger.BOOKINGS)
         assert report.failure_code is SynchronizationFailureCode.AUTH_REQUIRED
         assert "automatically" not in report.failure_detail
     c._notify_auth_required(caller)

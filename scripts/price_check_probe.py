@@ -15,7 +15,6 @@ import shutil
 import sqlite3
 import tempfile
 import threading
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +26,6 @@ from booksaver.daemon.check_coordinator import (
     ImmediateCompletion,
     ImmediateCompletionKind,
 )
-from booksaver.domain.browser_executor import ExecutionRoutingMode, PriceExecutorKind
 from booksaver.domain.check_result import CheckOutcome
 from booksaver.domain.models import Config
 from booksaver.infrastructure.config.toml_env_source import TomlEnvConfigSource
@@ -113,11 +111,6 @@ def main() -> int:
         isolated_data = Path(root) / "data"
         _clone_state(production_cfg.data_directory.path, isolated_data)
         cfg = load_config(_IsolatedConfigSource(raw, isolated_data))
-        cfg.agentic_browser_settings = replace(
-            cfg.agentic_browser_settings,
-            routing=ExecutionRoutingMode.OWNER_CANARY,
-            price_executor=PriceExecutorKind.BROWSER_USE,
-        )
         telegram_user_id, booking_id = _selection(cfg, args.booking_id)
         completed = threading.Event()
         holder: list[ImmediateCompletion] = []

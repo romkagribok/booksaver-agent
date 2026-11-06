@@ -26,7 +26,7 @@ User=booksaver
 Group=booksaver
 WorkingDirectory=/opt/booksaver
 
-# Secrets (BOOKSAVER_TELEGRAM_BOT_TOKEN, BOOKSAVER_LLM_API_KEY,
+# Secrets (BOOKSAVER_TELEGRAM_BOT_TOKEN, BOOKSAVER_TYPESAFE_API_KEY,
 # BOOKSAVER_SECRET_KEY, optional BOOKSAVER_SMTP_PASSWORD) live only in this
 # env file, which must never be committed to git and should be root-owned
 # with mode 600 (systemd reads it before dropping to User=booksaver).

@@ -23,11 +23,6 @@ class User:
     ``None``); a VPS-deployed owner and every invited user have one. Exactly
     one ``OWNER`` row exists per database (enforced by a partial unique index
     on ``users.role`` — see ``sqlite_store.py``).
-
-    ``encrypted_key`` is an opaque, nullable blob reserved for the personal
-    Anthropic-key intake slice (US-027, `/setkey`). This slice never reads or
-    writes it beyond passing it through unchanged — no encryption/decryption
-    logic lives here yet.
     """
 
     user_id: int
@@ -35,7 +30,6 @@ class User:
     role: UserRole
     access_state: UserAccessState
     created_at: datetime
-    encrypted_key: bytes | None = None
     telegram_username: str | None = None
 
     @property

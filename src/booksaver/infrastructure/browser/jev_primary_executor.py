@@ -1,8 +1,8 @@
 """Jev as the authoritative price method (ADR-056).
 
 The provider-neutral port, validators, offer selection, history, savings, and alerts are
-unchanged; this adapter only adds what the Anthropic ledger used to provide for the LLM method:
-a daily spend cap, a durable per-run cost record, and the content-free run diagnostic.
+unchanged; this adapter adds a daily spend cap, a durable per-run cost record, and the
+content-free run diagnostic.
 """
 
 from __future__ import annotations

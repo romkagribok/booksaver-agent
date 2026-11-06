@@ -157,7 +157,6 @@ def test_zoom_accepts_only_a_bounded_screen_region() -> None:
     [
         ("https://www.booking.com/searchresults.html", ExecutorEgressKind.BOOKING),
         ("https://cf.bstatic.com/static/app.js", ExecutorEgressKind.BOOKING),
-        ("https://api.anthropic.com/v1/messages", ExecutorEgressKind.ANTHROPIC),
         ("http://127.0.0.1:4318/v1/traces", ExecutorEgressKind.LOOPBACK),
         ("ws://localhost:9222/devtools/browser/example", ExecutorEgressKind.LOOPBACK),
     ],
@@ -171,9 +170,8 @@ def test_authenticated_executor_egress_allowlist(url: str, kind: ExecutorEgressK
     [
         "https://browserbase.com/session",
         "https://api.openai.com/v1/responses",
-        "https://telemetry.stagehand.dev/v1/traces",
+        "https://api.anthropic.com/v1/messages",  # the retired model provider
         "https://api.anthropic.com.evil.example/v1/messages",
-        "http://api.anthropic.com/v1/messages",
         "https://localhost.evil.example/",
     ],
 )

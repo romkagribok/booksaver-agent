@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import re
-import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -195,117 +193,13 @@ class AgentTurnContext:
 
 @dataclass(frozen=True)
 class AgentSettings:
-    """Browser-agent limits plus the fixed adaptive portfolio (ADR-031).
+    """The per-job cost cap that bounds Jev price and sync execution (ADR-017)."""
 
-    ``model`` remains the compatibility name for the primary model.  It is no
-    longer an arbitrary model selector: only Sonnet 5 is valid and Opus 5 is
-    the sole escalation profile.
-    """
-
-    max_steps: int = 15
-    max_llm_calls: int = 20
-    check_timeout_seconds: int = 180
-    model: str = "claude-sonnet-5"
-    escalation_model: str = "claude-opus-5"
     max_job_cost_micro_usd: int = 1_000_000
-    max_deployment_daily_cost_micro_usd: int = 10_000_000
-    reserve_opus_diagnostic_for_ambiguous_episode: bool = True
-    max_recovery_calls_per_step: int = 4
-    recovery_timeout_seconds: int = 60
-    screenshot_after_no_progress: int = 2
-    max_semantic_action_executions: int = 2
 
     def __post_init__(self) -> None:
-        if self.model != "claude-sonnet-5":
-            raise ValueError(
-                "agent.primary_model must be claude-sonnet-5; Fable and arbitrary "
-                "model profiles are not approved"
-            )
-        if self.escalation_model != "claude-opus-5":
-            raise ValueError(
-                "agent.escalation_model must be claude-opus-5; Fable and arbitrary "
-                "model profiles are not approved"
-            )
         if not 1 <= self.max_job_cost_micro_usd <= 1_000_000:
             raise ValueError("agent.max_job_cost_usd must be between 0.000001 and 1.00")
-        if not 1 <= self.max_deployment_daily_cost_micro_usd <= 10_000_000:
-            raise ValueError(
-                "agent.max_deployment_daily_cost_usd must be between 0.000001 and 10.00"
-            )
-        if isinstance(self.reserve_opus_diagnostic_for_ambiguous_episode, bool) is False:
-            raise ValueError(
-                "agent.reserve_opus_diagnostic_for_ambiguous_episode must be boolean"
-            )
-        if self.max_steps < 1:
-            raise ValueError(f"agent.max_steps must be >= 1, got {self.max_steps}")
-        if self.max_llm_calls < 1:
-            raise ValueError(f"agent.max_llm_calls must be >= 1, got {self.max_llm_calls}")
-        if not 30 <= self.check_timeout_seconds <= 3600:
-            raise ValueError(
-                "agent.check_timeout_seconds must be between 30 and 3600, "
-                f"got {self.check_timeout_seconds}"
-            )
-        for name in (
-            "max_recovery_calls_per_step",
-            "recovery_timeout_seconds",
-            "screenshot_after_no_progress",
-            "max_semantic_action_executions",
-        ):
-            if getattr(self, name) < 1:
-                raise ValueError(f"agent.{name} must be >= 1")
-
-    @property
-    def recovery_policy(self) -> RecoveryPolicy:
-        return RecoveryPolicy(
-            max_llm_calls=self.max_recovery_calls_per_step,
-            timeout_seconds=self.recovery_timeout_seconds,
-            no_progress_before_screenshot=self.screenshot_after_no_progress,
-            max_semantic_executions=self.max_semantic_action_executions,
-        )
-
-    @property
-    def primary_model(self) -> str:
-        return self.model
-
-
-class BudgetExceeded(Exception):
-    """Raised the moment any hard cap is breached; maps to BUDGET_EXCEEDED."""
-
-
-class AgentBudget:
-    """Mutable per-check budget. Screenshot (tier-2) turns cost 2 steps (ADR-015)."""
-
-    def __init__(
-        self, settings: AgentSettings, clock: Callable[[], float] = time.monotonic
-    ) -> None:
-        self._settings = settings
-        self._clock = clock
-        self._started = clock()
-        self.steps_used = 0
-        self.llm_calls_used = 0
-
-    def consume_step(self, tier2: bool = False) -> None:
-        self.steps_used += 2 if tier2 else 1
-        if self.steps_used > self._settings.max_steps:
-            raise BudgetExceeded(
-                f"agent step cap exceeded ({self.steps_used}/{self._settings.max_steps})"
-            )
-
-    def consume_llm_call(self) -> None:
-        if self.llm_calls_used >= self._settings.max_llm_calls:
-            raise BudgetExceeded(
-                f"LLM call cap exceeded "
-                f"({self.llm_calls_used}/{self._settings.max_llm_calls})"
-            )
-        self.llm_calls_used += 1
-
-    def check_time(self) -> None:
-        elapsed = self._clock() - self._started
-        if elapsed > self._settings.check_timeout_seconds:
-            raise BudgetExceeded(
-                f"check timeout exceeded ({elapsed:.0f}s/"
-                f"{self._settings.check_timeout_seconds}s)"
-            )
 
 
 # ── Action guard (ADR-016): enforced at the adapter boundary, never prompt-only ──

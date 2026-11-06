@@ -107,8 +107,8 @@ def test_connect_uses_telegram_web_app_button_without_chat_credentials() -> None
 def test_connect_shows_versioned_agentic_disclosure_when_caller_is_invited() -> None:
     manager = StubManager()
     disclosure = (
-        "Privacy disclosure (anthropic-visible-booking-page-v1): the deployment "
-        "owner's Anthropic account may process visible page content and screenshots."
+        "Privacy disclosure (typesafe-visible-booking-page-v1): the deployment "
+        "owner's TypeSafe account (Jev) reads Booking.com page content for your checks."
     )
     router, _callbacks, _client, sent = _register(
         manager,

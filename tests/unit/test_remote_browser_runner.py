@@ -435,46 +435,21 @@ def test_remote_auth_declares_no_dom_steps() -> None:
 @pytest.fixture
 def forbidden_model_calls(monkeypatch):
     """Observe forbidden model capability construction and use."""
-    import anthropic
     import browser_use
 
-    from booksaver.application.model_policy import BrowserJobCostBudget
     from booksaver.infrastructure.browser.browser_use_inventory_executor import (
         BrowserUseInventoryBrowserExecutor,
         LocalBrowserUseInventoryRuntime,
     )
-    from booksaver.infrastructure.llm.adaptive_execution import AdaptiveRoleExecutor
-    from booksaver.infrastructure.llm.anthropic_adapter import (
-        AnthropicAgentBrain,
-        AnthropicExtractor,
-        AnthropicInventoryInterpreter,
-    )
-    from booksaver.infrastructure.llm.client_factory import (
-        AnthropicLLMClientFactory,
-        CallerBoundAnthropicFactory,
-        LazyAdaptiveAnthropicRuntimeFactory,
-    )
-    from booksaver.infrastructure.llm.page_state_classifier import AnthropicPageStateClassifier
+    from booksaver.infrastructure.browser.jev_primary_executor import JevPrimaryPriceExecutor
+    from booksaver.infrastructure.llm.typesafe_client import TypeSafeClient
 
     calls = Mock(side_effect=AssertionError("remote authentication must be model-free"))
-    monkeypatch.setattr(anthropic, "Anthropic", calls)
     monkeypatch.setattr(browser_use, "Agent", calls)
-    monkeypatch.setattr(browser_use, "ChatAnthropic", calls)
-    monkeypatch.setattr(AnthropicLLMClientFactory, "__init__", calls)
-    monkeypatch.setattr(CallerBoundAnthropicFactory, "__init__", calls)
-    monkeypatch.setattr(LazyAdaptiveAnthropicRuntimeFactory, "__init__", calls)
     monkeypatch.setattr(BrowserUseInventoryBrowserExecutor, "__init__", calls)
     monkeypatch.setattr(LocalBrowserUseInventoryRuntime, "__init__", calls)
-    monkeypatch.setattr(AnthropicPageStateClassifier, "__init__", calls)
-    monkeypatch.setattr(BrowserJobCostBudget, "__init__", calls)
-    monkeypatch.setattr(BrowserJobCostBudget, "admit", calls)
-    monkeypatch.setattr(AdaptiveRoleExecutor, "invoke_primary", calls)
-    monkeypatch.setattr(AdaptiveRoleExecutor, "invoke_escalation", calls)
-    monkeypatch.setattr(AnthropicAgentBrain, "decide", calls)
-    monkeypatch.setattr(AnthropicExtractor, "extract_price", calls)
-    monkeypatch.setattr(AnthropicExtractor, "extract_offers", calls)
-    monkeypatch.setattr(AnthropicInventoryInterpreter, "interpret", calls)
-    monkeypatch.setattr(AnthropicPageStateClassifier, "classify", calls)
+    monkeypatch.setattr(TypeSafeClient, "__init__", calls)
+    monkeypatch.setattr(JevPrimaryPriceExecutor, "__init__", calls)
     yield calls
     calls.assert_not_called()
 

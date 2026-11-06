@@ -16,13 +16,10 @@ from booksaver.application.load_config import load_config
 from booksaver.cli.commands import _make_check_coordinator, _make_price_executor_factory
 from booksaver.domain.agent import LLMUsage
 from booksaver.domain.browser_executor import (
-    AgenticBrowserSettings,
     AllInEvidence,
     EvidenceCompleteness,
     ExecutionLimits,
-    ExecutionRoutingMode,
     ExecutionUsage,
-    InventoryExecutionRoutingMode,
     ObservationSource,
     ObservedOffer,
     ObservedQueryFacts,
@@ -30,16 +27,11 @@ from booksaver.domain.browser_executor import (
     PriceExecutionResult,
     PriceExecutionStatus,
     PriceExecutorKind,
-    QualificationState,
-    QualificationStatus,
     RedactedProvenance,
     RefundabilityEvidence,
-    RoutingContext,
-    RoutingReason,
     SessionLeaseReference,
     TrustedPriceQuery,
     ValidationRejection,
-    resolve_execution_route,
     validate_price_observation,
 )
 from booksaver.domain.errors import ConfigValidationError
@@ -389,131 +381,6 @@ def test_meter_preserves_actual_billable_cost_when_provider_overshoots_cap() -> 
     assert not usage.within(limits)
 
 
-def _route_context(
-    *,
-    owner: bool = False,
-    status: QualificationStatus = QualificationStatus.UNQUALIFIED,
-    acknowledged: str | None = None,
-) -> RoutingContext:
-    qualified_at = NOW if status is QualificationStatus.QUALIFIED else None
-    return RoutingContext(
-        is_owner=owner,
-        qualification=QualificationState(status=status, qualified_at=qualified_at),
-        disclosure_version="disclosure-v1",
-        acknowledged_disclosure_version=acknowledged,
-    )
-
-
-def test_routing_is_legacy_by_default_and_owner_only_in_canary() -> None:
-    assert AgenticBrowserSettings().routing is ExecutionRoutingMode.LEGACY
-    assert not resolve_execution_route(
-        ExecutionRoutingMode.OWNER_CANARY, _route_context()
-    ).use_agentic
-    owner = resolve_execution_route(
-        ExecutionRoutingMode.OWNER_CANARY, _route_context(owner=True)
-    )
-    assert owner.use_agentic
-    assert owner.reason is RoutingReason.OWNER_CANARY
-
-
-def test_consented_users_admits_owner_and_disclosed_invitee_before_qualification() -> None:
-    owner = resolve_execution_route(
-        ExecutionRoutingMode.CONSENTED_USERS,
-        _route_context(owner=True),
-    )
-    invitee = resolve_execution_route(
-        ExecutionRoutingMode.CONSENTED_USERS,
-        _route_context(acknowledged="disclosure-v1"),
-    )
-
-    assert owner.use_agentic
-    assert invitee.use_agentic
-    assert owner.reason is RoutingReason.OWNER_CONSENTED_ROLLOUT
-    assert invitee.reason is RoutingReason.INVITEE_CONSENTED_ROLLOUT
-
-
-@pytest.mark.parametrize("acknowledged", [None, "disclosure-v0"])
-def test_consented_users_routes_invitee_agentic_whatever_the_disclosure_record(
-    acknowledged: str | None,
-) -> None:
-    decision = resolve_execution_route(
-        ExecutionRoutingMode.CONSENTED_USERS,
-        _route_context(acknowledged=acknowledged),
-    )
-
-    assert decision.use_agentic
-    assert decision.reason is RoutingReason.INVITEE_CONSENTED_ROLLOUT
-
-
-def test_invitee_agentic_requires_qualification_but_not_disclosure() -> None:
-    unqualified = resolve_execution_route(
-        ExecutionRoutingMode.AGENTIC, _route_context(acknowledged="disclosure-v1")
-    )
-    no_consent = resolve_execution_route(
-        ExecutionRoutingMode.AGENTIC,
-        _route_context(status=QualificationStatus.QUALIFIED),
-    )
-    admitted = resolve_execution_route(
-        ExecutionRoutingMode.AGENTIC,
-        _route_context(
-            status=QualificationStatus.QUALIFIED, acknowledged="disclosure-v1"
-        ),
-    )
-    assert unqualified.reason is RoutingReason.QUALIFICATION_REQUIRED
-    # ADR-062: invitees are informed, not gated, so no disclosure record is needed.
-    assert no_consent.use_agentic
-    assert admitted.use_agentic
-
-
-def test_invitee_agentic_rejects_qualification_from_another_executor_policy() -> None:
-    context = _route_context(
-        status=QualificationStatus.QUALIFIED,
-        acknowledged="disclosure-v1",
-    )
-    context = replace(
-        context,
-        qualification=QualificationState(
-            status=QualificationStatus.QUALIFIED,
-            policy_version="agentic-price-v1",
-            qualified_at=NOW,
-        ),
-    )
-
-    decision = resolve_execution_route(ExecutionRoutingMode.AGENTIC, context)
-
-    assert decision.use_agentic is False
-    assert decision.reason is RoutingReason.QUALIFICATION_REQUIRED
-
-
-def test_owner_agentic_mode_still_requires_completed_qualification() -> None:
-    blocked = resolve_execution_route(
-        ExecutionRoutingMode.AGENTIC,
-        _route_context(owner=True),
-    )
-    admitted = resolve_execution_route(
-        ExecutionRoutingMode.AGENTIC,
-        _route_context(owner=True, status=QualificationStatus.QUALIFIED),
-    )
-
-    assert not blocked.use_agentic
-    assert blocked.reason is RoutingReason.QUALIFICATION_REQUIRED
-    assert admitted.use_agentic
-    assert admitted.reason is RoutingReason.OWNER_AGENTIC
-
-
-@pytest.mark.parametrize(
-    "mode",
-    [ExecutionRoutingMode.AGENTIC, ExecutionRoutingMode.CONSENTED_USERS],
-)
-def test_regression_forces_legacy_even_for_owner(mode: ExecutionRoutingMode) -> None:
-    decision = resolve_execution_route(
-        mode,
-        _route_context(owner=True, status=QualificationStatus.REGRESSED),
-    )
-    assert not decision.use_agentic
-    assert decision.reason is RoutingReason.REGRESSION_ROLLBACK
-
-
 class _RestoreTarget:
     def __init__(self) -> None:
         self.restored: list[bytes] = []
@@ -600,83 +467,39 @@ def test_execution_meter_counts_computer_use_inside_total_and_caps_cost() -> Non
 
 
 class _ConfigSource:
-    def __init__(
-        self,
-        routing: str | None = None,
-        inventory_routing: str | None = None,
-        price_executor: str | None = None,
-    ) -> None:
-        self.routing = routing
-        self.inventory_routing = inventory_routing
+    def __init__(self, price_executor: str | None = None) -> None:
         self.price_executor = price_executor
 
     def read(self) -> dict[str, object]:
         data: dict[str, object] = {
             "storage": {"data_directory": "/tmp/booksaver-test"}
         }
-        agentic_browser: dict[str, str] = {}
-        if self.routing is not None:
-            agentic_browser["routing"] = self.routing
-        if self.inventory_routing is not None:
-            agentic_browser["inventory_routing"] = self.inventory_routing
         if self.price_executor is not None:
-            agentic_browser["price_executor"] = self.price_executor
-        if agentic_browser:
-            data["agentic_browser"] = agentic_browser
+            data["agentic_browser"] = {"price_executor": self.price_executor}
         return data
 
 
-def test_config_defaults_agentic_browser_to_legacy() -> None:
+def test_config_defaults_the_price_method_to_jev() -> None:
     settings = load_config(_ConfigSource()).agentic_browser_settings
-    assert settings.routing is ExecutionRoutingMode.LEGACY
-    assert settings.inventory_routing is InventoryExecutionRoutingMode.AGENTIC
-    assert settings.price_executor is PriceExecutorKind.BROWSER_USE
+    assert settings.price_executor is PriceExecutorKind.JEV
+    assert load_config(_ConfigSource("jev")).agentic_browser_settings == settings
 
 
-def test_config_inventory_routing_is_independent_from_price() -> None:
-    settings = load_config(
-        _ConfigSource(routing="owner_canary", inventory_routing="legacy")
-    ).agentic_browser_settings
-
-    assert settings.routing is ExecutionRoutingMode.OWNER_CANARY
-    assert settings.inventory_routing is InventoryExecutionRoutingMode.LEGACY
-
-
-def test_config_accepts_consented_users_price_routing() -> None:
-    settings = load_config(_ConfigSource(routing="consented_users")).agentic_browser_settings
-
-    assert settings.routing is ExecutionRoutingMode.CONSENTED_USERS
-
-
-def test_config_rejects_unknown_agentic_routing() -> None:
-    with pytest.raises(ConfigValidationError, match="agentic_browser.routing"):
-        load_config(_ConfigSource("maybe"))
-
-
-def test_config_rejects_owner_canary_inventory_routing() -> None:
-    with pytest.raises(ConfigValidationError, match="agentic_browser.inventory_routing"):
-        load_config(_ConfigSource(inventory_routing="owner_canary"))
-
-
-def test_config_rejects_unknown_price_executor() -> None:
+@pytest.mark.parametrize("executor", ["automatic", "stagehand", "browser_use"])
+def test_config_rejects_every_price_executor_but_jev(executor: str) -> None:
     with pytest.raises(ConfigValidationError, match="agentic_browser.price_executor"):
-        load_config(_ConfigSource(price_executor="automatic"))
+        load_config(_ConfigSource(price_executor=executor))
 
 
-def test_config_rejects_removed_stagehand_price_executor() -> None:
-    with pytest.raises(ConfigValidationError, match="agentic_browser.price_executor"):
-        load_config(_ConfigSource(price_executor="stagehand"))
-
-
-def test_price_factory_is_jev_only_for_agentic_routing() -> None:
+def test_price_factory_needs_the_typesafe_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("BOOKSAVER_TYPESAFE_API_KEY", raising=False)
     assert _make_price_executor_factory(load_config(_ConfigSource())) is None
-    with pytest.raises(ValueError, match='set it to "jev"'):
-        _make_price_executor_factory(load_config(_ConfigSource(routing="consented_users")))
+    monkeypatch.setenv("BOOKSAVER_TYPESAFE_API_KEY", "test-key")
+    assert callable(_make_price_executor_factory(load_config(_ConfigSource())))
 
 
-def test_production_composition_uses_browser_use_for_every_agentic_inventory_trigger(
+def test_production_composition_uses_browser_use_for_every_inventory_trigger(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from booksaver.infrastructure.browser.browser_use_inventory_executor import (
         LocalBrowserUseInventoryExecutor,
@@ -684,12 +507,11 @@ def test_production_composition_uses_browser_use_for_every_agentic_inventory_tri
 
     cfg = load_config(_ConfigSource())
     cfg.data_directory = type(cfg.data_directory)(tmp_path)
-    monkeypatch.setenv("BOOKSAVER_LLM_API_KEY", "test-key")
     coordinator = _make_check_coordinator(cfg, object())
     regular = coordinator._agentic_inventory_executor_factory  # noqa: SLF001
     bookings = coordinator._bookings_inventory_executor_factory  # noqa: SLF001
     assert regular is not None and bookings is not None
     broker = InMemorySessionLeaseBroker()
 
-    assert isinstance(regular(object(), broker), LocalBrowserUseInventoryExecutor)
-    assert isinstance(bookings(object(), broker), LocalBrowserUseInventoryExecutor)
+    assert isinstance(regular(broker), LocalBrowserUseInventoryExecutor)
+    assert isinstance(bookings(broker), LocalBrowserUseInventoryExecutor)

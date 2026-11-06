@@ -6,11 +6,6 @@ from booksaver.domain.account_sync import SynchronizationFailureCode
 def refresh_failure_guidance(code: SynchronizationFailureCode | None) -> str:
     if code is SynchronizationFailureCode.AUTH_REQUIRED:
         return "Booking.com needs you to sign in again. Send /connect to reconnect."
-    if code is SynchronizationFailureCode.USER_KEY_INVALID:
-        return (
-            "Your personal AI key isn't working. Send /setkey to replace it, "
-            "or /deletekey to use the bot's shared key."
-        )
     if code is SynchronizationFailureCode.PERSISTENCE_CONFLICT:
         return (
             "A reservation on Booking.com no longer matches what we have saved, "

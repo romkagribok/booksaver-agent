@@ -17,8 +17,6 @@ from booksaver.domain.browser_executor import (
     PriceObservationValidation,
     RedactedProvenance,
     RefundabilityEvidence,
-    RoutingDecision,
-    RoutingReason,
     ValidatedObservedOffer,
     ValidationRejection,
 )
@@ -31,7 +29,6 @@ from booksaver.monitor.search_check_job import BookingComSearchMonitor
 
 from .fakes import (
     FakeCheckHistoryRepository,
-    FakeInteractiveBrowser,
     make_booking,
 )
 
@@ -129,22 +126,19 @@ class _AgenticCheck:
 
 
 def _monitor(check: _AgenticCheck):
-    browser = FakeInteractiveBrowser()
     history = FakeCheckHistoryRepository()
     monitor = BookingComSearchMonitor(
-        browser=browser,
         check_history=history,
         failure_tracker=FailureTracker(history),
         agentic_price_check=check,  # type: ignore[arg-type]
         agentic_owner_user_id=7,
-        agentic_route=RoutingDecision(True, RoutingReason.OWNER_CANARY),
     )
-    return monitor, browser, history
+    return monitor, history
 
 
 def test_agentic_path_bypasses_legacy_dom_and_reuses_booksaver_result_contract() -> None:
     check = _AgenticCheck(_outcome())
-    monitor, browser, history = _monitor(check)
+    monitor, history = _monitor(check)
     snapshot = _snapshot()
 
     result = monitor.run_authenticated(make_booking(), snapshot)
@@ -154,8 +148,6 @@ def test_agentic_path_bypasses_legacy_dom_and_reuses_booksaver_result_contract()
     assert result.live_price == Money(Decimal("350"), "EUR")
     assert result.price_source is not None
     assert result.price_source.genius_evidence.value == "applied_or_present"
-    assert browser.actions == []
-    assert browser.restored_cookies == []
     assert check.calls[0]["session_material"] == snapshot.cookies
     assert history.results == [result]
     assert monitor.last_llm_calls_used == 3
@@ -163,7 +155,7 @@ def test_agentic_path_bypasses_legacy_dom_and_reuses_booksaver_result_contract()
 
 def test_computer_use_source_is_marked_agent_without_giving_it_equivalence_authority() -> None:
     check = _AgenticCheck(_outcome(room_label="Different Suite", fallback=True))
-    monitor, _browser, _history = _monitor(check)
+    monitor, _history = _monitor(check)
 
     result = monitor.run_authenticated(make_booking(), _snapshot())
 
@@ -174,7 +166,7 @@ def test_computer_use_source_is_marked_agent_without_giving_it_equivalence_autho
 
 def test_qualified_room_equivalence_ignores_only_rate_plan_suffix() -> None:
     check = _AgenticCheck(_outcome(room_label="Standard Double - Flexible"))
-    monitor, _browser, _history = _monitor(check)
+    monitor, _history = _monitor(check)
 
     result = monitor.run_authenticated(make_booking(), _snapshot())
 
@@ -188,7 +180,7 @@ def test_qualified_room_equivalence_preserves_room_variant_boundaries() -> None:
         "Deluxe Double - Flexible",
     ):
         check = _AgenticCheck(_outcome(room_label=room_label))
-        monitor, _browser, _history = _monitor(check)
+        monitor, _history = _monitor(check)
 
         result = monitor.run_authenticated(make_booking(), _snapshot())
 
@@ -199,20 +191,18 @@ def test_qualified_room_equivalence_preserves_room_variant_boundaries() -> None:
 
 def test_agentic_provider_failure_is_terminal_without_legacy_retry() -> None:
     check = _AgenticCheck(_outcome(status=PriceExecutionStatus.PROVIDER_FAILURE))
-    monitor, browser, _history = _monitor(check)
+    monitor, _history = _monitor(check)
 
     result = monitor.run_authenticated(make_booking(), _snapshot())
 
     assert result.failure_reason is not None
     assert result.failure_reason.code is FailureCode.PROVIDER_UNAVAILABLE
-    assert browser.actions == []
-    assert browser.restored_cookies == []
 
 
 def test_room_only_offer_is_not_reported_for_a_reservation_with_breakfast() -> None:
     booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
     for meal_text, reason in (("none", "meal_plan_worse=1"), (None, "meal_plan_unknown=1")):
-        monitor, _browser, _history = _monitor(_AgenticCheck(_outcome(meal_text=meal_text)))
+        monitor, _history = _monitor(_AgenticCheck(_outcome(meal_text=meal_text)))
         result = monitor.run_authenticated(booking, _snapshot())
         assert result.outcome is CheckOutcome.FAILURE
         assert result.failure_reason is not None
@@ -225,7 +215,7 @@ def test_room_only_offer_is_not_reported_for_a_reservation_with_breakfast() -> N
 def test_offer_meal_plan_reaches_the_check_result() -> None:
     booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
     check = _AgenticCheck(_outcome(meal_text="Very good breakfast included"))
-    monitor, _browser, _history = _monitor(check)
+    monitor, _history = _monitor(check)
     result = monitor.run_authenticated(booking, _snapshot())
     assert result.outcome is CheckOutcome.SUCCESS
     assert result.offer_meal_plan is MealPlan.BREAKFAST
