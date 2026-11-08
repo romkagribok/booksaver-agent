@@ -31,7 +31,7 @@ from booksaver.domain.mobile_web import (
     PriceSourceProvenance,
 )
 from booksaver.domain.models import Booking
-from booksaver.domain.offer import OfferCandidate, select_offer
+from booksaver.domain.offer import ExclusionReason, OfferCandidate, select_offer
 from booksaver.domain.session import SessionMode
 from booksaver.domain.user_session import UserSessionSnapshot
 from booksaver.monitor.failure_tracker import FailureTracker
@@ -209,9 +209,16 @@ class BookingComSearchMonitor:
                 now,
                 FailureReason(
                     FailureCode.NO_EQUIVALENT_OFFER,
-                    f"This check could not verify a matching room: {len(candidates)} "
-                    f"price-qualified offers; {selection.exclusion_summary()}. "
-                    "See the check trace for comparison details.",
+                    (
+                        "No matching room type found"
+                        if selection.excluded
+                        and all(
+                            reason is ExclusionReason.ROOM_MISMATCH
+                            for _, reason in selection.excluded
+                        )
+                        else "No equivalent offer found"
+                    )
+                    + f": {len(candidates)} prices found; {selection.exclusion_summary()}.",
                 ),
             )
         facts = outcome.result.query_facts

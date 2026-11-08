@@ -855,3 +855,13 @@ A trip with a cancelled card can be verified.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-255` | Record "no availability for your dates" as conclusive | Jev price | Planned | `001-no-availability-is-conclusive/stories/001-record-no-availability.md` |
+
+## 033-jev-reads-room-type
+
+Jev reads the booked room type; agreed totals are not dropped.
+
+### 001-jev-reads-room-type
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-256` | Jev reads the room type and agreed totals count | Jev sync | Planned | `001-jev-reads-room-type/stories/001-jev-reads-room-type.md` |

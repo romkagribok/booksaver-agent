@@ -59,12 +59,13 @@ def test_complete_explicit_single_room_confirmation_facts():
     assert facts["property_reference"] == _ANCHORS[0][1]
     assert facts["check_in"] == "2026-10-23"
     assert facts["check_out"] == "2026-10-24"
-    assert facts["room_type"] == "Standard Double Room"
     assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
-    # Price and cancellation facts belong to the Jev path; this parser leaves them unknown.
+    # Room, price and cancellation facts belong to the Jev path; this parser leaves them unknown.
     assert all(
         facts[key] == "unknown"
-        for key in ("booked_total", "currency", "all_in", "refundability", "refund_deadline")
+        for key in (
+            "room_type", "booked_total", "currency", "all_in", "refundability", "refund_deadline",
+        )
     )
     assert _reasons(_BODY) == {}
     assert all(isinstance(value, str) for value in facts.values())
@@ -244,7 +245,7 @@ def test_property_anchor_must_appear_before_check_in():
     assert facts["property_reference"] == "unknown"
 
 
-def test_single_apartment_week_has_explicit_guest_and_room_facts():
+def test_single_apartment_week_has_explicit_guest_facts():
     body = (
         _BODY.replace("Sat, Oct 24, 2026", "Fri, Oct 30, 2026")
         .replace("2 adults - 1 night, 1 rooms", "2 adults - 1 week, 1 apartment")
@@ -255,7 +256,6 @@ def test_single_apartment_week_has_explicit_guest_and_room_facts():
     )
     facts = _parse(body)
     assert facts is not None
-    assert facts["room_type"] == "One-Bedroom Apartment"
     assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
 
 
@@ -273,7 +273,6 @@ def test_five_night_apartment_guest_summary_survives_late_navigation_label():
     facts = _parse(body)
     assert facts is not None
     assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
-    assert facts["room_type"] == "Standard Double Room"
 
 
 @pytest.mark.parametrize('heading', [
@@ -422,3 +421,16 @@ def _reasons(body: str) -> dict[str, str]:
     reasons: dict[str, str] = {}
     assert parse_confirmation_facts(body, _ANCHORS, observed_at=_NOW, reasons=reasons) is not None
     return reasons
+
+
+def test_meals_are_read_whatever_lines_precede_the_room_name():
+    body = _BODY.replace(
+        "Standard Double Room\nChange your room",
+        "Private suite\nDeluxe Queen Bed\nChange your room\nMeal Plan\n"
+        "No meal is included in this room rate.",
+    )
+    facts = _parse(body)
+    assert facts is not None
+    assert facts["meal_plan"] == "none"
+    assert facts["meal_plan_text"] == "No meal is included in this room rate."
+
