@@ -186,21 +186,6 @@ def _guest_facts(
     return {"adults": adults, "children": "0", "rooms": "1"}, nights
 
 
-def _room_fact(lines: list[str], single_unit: bool) -> str | None:
-    if not single_unit:
-        return None
-    index = _heading(lines, "Your room details")
-    if index is None or index + 2 >= len(lines):
-        return None
-    index += 1
-    if lines[index] == "Entire apartment":
-        index += 1
-    if index + 1 >= len(lines) or lines[index + 1] not in {"Change your room", "Guest name"}:
-        return None
-    value = lines[index]
-    return value if 0 < len(value) <= 500 else None
-
-
 def _is_facilities_value(section: list[str], index: int) -> bool:
     inline = _FACILITIES_LABEL.fullmatch(section[index])
     if inline is not None and inline.group(1):
@@ -209,7 +194,7 @@ def _is_facilities_value(section: list[str], index: int) -> bool:
     return previous is not None and not previous.group(1)
 
 
-def _meal_facts(lines: list[str], room_found: bool) -> dict[str, str]:
+def _meal_facts(lines: list[str], single_unit: bool) -> dict[str, str]:
     """Read the booked meal plan from the room details section, never from the rest of the page.
 
     A labelled row is authoritative. Without one, standalone meal wording in the section counts.
@@ -217,7 +202,7 @@ def _meal_facts(lines: list[str], room_found: bool) -> dict[str, str]:
     carries no text so a later explicit statement can replace it.
     """
     start = _heading(lines, "Your room details")
-    if start is None or not room_found:
+    if start is None or not single_unit:
         return {}
     section: list[str] = []
     for line in lines[start + 1:start + 61]:
@@ -318,11 +303,8 @@ def parse_confirmation_facts(
     payload.update(_property_facts(lines, hotel_anchors))
     guests, _nights = _guest_facts(lines, check_in, check_out)
     payload.update(guests)
-    room = _room_fact(lines, bool(guests))
-    if room is not None:
-        payload["room_type"] = room
-    payload.update(_meal_facts(lines, room is not None))
-    # Booked total and refund terms are read by Jev (ADR-061), never by layout-specific code.
+    payload.update(_meal_facts(lines, bool(guests)))
+    # Booked total, refund terms and room type are read by Jev (ADR-061), never by layout code.
     return payload
 
 

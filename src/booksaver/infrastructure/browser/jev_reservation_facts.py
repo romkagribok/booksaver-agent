@@ -45,6 +45,9 @@ _MAX_CALLS_PER_SYNC = 20
 _MIN_CONFIDENCE = 0.6
 # The deadline sentence is often one of several similar ones, so its confidence runs lower.
 _MIN_LINE_CONFIDENCE = 0.5
+_MAX_ROOM_LINES = 8
+# Backstop: a line with an email, a long number or a PIN is never sent as a room candidate.
+_PERSONAL = re.compile(r"@|\d{5,}|\bPIN\b", re.I)
 _MAX_OPTIONS = 25
 _MAX_OPTION_CHARS = 300
 _CALL_SECONDS = 20.0
@@ -66,6 +69,23 @@ def price_area(lines: list[str]) -> list[str]:
         return []
     area = lines[max(0, index - 8): index + 26]
     return [line[:_MAX_OPTION_CHARS] for line in area if re.search(_MONEY, line)][:_MAX_OPTIONS]
+
+
+def room_candidates(lines: list[str]) -> list[str]:
+    """The room section's lines before the guest row: room evidence only, never personal rows."""
+
+    starts = [
+        i for i, line in enumerate(lines) if line.rstrip(":").casefold() == "your room details"
+    ]
+    if len(starts) != 1:
+        return []
+    candidates: list[str] = []
+    for line in lines[starts[0] + 1:starts[0] + 1 + _MAX_ROOM_LINES]:
+        if line.casefold().startswith(("guest name", "change your room")):
+            break
+        if len(line) <= 120 and not _PERSONAL.search(line) and line not in candidates:
+            candidates.append(line)
+    return candidates
 
 
 def cancellation_sentences(lines: list[str]) -> list[str]:
@@ -169,8 +189,6 @@ class JevReservationFacts:
     ) -> None:
         lines = confirmation_lines(text)
         area, sentences = price_area(lines), cancellation_sentences(lines)
-        if not area and not sentences:
-            return
         totals = {f"m{i}": line for i, line in enumerate(area)}
         refund_lines = {f"r{i}": sentence for i, sentence in enumerate(sentences)}
         nights = None
@@ -210,7 +228,26 @@ class JevReservationFacts:
                 },
                 {**refund_lines, "none": "No sentence states this"},
             )
-        state = {"price_area": area, "cancellation_sentences": sentences}
+        # One booked room only: a multi-room reservation has no single room type to compare.
+        room_lines = room_candidates(lines) if facts.get("rooms") == "1" else []
+        rooms = {f"l{i}": line for i, line in enumerate(room_lines)}
+        if rooms:
+            questions["room"] = choice_question(
+                {
+                    "question": "These lines are listed under Your room details on one "
+                    "Booking.com reservation confirmation. Which line names the room type the "
+                    "guest booked?",
+                    "hint": "A general unit category such as Private suite or Entire apartment "
+                    "may come before the room name.",
+                    "rules": _RULES,
+                },
+                {**rooms, "none": "No line names the booked room type"},
+            )
+        if not questions:
+            return
+        state: dict[str, object] = {"price_area": area, "cancellation_sentences": sentences}
+        if rooms:
+            state["your_room_details"] = room_lines
         try:
             for _ in range(2):
                 self.meter.admit()
@@ -237,7 +274,8 @@ class JevReservationFacts:
             reasons.setdefault("booked_total", "jev_unavailable")
             reasons.setdefault("refundability", "jev_unavailable")
             return
-        total_choice = _agreed(results, "total")
+        # Agreement plus the code check is the guard; a floor dropped correct mixed-currency totals.
+        total_choice = _agreed(results, "total", 0.0)
         jev_total = check_total(totals[total_choice], area) if total_choice in totals else None
         line_choice = _agreed(results, "refund_line", _MIN_LINE_CONFIDENCE)
         terms = _agreed(results, "refund")
@@ -246,8 +284,16 @@ class JevReservationFacts:
             check_refund(terms, refund_lines.get(line_choice or ""), check_in, self.observed_at)
             if terms is not None else None
         )
-        self._apply(facts, reasons, "booked_total", jev_total)
-        self._apply(facts, reasons, "refundability", jev_refund)
+        if totals:
+            self._apply(facts, reasons, "booked_total", jev_total)
+        if refund_lines:
+            self._apply(facts, reasons, "refundability", jev_refund)
+        if rooms:
+            room_choice = _agreed(results, "room", _MIN_LINE_CONFIDENCE)
+            self._apply(
+                facts, reasons, "room_type",
+                {"room_type": rooms[room_choice]} if room_choice in rooms else None,
+            )
 
     def _apply(
         self, facts: dict[str, str], reasons: dict[str, str], name: str,

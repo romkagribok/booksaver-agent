@@ -187,6 +187,7 @@ def test_qualified_room_equivalence_preserves_room_variant_boundaries() -> None:
         assert result.outcome is CheckOutcome.FAILURE
         assert result.failure_reason is not None
         assert result.failure_reason.code is FailureCode.NO_EQUIVALENT_OFFER
+        assert result.failure_reason.detail.startswith("No matching room type found: ")
 
 
 def test_agentic_provider_failure_is_terminal_without_legacy_retry() -> None:

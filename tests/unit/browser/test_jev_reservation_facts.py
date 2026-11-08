@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from booksaver.infrastructure.browser.inventory_confirmation_facts import confirmation_lines
 from booksaver.infrastructure.browser.jev_price_executor import JevArmMeter
 from booksaver.infrastructure.browser.jev_reservation_facts import (
     JevReservationFacts,
@@ -15,6 +16,7 @@ from booksaver.infrastructure.browser.jev_reservation_facts import (
     check_refund,
     check_total,
     price_area,
+    room_candidates,
 )
 from booksaver.infrastructure.llm.typesafe_client import (
     ChoiceAnswer,
@@ -157,11 +159,11 @@ def test_calendar_months_are_used_for_within() -> None:
     "client",
     [
         _Client(_answers(), _answers(total="1 room € 453")),  # the two runs disagree
-        _Client(_answers(conf=0.5)),  # not confident
+        _Client(_answers(total="1 room € 453")),  # agreed, but a component, not the total
         _Client(error=True),
     ],
 )
-def test_unagreed_unconfident_or_failed_answers_change_nothing(client: _Client) -> None:
+def test_unagreed_unchecked_or_failed_answers_change_nothing(client: _Client) -> None:
     facts, reasons = dict(_UNKNOWN), {}
     asyncio.run(_reader(client)(TEXT, facts, reasons))
     assert facts["booked_total"] == "unknown"
@@ -211,4 +213,59 @@ def test_a_page_missing_one_kind_of_candidate_asks_only_what_it_can(page: list[s
     asyncio.run(_reader(client)("\n".join(page), facts, {}))
     asked = set(client.requests[0][1])
     assert asked in ({"total"}, {"refund", "refund_line"})
+
+
+def test_an_agreed_total_counts_however_unsure_jev_is() -> None:
+    # Park Plaza Lodge: rows in EUR, charged in USD; both runs chose the total at 0.51 and 0.54.
+    facts = dict(_UNKNOWN)
+    asyncio.run(_reader(_Client(_answers(conf=0.51), _answers(conf=0.54)))(TEXT, facts, {}))
+    assert (facts["booked_total"], facts["currency"]) == ("577.42", "USD")
+
+
+ROOM_TEXT = "\n".join([
+    "Your confirmation is on its way to guest@example.com", "Confirmation number:6918993423",
+    "PIN:5140", "Your room details", "Private suite", "Deluxe Queen Bed", "Change your room",
+    "Guest name", "Real Person Edit guest name", *PAGE,
+])
+_ROOM_OPTIONS = room_candidates(confirmation_lines(ROOM_TEXT))
+
+
+def _with_room(room: str, conf: float = 0.9) -> dict[str, Any]:
+    return {**_answers(), "room": (f"l{_ROOM_OPTIONS.index(room)}", conf)}
+
+
+def test_jev_reads_the_room_type_of_a_single_room_stay() -> None:
+    facts, reasons = {**_UNKNOWN, "rooms": "1", "room_type": "unknown"}, {}
+    reader = _reader(_Client(_with_room("Deluxe Queen Bed")))
+    asyncio.run(reader(ROOM_TEXT, facts, reasons))
+    assert facts["room_type"] == "Deluxe Queen Bed" and "room_type" not in reasons
+    assert reader.counts["read_room_type"] == 1
+
+
+@pytest.mark.parametrize(
+    "client",
+    [
+        _Client(_with_room("Deluxe Queen Bed"), _with_room("Private suite")),
+        _Client(_with_room("Deluxe Queen Bed", conf=0.4)),
+    ],
+)
+def test_an_unagreed_or_unsure_room_stays_unknown(client: _Client) -> None:
+    facts, reasons = {**_UNKNOWN, "rooms": "1", "room_type": "unknown"}, {}
+    asyncio.run(_reader(client)(ROOM_TEXT, facts, reasons))
+    assert facts["room_type"] == "unknown" and reasons["room_type"] == "jev_unread"
+
+
+def test_a_multi_room_or_unknown_party_is_not_asked_for_a_room() -> None:
+    client = _Client(_answers())
+    asyncio.run(_reader(client)(ROOM_TEXT, {**_UNKNOWN, "rooms": "unknown"}, {}))
+    assert all("room" not in questions for _, questions in client.requests)
+
+
+def test_room_candidates_are_the_room_section_only() -> None:
+    assert _ROOM_OPTIONS == ["Private suite", "Deluxe Queen Bed"]
+    client = _Client(_with_room("Deluxe Queen Bed"))
+    asyncio.run(_reader(client)(ROOM_TEXT, {**_UNKNOWN, "rooms": "1", "room_type": "unknown"}, {}))
+    sent = repr(client.requests)
+    for personal in ("guest@example.com", "6918993423", "5140", "Real Person"):
+        assert personal not in sent
 
