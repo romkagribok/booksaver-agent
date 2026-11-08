@@ -25,3 +25,7 @@ Codex review (PR #107): P1, a "PIN" label's value on the next line and a spaced 
 values (PIN, confirmation number, guest name, email, phone and similar), any line holding the
 reservation's confirmation number, and long digit runs split by spaces or dots, before any section is
 built. P2, an agreed meal class was accepted without an agreed line; it now needs one, or stays unknown.
+
+Codex review (second round, P2): the long-number filter also removed numeric stay dates ("2026-11-12",
+"12.11.2026"), exactly when Jev must read the dates. Date-shaped tokens with a 20xx year are blanked
+before the personal check, so date lines stay while phone and reference numbers are still dropped.

@@ -372,3 +372,8 @@ def test_a_page_with_a_spaced_confirmation_and_pin_sends_neither() -> None:
     sent = repr(client.requests)
     assert "1234 567 890" not in sent and "9876" not in sent
 
+
+@pytest.mark.parametrize("value", ["2026-11-12", "12.11.2026", "11/12/2026", "Thu 12.11.2026"])
+def test_numeric_stay_dates_reach_jev_but_long_numbers_do_not(value: str) -> None:
+    kept = header_lines(["Check-in", value, "Phone 555 010 0123", "Ref 1234 5678 90"])
+    assert kept == ["Check-in", value]

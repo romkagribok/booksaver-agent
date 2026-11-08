@@ -51,6 +51,10 @@ _MAX_ROOM_LINES = 8
 _PERSONAL = re.compile(
     r"@|\d{5,}|\d(?:[ .-]?\d){7,}|\+\d|\d{3}[ .-]\d{3}[ .-]\d{4}|\bPIN\b|^guest name", re.I,
 )
+# Numeric dates are not personal: they are blanked before the personal check, so they stay.
+_NUMERIC_DATE = re.compile(
+    r"(?<!\d)(?:20\d\d[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[-./]\d{1,2}[-./]20\d\d)(?!\d)"
+)
 # A label row whose value follows on the next line, or inline after a colon.
 _SENSITIVE_LABELS = frozenset({
     "pin", "pin code", "confirmation number", "booking number", "reservation number",
@@ -138,7 +142,8 @@ def _room_heading(lines: list[str]) -> int | None:
 def _safe(lines: list[str]) -> list[str]:
     kept: list[str] = []
     for line in lines:
-        if len(line) <= 200 and not _PERSONAL.search(line) and line not in kept:
+        personal = _PERSONAL.search(_NUMERIC_DATE.sub(" ", line))
+        if len(line) <= 200 and not personal and line not in kept:
             kept.append(line)
     return kept[:_MAX_SECTION_LINES]
 

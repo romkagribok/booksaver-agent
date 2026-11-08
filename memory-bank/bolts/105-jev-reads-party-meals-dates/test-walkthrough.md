@@ -22,3 +22,7 @@ created: 2026-11-08T18:45:20Z
   on its own line never reach a request; a meal class with no line or disagreeing lines stays unknown.
   Full suite 2,593 passed, 1 skipped. Live Jev again on the seven real pages: unchanged. Variant
   "breakfast for an extra US$15" is now unknown instead of none (no line states the booked meals).
+- After the second Codex fix: ISO, dotted and slashed dates stay in the header while phone and spaced
+  reference numbers are dropped. Full suite 2,597 passed, 1 skipped. Live Jev on Kalipè's page with
+  "2027-01-27" and "27.01.2027" dates and code dates unknown: both read as 2027-01-27 to 2027-02-01,
+  upcoming, with the party 2/0/1.
