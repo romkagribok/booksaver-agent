@@ -15,3 +15,9 @@ created: 2026-11-08T02:39:22Z
 - `parse_confirmation_facts`: `_room_fact` deleted; meals are read for any single-room party.
 - Price checks: "No matching room type found: N prices found; room_mismatch=N." when every exclusion
   is the room, otherwise "No equivalent offer found: ...".
+
+Codex review (PR #106, P1): the room options were every short page line, so guest names, the
+confirmation number, PIN and email reached TypeSafe. `room_candidates` now takes only the lines under
+"Your room details" before the guest row (at most 8), drops any line with an email, a long number or a
+PIN, and those lines are the room question's state. Without the section in the state Jev answered
+"none"; with it, 0.97 to 1.0.

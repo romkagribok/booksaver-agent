@@ -23,6 +23,8 @@ chose the correct total line "US$344.50" (room rows were in the display currency
 - **FR-1.** Jev reads the booked room type for single-room reservations in the same two calls that
   read the total and refund terms; both calls must choose the same page line at confidence 0.5 or
   more. The layout-specific room parser is removed.
+- **FR-1a.** Only the lines under "Your room details" before the guest row are sent for the
+  room, never guest names, confirmation numbers, PINs or email addresses.
 - **FR-2.** The booked total is accepted when both Jev calls choose the same line and the code check
   (largest amount in its currency in the price area) passes; there is no confidence floor.
 - **FR-3.** The booked meal plan is read whenever the page describes a single-room party, no longer

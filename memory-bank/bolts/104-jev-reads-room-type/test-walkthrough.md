@@ -17,3 +17,7 @@ created: 2026-11-08T02:39:22Z
   refundable until 2026-11-12, meals none); the other seven upcoming reservations unchanged; Jev's two
   room answers agreed on every page (confidence 0.51 to 0.71). Wording comparison on Park Plaza's
   lines: chosen wording "Deluxe Queen Bed" 0.76/0.80.
+- After the Codex fix: the room candidates for a page with email, confirmation number, PIN and guest
+  name are only "Private suite" and "Deluxe Queen Bed", and none of the personal values is in any
+  request. Full suite 2,617 passed, 1 skipped. Replay again (restored healthy at 02:59:37Z): Park
+  Plaza eligible with Deluxe Queen Bed; others unchanged; room confidence 0.97 to 1.0 on every page.

@@ -16,6 +16,7 @@ from booksaver.infrastructure.browser.jev_reservation_facts import (
     check_refund,
     check_total,
     price_area,
+    room_candidates,
 )
 from booksaver.infrastructure.llm.typesafe_client import (
     ChoiceAnswer,
@@ -221,10 +222,12 @@ def test_an_agreed_total_counts_however_unsure_jev_is() -> None:
     assert (facts["booked_total"], facts["currency"]) == ("577.42", "USD")
 
 
-ROOM_TEXT = "\n".join(
-    ["Your room details", "Private suite", "Deluxe Queen Bed", "Change your room", *PAGE]
-)
-_ROOM_OPTIONS = list(dict.fromkeys(line for line in confirmation_lines(ROOM_TEXT)))
+ROOM_TEXT = "\n".join([
+    "Your confirmation is on its way to guest@example.com", "Confirmation number:6918993423",
+    "PIN:5140", "Your room details", "Private suite", "Deluxe Queen Bed", "Change your room",
+    "Guest name", "Real Person Edit guest name", *PAGE,
+])
+_ROOM_OPTIONS = room_candidates(confirmation_lines(ROOM_TEXT))
 
 
 def _with_room(room: str, conf: float = 0.9) -> dict[str, Any]:
@@ -256,4 +259,13 @@ def test_a_multi_room_or_unknown_party_is_not_asked_for_a_room() -> None:
     client = _Client(_answers())
     asyncio.run(_reader(client)(ROOM_TEXT, {**_UNKNOWN, "rooms": "unknown"}, {}))
     assert all("room" not in questions for _, questions in client.requests)
+
+
+def test_room_candidates_are_the_room_section_only() -> None:
+    assert _ROOM_OPTIONS == ["Private suite", "Deluxe Queen Bed"]
+    client = _Client(_with_room("Deluxe Queen Bed"))
+    asyncio.run(_reader(client)(ROOM_TEXT, {**_UNKNOWN, "rooms": "1", "room_type": "unknown"}, {}))
+    sent = repr(client.requests)
+    for personal in ("guest@example.com", "6918993423", "5140", "Real Person"):
+        assert personal not in sent
 
