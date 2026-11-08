@@ -60,12 +60,28 @@ def stall_reason(reservation: MonitoredReservation, now: datetime) -> StallReaso
     return StallReason.CHECKS_FAILING
 
 
+_MISSING_LABELS = {
+    EligibilityReason.MISSING_BOOKED_TOTAL: "booked total",
+    EligibilityReason.MISSING_ROOM_TYPE: "room type",
+    EligibilityReason.MISSING_OCCUPANCY: "number of guests",
+    EligibilityReason.REFUNDABILITY_UNKNOWN: "refund terms",
+}
+
+
+def _missing(reservation: MonitoredReservation) -> str:
+    labels = [
+        label for reason, label in _MISSING_LABELS.items()
+        if reason in reservation.eligibility_reasons
+    ] or ["booked total", "refund terms"]
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " or " + labels[-1]
+
+
 def stall_message(reservation: MonitoredReservation, reason: StallReason) -> tuple[str, str]:
     name = reservation.property_name
     cause = {
         StallReason.SYNC_FAILING: "BookSaver can't read this reservation from your account.",
         StallReason.TOTAL_UNCONFIRMED: (
-            "BookSaver can't confirm this reservation's booked total or refund terms from "
+            f"BookSaver can't confirm this reservation's {_missing(reservation)} from "
             "Booking.com, so it can't check it for savings."
         ),
         StallReason.CHECKS_FAILING: "Its price checks keep failing.",

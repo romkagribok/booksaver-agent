@@ -13,10 +13,13 @@ from booksaver.infrastructure.browser.jev_price_executor import JevArmMeter
 from booksaver.infrastructure.browser.jev_reservation_facts import (
     JevReservationFacts,
     cancellation_sentences,
+    check_dates,
     check_refund,
     check_total,
+    header_lines,
     price_area,
     room_candidates,
+    room_section_lines,
 )
 from booksaver.infrastructure.llm.typesafe_client import (
     ChoiceAnswer,
@@ -108,6 +111,9 @@ def _answers(total: str = "US$577.42", terms: str = "free_until_date",
         "total": (next(f"m{i}" for i, line in enumerate(AREA) if line.startswith(total)), conf),
         "refund": (terms, conf),
         "refund_line": (next(f"r{i}" for i, s in enumerate(SENTENCES) if s.startswith(line)), conf),
+        # The stay in _UNKNOWN is three nights for one adult.
+        "adults": ("n1", conf), "children": ("n0", conf), "rooms": ("n1", conf),
+        "nights": ("n3", conf),
     }
 
 
@@ -131,7 +137,8 @@ def test_jev_reads_the_total_and_refund_terms() -> None:
         "577.42", "USD", "jev")
     assert facts["refund_deadline"] == "2026-11-07"
     assert reasons == {}
-    assert reader.counts == {"read_booked_total": 1, "read_refundability": 1}
+    assert reader.counts == {"read_booked_total": 1, "read_refundability": 1, "read_party": 1}
+    assert (facts["adults"], facts["children"], facts["rooms"]) == ("1", "0", "1")
 
 
 def test_a_dated_cost_line_gives_the_exact_deadline() -> None:
@@ -211,7 +218,7 @@ def test_a_page_missing_one_kind_of_candidate_asks_only_what_it_can(page: list[s
                       "refund_line": ("r0", 0.9)})
     facts = dict(_UNKNOWN)
     asyncio.run(_reader(client)("\n".join(page), facts, {}))
-    asked = set(client.requests[0][1])
+    asked = set(client.requests[0][1]) & {"total", "refund", "refund_line"}
     assert asked in ({"total"}, {"refund", "refund_line"})
 
 
@@ -255,10 +262,12 @@ def test_an_unagreed_or_unsure_room_stays_unknown(client: _Client) -> None:
     assert facts["room_type"] == "unknown" and reasons["room_type"] == "jev_unread"
 
 
-def test_a_multi_room_or_unknown_party_is_not_asked_for_a_room() -> None:
-    client = _Client(_answers())
-    asyncio.run(_reader(client)(ROOM_TEXT, {**_UNKNOWN, "rooms": "unknown"}, {}))
-    assert all("room" not in questions for _, questions in client.requests)
+def test_a_multi_room_party_gets_no_room_type() -> None:
+    facts = {**_UNKNOWN, "room_type": "unknown"}
+    client = _Client({**_with_room("Deluxe Queen Bed"), "rooms": ("n2", 0.9)})
+    text = "Booking Details\n1 adult - 3 nights, 2 rooms\n" + ROOM_TEXT
+    asyncio.run(_reader(client)(text, facts, {}))
+    assert facts["rooms"] == "2" and facts["room_type"] == "unknown"
 
 
 def test_room_candidates_are_the_room_section_only() -> None:
@@ -268,4 +277,73 @@ def test_room_candidates_are_the_room_section_only() -> None:
     sent = repr(client.requests)
     for personal in ("guest@example.com", "6918993423", "5140", "Real Person"):
         assert personal not in sent
+
+
+def test_a_party_needs_every_count_and_nights_matching_the_stay() -> None:
+    facts: dict[str, str] = {**_UNKNOWN, "adults": "unknown"}
+    asyncio.run(_reader(_Client({**_answers(), "children": ("n2", 0.9)}))(TEXT, facts, {}))
+    assert (facts["adults"], facts["children"], facts["rooms"]) == ("1", "2", "1")
+    for wrong in ({"nights": ("n2", 0.9)}, {"adults": ("not_stated", 0.9)}):
+        facts, reasons = {**_UNKNOWN, "adults": "unknown"}, {}
+        asyncio.run(_reader(_Client({**_answers(), **wrong}))(TEXT, facts, reasons))
+        assert facts["adults"] == "unknown" and reasons["party"] == "jev_unread"
+
+
+MEAL_TEXT = "\n".join([
+    "Your room details", "Standard Double Room", "Guest name", "Real Person",
+    "Meal Plan", "Breakfast is included in the room rate.", "Phone +1 323 931 1501", *PAGE,
+])
+_MEAL_LINES = room_section_lines(confirmation_lines(MEAL_TEXT))
+
+
+def _meal(meal: str, line: str | None = None) -> dict[str, Any]:
+    chosen = f"s{_MEAL_LINES.index(line)}" if line else "none"
+    return {**_answers(), "meal": (meal, 0.9), "meal_line": (chosen, 0.9)}
+
+
+def test_jev_classifies_the_meal_plan_and_keeps_its_line() -> None:
+    facts = {**_UNKNOWN, "meal_plan": "unknown"}
+    line = "Breakfast is included in the room rate."
+    asyncio.run(_reader(_Client(_meal("breakfast", line)))(MEAL_TEXT, facts, {}))
+    assert (facts["meal_plan"], facts["meal_plan_text"]) == ("breakfast", line)
+
+
+def test_meals_not_stated_or_unagreed_stay_unknown() -> None:
+    for client in (
+        _Client(_meal("not_stated")),
+        _Client(_meal("breakfast"), _meal("none")),
+    ):
+        facts, reasons = {**_UNKNOWN, "meal_plan": "unknown"}, {}
+        asyncio.run(_reader(client)(MEAL_TEXT, facts, reasons))
+        assert facts["meal_plan"] == "unknown" and reasons["meal_plan"] == "jev_unread"
+
+
+def test_the_guest_name_and_phone_never_reach_jev() -> None:
+    assert "Real Person" not in _MEAL_LINES and "Guest name" not in _MEAL_LINES
+    assert not any("+1" in line for line in _MEAL_LINES + header_lines(confirmation_lines(
+        "Your stay is confirmed\nPhone +1 323 931 1501\nReal Person, guest@example.com"
+    )))
+
+
+def test_dates_code_could_not_read_are_read_by_jev() -> None:
+    answers = {
+        **_answers(), "check_in_month": ("n11", 0.9), "check_in_day": ("n12", 0.9),
+        "check_in_year": ("n2026", 0.9), "check_out_month": ("n11", 0.9),
+        "check_out_day": ("n15", 0.9), "check_out_year": ("n2026", 0.9),
+    }
+    facts = {**_UNKNOWN, "check_in": "unknown", "check_out": "unknown", "lifecycle": "unknown"}
+    client = _Client(answers)
+    asyncio.run(_reader(client)(TEXT, facts, {}))
+    assert (facts["check_in"], facts["check_out"], facts["lifecycle"]) == (
+        "2026-11-12", "2026-11-15", "upcoming")
+    assert facts["refund_deadline"] == "2026-11-07"  # the refund check used Jev's dates
+    known = _Client(_answers())
+    asyncio.run(_reader(known)(TEXT, dict(_UNKNOWN), {}))
+    assert not any("check_in_day" in questions for _, questions in known.requests)
+
+
+def test_impossible_dates_are_rejected() -> None:
+    assert check_dates([2, 30, 2027, 3, 1, 2027], date(2026, 11, 8)) is None
+    assert check_dates([3, 1, 2027, 2, 27, 2027], date(2026, 11, 8)) is None
+    assert check_dates([1, 1, 2027, 6, 1, 2027], date(2026, 11, 8)) is None  # over 90 nights
 
