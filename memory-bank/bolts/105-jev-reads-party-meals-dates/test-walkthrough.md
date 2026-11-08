@@ -18,3 +18,7 @@ created: 2026-11-08T18:45:20Z
 - Replay of users 4, 1 and 3 on cloned data (restored healthy at 18:44:59Z): all syncs complete; all
   seven upcoming reservations unchanged (party, meal text, room, total, refund, eligibility); Jev cost
   for user 4's sync 12 calls, 57,604 input tokens, about USD 0.0024.
+- After the Codex fixes: label rows take their values with them; a spaced confirmation number and a PIN
+  on its own line never reach a request; a meal class with no line or disagreeing lines stays unknown.
+  Full suite 2,593 passed, 1 skipped. Live Jev again on the seven real pages: unchanged. Variant
+  "breakfast for an extra US$15" is now unknown instead of none (no line states the booked meals).

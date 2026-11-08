@@ -48,7 +48,15 @@ _MIN_CONFIDENCE = 0.6
 _MIN_LINE_CONFIDENCE = 0.5
 _MAX_ROOM_LINES = 8
 # Backstop: lines with an email, long number, phone number, PIN or guest name are never sent.
-_PERSONAL = re.compile(r"@|\d{5,}|\+\d|\d{3}[ .-]\d{3}[ .-]\d{4}|\bPIN\b|^guest name", re.I)
+_PERSONAL = re.compile(
+    r"@|\d{5,}|\d(?:[ .-]?\d){7,}|\+\d|\d{3}[ .-]\d{3}[ .-]\d{4}|\bPIN\b|^guest name", re.I,
+)
+# A label row whose value follows on the next line, or inline after a colon.
+_SENSITIVE_LABELS = frozenset({
+    "pin", "pin code", "confirmation number", "booking number", "reservation number",
+    "guest name", "guest names", "name", "booker", "booked by", "email", "email address",
+    "phone", "phone number",
+})
 _MAX_SECTION_LINES = 40
 _ROOM_SECTION_END = frozenset({"cancellation cost", "price", "price breakdown", "additional info"})
 _MEALS = {
@@ -97,6 +105,27 @@ def room_candidates(lines: list[str]) -> list[str]:
         if len(line) <= 120 and not _PERSONAL.search(line) and line not in candidates:
             candidates.append(line)
     return candidates
+
+
+def redact(lines: list[str], confirmation_id: str | None = None) -> list[str]:
+    """Drop personal label rows with their values, and any line holding the confirmation number."""
+    secret = re.sub(r"\D", "", confirmation_id or "")
+    kept: list[str] = []
+    skip_value = False
+    for line in lines:
+        if skip_value:
+            skip_value = False
+            continue
+        label = line.rstrip(":").strip().casefold()
+        if label in _SENSITIVE_LABELS:
+            skip_value = True
+            continue
+        if line.partition(":")[0].strip().casefold() in _SENSITIVE_LABELS:
+            continue
+        if len(secret) >= 6 and secret in re.sub(r"\D", "", line):
+            continue
+        kept.append(line)
+    return kept
 
 
 def _room_heading(lines: list[str]) -> int | None:
@@ -285,7 +314,7 @@ class JevReservationFacts:
     async def __call__(
         self, text: str, facts: dict[str, str], reasons: dict[str, str],
     ) -> None:
-        lines = confirmation_lines(text)
+        lines = redact(confirmation_lines(text), facts.get("confirmation_id"))
         area, sentences = price_area(lines), cancellation_sentences(lines)
         totals = {f"m{i}": line for i, line in enumerate(area)}
         refund_lines = {f"r{i}": sentence for i, sentence in enumerate(sentences)}
@@ -453,9 +482,13 @@ class JevReservationFacts:
         if meal_lines:
             meal = _agreed(results, "meal", _MIN_LINE_CONFIDENCE)
             meal_line = _agreed(results, "meal_line", _MIN_LINE_CONFIDENCE)
-            self._apply(facts, reasons, "meal_plan", None if meal in (None, "not_stated") else {
-                "meal_plan": str(meal), "meal_plan_text": meal_lines.get(meal_line or "", "")[:200],
-            })
+            # The class counts only with an agreed line stating it.
+            self._apply(
+                facts, reasons, "meal_plan",
+                None if meal in (None, "not_stated") or meal_line not in meal_lines else {
+                    "meal_plan": str(meal), "meal_plan_text": meal_lines[str(meal_line)][:200],
+                },
+            )
         # One booked room only: a multi-room reservation has no single room type to compare.
         if rooms and facts.get("rooms") == "1":
             room_choice = _agreed(results, "room", _MIN_LINE_CONFIDENCE)

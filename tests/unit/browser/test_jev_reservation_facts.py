@@ -18,6 +18,7 @@ from booksaver.infrastructure.browser.jev_reservation_facts import (
     check_total,
     header_lines,
     price_area,
+    redact,
     room_candidates,
     room_section_lines,
 )
@@ -309,9 +310,12 @@ def test_jev_classifies_the_meal_plan_and_keeps_its_line() -> None:
 
 
 def test_meals_not_stated_or_unagreed_stay_unknown() -> None:
+    line = "Breakfast is included in the room rate."
     for client in (
         _Client(_meal("not_stated")),
         _Client(_meal("breakfast"), _meal("none")),
+        _Client(_meal("none")),  # agreed class, no line stating it
+        _Client(_meal("none", line), _meal("none", "Standard Double Room")),  # lines disagree
     ):
         facts, reasons = {**_UNKNOWN, "meal_plan": "unknown"}, {}
         asyncio.run(_reader(client)(MEAL_TEXT, facts, reasons))
@@ -346,4 +350,25 @@ def test_impossible_dates_are_rejected() -> None:
     assert check_dates([2, 30, 2027, 3, 1, 2027], date(2026, 11, 8)) is None
     assert check_dates([3, 1, 2027, 2, 27, 2027], date(2026, 11, 8)) is None
     assert check_dates([1, 1, 2027, 6, 1, 2027], date(2026, 11, 8)) is None  # over 90 nights
+
+
+def test_personal_labels_take_their_values_with_them() -> None:
+    page = [
+        "Your stay is confirmed", "Confirmation number", "1234 567 890", "PIN", "9876",
+        "Booking Details", "2 adults - 1 night, 1 rooms", "Guest name:", "Real Person",
+        "Ref 1234.567.890", "Phone: 555 0100",
+    ]
+    kept = redact(page, "1234567890")
+    assert kept == ["Your stay is confirmed", "Booking Details", "2 adults - 1 night, 1 rooms"]
+    # The spaced number is caught even without knowing the confirmation id.
+    assert "1234 567 890" not in header_lines(page)
+
+
+def test_a_page_with_a_spaced_confirmation_and_pin_sends_neither() -> None:
+    text = "\n".join(["Confirmation number", "1234 567 890", "PIN", "9876", *PAGE])
+    client = _Client(_answers())
+    facts = {**_UNKNOWN, "confirmation_id": "1234567890"}
+    asyncio.run(_reader(client)(text, facts, {}))
+    sent = repr(client.requests)
+    assert "1234 567 890" not in sent and "9876" not in sent
 
