@@ -637,9 +637,9 @@ class GroupedInventoryReader:
                         facts = None
                     if (
                         facts is not None and cancelled is None and self.assist is not None
-                        and facts.get("lifecycle") == "upcoming"
+                        and facts.get("lifecycle") in {"upcoming", "unknown"}
                     ):
-                        # Jev reads every upcoming page; code's own facts stand (ADR-060).
+                        # Jev reads every upcoming page, and pages whose dates code cannot read.
                         await self.assist(snapshot.text, facts, reasons)
                     if facts is not None:
                         for fact, reason in reasons.items():

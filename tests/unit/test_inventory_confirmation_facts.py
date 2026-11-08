@@ -48,6 +48,12 @@ def _parse(body: str = _BODY, *, anchors=_ANCHORS, now: datetime = _NOW):
     return parse_confirmation_facts(body, anchors, observed_at=now)
 
 
+def _reasons(body: str) -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    assert parse_confirmation_facts(body, _ANCHORS, observed_at=_NOW, reasons=reasons) is not None
+    return reasons
+
+
 def test_complete_explicit_single_room_confirmation_facts():
     facts = _parse()
     assert facts is not None
@@ -59,12 +65,12 @@ def test_complete_explicit_single_room_confirmation_facts():
     assert facts["property_reference"] == _ANCHORS[0][1]
     assert facts["check_in"] == "2026-10-23"
     assert facts["check_out"] == "2026-10-24"
-    assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
-    # Room, price and cancellation facts belong to the Jev path; this parser leaves them unknown.
+    # Room, party, meals, price and refund facts belong to Jev; this parser leaves them unknown.
     assert all(
         facts[key] == "unknown"
         for key in (
-            "room_type", "booked_total", "currency", "all_in", "refundability", "refund_deadline",
+            "room_type", "adults", "children", "rooms", "meal_plan", "booked_total", "currency",
+            "all_in", "refundability", "refund_deadline",
         )
     )
     assert _reasons(_BODY) == {}
@@ -85,27 +91,6 @@ def test_footer_booking_details_navigation_preserves_header_guest_and_price_fact
     if inline:
         body = body.replace("Confirmation number\n1234567890", "Confirmation number:1234567890")
     assert _parse(body + "\nBooking Details\nCommunications") == _parse(body)
-
-
-@pytest.mark.parametrize("extra", [
-    "Booking Details\n2 adults - 1 night, 1 rooms\n",
-    "Booking Details\n3 adults - 1 night, 1 rooms\n",
-    "Booking Details\nCommunications\n",
-])
-def test_duplicate_guest_labels_inside_confirmation_header_remain_ambiguous(extra):
-    body = _BODY.replace("Address\n", extra + "Address\n")
-    facts = _parse(body + "\nBooking Details\nCommunications")
-    assert facts is not None
-    assert all(facts[field] == "unknown" for field in (
-        "adults", "children", "rooms", "room_type", "booked_total", "all_in",
-    ))
-
-
-def test_guest_composition_after_confirmation_identity_is_not_header_evidence():
-    body = _BODY.replace("Booking Details\n2 adults - 1 night, 1 rooms\n", "")
-    facts = _parse(body + "\nBooking Details\n2 adults - 1 night, 1 rooms")
-    assert facts is not None
-    assert facts["adults"] == facts["room_type"] == facts["all_in"] == "unknown"
 
 
 @pytest.mark.parametrize("boundary", ["Reference", "", "Confirmation number extra"])
@@ -188,24 +173,6 @@ def test_bad_or_ambiguous_stay_dates_do_not_infer_lifecycle_or_occupancy(change)
 
 
 @pytest.mark.parametrize(
-    "details",
-    [
-        "Max. 2 adults - 1 night, 1 rooms",
-        "2 guests - 1 night, 1 rooms",
-        "2 adults and 1 child - 1 night, 1 rooms",
-        "2 adults - 1 night, 2 rooms",
-        "2 adults - 2 nights, 1 rooms",
-        "2 adults - 1 night, 1 rooms; additional guests allowed",
-    ],
-)
-def test_only_closed_booked_single_unit_composition_qualifies(details):
-    facts = _parse(_BODY.replace("2 adults - 1 night, 1 rooms", details))
-    assert facts is not None
-    assert facts["adults"] == facts["children"] == facts["rooms"] == "unknown"
-    assert facts["room_type"] == facts["all_in"] == "unknown"
-
-
-@pytest.mark.parametrize(
     "change",
     [
         ("Booking Details", "Booking Details\n2 adults - 1 night, 1 rooms\nBooking Details"),
@@ -225,8 +192,6 @@ def test_duplicate_or_unsupported_room_sections_leave_room_unknown(change):
         (),
         _ANCHORS * 2,
         (("Other Hotel", _ANCHORS[0][1]),),
-        (("Synthetic Lake Hotel", "https://www.booking.com/hotel/lt/lake.html?auth_key=private"),),
-        (("Synthetic Lake Hotel", "https://www.booking.com/hotel/lt/lake.html#rooms"),),
         (("Synthetic Lake Hotel", "https://user:secret@www.booking.com/hotel/lt/lake.html"),),
         (("Synthetic Lake Hotel", "https://www.booking.com.evil.test/hotel/lt/lake.html"),),
         (("Synthetic Lake Hotel", "http://www.booking.com/hotel/lt/lake.html"),),
@@ -239,40 +204,17 @@ def test_property_requires_unique_header_anchor_and_canonical_safe_url(anchors):
     assert facts["property_name"] == facts["property_reference"] == "unknown"
 
 
+@pytest.mark.parametrize("suffix", ["?auth_key=private&aid=1", "#rooms"])
+def test_a_hotel_link_keeps_the_property_without_its_query(suffix):
+    url = _ANCHORS[0][1]
+    facts = _parse(anchors=(("Synthetic Lake Hotel", url + suffix),))
+    assert facts is not None and facts["property_reference"] == url
+
+
 def test_property_anchor_must_appear_before_check_in():
     facts = _parse(_BODY.replace("Synthetic Lake Hotel\n", "") + "\nSynthetic Lake Hotel")
     assert facts is not None
     assert facts["property_reference"] == "unknown"
-
-
-def test_single_apartment_week_has_explicit_guest_facts():
-    body = (
-        _BODY.replace("Sat, Oct 24, 2026", "Fri, Oct 30, 2026")
-        .replace("2 adults - 1 night, 1 rooms", "2 adults - 1 week, 1 apartment")
-        .replace(
-            "Standard Double Room\nChange your room",
-            "Entire apartment\nOne-Bedroom Apartment\nGuest name",
-        )
-    )
-    facts = _parse(body)
-    assert facts is not None
-    assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
-
-
-def test_five_night_apartment_guest_summary_survives_late_navigation_label():
-    body = (
-        _BODY.replace("Sat, Oct 24, 2026", "Wed, Oct 28, 2026")
-        .replace("2 adults - 1 night, 1 rooms", "2 adults - 5 nights, 1 apartment")
-        .replace("1 room\t€ 89.29", "1 apartment\t€ 89.29")
-        .replace(
-            "€ 2 City tax per person per night\t€ 4", "€ 2 City tax per person per night\t€ 20",
-        )
-        .replace("€ 104", "€ 120")
-        + "\nBooking Details\nCommunications"
-    )
-    facts = _parse(body)
-    assert facts is not None
-    assert (facts["adults"], facts["children"], facts["rooms"]) == ("2", "0", "1")
 
 
 @pytest.mark.parametrize('heading', [
@@ -312,125 +254,3 @@ def test_cancellation_contradictions_are_case_insensitive(confirmed):
     assert parse_cancelled_confirmation(
         f'Your booking is cancelled\n{confirmed}\nConfirmation number: 1234500001'
     ) is None
-
-
-# The room section of the owner's own reservation, as rendered on the layout synchronization reads.
-_OWNER_ROOM_ROWS = (
-    "Guest name\nSynthetic Guest Edit guest name\nMax capacity\n2 adults\n"
-    "Meal Plan\nNo meal is included in this room rate.\n"
-    "Smoking preference\nNon-smoking room\nFacilities\nPrivate bathroom, Desk, Dining table\n"
-)
-
-
-def _meal(body: str) -> tuple[str, str]:
-    facts = _parse(body)
-    assert facts is not None
-    return facts["meal_plan"], facts["meal_plan_text"]
-
-
-def _with_room_rows(rows: str) -> str:
-    return _BODY.replace("Guest name\nSynthetic Guest\n", rows)
-
-
-def test_explicit_no_meal_row_is_recorded_with_its_wording():
-    assert _meal(_with_room_rows(_OWNER_ROOM_ROWS)) == (
-        "none", "No meal is included in this room rate.",
-    )
-
-
-@pytest.mark.parametrize(
-    "row, expected",
-    [
-        ("Meal Plan\nBreakfast is included in the room rate.\n", "breakfast"),
-        ("Meal Plan\tBreakfast is included in the room rate.\n", "breakfast"),
-        ("Meal Plan: Breakfast & dinner included\n", "half_board"),
-        ("Meal Plan\nAll-inclusive\n", "all_inclusive"),
-        ("Meal Plan\nBreakfast costs \u20ac 15 per person per night.\n", "none"),
-        # Unrecognized wording is never rounded to a value.
-        ("Meal Plan\nSomething Booking.com has not said before\n", "unknown"),
-        ("Meal Plan\nBreakfast & lunch included\n", "unknown"),
-        ("Meal Plan\n2 meals per day\n", "unknown"),
-        ("Meals are not included\n", "none"),
-        ("Meal Plan No meal is included in this room rate.\n", "none"),
-    ],
-)
-def test_labelled_meal_plan_row_is_authoritative(row, expected):
-    body = _with_room_rows("Guest name\nSynthetic Guest\n" + row + "Smoking preference\nAny\n")
-    assert _meal(body)[0] == expected
-
-
-def test_standalone_inclusion_line_counts_when_no_row_is_labelled():
-    body = _with_room_rows("Guest name\nSynthetic Guest\nBreakfast included\n")
-    assert _meal(body) == ("breakfast", "Breakfast included")
-    upsell = _with_room_rows(
-        "Guest name\nSynthetic Guest\nBreakfast included\nAdd dinner for \u20ac 20\n"
-    )
-    assert _meal(upsell) == ("breakfast", "Breakfast included")
-
-
-@pytest.mark.parametrize(
-    "facilities",
-    [
-        "Facilities\nPrivate bathroom, Breakfast, Desk\n",
-        "Facilities\nComplimentary breakfast, Desk\n",
-        "Facilities: Complimentary breakfast, Desk\n",
-        "Room facilities\tBreakfast included in the minibar, Desk\n",
-    ],
-)
-def test_facilities_list_naming_a_meal_is_not_the_booked_meal_plan(facilities):
-    rows = "Guest name\nSynthetic Guest\n" + facilities
-    assert _meal(_with_room_rows(rows)) == ("none", "unknown")
-    stated = _with_room_rows(rows + "Breakfast included\n")
-    assert _meal(stated) == ("breakfast", "Breakfast included")
-    labelled = _with_room_rows(rows + "Meal Plan\nNo meal is included in this room rate.\n")
-    assert _meal(labelled) == ("none", "No meal is included in this room rate.")
-
-
-def test_unrecognized_free_text_in_the_section_is_not_kept():
-    body = _with_room_rows("Guest name\nSynthetic Guest\nPlease serve breakfast early\n")
-    assert _meal(body) == ("unknown", "unknown")
-    labelled = _with_room_rows("Guest name\nSynthetic Guest\nMeal Plan\nBrunch plan\n")
-    assert _meal(labelled) == ("unknown", "Brunch plan")
-    inline = _with_room_rows("Guest name\nSynthetic Guest\nMeal Plan: All-inclusive\n")
-    assert _meal(inline) == ("all_inclusive", "All-inclusive")
-
-
-def test_page_that_states_nothing_means_no_meals_only_when_the_section_was_read():
-    # Owner decision: silence means no meals. It carries no text, so a stated plan can replace it.
-    assert _meal(_BODY) == ("none", "unknown")
-    without_guest_row = _BODY.replace("Guest name\nSynthetic Guest\n", "")
-    assert _meal(without_guest_row) == ("unknown", "unknown")
-    without_room = _BODY.replace("Your room details", "Your accommodation")
-    assert _meal(without_room) == ("unknown", "unknown")
-
-
-def test_meal_wording_outside_the_room_section_is_ignored():
-    body = _BODY.replace("Additional Info\n", "Additional Info\nBreakfast included\n")
-    assert _meal(body) == ("none", "unknown")
-
-
-def test_conflicting_labelled_rows_and_long_wording_stay_bounded():
-    rows = "Guest name\nSynthetic Guest\nMeal Plan\nBreakfast included\nMeal Plan\nAll-inclusive\n"
-    assert _meal(_with_room_rows(rows))[0] == "unknown"
-    long_row = "Guest name\nSynthetic Guest\nMeal Plan\nBreakfast included " + "x" * 400 + "\n"
-    plan, text = _meal(_with_room_rows(long_row))
-    assert plan == "breakfast" and len(text) == 200
-
-
-def _reasons(body: str) -> dict[str, str]:
-    reasons: dict[str, str] = {}
-    assert parse_confirmation_facts(body, _ANCHORS, observed_at=_NOW, reasons=reasons) is not None
-    return reasons
-
-
-def test_meals_are_read_whatever_lines_precede_the_room_name():
-    body = _BODY.replace(
-        "Standard Double Room\nChange your room",
-        "Private suite\nDeluxe Queen Bed\nChange your room\nMeal Plan\n"
-        "No meal is included in this room rate.",
-    )
-    facts = _parse(body)
-    assert facts is not None
-    assert facts["meal_plan"] == "none"
-    assert facts["meal_plan_text"] == "No meal is included in this room rate."
-

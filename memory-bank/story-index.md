@@ -865,3 +865,13 @@ Jev reads the booked room type; agreed totals are not dropped.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-256` | Jev reads the room type and agreed totals count | Jev sync | Planned | `001-jev-reads-room-type/stories/001-jev-reads-room-type.md` |
+
+## 034-jev-reads-reservation-facts
+
+Jev reads the booked party, meals and (when needed) dates.
+
+### 001-jev-reads-party-meals-dates
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-257` | Jev reads the booked party, meals and missing dates | Jev sync | Planned | `001-jev-reads-party-meals-dates/stories/001-jev-reads-party-meals-dates.md` |

@@ -1,7 +1,8 @@
-"""Jev is the only reader of a confirmation's booked total and refund terms (ADR-061).
+"""Jev reads a confirmation's total, refund terms, room, party, meals and missing dates.
 
 Jev is asked twice and both answers must agree. Code checks only rules that hold for any layout.
-Only the price area's money lines and the cancellation and deadline lines reach TypeSafe.
+Only the price area's money lines, cancellation lines, the header and room section reach TypeSafe,
+with personal rows (guest name, email, phone, confirmation number, PIN) removed.
 """
 
 from __future__ import annotations
@@ -40,14 +41,36 @@ from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
 
 logger = logging.getLogger(__name__)
 
-ADAPTER = "jev-reservation-facts-v3"
+ADAPTER = "jev-reservation-facts-v4"
 _MAX_CALLS_PER_SYNC = 20
 _MIN_CONFIDENCE = 0.6
 # The deadline sentence is often one of several similar ones, so its confidence runs lower.
 _MIN_LINE_CONFIDENCE = 0.5
 _MAX_ROOM_LINES = 8
-# Backstop: a line with an email, a long number or a PIN is never sent as a room candidate.
-_PERSONAL = re.compile(r"@|\d{5,}|\bPIN\b", re.I)
+# Backstop: lines with an email, long number, phone number, PIN or guest name are never sent.
+_PERSONAL = re.compile(
+    r"@|\d{5,}|\d(?:[ .-]?\d){7,}|\+\d|\d{3}[ .-]\d{3}[ .-]\d{4}|\bPIN\b|^guest name", re.I,
+)
+# Numeric dates are not personal: they are blanked before the personal check, so they stay.
+_NUMERIC_DATE = re.compile(
+    r"(?<!\d)(?:20\d\d[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[-./]\d{1,2}[-./]20\d\d)(?!\d)"
+)
+# A label row whose value follows on the next line, or inline after a colon.
+_SENSITIVE_LABELS = frozenset({
+    "pin", "pin code", "confirmation number", "booking number", "reservation number",
+    "guest name", "guest names", "name", "booker", "booked by", "email", "email address",
+    "phone", "phone number",
+})
+_MAX_SECTION_LINES = 40
+_ROOM_SECTION_END = frozenset({"cancellation cost", "price", "price breakdown", "additional info"})
+_MEALS = {
+    "none": "No meals are included (room only)",
+    "breakfast": "Breakfast is included",
+    "half_board": "Breakfast and dinner are included (half board)",
+    "full_board": "Breakfast, lunch and dinner are included (full board)",
+    "all_inclusive": "All inclusive",
+    "not_stated": "These lines do not say which meals are included",
+}
 _MAX_OPTIONS = 25
 _MAX_OPTION_CHARS = 300
 _CALL_SECONDS = 20.0
@@ -86,6 +109,68 @@ def room_candidates(lines: list[str]) -> list[str]:
         if len(line) <= 120 and not _PERSONAL.search(line) and line not in candidates:
             candidates.append(line)
     return candidates
+
+
+def redact(lines: list[str], confirmation_id: str | None = None) -> list[str]:
+    """Drop personal label rows with their values, and any line holding the confirmation number."""
+    secret = re.sub(r"\D", "", confirmation_id or "")
+    kept: list[str] = []
+    skip_value = False
+    for line in lines:
+        if skip_value:
+            skip_value = False
+            continue
+        label = line.rstrip(":").strip().casefold()
+        if label in _SENSITIVE_LABELS:
+            skip_value = True
+            continue
+        if line.partition(":")[0].strip().casefold() in _SENSITIVE_LABELS:
+            continue
+        if len(secret) >= 6 and secret in re.sub(r"\D", "", line):
+            continue
+        kept.append(line)
+    return kept
+
+
+def _room_heading(lines: list[str]) -> int | None:
+    starts = [
+        i for i, line in enumerate(lines) if line.rstrip(":").casefold() == "your room details"
+    ]
+    return starts[0] if len(starts) == 1 else None
+
+
+def _safe(lines: list[str]) -> list[str]:
+    kept: list[str] = []
+    for line in lines:
+        personal = _PERSONAL.search(_NUMERIC_DATE.sub(" ", line))
+        if len(line) <= 200 and not personal and line not in kept:
+            kept.append(line)
+    return kept[:_MAX_SECTION_LINES]
+
+
+def header_lines(lines: list[str]) -> list[str]:
+    """Lines above the room section (stay dates, the booked party), never personal rows."""
+    end = _room_heading(lines)
+    return _safe(lines[:end if end is not None else 60])
+
+
+def room_section_lines(lines: list[str]) -> list[str]:
+    """The room section up to the price, without the guest's name or other personal rows."""
+    start = _room_heading(lines)
+    if start is None:
+        return []
+    section: list[str] = []
+    skip_value = False
+    for line in lines[start + 1:start + 61]:
+        if line.rstrip(":").casefold() in _ROOM_SECTION_END:
+            break
+        if skip_value:
+            skip_value = False
+            continue
+        # A bare "Guest name" label is followed by the guest's name.
+        skip_value = line.rstrip(":").casefold() == "guest name"
+        section.append(line)
+    return _safe(section)
 
 
 def cancellation_sentences(lines: list[str]) -> list[str]:
@@ -170,6 +255,53 @@ def _known(facts: dict[str, str], name: str) -> bool:
     return facts.get(name, "unknown") not in {"unknown", "", None}
 
 
+def _count_question(question: str, low: int, high: int) -> dict[str, object]:
+    return choice_question(
+        {"question": question, "rules": _RULES},
+        {**{f"n{n}": str(n) for n in range(low, high + 1)}, "not_stated": "Not stated"},
+    )
+
+
+def _number(results: list[SystemOneResult], question: str) -> int | None:
+    choice = _agreed(results, question, _MIN_LINE_CONFIDENCE)
+    return int(choice[1:]) if choice and choice[:1] == "n" and choice[1:].isdigit() else None
+
+
+def check_party(
+    adults: int | None, children: int | None, rooms: int | None, nights: int | None,
+    check_in: date | None, check_out: date | None,
+) -> dict[str, str] | None:
+    """Jev's party counts, if all were read and the nights match the stay dates."""
+    if None in (adults, children, rooms, nights, check_in, check_out):
+        return None
+    assert check_in is not None and check_out is not None
+    if nights != (check_out - check_in).days:
+        return None
+    return {"adults": str(adults), "children": str(children), "rooms": str(rooms)}
+
+
+def check_dates(
+    parts: list[int | None], today: date,
+) -> dict[str, str] | None:
+    """Jev's month, day and year for both dates, if they form a real stay of 1 to 90 nights."""
+    if None in parts:
+        return None
+    try:
+        check_in = date(parts[2], parts[0], parts[1])  # type: ignore[arg-type]
+        check_out = date(parts[5], parts[3], parts[4])  # type: ignore[arg-type]
+    except ValueError:
+        return None
+    if not 0 < (check_out - check_in).days <= 90:
+        return None
+    lifecycle = (
+        "completed" if check_out <= today else "current" if check_in <= today else "upcoming"
+    )
+    return {
+        "check_in": check_in.isoformat(), "check_out": check_out.isoformat(),
+        "lifecycle": lifecycle, "scope": "past" if lifecycle == "completed" else "upcoming",
+    }
+
+
 @dataclass
 class JevReservationFacts:
     """One sync's reader: two Jev calls per upcoming page; agreed, checked answers are the facts."""
@@ -187,7 +319,7 @@ class JevReservationFacts:
     async def __call__(
         self, text: str, facts: dict[str, str], reasons: dict[str, str],
     ) -> None:
-        lines = confirmation_lines(text)
+        lines = redact(confirmation_lines(text), facts.get("confirmation_id"))
         area, sentences = price_area(lines), cancellation_sentences(lines)
         totals = {f"m{i}": line for i, line in enumerate(area)}
         refund_lines = {f"r{i}": sentence for i, sentence in enumerate(sentences)}
@@ -228,8 +360,52 @@ class JevReservationFacts:
                 },
                 {**refund_lines, "none": "No sentence states this"},
             )
-        # One booked room only: a multi-room reservation has no single room type to compare.
-        room_lines = room_candidates(lines) if facts.get("rooms") == "1" else []
+        header = header_lines(lines)
+        if header:
+            questions["adults"] = _count_question("How many adults is this reservation for?", 1, 12)
+            questions["children"] = _count_question(
+                "How many children is this reservation for? Answer 0 if it names only adults.",
+                0, 8,
+            )
+            questions["rooms"] = _count_question(
+                "How many rooms or apartments does this reservation book?", 1, 8,
+            )
+            questions["nights"] = _count_question("How many nights is this stay?", 1, 90)
+        dates_needed = bool(header) and not (
+            _known(facts, "check_in") and _known(facts, "check_out")
+        )
+        if dates_needed:
+            year = self.observed_at.year
+            for stay in ("check_in", "check_out"):
+                label = stay.replace("_", "-")
+                questions[f"{stay}_month"] = _count_question(
+                    f"In which month (1-12) is {label}?", 1, 12,
+                )
+                questions[f"{stay}_day"] = _count_question(
+                    f"On which day of the month is {label}?", 1, 31,
+                )
+                questions[f"{stay}_year"] = _count_question(
+                    f"In which year is {label}?", year - 1, year + 2,
+                )
+        section = room_section_lines(lines)
+        meal_lines = {f"s{i}": line for i, line in enumerate(section)}
+        if meal_lines:
+            questions["meal"] = choice_question(
+                {
+                    "question": "Which meals does this booked rate include?",
+                    "hint": "A meal offered for an extra charge is not included. A list of room "
+                    "facilities is not the rate.",
+                    "rules": _RULES,
+                },
+                _MEALS,
+            )
+            questions["meal_line"] = choice_question(
+                {"question": "Which line says which meals the booked rate includes?",
+                 "rules": _RULES},
+                {**meal_lines, "none": "No line says this"},
+            )
+        # Asked for any page; applied only when the party is one room (see below).
+        room_lines = room_candidates(lines)
         rooms = {f"l{i}": line for i, line in enumerate(room_lines)}
         if rooms:
             questions["room"] = choice_question(
@@ -246,7 +422,11 @@ class JevReservationFacts:
         if not questions:
             return
         state: dict[str, object] = {"price_area": area, "cancellation_sentences": sentences}
-        if rooms:
+        if header:
+            state["booking_header"] = header
+        if section:
+            state["your_room_details"] = section
+        elif rooms:
             state["your_room_details"] = room_lines
         try:
             for _ in range(2):
@@ -271,9 +451,15 @@ class JevReservationFacts:
                 results.append(outcome)
         if len(results) != 2:
             self._count("unavailable")
-            reasons.setdefault("booked_total", "jev_unavailable")
-            reasons.setdefault("refundability", "jev_unavailable")
+            for name in ("booked_total", "refundability", "room_type", "party", "meal_plan"):
+                reasons.setdefault(name, "jev_unavailable")
             return
+        if dates_needed:
+            self._apply(facts, reasons, "stay_dates", check_dates(
+                [_number(results, f"{stay}_{part}")
+                 for stay in ("check_in", "check_out") for part in ("month", "day", "year")],
+                self.observed_at.astimezone(UTC).date(),
+            ))
         # Agreement plus the code check is the guard; a floor dropped correct mixed-currency totals.
         total_choice = _agreed(results, "total", 0.0)
         jev_total = check_total(totals[total_choice], area) if total_choice in totals else None
@@ -288,7 +474,28 @@ class JevReservationFacts:
             self._apply(facts, reasons, "booked_total", jev_total)
         if refund_lines:
             self._apply(facts, reasons, "refundability", jev_refund)
-        if rooms:
+        if header:
+            check_out = (
+                date.fromisoformat(facts["check_out"]) if _known(facts, "check_out") else None
+            )
+            adults, children, rooms_booked, stay_nights = (
+                _number(results, name) for name in ("adults", "children", "rooms", "nights")
+            )
+            self._apply(facts, reasons, "party", check_party(
+                adults, children, rooms_booked, stay_nights, check_in, check_out,
+            ))
+        if meal_lines:
+            meal = _agreed(results, "meal", _MIN_LINE_CONFIDENCE)
+            meal_line = _agreed(results, "meal_line", _MIN_LINE_CONFIDENCE)
+            # The class counts only with an agreed line stating it.
+            self._apply(
+                facts, reasons, "meal_plan",
+                None if meal in (None, "not_stated") or meal_line not in meal_lines else {
+                    "meal_plan": str(meal), "meal_plan_text": meal_lines[str(meal_line)][:200],
+                },
+            )
+        # One booked room only: a multi-room reservation has no single room type to compare.
+        if rooms and facts.get("rooms") == "1":
             room_choice = _agreed(results, "room", _MIN_LINE_CONFIDENCE)
             self._apply(
                 facts, reasons, "room_type",

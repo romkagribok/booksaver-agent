@@ -90,3 +90,14 @@ def test_each_message_names_the_hotel_and_a_plain_cause(reason: StallReason) -> 
     subject, body = stall_message(_reservation(), reason)
     assert "Synthetic Hotel" in subject
     assert "24 hours" in body
+
+
+def test_an_unconfirmed_reservation_names_the_facts_it_is_missing() -> None:
+    held = _reservation(
+        eligibility=EligibilityStatus.INELIGIBLE,
+        eligibility_reasons=frozenset({
+            EligibilityReason.MISSING_ROOM_TYPE, EligibilityReason.MISSING_BOOKED_TOTAL,
+        }),
+    )
+    _subject, body = stall_message(held, StallReason.TOTAL_UNCONFIRMED)
+    assert "can't confirm this reservation's booked total or room type from" in body

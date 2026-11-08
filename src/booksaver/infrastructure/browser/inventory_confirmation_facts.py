@@ -11,13 +11,6 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from urllib.parse import urlsplit
 
-from booksaver.domain.meal_plan import (
-    MAX_MEAL_PLAN_TEXT,
-    MealPlan,
-    classify_meal_text,
-    mentions_meals,
-)
-
 _MAX_TEXT = 250_000
 _MAX_LINES = 8_000
 # en-US grouping only: the reader qualifies English pages rendered in the en-US browser locale.
@@ -62,10 +55,6 @@ _UNKNOWN_FACTS = (
     "refundability_text", "refund_deadline", "adults", "children", "rooms",
     "meal_plan", "meal_plan_text",
 )
-_MEAL_LABEL = re.compile(r"(?:meal plan|meal option|meals):?(?: (.+))?", re.IGNORECASE)
-_ROOM_SECTION_END = frozenset({"cancellation cost", "price", "price breakdown", "additional info"})
-# A facilities list describes the room, not the booked rate, even when it names a meal.
-_FACILITIES_LABEL = re.compile(r"(?:room )?(?:facilities|amenities):?( .+)?", re.IGNORECASE)
 
 
 def _currency(token: str) -> str:
@@ -152,93 +141,13 @@ def _property_facts(
             and parts.port is None
             and parts.username is None
             and parts.password is None
-            and not parts.query
-            and not parts.fragment
             and re.fullmatch(r"/hotel/[a-z]{2}/[A-Za-z0-9._-]+\.html", parts.path)
         )
     except ValueError:
         return {}
-    return {"property_name": name, "property_reference": url} if allowed else {}
-
-
-def _guest_facts(
-    lines: list[str], check_in: date | None, check_out: date | None,
-) -> tuple[dict[str, str], int | None]:
-    boundary = _confirmation_heading(lines)
-    if boundary is None:
-        return {}, None
-    # Later page navigation repeats "Booking Details" without describing the booked party.
-    # Only the unique composition label inside this confirmation's header can supply guests.
-    value = _following(lines[:boundary], "Booking Details")
-    if value is None or check_in is None or check_out is None:
-        return {}, None
-    # This is a closed booked-party composition, not a capacity or generic guest-count label.
-    match = re.fullmatch(
-        r"([1-9][0-9]?) adults? - ([1-9][0-9]?) (nights?|weeks?), "
-        r"1 (rooms?|apartments?)", value,
-    )
-    if match is None:
-        return {}, None
-    adults, length, duration, _unit = match.groups()
-    nights = int(length) * (7 if duration.startswith("week") else 1)
-    if (check_out - check_in).days != nights:
-        return {}, None
-    return {"adults": adults, "children": "0", "rooms": "1"}, nights
-
-
-def _is_facilities_value(section: list[str], index: int) -> bool:
-    inline = _FACILITIES_LABEL.fullmatch(section[index])
-    if inline is not None and inline.group(1):
-        return True
-    previous = _FACILITIES_LABEL.fullmatch(section[index - 1]) if index else None
-    return previous is not None and not previous.group(1)
-
-
-def _meal_facts(lines: list[str], single_unit: bool) -> dict[str, str]:
-    """Read the booked meal plan from the room details section, never from the rest of the page.
-
-    A labelled row is authoritative. Without one, standalone meal wording in the section counts.
-    A section with a guest row and no meal wording at all means no meals; that silent reading
-    carries no text so a later explicit statement can replace it.
-    """
-    start = _heading(lines, "Your room details")
-    if start is None or not single_unit:
-        return {}
-    section: list[str] = []
-    for line in lines[start + 1:start + 61]:
-        if line.rstrip(":").casefold() in _ROOM_SECTION_END:
-            break
-        section.append(line)
-    # (wording to classify, wording to keep). An inline value is classified with its label so
-    # "Meals are not included" is not cut down to "are not included".
-    labelled: list[tuple[str, str]] = []
-    for index, line in enumerate(section):
-        match = _MEAL_LABEL.fullmatch(line)
-        if match is None:
-            continue
-        following = section[index + 1] if index + 1 < len(section) else ""
-        labelled.append((line, match.group(1)) if match.group(1) else (following, following))
-    stated = labelled or [
-        (line, line)
-        for index, line in enumerate(section)
-        if mentions_meals(line) and not _is_facilities_value(section, index)
-    ]
-    if not stated:
-        guest_row = any(line.casefold().startswith("guest name") for line in section)
-        return {"meal_plan": MealPlan.NONE.value} if guest_row else {}
-    readings = [(classify_meal_text(wording), kept) for wording, kept in stated]
-    plans = {plan for plan, _ in readings}
-    plan = next(iter(plans)) if len(plans) == 1 else MealPlan.UNKNOWN
-    if not labelled:
-        # Unlabelled lines may also price an optional extra; an inclusion among them still stands.
-        included = plans - {MealPlan.NONE, MealPlan.UNKNOWN}
-        if len(included) == 1 and MealPlan.UNKNOWN not in plans:
-            plan = next(iter(included))
-        if plan is MealPlan.UNKNOWN:
-            # Unrecognized free text in the section may be the guest's own; it is not kept.
-            return {"meal_plan": plan.value}
-    text = next((kept for found, kept in readings if found is plan), readings[0][1])
-    return {"meal_plan": plan.value, "meal_plan_text": text[:MAX_MEAL_PLAN_TEXT]}
+    # Tracking parameters are dropped; the property is the allowlisted path.
+    reference = f"https://{parts.hostname}{parts.path}"
+    return {"property_name": name, "property_reference": reference} if allowed else {}
 
 
 # Free until one local moment, charged from the next: (until day, minute, from day, minute).
@@ -301,10 +210,7 @@ def parse_confirmation_facts(
     else:
         check_in = check_out = None
     payload.update(_property_facts(lines, hotel_anchors))
-    guests, _nights = _guest_facts(lines, check_in, check_out)
-    payload.update(guests)
-    payload.update(_meal_facts(lines, bool(guests)))
-    # Booked total, refund terms and room type are read by Jev (ADR-061), never by layout code.
+    # Total, refund terms, room, party and meals are read by Jev (ADR-061), never by layout code.
     return payload
 
 
