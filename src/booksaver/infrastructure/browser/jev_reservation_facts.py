@@ -348,11 +348,14 @@ class JevReservationFacts:
         area, sentences = price_area(lines), cancellation_sentences(lines)
         currency = booking_currency(area)
         # Only lines in the booking's currency can be its total; unknown currency keeps them all.
-        totals = {
-            f"m{i}": line for i, line in enumerate(area)
-            if currency is None
-            or {_currency(m[1]) for m in re.finditer(_MONEY, line)} == {currency}
-        }
+        totals: dict[str, str] = {}
+        for i, line in enumerate(area):
+            # A repeated line is one option: duplicates split Jev's choice between equal answers.
+            if line not in totals.values() and (
+                currency is None
+                or {_currency(m[1]) for m in re.finditer(_MONEY, line)} == {currency}
+            ):
+                totals[f"m{i}"] = line
         refund_lines = {f"r{i}": sentence for i, sentence in enumerate(sentences)}
         nights = None
         if _known(facts, "check_in") and _known(facts, "check_out"):
@@ -364,8 +367,10 @@ class JevReservationFacts:
                 {
                     "question": f"These lines are from one Booking.com reservation confirmation "
                     f"for a stay of {nights} night(s). Which line is the total amount the guest "
-                    "pays for the whole stay, including taxes, in the currency they will be "
-                    "charged?",
+                    "pays for the whole stay, including taxes?"
+                    + (f" The reservation's own currency is {currency}; the options are the lines "
+                       "in that currency." if currency else " Choose the amount in the "
+                       "reservation's own currency."),
                     "hint": "A line starting with 'approx.' is an estimate in another currency. "
                     "Room and tax rows are parts of the total. A cancellation fee is not the "
                     "total.",
