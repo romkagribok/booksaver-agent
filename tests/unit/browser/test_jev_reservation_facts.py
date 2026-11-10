@@ -115,7 +115,7 @@ def _answers(total: str = "US$577.42", terms: str = "free_until_date",
         "refund_line": (next(f"r{i}" for i, s in enumerate(SENTENCES) if s.startswith(line)), conf),
         # The stay in _UNKNOWN is three nights for one adult.
         "adults": ("n1", conf), "children": ("n0", conf), "rooms": ("n1", conf),
-        "nights": ("n3", conf),
+        "nights": ("n3", conf), "booking_currency": ("USD", conf),
     }
 
 
@@ -427,3 +427,31 @@ def test_trip_cards_need_both_asks_and_respect_the_budget() -> None:
     assert asyncio.run(_reader(_Client({"c0": ("stay_active", 1.0)}), cap=0)
                        .classify_cards(cards)) is None
     assert asyncio.run(_reader(_Client()).classify_cards([])) == []
+
+
+def test_the_total_must_be_in_the_agreed_booking_currency() -> None:
+    """Live: Ayres shows "approx. € 132" and "US$147.78"; the estimate was saved (intent 038)."""
+    def run(*runs: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+        facts, reasons = dict(_UNKNOWN), {}
+        asyncio.run(_reader(_Client(*runs))("\n".join(PAGE), facts, reasons))
+        return facts, reasons
+
+    facts, _ = run(_answers())
+    assert (facts["booked_total"], facts["currency"]) == ("577.42", "USD")
+    estimate = {**_answers(), "total": (next(f"m{i}" for i, line in enumerate(AREA)
+                                             if line.startswith("approx.")), 0.9)}
+    facts, reasons = run(estimate)
+    assert facts["booked_total"] == "unknown" and reasons["booked_total"] == "jev_unread"
+    facts, _ = run({**_answers(), "booking_currency": ("EUR", 0.9)})
+    assert facts["booked_total"] == "unknown"
+    facts, _ = run(_answers(), {**_answers(), "booking_currency": ("not_stated", 0.9)})
+    assert facts["booked_total"] == "unknown"
+
+
+def test_a_single_currency_page_needs_no_currency_question() -> None:
+    page = [line for line in PAGE if "US$" not in line and not line.startswith("approx.")]
+    page.append("€ 516")
+    client = _Client({**_answers(), "total": ("m0", 0.9)})
+    asyncio.run(_reader(client)("\n".join(page), dict(_UNKNOWN), {}))
+    assert "booking_currency" not in client.requests[0][1]
+

@@ -41,7 +41,7 @@ from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
 
 logger = logging.getLogger(__name__)
 
-ADAPTER = "jev-reservation-facts-v4"
+ADAPTER = "jev-reservation-facts-v5"
 _MAX_CALLS_PER_SYNC = 20
 _MIN_CONFIDENCE = 0.6
 # The deadline sentence is often one of several similar ones, so its confidence runs lower.
@@ -340,6 +340,19 @@ class JevReservationFacts:
             nights = (date.fromisoformat(facts["check_out"])
                       - date.fromisoformat(facts["check_in"])).days
         questions: dict[str, dict[str, object]] = {}
+        # The booking's currency (intent 038): pages also show an estimate in the guest's currency.
+        currencies = sorted({_currency(m[1]) for line in area for m in re.finditer(_MONEY, line)})
+        if len(currencies) > 1:
+            questions["booking_currency"] = choice_question(
+                {
+                    "question": "In which currency is this reservation priced and paid?",
+                    "hint": "Booking.com may also show an approximate amount converted into the "
+                    "guest's own currency; that is not the reservation's currency.",
+                    "rules": _RULES,
+                },
+                {**{code: code for code in currencies},
+                 "not_stated": "The lines do not show which currency the reservation is in"},
+            )
         if totals:
             questions["total"] = choice_question(
                 {
@@ -475,6 +488,13 @@ class JevReservationFacts:
         # Agreement plus the code check is the guard; a floor dropped correct mixed-currency totals.
         total_choice = _agreed(results, "total", 0.0)
         jev_total = check_total(totals[total_choice], area) if total_choice in totals else None
+        booking_currency = (
+            currencies[0] if len(currencies) == 1
+            else _agreed(results, "booking_currency", _MIN_LINE_CONFIDENCE)
+        )
+        # A total in any other currency is a display estimate, never the booked total.
+        if jev_total is not None and jev_total["currency"] != booking_currency:
+            jev_total = None
         line_choice = _agreed(results, "refund_line", _MIN_LINE_CONFIDENCE)
         terms = _agreed(results, "refund")
         check_in = date.fromisoformat(facts["check_in"]) if _known(facts, "check_in") else None
