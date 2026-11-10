@@ -36,7 +36,6 @@ from booksaver.domain.browser_executor import (
     RedactedProvenance,
     query_identity_rejection,
 )
-from booksaver.domain.meal_plan import mentions_meals
 from booksaver.domain.mobile_web import MobileWebSettings
 from booksaver.domain.model_policy import UsdAmount
 from booksaver.domain.price_comparison import (
@@ -115,13 +114,9 @@ _PER_NIGHT = re.compile(
     re.IGNORECASE,
 )
 _NIGHTS = re.compile(r"\b(\d{1,2})\s+nights?\b", re.IGNORECASE)
-_REFUNDABLE_TEXT = re.compile(r"free cancel|fully refundable|\brefundable\b", re.IGNORECASE)
-_NONREFUNDABLE_TEXT = re.compile(r"non[- ]?refundable|no refund|not refundable", re.IGNORECASE)
-# Anything short of a full free cancellation is never grounded as refundable.
-_NOT_FULLY_REFUNDABLE = re.compile(
-    r"non[- ]?refundable|no refund|not refundable|partial|no free cancel|not free|fee applies",
-    re.IGNORECASE,
-)
+# Jev's rate terms (refund, taxes, meals) count only when it names the stating line this surely.
+_MIN_TERM_CONFIDENCE = 0.8
+_MEAL_CLASSES = ("breakfast", "half_board", "full_board", "all_inclusive")
 # Label status is deliberately narrow: only a line that IS the label, or an amount line that
 # starts with it. "Total savings", "Member price", "Price per night", "Price for:" are not labels.
 _PRICE_LABEL_LINE = re.compile(r"^(?:total price|price|total)\s*:?$", re.IGNORECASE)
@@ -140,14 +135,6 @@ _NOT_A_TOTAL = re.compile(
     re.IGNORECASE,
 )
 _DEADLINE_CONTINUATION = re.compile(r"^(?:before|until|by|up to)\b", re.IGNORECASE)
-_TAXES_INCLUDED = re.compile(
-    r"includ\w*[^.]{0,40}\b(?:tax|taxes|charges|fees)\b", re.IGNORECASE
-)
-_TAXES_EXCLUDED = re.compile(
-    r"not included|excluded|excludes|\+\s*(?:\S+\s+){0,3}(?:tax|taxes|fees|charges)\b|"
-    r"(?:tax|taxes|fees|charges)\s+(?:not included|extra|additional)|additional (?:tax|fee)",
-    re.IGNORECASE,
-)
 
 
 class JevBudgetStop(RuntimeError):
@@ -335,6 +322,8 @@ class _RateEvidence:
     refundability_text: str | None
     all_in: str
     complete: bool
+    # Jev's meal class for the rate (a MealPlan value), None when it was not sure.
+    meal_plan: str | None = None
     # Bounded category for diagnostics: why this rate has (or lacks) a grounded total.
     total_reason: str = "ok"
 
@@ -375,10 +364,10 @@ def rate_questions(
                 "rules": _UNTRUSTED,
             },
             {
-                "free_cancellation": "It explicitly offers free cancellation or says the rate "
-                "is refundable",
-                "non_refundable": "It explicitly says the rate is non-refundable or cannot be "
-                "cancelled for free",
+                "free_cancellation": "It explicitly offers full free cancellation or says the "
+                "rate is fully refundable",
+                "non_refundable": "It says the rate is non-refundable, only partly refundable, "
+                "or cannot be cancelled for free",
                 "not_stated": "It does not state a cancellation policy",
             },
         ),
@@ -403,8 +392,58 @@ def rate_questions(
                 "not_stated": "It does not say whether taxes and fees are included",
             },
         ),
+        "taxes_line": choice_question(
+            {
+                "question": "Which line of the room card or rate option says whether the price "
+                "includes taxes and fees?",
+                "rules": _UNTRUSTED,
+            },
+            _with_none(
+                {f"t{index}": line for index, line in enumerate(_card_lines(room, rate))},
+                "No line says whether taxes and fees are included",
+            ),
+        ),
+        "meal": choice_question(
+            {
+                "question": "Which meals does this rate option include in its price?",
+                # Live wording check (2026-11-10): a bare "Breakfast" line was read as included.
+                "hint": "A meal offered for an extra charge, or only named without saying it "
+                "is included (for example just 'Breakfast'), is not included.",
+                "rules": _UNTRUSTED,
+            },
+            {
+                "none": "No meals are included, or the rate option does not mention meals",
+                "breakfast": "Breakfast is included",
+                "half_board": "Breakfast and dinner are included (half board)",
+                "full_board": "Breakfast, lunch and dinner are included (full board)",
+                "all_inclusive": "It is all-inclusive",
+                "unclear": "The wording is unclear or contradictory",
+            },
+        ),
+        "meal_line": choice_question(
+            {
+                "question": "Which line of the rate option states which meals are included?",
+                "rules": _UNTRUSTED,
+            },
+            _with_none(_line_options(rate, limit=30), "No line states included meals"),
+        ),
     }
     return state, questions, prices
+
+
+def _card_lines(room: RoomSnapshot, rate: tuple[str, ...]) -> tuple[str, ...]:
+    return (*room.lines[-12:], *rate)[:40]
+
+
+def _names_line(choice: str | None, prefix: str, count: int) -> bool:
+    if not choice or choice[:1] != prefix or not choice[1:].isdigit():
+        return False
+    return int(choice[1:]) < count
+
+
+def _sure(result: SystemOneResult, question: str) -> str | None:
+    answer = result.choice(question)
+    return answer.choice if answer.confidence >= _MIN_TERM_CONFIDENCE else None
 
 
 def _nightly_indexes(rate: tuple[str, ...]) -> set[int]:
@@ -527,7 +566,7 @@ def ground_rate(
     nights_consistent = not stated_nights or stated_nights == {nights}
 
     refund_choice = result.choice("refund").choice
-    line_choice = result.choice("refund_line").choice
+    line_choice = _sure(result, "refund_line") or "none"
     refund_line: str | None = None
     if line_choice.startswith("l") and line_choice[1:].isdigit():
         index = int(line_choice[1:])
@@ -535,34 +574,28 @@ def ground_rate(
             refund_line = rate[index]
             if index + 1 < len(rate) and _DEADLINE_CONTINUATION.match(rate[index + 1]):
                 refund_line = f"{refund_line} {rate[index + 1]}"
-    if refund_choice == "free_cancellation":
-        supported = (
-            refund_line is not None
-            and _REFUNDABLE_TEXT.search(refund_line) is not None
-            and _NOT_FULLY_REFUNDABLE.search(refund_line) is None
-        )
-        refundability = "explicit_refundable" if supported else "conflicting"
-    elif refund_choice == "non_refundable":
-        supported = (
-            refund_line is not None and _NOT_FULLY_REFUNDABLE.search(refund_line) is not None
-        )
-        refundability = "explicit_nonrefundable" if supported else "conflicting"
+    # Jev's class counts when it surely names the line stating it (ADR-064); no word lists.
+    if refund_choice in {"free_cancellation", "non_refundable"}:
+        if refund_line is None or _sure(result, "refund") is None:
+            refundability = "conflicting"
+        elif refund_choice == "free_cancellation":
+            refundability = "explicit_refundable"
+        else:
+            refundability = "explicit_nonrefundable"
     else:
         refundability = "unknown"
 
-    # Tax wording is matched within one line or two adjacent lines, never across the whole
-    # card: "Breakfast included" must not combine with a later "+ € 12 taxes and fees".
-    card_lines = (*room.lines, *rate)
-    windows = (*card_lines, *(f"{a} {b}" for a, b in zip(card_lines, card_lines[1:], strict=False)))
-    taxes_choice = result.choice("taxes").choice
-    excluded_text = any(_TAXES_EXCLUDED.search(window) for window in windows)
-    included_text = any(_TAXES_INCLUDED.search(window) for window in windows)
-    if taxes_choice == "included":
-        all_in = "explicit" if included_text and not excluded_text else "conflicting"
-    elif taxes_choice == "excluded" and included_text and not excluded_text:
-        all_in = "conflicting"
+    card_lines = _card_lines(room, rate)
+    taxes_named = _names_line(_sure(result, "taxes_line"), "t", len(card_lines))
+    if result.choice("taxes").choice == "included":
+        all_in = "explicit" if taxes_named and _sure(result, "taxes") else "conflicting"
     else:
         all_in = "unknown"
+
+    meal = _sure(result, "meal")
+    meal_named = _names_line(_sure(result, "meal_line"), "l", len(rate))
+    # An included plan needs its stating line; an unsure answer stays unknown (only excludes).
+    meal_plan = meal if meal == "none" or (meal in _MEAL_CLASSES and meal_named) else None
     return _RateEvidence(
         total=total,
         refundability=refundability,
@@ -570,6 +603,7 @@ def ground_rate(
         all_in=all_in,
         complete=total is not None and nights_consistent,
         total_reason=total_reason,
+        meal_plan=meal_plan,
     )
 
 
@@ -1169,12 +1203,12 @@ class LocalJevPriceRuntime:
                     "refundability": evidence.refundability,
                     "refundability_text": evidence.refundability_text,
                     "completeness": "complete" if evidence.complete else "incomplete",
-                    # rate[0] is the rate's name ("Flexible + Breakfast"): a meal word with no
-                    # inclusion wording, which would make the whole text unclassifiable.
-                    "meal_text": "\n".join(line for line in rate[1:] if mentions_meals(line))
-                    or "none",
+                    "meal_text": evidence.meal_plan,
                 }
             )
+        booked_room = await self._booked_room(query, rate_jobs, offers, decider)
+        for offer in offers:
+            offer["booked_room"] = offer["room_label"] == booked_room
         facts = _url_query_facts(snapshot.url)
         diagnostics.extraction = (
             f"rooms={len(snapshot.rooms)} rates={snapshot.rate_count} "
@@ -1189,7 +1223,8 @@ class LocalJevPriceRuntime:
             f"all_in={sum(o['all_in'] == 'explicit' for o in offers)} "
             f"complete={sum(o['completeness'] == 'complete' for o in offers)} "
             f"property={'y' if property_name is not None else 'n'} "
-            f"stay_facts={'y' if facts is not None else 'n'}"
+            f"stay_facts={'y' if facts is not None else 'n'} "
+            f"booked_room={'y' if booked_room is not None else 'n'}"
         )
         if not offers or property_name is None:
             return None
@@ -1218,6 +1253,56 @@ class LocalJevPriceRuntime:
             )
         except ValueError:
             return None
+
+    @staticmethod
+    async def _booked_room(
+        query: Any,
+        rate_jobs: list[tuple[str, RoomSnapshot, tuple[str, ...], dict[str, str]]],
+        offers: list[dict[str, object]],
+        decider: JevDecisionPort,
+    ) -> str | None:
+        """Which priced room is the booked room type, when none carries its exact name (FR-1)."""
+
+        booked = query.room_type
+        cards: dict[str, tuple[str, ...]] = {}
+        for room_label, room, _rate, _prices in rate_jobs:
+            cards.setdefault(room_label, room.lines)
+        labels = [label for label in cards if any(o["room_label"] == label for o in offers)]
+        if not booked or not labels:
+            return None
+        exact = [label for label in labels if label.casefold().split() == booked.casefold().split()]
+        if exact:
+            return exact[0]
+        options = {
+            f"r{index}": " | ".join(
+                dict.fromkeys((label, *(line for line in cards[label][:6] if len(line) <= 80)))
+            )
+            for index, label in enumerate(labels[:20])
+        }
+        question = {
+            "booked_room": choice_question(
+                {
+                    "question": "A guest booked the room type named in booked_room at this "
+                    "hotel. Which room offered on this page is that same room type?",
+                    "hint": "The booking confirmation and the hotel page often name the same "
+                    "room slightly differently, for example with or without 'Standard', "
+                    "'Room' or the bed type. If two offered rooms fit equally well, answer none.",
+                    "not_for": "a different category (for example Superior or Deluxe instead "
+                    "of Standard), a different bed setup or occupancy, or a room with an extra "
+                    "feature such as a balcony, view or kitchen",
+                    "rules": _UNTRUSTED,
+                },
+                _with_none(options, "None of these rooms is the booked room type"),
+            )
+        }
+        state = {"booked_room": booked}
+        # Asked twice: both answers must agree surely, or no offer counts as the booked room.
+        answers = await _all_or_fail([decider.ask(state, question) for _ in range(2)])
+        choices = {answer.choice("booked_room").choice for answer in answers}
+        sure = all(answer.choice("booked_room").confidence >= _MIN_TERM_CONFIDENCE
+                   for answer in answers)
+        choice = choices.pop() if len(choices) == 1 and sure else "none"
+        return labels[int(choice[1:])] if choice.startswith("r") and choice[1:].isdigit() else None
 
     @staticmethod
     async def _unavailable(

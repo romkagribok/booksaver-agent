@@ -282,6 +282,7 @@ class OwnerBoundAgenticPriceCheck:
                 stay_dates=booking.stay_dates,
                 occupancy=booking.occupancy,
                 currency=booking.baseline_price.currency,
+                room_type=booking.room_type.label,
             ),
             session_lease=lease,
             limits=limits or ExecutionLimits(deadline=now + timedelta(seconds=180)),

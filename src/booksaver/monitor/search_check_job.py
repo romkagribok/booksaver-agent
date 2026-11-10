@@ -24,7 +24,7 @@ from booksaver.domain.check_result import (
     FailureReason,
     RefundIndicators,
 )
-from booksaver.domain.meal_plan import offer_meal_plan
+from booksaver.domain.meal_plan import MealPlan
 from booksaver.domain.mobile_web import (
     GeniusEvidence,
     MobileProfileId,
@@ -187,6 +187,8 @@ class BookingComSearchMonitor:
                 offer.room_label,
                 booking,
             )
+            if not matches and offer.booked_room:
+                matches, confidence = True, 0.9
             candidates.append(
                 OfferCandidate(
                     room_label=offer.room_label,
@@ -195,7 +197,7 @@ class BookingComSearchMonitor:
                     cancellation_text=offer.cancellation_text,
                     matches_room=matches,
                     match_confidence=confidence,
-                    meal_plan=offer_meal_plan(offer.meal_text),
+                    meal_plan=MealPlan.parse(offer.meal_text),
                 )
             )
         selection = select_offer(candidates, booking)

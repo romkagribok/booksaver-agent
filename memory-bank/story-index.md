@@ -876,6 +876,16 @@ Jev reads the booked party, meals and (when needed) dates.
 |-------|-------|-----|--------|------|
 | `US-257` | Jev reads the booked party, meals and missing dates | Jev sync | Complete (release A; releases B and C are outside intent 034) | `001-jev-reads-party-meals-dates/stories/001-jev-reads-party-meals-dates.md` |
 
+## 035-jev-judges-price-offers
+
+Jev judges the room, hotel, meals, refund and taxes of price offers.
+
+### 001-jev-judges-room-and-rate-terms
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-258` | Jev judges the booked room and each rate's terms | Jev price | Planned | `001-jev-judges-room-and-rate-terms/stories/001-jev-judges-room-and-rate-terms.md` |
+
 ## 036-per-user-limits
 
 Per-user check limit sized for real bookings; Jev daily cap per user, not shared.

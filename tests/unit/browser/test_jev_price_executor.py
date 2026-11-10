@@ -99,6 +99,13 @@ def _option(options: Mapping[str, object], predicate: Any) -> str:
     return next(key for key, value in options.items() if predicate(str(value)))
 
 
+def _terms(questions: Mapping[str, Mapping[str, object]], **chosen: str) -> dict[str, ChoiceAnswer]:
+    """Answers to the tax-line and meal questions; by default nothing is named."""
+    picks = {"taxes_line": "none", "meal": "none", "meal_line": "none", **chosen}
+    return {key: _choice(questions[key]["criteria"], value)  # type: ignore[arg-type]
+            for key, value in picks.items()}
+
+
 class ScriptedJev:
     """Answer like a sensible Jev would, from the offered options only."""
 
@@ -109,7 +116,9 @@ class ScriptedJev:
         fail_on: str | None = None,
         room_name: str = "l0",
         availability: tuple[str, float] = ("unavailable", 1.0),
+        booked_room: tuple[str, float] = ("none", 1.0),
     ) -> None:
+        self.booked_room = booked_room
         self.taxes = taxes
         self.fail_on = fail_on
         self.room_name = room_name
@@ -146,6 +155,27 @@ class ScriptedJev:
                 )
             elif question_id == "taxes":
                 chosen = self.taxes
+            elif question_id == "taxes_line":
+                chosen = (
+                    _option(options, lambda v: "taxes" in v.lower())
+                    if self.taxes == "included" else "none"
+                )
+            elif question_id == "meal":
+                lines = state["rate_option_lines"]  # type: ignore[index]
+                chosen = (
+                    "breakfast" if any("breakfast included" in line.lower() for line in lines)
+                    else "none"
+                )
+            elif question_id == "meal_line":
+                chosen = next(
+                    (key for key, value in options.items()
+                     if "breakfast included" in str(value).lower()),
+                    "none",
+                )
+            elif question_id == "booked_room":
+                chosen, confidence = self.booked_room
+                answers[question_id] = ChoiceAnswer(chosen, confidence, {chosen: confidence})
+                continue
             else:  # pragma: no cover - unexpected question
                 raise AssertionError(question_id)
             answers[question_id] = _choice(options, chosen)
@@ -214,7 +244,7 @@ def test_extraction_returns_validated_whole_stay_offers() -> None:
 def test_taxes_excluded_text_keeps_offers_out_of_all_in_comparison() -> None:
     excluded_room = (*ROOM_LINES[:5], "Not included:", "12 % TAX.")
     observation = _extract(ScriptedJev(taxes="included"), _snapshot(excluded_room))
-    # Jev claimed "included" but the card says otherwise: conflicting, never explicit.
+    # Jev claimed "included" but named no line saying so: conflicting, never explicit.
     assert {offer.all_in for offer in observation.offers} == {AllInEvidence.CONFLICTING}
     observation = _extract(ScriptedJev(taxes="excluded"), _snapshot(excluded_room))
     assert {offer.all_in for offer in observation.offers} == {AllInEvidence.UNKNOWN}
@@ -227,9 +257,10 @@ def test_per_night_choice_and_unsupported_refund_claim_are_not_grounded() -> Non
     answers = {
         "total": _choice(questions["total"]["criteria"], per_night),  # type: ignore[arg-type]
         "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
-        # Jev points at a line that does not state a cancellation policy.
-        "refund_line": _choice(questions["refund_line"]["criteria"], "l0"),  # type: ignore[arg-type]
+        # Jev names no line stating a cancellation policy.
+        "refund_line": _choice(questions["refund_line"]["criteria"], "none"),  # type: ignore[arg-type]
         "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+        **_terms(questions),
     }
     result = SystemOneResult("jev-1.13.0", answers, 10, 0)
     evidence = ground_rate(result, room, FLEXIBLE, prices, expected_currency="USD", nights=1)
@@ -246,6 +277,7 @@ def test_stated_nights_must_match_the_requested_stay() -> None:
         "refund": _choice(questions["refund"]["criteria"], "not_stated"),  # type: ignore[arg-type]
         "refund_line": _choice(questions["refund_line"]["criteria"], "none"),  # type: ignore[arg-type]
         "taxes": _choice(questions["taxes"]["criteria"], "not_stated"),  # type: ignore[arg-type]
+        **_terms(questions),
     }
     result = SystemOneResult("jev-1.13.0", answers, 10, 0)
     evidence = ground_rate(result, room, FLEXIBLE, prices, expected_currency="USD", nights=3)
@@ -346,6 +378,7 @@ def _grounded(rate: tuple[str, ...], *, total_line: str, refund: str, refund_lin
         "refund": _choice(questions["refund"]["criteria"], refund),  # type: ignore[arg-type]
         "refund_line": _choice(questions["refund_line"]["criteria"], line),  # type: ignore[arg-type]
         "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+        **_terms(questions),
     }
     result = SystemOneResult("jev-1.13.0", answers, 10, 0)
     return ground_rate(result, room, rate, prices, expected_currency="USD", nights=1)
@@ -360,11 +393,37 @@ def test_component_or_teaser_amounts_are_never_a_total(line: str) -> None:
 
 
 @pytest.mark.parametrize("policy", ["Partially refundable", "No free cancellation"])
-def test_partial_refund_terms_are_never_grounded_as_refundable(policy: str) -> None:
+def test_jev_classes_partial_refund_terms_by_their_named_line(policy: str) -> None:
     rate = ("Flexible", policy, "Price $319")
-    evidence = _grounded(rate, total_line="Price $319", refund="free_cancellation",
+    evidence = _grounded(rate, total_line="Price $319", refund="non_refundable",
                          refund_line=policy)
-    assert evidence.refundability == "conflicting"
+    assert evidence.refundability == "explicit_nonrefundable"
+    assert evidence.refundability_text == policy
+
+
+def test_an_unsure_refund_or_tax_answer_never_counts() -> None:
+    room = RoomSnapshot(ROOM_LINES, (FLEXIBLE,))
+    _state, questions, prices = rate_questions("Standard King Room", room, FLEXIBLE, nights=1)
+
+    def unsure(question: str, chosen: str) -> ChoiceAnswer:
+        return ChoiceAnswer(chosen, 0.6, {chosen: 0.6})
+
+    answers = {
+        "total": _choice(questions["total"]["criteria"],  # type: ignore[arg-type]
+                         _option(prices, lambda v: v.startswith("Price $"))),
+        "refund": unsure("refund", "free_cancellation"),
+        "refund_line": _choice(questions["refund_line"]["criteria"], "l3"),  # type: ignore[arg-type]
+        "taxes": unsure("taxes", "included"),
+        **_terms(questions, taxes_line="t6"),
+    }
+    evidence = ground_rate(SystemOneResult("jev-1.13.0", answers, 10, 0), room, FLEXIBLE,
+                           prices, expected_currency="USD", nights=1)
+    assert (evidence.refundability, evidence.all_in) == ("conflicting", "conflicting")
+    answers["refund"] = _choice(questions["refund"]["criteria"], "free_cancellation")  # type: ignore[arg-type]
+    answers["taxes"] = _choice(questions["taxes"]["criteria"], "included")  # type: ignore[arg-type]
+    evidence = ground_rate(SystemOneResult("jev-1.13.0", answers, 10, 0), room, FLEXIBLE,
+                           prices, expected_currency="USD", nights=1)
+    assert (evidence.refundability, evidence.all_in) == ("explicit_refundable", "explicit")
 
 
 def test_total_question_states_the_stay_length_and_booking_label() -> None:
@@ -661,6 +720,7 @@ def test_discounted_rate_cards_ground_only_the_current_price(layout: str) -> Non
         "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
         "refund_line": _choice(questions["refund_line"]["criteria"], "l1"),  # type: ignore[arg-type]
         "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+        **_terms(questions),
     }
     evidence = ground_rate(
         SystemOneResult("jev-1.13.0", answers, 10, 0),
@@ -700,6 +760,9 @@ def test_extraction_diagnostic_counts_why_rates_went_unpriced() -> None:
                 "refund": "free_cancellation",
                 "refund_line": "l1",
                 "taxes": "included",
+                "taxes_line": "none",
+                "meal": "none",
+                "meal_line": "none",
             }
             answers = {
                 question_id: _choice(question["criteria"], chosen[question_id])
@@ -903,6 +966,7 @@ def test_no_wrong_amount_is_ever_grounded_as_the_total(case: int) -> None:
         "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
         "refund_line": _choice(questions["refund_line"]["criteria"], "l1"),  # type: ignore[arg-type]
         "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+        **_terms(questions),
     }
     evidence = ground_rate(
         SystemOneResult("jev-1.13.0", answers, 10, 0),
@@ -942,6 +1006,7 @@ def test_legitimate_totals_are_still_grounded(case: int) -> None:
         "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
         "refund_line": _choice(questions["refund_line"]["criteria"], "l1"),  # type: ignore[arg-type]
         "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+        **_terms(questions),
     }
     currency = "USD" if "US$" in marker else "EUR"
     evidence = ground_rate(
@@ -952,7 +1017,7 @@ def test_legitimate_totals_are_still_grounded(case: int) -> None:
     assert str(evidence.total.amount) == expected and evidence.total_reason == "ok"
 
 
-def test_taxes_added_on_top_are_never_grounded_as_included() -> None:
+def test_an_included_tax_claim_without_its_line_is_never_explicit() -> None:
     rate = ("Flexible", "Free cancellation", "Breakfast included", "€ 94",
             "+ € 12 taxes and fees", "1 night")
     room = RoomSnapshot(("Standard King Room",), (rate,))
@@ -963,6 +1028,7 @@ def test_taxes_added_on_top_are_never_grounded_as_included() -> None:
         "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
         "refund_line": _choice(questions["refund_line"]["criteria"], "l1"),  # type: ignore[arg-type]
         "taxes": _choice(questions["taxes"]["criteria"], "included"),  # type: ignore[arg-type]
+        **_terms(questions),
     }
     evidence = ground_rate(
         SystemOneResult("jev-1.13.0", answers, 10, 0), room, rate, prices,
@@ -1014,7 +1080,7 @@ def test_reload_never_recovers_a_tab_that_left_the_allowed_site(monkeypatch: Any
     assert session.navigations == [] and "end=invariant_before_reload" in runtime.diagnostic
 
 
-def test_each_offer_carries_its_own_rate_meal_wording() -> None:
+def test_each_offer_carries_jevs_meal_class_for_its_rate() -> None:
     snapshot = parse_offer_snapshot(
         {
             "url": URL,
@@ -1028,31 +1094,73 @@ def test_each_offer_carries_its_own_rate_meal_wording() -> None:
         }
     )
     saver, flexible = _extract(ScriptedJev(), snapshot).offers
-    # Read by code from the rate row; the room card's own lines are never meal evidence.
-    assert saver.meal_text == "none"
-    assert flexible.meal_text == "Very good breakfast included"
+    assert (saver.meal_text, flexible.meal_text) == ("none", "breakfast")
 
 
-def test_a_rate_named_for_a_meal_still_classifies_by_its_inclusion_statement() -> None:
-    """Live wording: the rate is called "Flexible + Breakfast" and says breakfast is included."""
-    from booksaver.domain.meal_plan import MealPlan, offer_meal_plan
+def test_an_included_meal_needs_its_named_line_and_a_sure_answer() -> None:
+    rate = (*FLEXIBLE, "Breakfast included")
+    room = RoomSnapshot(ROOM_LINES, (rate,))
+    _state, questions, prices = rate_questions("Standard King Room", room, rate, nights=1)
+    base = {
+        "total": _choice(questions["total"]["criteria"],  # type: ignore[arg-type]
+                         _option(prices, lambda v: v.startswith("Price $"))),
+        "refund": _choice(questions["refund"]["criteria"], "not_stated"),  # type: ignore[arg-type]
+        "refund_line": _choice(questions["refund_line"]["criteria"], "none"),  # type: ignore[arg-type]
+        "taxes": _choice(questions["taxes"]["criteria"], "not_stated"),  # type: ignore[arg-type]
+    }
+    line = f"l{len(rate) - 1}"
 
-    named = ("Flexible + Breakfast", *FLEXIBLE[1:3], "Very good breakfast included in the price",
-             *FLEXIBLE[3:])
-    name_only = ("Flexible + Breakfast", *FLEXIBLE[1:])
-    snapshot = parse_offer_snapshot(
-        {
-            "url": URL,
-            "title": PROPERTY,
-            "headings": [PROPERTY],
-            "rooms": [{"lines": list(ROOM_LINES), "rates": [list(named), list(name_only)]}],
-        }
-    )
-    with_statement, without = _extract(ScriptedJev(), snapshot).offers
-    assert with_statement.meal_text == "Very good breakfast included in the price"
-    assert offer_meal_plan(with_statement.meal_text) is MealPlan.BREAKFAST
-    # A name alone is not evidence of an included meal; it can only exclude the offer.
-    assert without.meal_text == "none"
+    def meal(**chosen: str) -> str | None:
+        answers = {**base, **_terms(questions, **chosen)}
+        return ground_rate(SystemOneResult("jev-1.13.0", answers, 10, 0), room, rate, prices,
+                           expected_currency="USD", nights=1).meal_plan
+
+    assert meal(meal="breakfast", meal_line=line) == "breakfast"
+    assert meal(meal="breakfast") is None  # no stating line: unknown, which only excludes
+    assert meal(meal="unclear", meal_line=line) is None
+    assert meal() == "none"
+
+
+def _booked_room_extract(jev: ScriptedJev, room_type: str) -> tuple[Any, LocalJevPriceRuntime]:
+    runtime = LocalJevPriceRuntime()
+    request = _request()
+    request = replace(request, query=replace(request.query, room_type=room_type))
+    return asyncio.run(runtime._extract(request, _snapshot(), jev)), runtime
+
+
+def _booked_room_asks(jev: ScriptedJev) -> int:
+    return sum(isinstance(s, dict) and set(s) == {"booked_room"} for s in jev.states)
+
+
+def test_an_exact_room_name_needs_no_booked_room_question() -> None:
+    jev = ScriptedJev()
+    observation, runtime = _booked_room_extract(jev, "standard  king room")
+    assert _booked_room_asks(jev) == 0
+    assert all(offer.booked_room for offer in observation.offers)
+    assert "booked_room=y" in runtime.diagnostic
+
+
+def test_jev_names_the_booked_room_when_the_page_words_it_differently() -> None:
+    """Live: Park Plaza's confirmation says "Deluxe Queen Bed", AIRINN's "Standard Double Room"."""
+    jev = ScriptedJev(booked_room=("r0", 0.95))
+    observation, _runtime = _booked_room_extract(jev, "King Room")
+    assert _booked_room_asks(jev) == 2
+    assert all(offer.booked_room for offer in observation.offers)
+    for answer in (("none", 1.0), ("r0", 0.7)):
+        observation, runtime = _booked_room_extract(ScriptedJev(booked_room=answer), "King Room")
+        assert not any(offer.booked_room for offer in observation.offers)
+        assert "booked_room=n" in runtime.diagnostic
+
+
+def test_two_disagreeing_booked_room_answers_match_nothing() -> None:
+    class Flips(ScriptedJev):
+        async def ask(self, state: object, questions: Any) -> SystemOneResult:
+            if "booked_room" in questions:
+                self.booked_room = ("none", 1.0) if self.booked_room[0] == "r0" else ("r0", 1.0)
+            return await super().ask(state, questions)
+
+    observation, _runtime = _booked_room_extract(Flips(booked_room=("none", 1.0)), "King Room")
+    assert not any(offer.booked_room for offer in observation.offers)
 
 
 # --- FR-6: Booking.com's signed-in redirect drops selected_currency -----------------------------

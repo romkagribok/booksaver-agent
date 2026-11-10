@@ -52,6 +52,7 @@ def _outcome(
     status: PriceExecutionStatus = PriceExecutionStatus.OBSERVED,
     rejection: ValidationRejection | None = None,
     meal_text: str | None = None,
+    booked_room: bool = False,
 ) -> PriceExecutionOutcome:
     booking = make_booking()
     if status is not PriceExecutionStatus.OBSERVED:
@@ -109,6 +110,7 @@ def _outcome(
                     offer.total,
                     offer.refundability_text or "",
                     meal_text,
+                    booked_room,
                 ),
             )
         ),
@@ -190,6 +192,16 @@ def test_qualified_room_equivalence_preserves_room_variant_boundaries() -> None:
         assert result.failure_reason.detail.startswith("No matching room type found: ")
 
 
+def test_a_room_jev_judged_to_be_the_booked_room_is_compared() -> None:
+    """Live: booked "Standard Double Room", the hotel page offers "Double Room" (ADR-064)."""
+    check = _AgenticCheck(_outcome(room_label="Double Room", booked_room=True))
+    result = _monitor(check)[0].run_authenticated(make_booking(), _snapshot())
+    assert result.outcome is CheckOutcome.SUCCESS
+    unjudged = _AgenticCheck(_outcome(room_label="Double Room"))
+    result = _monitor(unjudged)[0].run_authenticated(make_booking(), _snapshot())
+    assert result.outcome is CheckOutcome.FAILURE
+
+
 def test_agentic_provider_failure_is_terminal_without_legacy_retry() -> None:
     check = _AgenticCheck(_outcome(status=PriceExecutionStatus.PROVIDER_FAILURE))
     monitor, _history = _monitor(check)
@@ -226,7 +238,7 @@ def test_room_only_offer_is_not_reported_for_a_reservation_with_breakfast() -> N
 
 def test_offer_meal_plan_reaches_the_check_result() -> None:
     booking = replace(make_booking(), meal_plan=MealPlan.BREAKFAST)
-    check = _AgenticCheck(_outcome(meal_text="Very good breakfast included"))
+    check = _AgenticCheck(_outcome(meal_text="breakfast"))
     monitor, _history = _monitor(check)
     result = monitor.run_authenticated(booking, _snapshot())
     assert result.outcome is CheckOutcome.SUCCESS
