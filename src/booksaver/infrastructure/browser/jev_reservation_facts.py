@@ -187,6 +187,19 @@ def cancellation_sentences(lines: list[str]) -> list[str]:
     return sentences[:16]
 
 
+def booking_currency(area: list[str]) -> str | None:
+    """The currency of the price area's amount-only lines, when they agree (intent 038).
+
+    Booking.com shows a reservation's own price as a bare amount ("US$147.78") and any conversion
+    into the guest's currency with words around it ("approx. € 132"); Jev mixed the two up.
+    """
+    found = {
+        _currency(match[1]) for line in area
+        if (match := re.fullmatch(r"\s*" + _MONEY + r"\s*\.?\s*", line))
+    }
+    return found.pop() if len(found) == 1 else None
+
+
 def check_total(line: str, area: list[str]) -> dict[str, str] | None:
     """Jev's total, if it is one amount and the largest in its currency in the price area."""
     amounts = list(re.finditer(_MONEY, line))
@@ -333,26 +346,19 @@ class JevReservationFacts:
     ) -> None:
         lines = redact(confirmation_lines(text), facts.get("confirmation_id"))
         area, sentences = price_area(lines), cancellation_sentences(lines)
-        totals = {f"m{i}": line for i, line in enumerate(area)}
+        currency = booking_currency(area)
+        # Only lines in the booking's currency can be its total; unknown currency keeps them all.
+        totals = {
+            f"m{i}": line for i, line in enumerate(area)
+            if currency is None
+            or {_currency(m[1]) for m in re.finditer(_MONEY, line)} == {currency}
+        }
         refund_lines = {f"r{i}": sentence for i, sentence in enumerate(sentences)}
         nights = None
         if _known(facts, "check_in") and _known(facts, "check_out"):
             nights = (date.fromisoformat(facts["check_out"])
                       - date.fromisoformat(facts["check_in"])).days
         questions: dict[str, dict[str, object]] = {}
-        # The booking's currency (intent 038): pages also show an estimate in the guest's currency.
-        currencies = sorted({_currency(m[1]) for line in area for m in re.finditer(_MONEY, line)})
-        if len(currencies) > 1:
-            questions["booking_currency"] = choice_question(
-                {
-                    "question": "In which currency is this reservation priced and paid?",
-                    "hint": "Booking.com may also show an approximate amount converted into the "
-                    "guest's own currency; that is not the reservation's currency.",
-                    "rules": _RULES,
-                },
-                {**{code: code for code in currencies},
-                 "not_stated": "The lines do not show which currency the reservation is in"},
-            )
         if totals:
             questions["total"] = choice_question(
                 {
@@ -488,12 +494,8 @@ class JevReservationFacts:
         # Agreement plus the code check is the guard; a floor dropped correct mixed-currency totals.
         total_choice = _agreed(results, "total", 0.0)
         jev_total = check_total(totals[total_choice], area) if total_choice in totals else None
-        booking_currency = (
-            currencies[0] if len(currencies) == 1
-            else _agreed(results, "booking_currency", _MIN_LINE_CONFIDENCE)
-        )
-        # A total in any other currency is a display estimate, never the booked total.
-        if jev_total is not None and jev_total["currency"] != booking_currency:
+        # A total in another currency than the booking's is a display estimate (intent 038).
+        if jev_total is not None and currency not in (None, jev_total["currency"]):
             jev_total = None
         line_choice = _agreed(results, "refund_line", _MIN_LINE_CONFIDENCE)
         terms = _agreed(results, "refund")

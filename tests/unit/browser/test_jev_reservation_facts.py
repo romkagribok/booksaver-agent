@@ -13,6 +13,7 @@ from booksaver.infrastructure.browser.inventory_confirmation_facts import confir
 from booksaver.infrastructure.browser.jev_price_executor import JevArmMeter
 from booksaver.infrastructure.browser.jev_reservation_facts import (
     JevReservationFacts,
+    booking_currency,
     cancellation_sentences,
     check_dates,
     check_refund,
@@ -115,7 +116,7 @@ def _answers(total: str = "US$577.42", terms: str = "free_until_date",
         "refund_line": (next(f"r{i}" for i, s in enumerate(SENTENCES) if s.startswith(line)), conf),
         # The stay in _UNKNOWN is three nights for one adult.
         "adults": ("n1", conf), "children": ("n0", conf), "rooms": ("n1", conf),
-        "nights": ("n3", conf), "booking_currency": ("USD", conf),
+        "nights": ("n3", conf),
     }
 
 
@@ -429,29 +430,20 @@ def test_trip_cards_need_both_asks_and_respect_the_budget() -> None:
     assert asyncio.run(_reader(_Client()).classify_cards([])) == []
 
 
-def test_the_total_must_be_in_the_agreed_booking_currency() -> None:
+def test_the_total_is_read_in_the_booking_currency() -> None:
     """Live: Ayres shows "approx. € 132" and "US$147.78"; the estimate was saved (intent 038)."""
-    def run(*runs: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
-        facts, reasons = dict(_UNKNOWN), {}
-        asyncio.run(_reader(_Client(*runs))("\n".join(PAGE), facts, reasons))
-        return facts, reasons
-
-    facts, _ = run(_answers())
+    assert booking_currency(AREA) == "USD"
+    client = _Client(_answers())
+    facts: dict[str, str] = dict(_UNKNOWN)
+    asyncio.run(_reader(client)("\n".join(PAGE), facts, {}))
     assert (facts["booked_total"], facts["currency"]) == ("577.42", "USD")
-    estimate = {**_answers(), "total": (next(f"m{i}" for i, line in enumerate(AREA)
-                                             if line.startswith("approx.")), 0.9)}
-    facts, reasons = run(estimate)
-    assert facts["booked_total"] == "unknown" and reasons["booked_total"] == "jev_unread"
-    facts, _ = run({**_answers(), "booking_currency": ("EUR", 0.9)})
-    assert facts["booked_total"] == "unknown"
-    facts, _ = run(_answers(), {**_answers(), "booking_currency": ("not_stated", 0.9)})
-    assert facts["booked_total"] == "unknown"
+    offered = client.requests[0][1]["total"]["criteria"]
+    assert "approx. € 516" not in offered.values() and "US$577.42" in offered.values()
 
 
-def test_a_single_currency_page_needs_no_currency_question() -> None:
-    page = [line for line in PAGE if "US$" not in line and not line.startswith("approx.")]
-    page.append("€ 516")
-    client = _Client({**_answers(), "total": ("m0", 0.9)})
-    asyncio.run(_reader(client)("\n".join(page), dict(_UNKNOWN), {}))
-    assert "booking_currency" not in client.requests[0][1]
-
+def test_the_booking_currency_comes_from_amount_only_lines() -> None:
+    assert booking_currency(["1 room € 89.29", "12 % VAT € 10.71", "€ 102"]) == "EUR"
+    assert booking_currency(["1 room € 120", "approx. € 132", "US$147.78", "US$0"]) == "USD"
+    # No bare amount, or bare amounts in two currencies: unknown, every line stays an option.
+    assert booking_currency(["approx. € 516", "until May 1: US$0"]) is None
+    assert booking_currency(["€ 5", "US$4"]) is None

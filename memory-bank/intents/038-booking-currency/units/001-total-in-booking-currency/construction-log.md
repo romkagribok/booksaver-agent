@@ -20,6 +20,7 @@ last_updated: "2026-11-10T13:26:27Z"
 
 | Date | Action | Change | Reason | Approved |
 |------|--------|--------|--------|----------|
+| 2026-11-10 | redesign | Jev currency question replaced by the amount-only rule | Staging: Jev chose EUR for two USD bookings | Engineering, under the standing waiver |
 
 ## Current Bolt Structure
 
@@ -32,3 +33,4 @@ last_updated: "2026-11-10T13:26:27Z"
 | Date | Bolt | Event | Details |
 |------|------|-------|---------|
 | 2026-11-10T13:26:27Z | 111-total-in-booking-currency | started | Owner request; human checkpoints skipped under the standing waiver (CLAUDE.local.md point 4) |
+| 2026-11-10T13:39:23Z | 111-total-in-booking-currency | redesigned | Staged replay 13:31Z: Jev answered EUR for Ayres and Park Plaza; amount-only rule instead |

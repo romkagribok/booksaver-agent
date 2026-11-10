@@ -30,17 +30,21 @@ saved currency and reject offers in another currency; the fault is the saved cur
 
 ## Functional Requirements
 
-### FR-1: Jev states the booking's currency
-- **Description**: In the same two calls as the total, Jev answers in which currency the booking is
-  priced and paid, choosing among the currencies shown in the price area. Both answers must agree.
-- **Acceptance Criteria**: Ayres, Park Plaza, Best Western and Aloft answer USD; AIRINN and Kalipè
-  answer EUR; disagreement leaves the currency unknown.
+### FR-1: The booking's currency comes from its amount-only price lines
+- **Description**: The booking's currency is the currency of the price area's lines that are only
+  an amount ("US$147.78", "€ 102"); a conversion for the guest always has words around it
+  ("approx. € 132"). When those lines disagree or are missing, the currency is unknown.
+- **Amendment (2026-11-10T13:39:23Z)**: the first design had Jev state the currency. On staging Jev answered EUR for
+  Ayres (0.98) and Park Plaza (0.89), both USD bookings, and two other wordings were no better
+  (offline, five real pages). The language-neutral rule above replaces it.
+- **Acceptance Criteria**: Ayres, Park Plaza, Best Western and Aloft give USD; AIRINN and Kalipè
+  give EUR.
 - **Priority**: Must
 - **Related Stories**: US-263
 
 ### FR-2: The booked total is in the booking's currency
-- **Description**: Jev's total counts only when its currency equals the agreed booking currency;
-  the total question also says an approximate amount converted for display is never the total.
+- **Description**: When the booking's currency is known, only lines in it are offered to Jev as
+  the total, and a total in another currency never counts. Unknown currency: unchanged behaviour.
 - **Acceptance Criteria**: "approx. € 132" next to "US$147.78" is never saved as the total; a
   total in another currency than the agreed one leaves the total unread (saved total kept).
 - **Priority**: Must

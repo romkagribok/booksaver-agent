@@ -19,9 +19,9 @@ implemented: false
 
 ## Acceptance Criteria
 
-- [ ] **Given** "approx. € 132" and "US$147.78" with agreed currency USD, **When** synced, **Then** the total is USD 147.78.
-- [ ] **Given** a total whose currency differs from the agreed currency, **When** synced, **Then** the total stays unread and the saved one is kept.
-- [ ] **Given** disagreeing currency answers, **When** synced, **Then** the total stays unread.
+- [ ] **Given** "approx. € 132" and "US$147.78", **When** synced, **Then** the total is USD 147.78.
+- [ ] **Given** a total in another currency than the amount-only lines, **When** synced, **Then** it is never offered or saved.
+- [ ] **Given** no amount-only line, **When** synced, **Then** every price line is offered as today.
 - [ ] **Given** a single-currency page (AIRINN, EUR), **When** synced, **Then** it is read as before.
 - [ ] **Given** the real pages on staging, **When** synced, **Then** Ayres becomes USD 147.78, the others keep their totals, and Ayres' check runs in USD.
 
