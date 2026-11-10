@@ -69,9 +69,7 @@ Randomized slots are persisted locally, so restarts do not reroll or replay comp
 
 TypeSafe's Jev (`BOOKSAVER_TYPESAFE_API_KEY`) is the only model provider and is required for
 price checks and for the reservation-facts part of account syncs. The only `[agent]` setting is
-`max_job_cost_usd` (USD 1.00 by default); other `[agent]` keys, `[extraction]`, `routing`, and
-`inventory_routing` from older config files are ignored with one warning, and the files still
-load. Every active user uses Jev:
+`max_job_cost_usd` (USD 1.00 by default); keys from older config files are ignored. Every active user uses Jev:
 
 ```toml
 [agentic_browser]

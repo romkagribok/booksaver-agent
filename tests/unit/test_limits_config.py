@@ -28,7 +28,7 @@ def _base(limits: dict | None = None) -> dict:
 class TestLimitsConfig:
     def test_defaults_when_section_absent(self):
         cfg = load_config(DictSource(_base()))
-        assert cfg.limits_settings.max_bookings_per_user == 3
+        assert not hasattr(cfg.limits_settings, "max_bookings_per_user")
         assert cfg.limits_settings.max_checks_per_user_per_day == 150
         assert cfg.limits_settings.messages_per_minute_per_chat == 20
 
@@ -37,20 +37,18 @@ class TestLimitsConfig:
             DictSource(
                 _base(
                     {
-                        "max_bookings_per_user": 5,
                         "max_checks_per_user_per_day": 100,
                         "messages_per_minute_per_chat": 10,
                     }
                 )
             )
         )
-        assert cfg.limits_settings.max_bookings_per_user == 5
         assert cfg.limits_settings.max_checks_per_user_per_day == 100
         assert cfg.limits_settings.messages_per_minute_per_chat == 10
 
-    def test_zero_max_bookings_per_user_rejected(self):
-        with pytest.raises(ConfigValidationError, match="limits"):
-            load_config(DictSource(_base({"max_bookings_per_user": 0})))
+    def test_removed_max_bookings_per_user_still_loads(self):
+        cfg = load_config(DictSource(_base({"max_bookings_per_user": 0})))
+        assert cfg.limits_settings.max_checks_per_user_per_day == 150
 
     def test_negative_max_checks_per_user_per_day_rejected(self):
         with pytest.raises(ConfigValidationError, match="limits"):
@@ -64,13 +62,11 @@ class TestLimitsConfig:
 class TestLimitsSettingsValueObject:
     def test_defaults_are_valid(self):
         settings = LimitsSettings()
-        assert settings.max_bookings_per_user == 3
         assert settings.max_checks_per_user_per_day == 150
         assert settings.messages_per_minute_per_chat == 20
 
     def test_each_field_must_be_at_least_one(self):
         for field_name in (
-            "max_bookings_per_user",
             "max_checks_per_user_per_day",
             "messages_per_minute_per_chat",
         ):
