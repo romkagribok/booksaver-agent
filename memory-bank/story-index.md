@@ -912,3 +912,13 @@ Jev classifies trip cards during discovery.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-262` | Jev classifies trip cards | Jev sync | Complete | `001-jev-classifies-trip-cards/stories/001-jev-classifies-trip-cards.md` |
+
+## 038-booking-currency
+
+Bookings are stored and checked in the currency they were made in.
+
+### 001-total-in-booking-currency
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-263` | The booked total is read in the booking's currency | Jev sync | Planned | `001-total-in-booking-currency/stories/001-total-in-booking-currency.md` |
