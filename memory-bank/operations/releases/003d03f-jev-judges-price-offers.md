@@ -2,7 +2,7 @@
 version: jevprice-003d03f
 commit: 003d03f
 created: "2026-11-10T01:07:59Z"
-status: deployed-awaiting-readback
+status: deployed-verified
 recorded: "2026-11-10T01:10:00Z"
 ---
 
@@ -44,4 +44,10 @@ merge `336f23e`). That PR's verification is recorded separately by its own sessi
 
 ## Production read-back
 
-Pending: the next scheduled checks of Park Plaza and the other monitored bookings.
+Production checks on 2026-11-10 (by then running `jevbetter-3cdaf88`, which contains this release):
+- **Park Plaza Lodge:** priced USD 364 at 06:53Z and 09:48Z through Jev's room match. It had failed
+  with "No matching room type found" on 2026-11-09.
+- **Unchanged:** Best Western USD 512, Union Club USD 570, Kalipè no availability.
+- **Ayres Hotel Vista Carlsbad:** priced in EUR and alerted a EUR 1 "saving" twice. The cause is the
+  reservation reader saving Booking.com's "approx. €" estimate instead of US$147.78, not this
+  release; it is fixed by intent 038.

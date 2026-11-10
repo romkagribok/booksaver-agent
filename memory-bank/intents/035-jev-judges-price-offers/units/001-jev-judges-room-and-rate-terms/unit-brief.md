@@ -2,7 +2,7 @@
 unit: 001-jev-judges-room-and-rate-terms
 intent: 035-jev-judges-price-offers
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-10T00:36:30Z"

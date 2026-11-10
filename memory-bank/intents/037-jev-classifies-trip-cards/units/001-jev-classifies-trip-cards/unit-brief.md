@@ -2,7 +2,7 @@
 unit: 001-jev-classifies-trip-cards
 intent: 037-jev-classifies-trip-cards
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-10T02:08:13Z"

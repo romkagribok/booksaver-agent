@@ -3,13 +3,13 @@ id: 109-same-or-better-room
 unit: 001-jev-judges-room-and-rate-terms
 intent: 035-jev-judges-price-offers
 type: simple-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 002-same-or-better-room
 created: "2026-11-10T01:15:25Z"
 started: "2026-11-10T01:15:25Z"
-completed: null
-current_stage: plan
+completed: "2026-11-10T13:54:13Z"
+current_stage: null
 stages_completed:
   - name: plan
     completed: "2026-11-10T01:15:25Z"

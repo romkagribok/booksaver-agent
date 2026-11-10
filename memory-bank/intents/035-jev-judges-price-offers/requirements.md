@@ -1,7 +1,7 @@
 ---
 intent: 035-jev-judges-price-offers
 phase: construction
-status: construction
+status: complete
 created: "2026-11-10T00:36:30Z"
 updated: "2026-11-10T00:36:30Z"
 ---

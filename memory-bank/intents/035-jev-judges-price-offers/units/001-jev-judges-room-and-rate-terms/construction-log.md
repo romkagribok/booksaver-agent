@@ -26,8 +26,8 @@ last_updated: "2026-11-10T00:36:30Z"
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
-| 106-jev-judges-room-and-rate-terms | US-258 | ⏳ in-progress | - |
-| 109-same-or-better-room | US-261 | ⏳ in-progress | 2026-11-10 |
+| 106-jev-judges-room-and-rate-terms | US-258 | ✅ complete | - |
+| 109-same-or-better-room | US-261 | ✅ complete | 2026-11-10 |
 
 ## Execution History
 
@@ -36,3 +36,5 @@ last_updated: "2026-11-10T00:36:30Z"
 | 2026-11-10T00:36:30Z | 106-jev-judges-room-and-rate-terms | started | Owner: "ok, please proceed"; plan before code; commit, merge and deploy approved |
 | 2026-11-10T01:03:30Z | 106-jev-judges-room-and-rate-terms | tested | Suite green; staged replay priced Park Plaza; AIRINN's room not on sale; 27 meal wordings safe after one hint |
 | 2026-11-10T01:15:25Z | 109-same-or-better-room | started | Owner approved same-or-better rooms; commit, merge and deploy approved for this flow |
+| 2026-11-10T13:54:31Z | 106-jev-judges-room-and-rate-terms | completed | Production read-back 2026-11-10 recorded in the release record; closed with bolt-complete.cjs |
+| 2026-11-10T13:54:31Z | 109-same-or-better-room | completed | Production read-back 2026-11-10 recorded in the release record; closed with bolt-complete.cjs |
