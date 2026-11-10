@@ -406,7 +406,9 @@ def rate_questions(
         "meal": choice_question(
             {
                 "question": "Which meals does this rate option include in its price?",
-                "hint": "A meal offered for an extra charge is not included.",
+                # Live wording check (2026-11-10): a bare "Breakfast" line was read as included.
+                "hint": "A meal offered for an extra charge, or only named without saying it "
+                "is included (for example just 'Breakfast'), is not included.",
                 "rules": _UNTRUSTED,
             },
             {

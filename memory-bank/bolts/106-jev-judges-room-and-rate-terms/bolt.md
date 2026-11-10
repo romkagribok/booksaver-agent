@@ -9,11 +9,17 @@ stories:
 created: "2026-11-10T00:36:30Z"
 started: "2026-11-10T00:36:30Z"
 completed: null
-current_stage: plan
+current_stage: test
 stages_completed:
   - name: plan
     completed: "2026-11-10T00:36:30Z"
     artifact: implementation-plan.md
+  - name: implement
+    completed: "2026-11-10T01:03:30Z"
+    artifact: implementation-walkthrough.md
+  - name: test
+    completed: "2026-11-10T01:03:30Z"
+    artifact: test-walkthrough.md
 requires_bolts: []
 enables_bolts: []
 requires_units: []
