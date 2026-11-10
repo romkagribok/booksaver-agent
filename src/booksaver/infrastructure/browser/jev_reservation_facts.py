@@ -41,7 +41,7 @@ from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
 
 logger = logging.getLogger(__name__)
 
-ADAPTER = "jev-reservation-facts-v4"
+ADAPTER = "jev-reservation-facts-v5"
 _MAX_CALLS_PER_SYNC = 20
 _MIN_CONFIDENCE = 0.6
 # The deadline sentence is often one of several similar ones, so its confidence runs lower.
@@ -185,6 +185,19 @@ def cancellation_sentences(lines: list[str]) -> list[str]:
             ):
                 sentences.append(candidate)
     return sentences[:16]
+
+
+def booking_currency(area: list[str]) -> str | None:
+    """The currency of the price area's amount-only lines, when they agree (intent 038).
+
+    Booking.com shows a reservation's own price as a bare amount ("US$147.78") and any conversion
+    into the guest's currency with words around it ("approx. € 132"); Jev mixed the two up.
+    """
+    found = {
+        _currency(match[1]) for line in area
+        if (match := re.fullmatch(r"\s*" + _MONEY + r"\s*\.?\s*", line))
+    }
+    return found.pop() if len(found) == 1 else None
 
 
 def check_total(line: str, area: list[str]) -> dict[str, str] | None:
@@ -333,7 +346,16 @@ class JevReservationFacts:
     ) -> None:
         lines = redact(confirmation_lines(text), facts.get("confirmation_id"))
         area, sentences = price_area(lines), cancellation_sentences(lines)
-        totals = {f"m{i}": line for i, line in enumerate(area)}
+        currency = booking_currency(area)
+        # Only lines in the booking's currency can be its total; unknown currency keeps them all.
+        totals: dict[str, str] = {}
+        for i, line in enumerate(area):
+            # A repeated line is one option: duplicates split Jev's choice between equal answers.
+            if line not in totals.values() and (
+                currency is None
+                or {_currency(m[1]) for m in re.finditer(_MONEY, line)} == {currency}
+            ):
+                totals[f"m{i}"] = line
         refund_lines = {f"r{i}": sentence for i, sentence in enumerate(sentences)}
         nights = None
         if _known(facts, "check_in") and _known(facts, "check_out"):
@@ -345,8 +367,10 @@ class JevReservationFacts:
                 {
                     "question": f"These lines are from one Booking.com reservation confirmation "
                     f"for a stay of {nights} night(s). Which line is the total amount the guest "
-                    "pays for the whole stay, including taxes, in the currency they will be "
-                    "charged?",
+                    "pays for the whole stay, including taxes?"
+                    + (f" The reservation's own currency is {currency}; the options are the lines "
+                       "in that currency." if currency else " Choose the amount in the "
+                       "reservation's own currency."),
                     "hint": "A line starting with 'approx.' is an estimate in another currency. "
                     "Room and tax rows are parts of the total. A cancellation fee is not the "
                     "total.",
@@ -475,6 +499,9 @@ class JevReservationFacts:
         # Agreement plus the code check is the guard; a floor dropped correct mixed-currency totals.
         total_choice = _agreed(results, "total", 0.0)
         jev_total = check_total(totals[total_choice], area) if total_choice in totals else None
+        # A total in another currency than the booking's is a display estimate (intent 038).
+        if jev_total is not None and currency not in (None, jev_total["currency"]):
+            jev_total = None
         line_choice = _agreed(results, "refund_line", _MIN_LINE_CONFIDENCE)
         terms = _agreed(results, "refund")
         check_in = date.fromisoformat(facts["check_in"]) if _known(facts, "check_in") else None

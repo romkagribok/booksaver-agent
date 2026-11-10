@@ -13,6 +13,7 @@ from booksaver.infrastructure.browser.inventory_confirmation_facts import confir
 from booksaver.infrastructure.browser.jev_price_executor import JevArmMeter
 from booksaver.infrastructure.browser.jev_reservation_facts import (
     JevReservationFacts,
+    booking_currency,
     cancellation_sentences,
     check_dates,
     check_refund,
@@ -427,3 +428,22 @@ def test_trip_cards_need_both_asks_and_respect_the_budget() -> None:
     assert asyncio.run(_reader(_Client({"c0": ("stay_active", 1.0)}), cap=0)
                        .classify_cards(cards)) is None
     assert asyncio.run(_reader(_Client()).classify_cards([])) == []
+
+
+def test_the_total_is_read_in_the_booking_currency() -> None:
+    """Live: Ayres shows "approx. € 132" and "US$147.78"; the estimate was saved (intent 038)."""
+    assert booking_currency(AREA) == "USD"
+    client = _Client(_answers())
+    facts: dict[str, str] = dict(_UNKNOWN)
+    asyncio.run(_reader(client)("\n".join(PAGE), facts, {}))
+    assert (facts["booked_total"], facts["currency"]) == ("577.42", "USD")
+    offered = client.requests[0][1]["total"]["criteria"]
+    assert "approx. € 516" not in offered.values() and "US$577.42" in offered.values()
+
+
+def test_the_booking_currency_comes_from_amount_only_lines() -> None:
+    assert booking_currency(["1 room € 89.29", "12 % VAT € 10.71", "€ 102"]) == "EUR"
+    assert booking_currency(["1 room € 120", "approx. € 132", "US$147.78", "US$0"]) == "USD"
+    # No bare amount, or bare amounts in two currencies: unknown, every line stays an option.
+    assert booking_currency(["approx. € 516", "until May 1: US$0"]) is None
+    assert booking_currency(["€ 5", "US$4"]) is None
