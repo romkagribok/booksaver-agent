@@ -2,7 +2,7 @@
 version: jevbetter-3cdaf88
 commit: 3cdaf88
 created: "2026-11-10T01:42:19Z"
-status: deployed-awaiting-readback
+status: deployed-verified
 recorded: "2026-11-10T01:45:00Z"
 ---
 
@@ -47,4 +47,11 @@ ADR-065, amends ADR-064).
 
 ## Production read-back
 
-Pending: the next scheduled checks.
+Production checks on 2026-11-10:
+- **AIRINN (2026-11-17):** priced EUR 157 at 06:55Z and 09:50Z on a better room ("Standard Double
+  Room with Balcony", breakfast, refundable). That is above the EUR 102 paid, so no alert. It had
+  never priced before.
+- **Park Plaza:** USD 364 on the same-room match.
+- **Union Club** (user 1): USD 570 against USD 592.48 paid gave a USD 22.48 saving alert at 11:44Z,
+  on an exact room match.
+- **Syncs:** 02:32Z, 06:52Z, 09:47Z and 11:43Z all complete, with no stall notices.
