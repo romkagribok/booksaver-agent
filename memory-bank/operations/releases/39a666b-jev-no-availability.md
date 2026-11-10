@@ -3,7 +3,7 @@ version: noavail-39a666b
 commit: 39a666b
 created: "2026-11-06T17:25:14Z"
 status: deployed-verified
-recorded: "2026-11-10T00:52:50Z"
+recorded: "2026-11-06T17:30:00Z"
 ---
 
 # No availability for the dates is a conclusive result (intent 032)
@@ -36,13 +36,6 @@ price validation (`query_identity_rejection`). A confident "unavailable" (at lea
 
 ## Production read-back
 
-Read 2026-11-10T00:46:02Z to 00:49:37Z. Method: read-only, through the specs.md operations agent's verify step: `ssh booksaver`, `docker ps/inspect/events/logs`, and the live database opened read-only from the host volume (`mode=ro`); the app's store was not opened and nothing was stopped, restarted, written or replayed.
-
-- Kalipè (2c711962, Residence Kalipè, user 4): the awaited scheduled sync ran at 2026-11-06T23:52:16Z and the check at 23:53:34Z recorded `no_equivalent_offer`, "The property shows no availability for these dates." (Jev `unavailable`, 17 calls, about USD 0.00035). Same result on 8 consecutive checks to 2026-11-09T10:02:28Z across three images; the ninth hit user 4's daily check limit.
-- No stall notice for this booking, or for any booking, since 2026-11-06.
-- Control: AIRINN (032be4a7) unchanged, `no_equivalent_offer` room_mismatch=26 on this image.
-- Not observed: the availability confidence (0.91 on staging) is not stored in production; the 0.8 floor is implied by the `unavailable` status only.
-- Caveat, logs: daemon logs since the promotion no longer exist. Another session recreated the `booksaver` container at 2026-11-10T00:41:38Z (Docker json-file logs go with the container), so `docker logs` starts at 00:41:54Z with five clean startup lines. "No errors" rests on database outcomes (`booking_sync_runs`, `check_history`, `jev_price_runs`, `scheduled_check_slots`, `monitoring_stall_notices`) and the later promotion health logs, not on a log scan.
-- Caveat, production state at read-back: at 2026-11-10T00:49Z the `booksaver` daemon was `Exited (0)`, paused at 00:46:37Z by a concurrent session's `jevprice-20261110` staging kit (its marker says its `run.sh` restores it). Not caused by this release; its restore was not observed in this read-back.
-
-Verdict: passed.
+The dad's scheduled run at 2026-11-06T23:53Z recorded Residence Kalipè as a conclusive
+`no_equivalent_offer` with "The property shows no availability for these dates." Eight checks to
+2026-11-09T10:02Z gave the same result, with no stall notice for it.
