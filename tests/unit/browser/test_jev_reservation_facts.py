@@ -407,14 +407,16 @@ def test_numeric_stay_dates_reach_jev_but_long_numbers_do_not(value: str) -> Non
 def test_trip_cards_are_classified_only_where_both_asks_agree_surely() -> None:
     cards = [["AIRINN Vilnius Airport Hotel", "Nov 10 – Nov 11", "Confirmed"],
              ["BMW X1 or similar", "Nov 12 – Nov 20", "Confirmed"],
-             ["Get the free app", "Guest name: Jane Doe", "Install"]]
+             ["Get the free app", "Guest name", "Jane Doe", "Booker: John Smith", "Install"]]
     client = _Client(
         {"c0": ("stay_active", 0.97), "c1": ("other_active", 0.95), "c2": ("not_a_booking", 0.9)},
         {"c0": ("stay_active", 0.93), "c1": ("other_inactive", 0.95), "c2": ("not_a_booking", 0.7)},
     )
     assert asyncio.run(_reader(client).classify_cards(cards)) == ["stay_active", None, None]
     state, questions = client.requests[0]
-    assert state == {} and "Jane Doe" not in json.dumps(questions)
+    assert state == {}
+    assert not {"Jane", "John", "Guest name", "Booker"} & set(json.dumps(questions).split())
+    assert "Jane Doe" not in json.dumps(questions) and "John Smith" not in json.dumps(questions)
     assert "BMW X1 or similar | Nov 12 – Nov 20 | Confirmed" in json.dumps(questions["c1"],
                                                                         ensure_ascii=False)
 

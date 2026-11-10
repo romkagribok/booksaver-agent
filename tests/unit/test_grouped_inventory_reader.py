@@ -1045,3 +1045,15 @@ def test_a_non_reservation_card_jev_calls_a_stay_is_unclassified(monkeypatch):
     worker.classify, _ = _jev({"Hotel": "stay_active"})
     asyncio.run(worker.run())
     assert result.verified_trip_counts == 0 and result.unresolved > 0
+
+
+def test_cards_beyond_the_classification_limit_block_count_proof_and_are_opened(monkeypatch):
+    promos = [(f"https://secure.booking.com/promo{i}.html", f"Offer {i}\nSave now")
+              for i in range(29)]
+    cards = [(DETAILS[0], "Hotel A\nCanceled"), *promos, (DETAILS[1], "Hotel B\nConfirmed")]
+    worker, result = harness(monkeypatch, _one_trip(cards, 1))
+    worker.classify, seen = _jev({"Canceled": "stay_cancelled", "Offer": "not_a_booking"})
+    asyncio.run(worker.run())
+    assert len(seen[0]) == 30
+    assert result.verified_trip_counts == 0 and result.details_observed == 2
+

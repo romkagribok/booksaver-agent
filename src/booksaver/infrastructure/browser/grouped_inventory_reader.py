@@ -530,16 +530,19 @@ class GroupedInventoryReader:
                 continue
             kept = merged.setdefault(key, [])
             kept.extend(line for line in lines if line not in kept)
-        return dict(list(merged.items())[:30])
+        return merged
 
     async def card_classes(self, snapshot: InventorySnapshot) -> dict[str, str | None] | None:
         """Jev's class per card key (ADR-066); None when Jev gave no answer (code words decide)."""
         if self.classify is None:
             return None
         cards = self.cards(snapshot)
-        classes = await self.classify(list(cards.values()))
-        if classes is None or len(classes) != len(cards):
+        asked = list(cards.values())[:30]
+        classes = await self.classify(asked)
+        if classes is None or len(classes) != len(asked):
             return None
+        # Cards beyond the limit stay unclassified: they block count proof and are opened.
+        classes = [*classes, *([None] * (len(cards) - len(asked)))]
         details = {
             InventoryTraversal._key(link.url) for link in snapshot.links
             if inventory_page_kind(link.url) == "reservation_detail"

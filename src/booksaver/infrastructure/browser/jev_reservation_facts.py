@@ -522,7 +522,7 @@ class JevReservationFacts:
             f"c{index}": choice_question(
                 {
                     "question": "What is this card on a Booking.com trip page? Card: "
-                    + " | ".join(_safe(lines)[:8]),
+                    + " | ".join(_safe(redact(lines))[:8]),
                     "rules": _RULES,
                 },
                 CARD_CLASSES,
