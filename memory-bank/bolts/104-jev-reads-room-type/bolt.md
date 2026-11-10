@@ -3,13 +3,13 @@ id: 104-jev-reads-room-type
 unit: 001-jev-reads-room-type
 intent: 033-jev-reads-room-type
 type: simple-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-jev-reads-room-type
 created: "2026-11-08T02:21:32Z"
 started: "2026-11-08T02:21:32Z"
-completed: null
-current_stage: test
+completed: "2026-11-10T00:55:35Z"
+current_stage: null
 stages_completed:
   - name: plan
     completed: "2026-11-08T02:21:32Z"

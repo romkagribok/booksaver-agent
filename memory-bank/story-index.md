@@ -825,16 +825,16 @@ Run BookSaver on Jev alone. Unit 1: Jev reads totals and refund terms; Claude re
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-249` | Move shared helpers out of Claude modules | Jev only | Planned | `003-delete-claude-code/stories/001-extract-shared-helpers.md` |
-| `US-250` | Delete the Claude-only code | Jev only | Planned | `003-delete-claude-code/stories/002-delete-claude-only-code.md` |
+| `US-249` | Move shared helpers out of Claude modules | Jev only | Complete | `003-delete-claude-code/stories/001-extract-shared-helpers.md` |
+| `US-250` | Delete the Claude-only code | Jev only | Complete | `003-delete-claude-code/stories/002-delete-claude-only-code.md` |
 
 ### 004-claude-data-config-docs
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-251` | Drop the Claude tables | Jev only | Planned | `004-claude-data-config-docs/stories/001-drop-claude-tables.md` |
-| `US-252` | Retire the Claude config keys | Jev only | Planned | `004-claude-data-config-docs/stories/002-retire-claude-config.md` |
-| `US-253` | Update docs and close the issues | Jev only | Planned | `004-claude-data-config-docs/stories/003-update-docs-and-issues.md` |
+| `US-251` | Drop the Claude tables | Jev only | In progress (released; bolt 101 open for US-253) | `004-claude-data-config-docs/stories/001-drop-claude-tables.md` |
+| `US-252` | Retire the Claude config keys | Jev only | In progress (released; bolt 101 open for US-253) | `004-claude-data-config-docs/stories/002-retire-claude-config.md` |
+| `US-253` | Update docs and close the issues | Jev only | In progress (issues closed; `.env.example` still names the Anthropic key) | `004-claude-data-config-docs/stories/003-update-docs-and-issues.md` |
 
 ## 031-cancelled-card-trip-count
 
@@ -854,7 +854,7 @@ A trip with a cancelled card can be verified.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-255` | Record "no availability for your dates" as conclusive | Jev price | Planned | `001-no-availability-is-conclusive/stories/001-record-no-availability.md` |
+| `US-255` | Record "no availability for your dates" as conclusive | Jev price | Complete | `001-no-availability-is-conclusive/stories/001-record-no-availability.md` |
 
 ## 033-jev-reads-room-type
 
@@ -864,7 +864,7 @@ Jev reads the booked room type; agreed totals are not dropped.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-256` | Jev reads the room type and agreed totals count | Jev sync | Planned | `001-jev-reads-room-type/stories/001-jev-reads-room-type.md` |
+| `US-256` | Jev reads the room type and agreed totals count | Jev sync | Complete | `001-jev-reads-room-type/stories/001-jev-reads-room-type.md` |
 
 ## 034-jev-reads-reservation-facts
 
@@ -874,7 +874,7 @@ Jev reads the booked party, meals and (when needed) dates.
 
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
-| `US-257` | Jev reads the booked party, meals and missing dates | Jev sync | Planned | `001-jev-reads-party-meals-dates/stories/001-jev-reads-party-meals-dates.md` |
+| `US-257` | Jev reads the booked party, meals and missing dates | Jev sync | Complete (release A; releases B and C are outside intent 034) | `001-jev-reads-party-meals-dates/stories/001-jev-reads-party-meals-dates.md` |
 
 ## 036-per-user-limits
 

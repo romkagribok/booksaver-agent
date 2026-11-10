@@ -22,7 +22,7 @@ FR-15.
 ## Acceptance criteria
 
 - [ ] Given README, AGENTS.md, the example config and the standards, when read, then TypeSafe is the only model provider.
-- [ ] Given issues #79 and #3, when the release is done, then they are closed with a summary.
+- [x] Given issues #79 and #3, when the release is done, then they are closed with a summary.
 
 ## Out of scope
 

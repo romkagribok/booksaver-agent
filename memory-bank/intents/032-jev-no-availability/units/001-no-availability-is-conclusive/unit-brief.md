@@ -2,7 +2,7 @@
 unit: 001-no-availability-is-conclusive
 intent: 032-jev-no-availability
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-06T16:53:03Z"

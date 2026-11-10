@@ -2,7 +2,7 @@
 unit: 001-jev-reads-room-type
 intent: 033-jev-reads-room-type
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-08T02:21:32Z"

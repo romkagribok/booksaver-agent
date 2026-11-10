@@ -2,7 +2,7 @@
 id: 001-jev-reads-room-type
 unit: 001-jev-reads-room-type
 intent: 033-jev-reads-room-type
-status: implemented
+status: complete
 priority: must
 created: "2026-11-08T02:21:32Z"
 assigned_bolt: 104-jev-reads-room-type

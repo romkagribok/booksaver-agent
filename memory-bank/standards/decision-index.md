@@ -322,7 +322,7 @@ Use this to find relevant prior decisions when working on related features.
 - **Read when**: Working on search entry, journey step ordering, Booking.com results URLs, agent budget allocation, or reconsidering homepage form automation versus direct property links.
 
 ### ADR-019: Fernet (via `cryptography`) for personal-key encryption at rest
-- **Status**: accepted
+- **Status**: accepted, amended by ADR-063 (personal Anthropic keys, `/setkey` and `/deletekey` removed; Fernet with `BOOKSAVER_SECRET_KEY` still encrypts sessions and diagnostics)
 - **Date**: 2026-07-11
 - **Bolt**: 009-user-access-and-keys (user-access-and-keys)
 - **Path**: `bolts/009-user-access-and-keys/adr-019-fernet-user-key-encryption.md`
@@ -601,6 +601,6 @@ Use this to find relevant prior decisions when working on related features.
 - **Date**: 2026-11-06
 - **Bolt**: 101-claude-data-config-docs (claude-data-config-docs)
 - **Path**: `bolts/101-claude-data-config-docs/adr-063-typesafe-jev-is-the-only-model-provider.md`
-- **Summary**: All Anthropic, Stagehand and Browser Use agent code, Claude tables, personal Anthropic keys and Claude-era config keys are removed; Jev via `BOOKSAVER_TYPESAFE_API_KEY` is the only model. Supersedes ADRs 009, 015-017, 031, 037, 043-046, 055; amends ADR-056.
+- **Summary**: All Anthropic, Stagehand and Browser Use agent code, Claude tables, personal Anthropic keys and Claude-era config keys are removed; Jev via `BOOKSAVER_TYPESAFE_API_KEY` is the only model. Supersedes ADRs 009, 015-017, 031, 037, 043-046, 055; amends ADRs 019 and 056.
 - **Read when**: Adding any model provider, model call, or LLM-related configuration.
 

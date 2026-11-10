@@ -2,7 +2,7 @@
 id: 001-record-no-availability
 unit: 001-no-availability-is-conclusive
 intent: 032-jev-no-availability
-status: implemented
+status: complete
 priority: must
 created: "2026-11-06T16:53:03Z"
 assigned_bolt: 103-no-availability-is-conclusive

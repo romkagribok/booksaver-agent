@@ -2,7 +2,7 @@
 id: 001-jev-reads-party-meals-dates
 unit: 001-jev-reads-party-meals-dates
 intent: 034-jev-reads-reservation-facts
-status: implemented
+status: complete
 priority: must
 created: "2026-11-08T18:31:21Z"
 assigned_bolt: 105-jev-reads-party-meals-dates

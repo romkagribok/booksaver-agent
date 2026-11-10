@@ -21,7 +21,7 @@ FR-13.
 
 ## Acceptance criteria
 
-- [ ] Given a backup, when the migration runs, then the three Claude tables are gone and personal keys are cleared.
+- [x] Given a backup, when the migration runs, then the three Claude tables are gone and personal keys are cleared.
 
 ## Out of scope
 

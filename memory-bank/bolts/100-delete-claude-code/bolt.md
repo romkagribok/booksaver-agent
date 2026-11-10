@@ -3,14 +3,14 @@ id: 100-delete-claude-code
 unit: 003-delete-claude-code
 intent: 030-jev-only-booksaver
 type: ddd-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-extract-shared-helpers
   - 002-delete-claude-only-code
 created: "2026-11-04T16:13:23Z"
 started: "2026-11-06T01:24:25Z"
-completed: null
-current_stage: test
+completed: "2026-11-10T00:55:34Z"
+current_stage: null
 stages_completed:
   - name: domain-model
     completed: "2026-11-06T01:24:25Z"

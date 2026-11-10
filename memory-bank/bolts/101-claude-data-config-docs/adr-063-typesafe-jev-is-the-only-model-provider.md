@@ -4,7 +4,7 @@ status: accepted
 created: 2026-11-06T02:06:45Z
 bolt: 101-claude-data-config-docs
 supersedes: ADR-009, ADR-015, ADR-016, ADR-017, ADR-031, ADR-037, ADR-043, ADR-044, ADR-045, ADR-046, ADR-055
-amends: ADR-056
+amends: ADR-056, ADR-019
 ---
 
 # ADR-063: TypeSafe's Jev is BookSaver's only model provider

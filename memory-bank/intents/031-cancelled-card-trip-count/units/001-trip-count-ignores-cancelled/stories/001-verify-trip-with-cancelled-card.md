@@ -22,10 +22,10 @@ FR-1, FR-2.
 
 ## Acceptance criteria
 
-- [ ] Given four confirmed hotel cards, one canceled card and one car rental with a count of five, when read, then the trip is verified and the sync is complete.
-- [ ] Given the same trip, when read, then the canceled card is still opened and recorded.
-- [ ] Given a count that matches neither way, when read, then the trip stays unverified.
-- [ ] Given the dad's account on staging, when synced, then the sync is complete and the superseded Best Western is no longer upcoming.
+- [x] Given four confirmed hotel cards, one canceled card and one car rental with a count of five, when read, then the trip is verified and the sync is complete.
+- [x] Given the same trip, when read, then the canceled card is still opened and recorded.
+- [x] Given a count that matches neither way, when read, then the trip stays unverified.
+- [x] Given the dad's account on staging, when synced, then the sync is complete and the superseded Best Western is no longer upcoming.
 
 ## Out of scope
 

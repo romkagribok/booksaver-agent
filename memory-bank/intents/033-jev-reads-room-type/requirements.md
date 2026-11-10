@@ -1,7 +1,7 @@
 ---
 intent: 033-jev-reads-room-type
 phase: construction
-status: construction
+status: complete
 created: "2026-11-08T02:21:32Z"
 updated: "2026-11-08T02:21:32Z"
 ---
