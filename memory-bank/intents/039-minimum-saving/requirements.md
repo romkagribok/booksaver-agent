@@ -1,7 +1,7 @@
 ---
 intent: 039-minimum-saving
 phase: construction
-status: construction
+status: complete
 created: "2026-11-10T14:50:41Z"
 updated: "2026-11-10T14:50:41Z"
 ---

@@ -2,7 +2,7 @@
 unit: 001-total-in-booking-currency
 intent: 038-booking-currency
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-10T13:26:27Z"
