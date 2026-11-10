@@ -82,7 +82,7 @@ data_directory = "~/.booksaver"  # Where all BookSaver data is stored — local 
 
 [limits]
 # Per-user abuse/fairness limits for multi-user Telegram deployments (US-031).
-# max_checks_per_user_per_day = 48   # price checks per user per day before skipping
+# max_checks_per_user_per_day = 150  # price checks per user per day before skipping
 # messages_per_minute_per_chat = 20  # outbound bot replies per chat per minute
 """
 
@@ -548,7 +548,7 @@ def _make_check_coordinator(
 
 
 def _make_reservation_facts_assistant(cfg: Config) -> tuple[Any, Any]:
-    """Jev reads totals and refund terms in syncs, under the shared Jev daily cap (ADR-060)."""
+    """Jev reads totals and refund terms in syncs, under the user's Jev daily cap (ADR-060)."""
     typesafe_key = os.environ.get("BOOKSAVER_TYPESAFE_API_KEY", "").strip()
     if not typesafe_key:
         return None, None
@@ -562,13 +562,13 @@ def _make_reservation_facts_assistant(cfg: Config) -> tuple[Any, Any]:
     settings = cfg.jev_comparison_settings
     client = TypeSafeClient(typesafe_key, model=settings.model)
     db_path = cfg.data_directory.path / "booksaver.db"
-    def _assistant() -> Any:
+    def _assistant(user_id: int) -> Any:
         now = datetime.now(UTC)
         return JevReservationFacts(
             client=client,
             meter=JevArmMeter(
                 max_calls=20,
-                max_cost_nano_usd=remaining_daily_nano_usd(db_path, settings, now),
+                max_cost_nano_usd=remaining_daily_nano_usd(db_path, settings, now, user_id),
             ),
             observed_at=now,
         )
@@ -603,7 +603,7 @@ def _make_price_executor_factory(cfg: Config) -> Any:
     client = TypeSafeClient(typesafe_key, model=settings.model)
     db_path = cfg.data_directory.path / "booksaver.db"
     logging.getLogger(__name__).warning(
-        "Jev is the price method model=%s daily_cap_nano_usd=%s",
+        "Jev is the price method model=%s daily_cap_per_user_nano_usd=%s",
         settings.model,
         settings.max_daily_cost_nano_usd,
     )

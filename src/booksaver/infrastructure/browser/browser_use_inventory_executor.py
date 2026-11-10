@@ -1492,7 +1492,7 @@ class LocalBrowserUseInventoryExecutor:
         *,
         lease_broker: InMemorySessionLeaseBroker,
         mobile_settings: MobileWebSettings | None = None,
-        facts_assistant: Callable[[], JevReservationFacts | None] | None = None,
+        facts_assistant: Callable[[int], JevReservationFacts | None] | None = None,
         record_assistant: Callable[[JevReservationFacts, InventoryExecutionRequest], None]
         | None = None,
     ) -> None:
@@ -1502,7 +1502,11 @@ class LocalBrowserUseInventoryExecutor:
         self._record_assistant = record_assistant
 
     def execute(self, request: InventoryExecutionRequest) -> InventoryExecutionResult:
-        assist = self._facts_assistant() if self._facts_assistant is not None else None
+        assist = (
+            self._facts_assistant(request.owner_user_id)
+            if self._facts_assistant is not None
+            else None
+        )
         try:
             with AsyncLoopRunner() as runner:
                 return BrowserUseInventoryBrowserExecutor(

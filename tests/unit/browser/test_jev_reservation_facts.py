@@ -203,7 +203,31 @@ def test_a_call_cut_off_by_the_deadline_is_still_charged(tmp_path: Any) -> None:
         pass
     reader.record(db, user_id=1, execution_id="sync-1")
     with SqliteStore(db) as store:
-        assert SqliteJevPriceRunRepository(store).cost_since(datetime(2026, 1, 1, tzinfo=UTC)) > 0
+        since = datetime(2026, 1, 1, tzinfo=UTC)
+        assert SqliteJevPriceRunRepository(store).cost_since(since, 1) > 0
+        assert SqliteJevPriceRunRepository(store).cost_since(since, 2) == 0
+
+
+def test_the_facts_budget_is_each_users_own_daily_cap(tmp_path: Any) -> None:
+    from booksaver.domain.price_comparison import JevComparisonSettings, JevUsage
+    from booksaver.infrastructure.browser.jev_reservation_facts import remaining_daily_nano_usd
+    from booksaver.infrastructure.persistence.price_comparison import (
+        JevPriceRun,
+        SqliteJevPriceRunRepository,
+    )
+    from booksaver.infrastructure.persistence.sqlite_store import SqliteStore
+
+    db = tmp_path / "booksaver.db"
+    now = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+    with SqliteStore(db) as store:
+        SqliteJevPriceRunRepository(store).record(JevPriceRun(
+            execution_id="user-2-today", user_id=2, booking_id="", created_at=now,
+            status="observed", usage=JevUsage(calls=9, cost_nano_usd=400_000),
+            latency_ms=1, adapter="test",
+        ))
+    settings = JevComparisonSettings(max_daily_cost_nano_usd=1_000_000)
+    assert remaining_daily_nano_usd(db, settings, now, 1) == 1_000_000
+    assert remaining_daily_nano_usd(db, settings, now, 2) == 600_000
 
 
 @pytest.mark.parametrize(
