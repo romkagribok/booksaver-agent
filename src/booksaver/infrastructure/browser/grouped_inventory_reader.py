@@ -524,7 +524,8 @@ class GroupedInventoryReader:
             lines = [line.strip() for line in link.text.splitlines() if line.strip()]
             if kind == "reservation_detail":
                 key = InventoryTraversal._key(link.url)
-            elif kind is None and len(lines) >= 2:
+            elif kind is None and (len(lines) >= 2 or _car_booking_link(link.url)):
+                # The car route is recognised by URL even when its card shows one line.
                 key = link.url
             else:
                 continue

@@ -1057,3 +1057,13 @@ def test_cards_beyond_the_classification_limit_block_count_proof_and_are_opened(
     assert len(seen[0]) == 30
     assert result.verified_trip_counts == 0 and result.details_observed == 2
 
+
+def test_a_single_line_car_booking_link_is_still_classified(monkeypatch):
+    car = "https://cars.booking.com/my-booking/123456789?preflang=en"
+    worker, result = harness(monkeypatch, _one_trip([(DETAILS[0], "Hotel A\nConfirmed"),
+                                                     (car, "Confirmed")], 2))
+    worker.classify, seen = _jev({"Hotel": "stay_active", "Confirmed": "other_active"})
+    asyncio.run(worker.run())
+    assert seen == [[["Hotel A", "Confirmed"], ["Confirmed"]]]
+    assert (result.verified_trip_counts, result.nonhotel_skipped, result.unresolved) == (1, 1, 0)
+
