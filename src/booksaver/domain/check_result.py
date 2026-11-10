@@ -166,6 +166,9 @@ class CheckResult:
     assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...] = ()
     # The chosen offer's meal plan, carried to the alert in the same pass; not persisted.
     offer_meal_plan: MealPlan = MealPlan.UNKNOWN
+    # The chosen offer's room when it is named differently from the booked one, for the alert.
+    offer_room: str | None = None
+    offer_room_better: bool = False
 
     def __post_init__(self) -> None:
         from .browser_resilience import validate_assisted_diagnoses
@@ -191,6 +194,8 @@ class CheckResult:
         price_source: PriceSourceProvenance | None = None,
         assisted_diagnoses: tuple[TerminalBrowserDiagnosis, ...] = (),
         offer_meal_plan: MealPlan = MealPlan.UNKNOWN,
+        offer_room: str | None = None,
+        offer_room_better: bool = False,
     ) -> CheckResult:
         return cls(
             check_id=str(uuid.uuid4()),
@@ -198,6 +203,8 @@ class CheckResult:
             checked_at=checked_at,
             outcome=CheckOutcome.SUCCESS,
             offer_meal_plan=offer_meal_plan,
+            offer_room=offer_room,
+            offer_room_better=offer_room_better,
             extraction_method=extraction_method,
             live_price=live_price,
             refund_indicators=refund_indicators,

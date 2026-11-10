@@ -116,9 +116,9 @@ class ScriptedJev:
         fail_on: str | None = None,
         room_name: str = "l0",
         availability: tuple[str, float] = ("unavailable", 1.0),
-        booked_room: tuple[str, float] = ("none", 1.0),
+        room_compare: tuple[str, float] = ("neither", 1.0),
     ) -> None:
-        self.booked_room = booked_room
+        self.room_compare = room_compare
         self.taxes = taxes
         self.fail_on = fail_on
         self.room_name = room_name
@@ -172,8 +172,8 @@ class ScriptedJev:
                      if "breakfast included" in str(value).lower()),
                     "none",
                 )
-            elif question_id == "booked_room":
-                chosen, confidence = self.booked_room
+            elif question_id[:1] == "r" and question_id[1:].isdigit():
+                chosen, confidence = self.room_compare
                 answers[question_id] = ChoiceAnswer(chosen, confidence, {chosen: confidence})
                 continue
             else:  # pragma: no cover - unexpected question
@@ -1121,46 +1121,75 @@ def test_an_included_meal_needs_its_named_line_and_a_sure_answer() -> None:
     assert meal() == "none"
 
 
-def _booked_room_extract(jev: ScriptedJev, room_type: str) -> tuple[Any, LocalJevPriceRuntime]:
+def test_a_sure_class_counts_when_its_line_confidence_is_split() -> None:
+    """Live AIRINN: "Flexible + Breakfast" and "Very good breakfast included" split the line."""
+    rate = ("Flexible + Breakfast", "Max. people: 2", "Very good breakfast included in the price",
+            "Free cancellation", "Price $319", "1 night")
+    room = RoomSnapshot(ROOM_LINES, (rate,))
+    _state, questions, prices = rate_questions("Standard King Room", room, rate, nights=1)
+    split = ChoiceAnswer("l2", 0.69, {"l0": 0.31, "l2": 0.69})
+    answers = {
+        "total": _choice(questions["total"]["criteria"],  # type: ignore[arg-type]
+                         _option(prices, lambda v: v.startswith("Price $"))),
+        "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
+        "refund_line": ChoiceAnswer("l3", 0.6, {"l3": 0.6, "none": 0.4}),
+        "taxes": _choice(questions["taxes"]["criteria"], "not_stated"),  # type: ignore[arg-type]
+        **_terms(questions, meal="breakfast"),
+        "meal_line": split,
+    }
+    evidence = ground_rate(SystemOneResult("jev-1.13.0", answers, 10, 0), room, rate, prices,
+                           expected_currency="USD", nights=1)
+    assert (evidence.meal_plan, evidence.refundability) == ("breakfast", "explicit_refundable")
+
+
+def _room_extract(jev: ScriptedJev, room_type: str) -> tuple[Any, LocalJevPriceRuntime]:
     runtime = LocalJevPriceRuntime()
     request = _request()
     request = replace(request, query=replace(request.query, room_type=room_type))
     return asyncio.run(runtime._extract(request, _snapshot(), jev)), runtime
 
 
-def _booked_room_asks(jev: ScriptedJev) -> int:
-    return sum(isinstance(s, dict) and set(s) == {"booked_room"} for s in jev.states)
+def _room_asks(jev: ScriptedJev) -> list[object]:
+    return [s for s in jev.states if isinstance(s, dict) and "booked_room" in s]
 
 
-def test_an_exact_room_name_needs_no_booked_room_question() -> None:
+def test_an_exact_room_name_needs_no_room_comparison() -> None:
     jev = ScriptedJev()
-    observation, runtime = _booked_room_extract(jev, "standard  king room")
-    assert _booked_room_asks(jev) == 0
-    assert all(offer.booked_room for offer in observation.offers)
-    assert "booked_room=y" in runtime.diagnostic
+    observation, runtime = _room_extract(jev, "standard  king room")
+    assert _room_asks(jev) == []
+    assert {offer.room_match for offer in observation.offers} == {"same"}
+    assert "rooms_same=1 rooms_better=0" in runtime.diagnostic
 
 
-def test_jev_names_the_booked_room_when_the_page_words_it_differently() -> None:
-    """Live: Park Plaza's confirmation says "Deluxe Queen Bed", AIRINN's "Standard Double Room"."""
-    jev = ScriptedJev(booked_room=("r0", 0.95))
-    observation, _runtime = _booked_room_extract(jev, "King Room")
-    assert _booked_room_asks(jev) == 2
-    assert all(offer.booked_room for offer in observation.offers)
-    for answer in (("none", 1.0), ("r0", 0.7)):
-        observation, runtime = _booked_room_extract(ScriptedJev(booked_room=answer), "King Room")
-        assert not any(offer.booked_room for offer in observation.offers)
-        assert "booked_room=n" in runtime.diagnostic
+@pytest.mark.parametrize("verdict", ["same", "better"])
+def test_jev_compares_a_differently_named_room_with_the_booked_room(verdict: str) -> None:
+    """Live: Park Plaza "Deluxe Queen Bed" = "Deluxe Queen Bed Room"; AIRINN only sells others."""
+    jev = ScriptedJev(room_compare=(verdict, 0.95))
+    observation, runtime = _room_extract(jev, "King Room")
+    asks = _room_asks(jev)
+    assert len(asks) == 2 and asks[0] == {"booked_room": "King Room",
+                                          "guests": "2 adults, 0 children, 1 room"}
+    assert {offer.room_match for offer in observation.offers} == {verdict}
+    assert f"rooms_{verdict}=1" in runtime.diagnostic
 
 
-def test_two_disagreeing_booked_room_answers_match_nothing() -> None:
+@pytest.mark.parametrize("answer", [("neither", 1.0), ("better", 0.7)])
+def test_neither_or_an_unsure_comparison_matches_nothing(answer: tuple[str, float]) -> None:
+    observation, runtime = _room_extract(ScriptedJev(room_compare=answer), "King Room")
+    assert {offer.room_match for offer in observation.offers} == {None}
+    assert "rooms_same=0 rooms_better=0" in runtime.diagnostic
+
+
+def test_two_disagreeing_room_comparisons_match_nothing() -> None:
     class Flips(ScriptedJev):
         async def ask(self, state: object, questions: Any) -> SystemOneResult:
-            if "booked_room" in questions:
-                self.booked_room = ("none", 1.0) if self.booked_room[0] == "r0" else ("r0", 1.0)
+            if "r0" in questions:
+                self.room_compare = ("same", 1.0) if self.room_compare[0] == "better" else (
+                    "better", 1.0)
             return await super().ask(state, questions)
 
-    observation, _runtime = _booked_room_extract(Flips(booked_room=("none", 1.0)), "King Room")
-    assert not any(offer.booked_room for offer in observation.offers)
+    observation, _runtime = _room_extract(Flips(), "King Room")
+    assert {offer.room_match for offer in observation.offers} == {None}
 
 
 # --- FR-6: Booking.com's signed-in redirect drops selected_currency -----------------------------

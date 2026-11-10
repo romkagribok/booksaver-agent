@@ -286,8 +286,8 @@ class ObservedOffer:
     completeness: EvidenceCompleteness
     # Jev's meal class for the rate (a MealPlan value), None when unread (ADR-064).
     meal_text: str | None = None
-    # Jev judged this offer's room to be the booked room type (ADR-064).
-    booked_room: bool = False
+    # "same" or "better": the offer's room compared with the booked room (ADR-065); None: neither.
+    room_match: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "room_label", _bounded_text(self.room_label, "room_label"))
@@ -377,7 +377,7 @@ class ValidatedObservedOffer:
     total: Money
     cancellation_text: str
     meal_text: str | None = None
-    booked_room: bool = False
+    room_match: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -545,7 +545,7 @@ def validate_price_observation(
                     total=offer.total,
                     cancellation_text=cancellation_text,
                     meal_text=offer.meal_text,
-                    booked_room=offer.booked_room,
+                    room_match=offer.room_match,
                 )
             )
         else:

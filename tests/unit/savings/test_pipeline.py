@@ -214,6 +214,16 @@ def test_render_alert_states_bookings_are_never_mutated() -> None:
     assert "Meals (offer): half board (breakfast and dinner)" in body
     assert "matches your stay, room and meal plan." in body
     assert "could not confirm" not in body
+    assert "Room         : " in body and "Room (offer)" not in body
+
+    _, body = render_alert(opportunity, confirmed, offer_meal_plan=MealPlan.BREAKFAST,
+                           offer_room="Business Double Room", offer_room_better=True)
+    assert f"Room (yours) : {confirmed.room_type.label}" in body
+    assert "Room (offer) : Business Double Room (a better room)" in body
+    assert "matches your stay and meal plan, in a room judged better than yours." in body
+    _, body = render_alert(opportunity, booking, offer_room="Deluxe Queen Bed Room")
+    assert "Room (offer) : Deluxe Queen Bed Room (same room type, named differently)" in body
+    assert "matches your stay and room. We could not confirm" in body
 
 
 def test_render_alert_labels_logged_out_price_as_public_rate() -> None:

@@ -35,6 +35,8 @@ class OfferCandidate:
     matches_room: bool
     match_confidence: float
     meal_plan: MealPlan = MealPlan.UNKNOWN
+    # Jev judged this room better than the booked one (ADR-065); the alert says so.
+    better_room: bool = False
 
     def exact_label_match(self, booking: Booking) -> bool:
         return self.room_label.strip().lower() == booking.room_type.label.strip().lower()

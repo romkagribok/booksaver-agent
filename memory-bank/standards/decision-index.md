@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 64
+total_decisions: 65
 ---
 
 # Decision Index
@@ -611,3 +611,11 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/106-jev-judges-room-and-rate-terms/adr-064-jev-judges-price-offers.md`
 - **Summary**: Jev picks the booked room among the page's priced rooms (asked twice, 0.8), classifies rate meals, and its refund and tax answers count with a named line; a matching Booking.com link proves the hotel. Total grounding, identity and selection stay in code.
 - **Read when**: Changing price-offer room matching, rate meal/refund/tax evidence, or hotel identity checks.
+
+### ADR-065: A cheaper same-or-better room is a saving
+- **Status**: accepted
+- **Date**: 2026-11-10
+- **Bolt**: 109-same-or-better-room (same-or-better-room)
+- **Path**: `bolts/109-same-or-better-room/adr-065-same-or-better-room.md`
+- **Summary**: Amends ADR-064. Jev compares each priced room with the booked room for the booked guests (same, better, neither; asked twice, 0.8); same or better rooms are compared; the alert names the offered room and whether it is better.
+- **Read when**: Changing which offered rooms count as equivalent, or how alerts describe the offered room.

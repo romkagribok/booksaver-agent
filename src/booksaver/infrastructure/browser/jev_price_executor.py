@@ -114,7 +114,7 @@ _PER_NIGHT = re.compile(
     re.IGNORECASE,
 )
 _NIGHTS = re.compile(r"\b(\d{1,2})\s+nights?\b", re.IGNORECASE)
-# Jev's rate terms (refund, taxes, meals) count only when it names the stating line this surely.
+# Jev's rate terms (refund, taxes, meals) count only when it is this sure and names a stating line.
 _MIN_TERM_CONFIDENCE = 0.8
 _MEAL_CLASSES = ("breakfast", "half_board", "full_board", "all_inclusive")
 # Label status is deliberately narrow: only a line that IS the label, or an amount line that
@@ -566,7 +566,9 @@ def ground_rate(
     nights_consistent = not stated_nights or stated_nights == {nights}
 
     refund_choice = result.choice("refund").choice
-    line_choice = _sure(result, "refund_line") or "none"
+    # The line is Jev's top pick: several lines often state the same thing ("Flexible +
+    # Breakfast" and "Breakfast included"), which splits its confidence without making it wrong.
+    line_choice = result.choice("refund_line").choice
     refund_line: str | None = None
     if line_choice.startswith("l") and line_choice[1:].isdigit():
         index = int(line_choice[1:])
@@ -586,14 +588,14 @@ def ground_rate(
         refundability = "unknown"
 
     card_lines = _card_lines(room, rate)
-    taxes_named = _names_line(_sure(result, "taxes_line"), "t", len(card_lines))
+    taxes_named = _names_line(result.choice("taxes_line").choice, "t", len(card_lines))
     if result.choice("taxes").choice == "included":
         all_in = "explicit" if taxes_named and _sure(result, "taxes") else "conflicting"
     else:
         all_in = "unknown"
 
     meal = _sure(result, "meal")
-    meal_named = _names_line(_sure(result, "meal_line"), "l", len(rate))
+    meal_named = _names_line(result.choice("meal_line").choice, "l", len(rate))
     # An included plan needs its stating line; an unsure answer stays unknown (only excludes).
     meal_plan = meal if meal == "none" or (meal in _MEAL_CLASSES and meal_named) else None
     return _RateEvidence(
@@ -1206,9 +1208,9 @@ class LocalJevPriceRuntime:
                     "meal_text": evidence.meal_plan,
                 }
             )
-        booked_room = await self._booked_room(query, rate_jobs, offers, decider)
+        room_matches = await self._room_matches(query, rate_jobs, offers, decider)
         for offer in offers:
-            offer["booked_room"] = offer["room_label"] == booked_room
+            offer["room_match"] = room_matches.get(str(offer["room_label"]))
         facts = _url_query_facts(snapshot.url)
         diagnostics.extraction = (
             f"rooms={len(snapshot.rooms)} rates={snapshot.rate_count} "
@@ -1224,7 +1226,8 @@ class LocalJevPriceRuntime:
             f"complete={sum(o['completeness'] == 'complete' for o in offers)} "
             f"property={'y' if property_name is not None else 'n'} "
             f"stay_facts={'y' if facts is not None else 'n'} "
-            f"booked_room={'y' if booked_room is not None else 'n'}"
+            f"rooms_same={sum(v == 'same' for v in room_matches.values())} "
+            f"rooms_better={sum(v == 'better' for v in room_matches.values())}"
         )
         if not offers or property_name is None:
             return None
@@ -1255,54 +1258,65 @@ class LocalJevPriceRuntime:
             return None
 
     @staticmethod
-    async def _booked_room(
+    async def _room_matches(
         query: Any,
         rate_jobs: list[tuple[str, RoomSnapshot, tuple[str, ...], dict[str, str]]],
         offers: list[dict[str, object]],
         decider: JevDecisionPort,
-    ) -> str | None:
-        """Which priced room is the booked room type, when none carries its exact name (FR-1)."""
+    ) -> dict[str, str]:
+        """Priced rooms that are the booked room type ("same") or better for the guests (FR-6)."""
 
         booked = query.room_type
         cards: dict[str, tuple[str, ...]] = {}
         for room_label, room, _rate, _prices in rate_jobs:
             cards.setdefault(room_label, room.lines)
         labels = [label for label in cards if any(o["room_label"] == label for o in offers)]
-        if not booked or not labels:
-            return None
-        exact = [label for label in labels if label.casefold().split() == booked.casefold().split()]
-        if exact:
-            return exact[0]
-        options = {
-            f"r{index}": " | ".join(
-                dict.fromkeys((label, *(line for line in cards[label][:6] if len(line) <= 80)))
-            )
-            for index, label in enumerate(labels[:20])
-        }
-        question = {
-            "booked_room": choice_question(
+        if not booked:
+            return {}
+        booked_words = booked.casefold().split()
+        matches = {label: "same" for label in labels if label.casefold().split() == booked_words}
+        others = [label for label in labels if label not in matches][:20]
+        if not others:
+            return matches
+        guests = query.occupancy
+        questions = {
+            f"r{index}": choice_question(
                 {
-                    "question": "A guest booked the room type named in booked_room at this "
-                    "hotel. Which room offered on this page is that same room type?",
+                    "question": "Compared with the booked room type, is this offered room the "
+                    "same room type, a better one for the same guests, or neither? Offered room: "
+                    + " | ".join(dict.fromkeys(
+                        (label, *(line for line in cards[label][:6] if len(line) <= 80))
+                    )),
                     "hint": "The booking confirmation and the hotel page often name the same "
-                    "room slightly differently, for example with or without 'Standard', "
-                    "'Room' or the bed type. If two offered rooms fit equally well, answer none.",
-                    "not_for": "a different category (for example Superior or Deluxe instead "
-                    "of Standard), a different bed setup or occupancy, or a room with an extra "
-                    "feature such as a balcony, view or kitchen",
+                    "room slightly differently, for example with or without 'Standard', 'Room' "
+                    "or the bed type.",
                     "rules": _UNTRUSTED,
                 },
-                _with_none(options, "None of these rooms is the booked room type"),
+                {
+                    "same": "The same room type, possibly named differently",
+                    "better": "Clearly better for these guests: a higher category or larger "
+                    "room with the same kind of beds, or the same room with an extra such as a "
+                    "balcony, view or kitchenette",
+                    "neither": "Worse, a different bed setup (for example twin beds instead of a "
+                    "double bed), not suitable for these guests, or unclear",
+                },
             )
+            for index, label in enumerate(others)
         }
-        state = {"booked_room": booked}
-        # Asked twice: both answers must agree surely, or no offer counts as the booked room.
-        answers = await _all_or_fail([decider.ask(state, question) for _ in range(2)])
-        choices = {answer.choice("booked_room").choice for answer in answers}
-        sure = all(answer.choice("booked_room").confidence >= _MIN_TERM_CONFIDENCE
-                   for answer in answers)
-        choice = choices.pop() if len(choices) == 1 and sure else "none"
-        return labels[int(choice[1:])] if choice.startswith("r") and choice[1:].isdigit() else None
+        state = {
+            "booked_room": booked,
+            "guests": f"{guests.adults} adults, {guests.children} children, {guests.rooms} room",
+        }
+        # Asked twice: a room counts only when both answers agree surely (ADR-065).
+        first, second = await _all_or_fail([decider.ask(state, questions) for _ in range(2)])
+        for index, label in enumerate(others):
+            answers = (first.choice(f"r{index}"), second.choice(f"r{index}"))
+            if (
+                answers[0].choice == answers[1].choice in {"same", "better"}
+                and min(answer.confidence for answer in answers) >= _MIN_TERM_CONFIDENCE
+            ):
+                matches[label] = answers[0].choice
+        return matches
 
     @staticmethod
     async def _unavailable(

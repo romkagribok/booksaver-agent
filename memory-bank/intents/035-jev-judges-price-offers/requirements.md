@@ -27,10 +27,15 @@ exact hotel-name comparison even when the Booking.com link already proves the ho
   name is still required but need not equal the saved one. Bookings saved with only a name keep the
   exact-name rule.
 - **FR-3.** Jev classifies each rate's meals (none, breakfast, half board, full board, all inclusive)
-  and names the line stating them. An included plan counts only with a named line and confidence 0.8;
+  and names the line stating them. An included plan counts only with confidence 0.8 and a named line (Jev's top pick);
   anything else is unknown, which can only exclude an offer. The code meal word lists are removed.
-- **FR-4.** Jev's refund class and tax answer count when it names the line stating them, at
-  confidence 0.8. The English refund and tax patterns that vetoed Jev are removed.
+- **FR-4.** Jev's refund class and tax answer count at confidence 0.8 when it names a line stating
+  them (its top pick; duplicate lines split line confidence). The English refund and tax patterns that vetoed Jev are removed.
+- **FR-6.** (Owner, 2026-11-10: "yes it should count as a saving (same or better)".) A cheaper
+  offer for a room Jev judges the same as or better than the booked room counts. Jev compares every
+  priced room without the booked name with the booked room for the booked guests (same, better,
+  neither), asked twice, agreement at 0.8. The alert names the offered room and says whether it is
+  the same room type named differently or a better room.
 - **FR-5.** The whole-stay total keeps its code check (money-critical; every rate was priced in
   production on 2026-11-08/09; a failure is loud, not wrong).
 
