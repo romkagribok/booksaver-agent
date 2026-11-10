@@ -34,6 +34,8 @@ def render_alert(
     session_mode: SessionMode | None = None,
     price_source: PriceSourceProvenance | None = None,
     offer_meal_plan: MealPlan = MealPlan.UNKNOWN,
+    offer_room: str | None = None,
+    offer_room_better: bool = False,
 ) -> tuple[str, str]:
     """Subject + body shared by all channels (US-009 core facts).
 
@@ -59,11 +61,23 @@ def render_alert(
         )
         if price_source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT:
             source_lines += "\nGenius       : evidence visible on the rendered page"
-    matches = "matches your stay, room and meal plan."
+    if offer_room_better:
+        stay = "your stay, in a room judged better than yours"
+        stay_meals = "your stay and meal plan, in a room judged better than yours"
+    else:
+        stay, stay_meals = "your stay and room", "your stay, room and meal plan"
+    matches = f"matches {stay_meals}."
     if booking.meal_plan is MealPlan.UNKNOWN:
         matches = (
-            "matches your stay and room. We could not confirm which meals your booking "
+            f"matches {stay}. We could not confirm which meals your booking "
             "includes, so compare meals before you rebook."
+        )
+    room_lines = f"Room         : {booking.room_type.label}\n"
+    if offer_room:
+        kind = "a better room" if offer_room_better else "same room type, named differently"
+        room_lines = (
+            f"Room (yours) : {booking.room_type.label}\n"
+            f"Room (offer) : {offer_room} ({kind})\n"
         )
     body = (
         f"Savings opportunity found for your Booking.com reservation.\n"
@@ -71,7 +85,7 @@ def render_alert(
         f"Property     : {booking.property.name}\n"
         f"Confirmation : {booking.confirmation_id.value}\n"
         f"Stay         : {booking.stay_dates.check_in} -> {booking.stay_dates.check_out}\n"
-        f"Room         : {booking.room_type.label}\n"
+        f"{room_lines}"
         f"Meals (yours): {booking.meal_plan.label}\n"
         f"Meals (offer): {offer_meal_plan.label}\n"
         f"\n"
@@ -115,6 +129,8 @@ class NotificationDispatcher:
         session_mode: SessionMode | None = None,
         price_source: PriceSourceProvenance | None = None,
         offer_meal_plan: MealPlan = MealPlan.UNKNOWN,
+        offer_room: str | None = None,
+        offer_room_better: bool = False,
     ) -> list[ChannelOutcome]:
         notifiers = self._resolver(booking) if self._resolver is not None else self._notifiers
         if not notifiers:
@@ -125,7 +141,8 @@ class NotificationDispatcher:
             return []
 
         subject, body = render_alert(
-            opportunity, booking, session_mode, price_source, offer_meal_plan
+            opportunity, booking, session_mode, price_source, offer_meal_plan,
+            offer_room, offer_room_better,
         )
         outcomes: list[ChannelOutcome] = []
         for notifier in notifiers:
@@ -186,6 +203,8 @@ class SavingsPipeline:
                 result.session_mode,
                 result.price_source,
                 result.offer_meal_plan,
+                result.offer_room,
+                result.offer_room_better,
             )
             if any(o.ok for o in outcomes):
                 self._savings.mark_notified(detection.opportunity_id, datetime.now(UTC))

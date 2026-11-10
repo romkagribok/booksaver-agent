@@ -885,6 +885,7 @@ Jev judges the room, hotel, meals, refund and taxes of price offers.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-258` | Jev judges the booked room and each rate's terms | Jev price | Planned | `001-jev-judges-room-and-rate-terms/stories/001-jev-judges-room-and-rate-terms.md` |
+| `US-261` | A cheaper same-or-better room counts as a saving | Jev price | Planned | `001-jev-judges-room-and-rate-terms/stories/002-same-or-better-room.md` |
 
 ## 036-per-user-limits
 

@@ -187,7 +187,8 @@ class BookingComSearchMonitor:
                 offer.room_label,
                 booking,
             )
-            if not matches and offer.booked_room:
+            matches_by_name = matches
+            if not matches and offer.room_match in {"same", "better"}:
                 matches, confidence = True, 0.9
             candidates.append(
                 OfferCandidate(
@@ -198,6 +199,7 @@ class BookingComSearchMonitor:
                     matches_room=matches,
                     match_confidence=confidence,
                     meal_plan=MealPlan.parse(offer.meal_text),
+                    better_room=not matches_by_name and offer.room_match == "better",
                 )
             )
         selection = select_offer(candidates, booking)
@@ -349,6 +351,8 @@ class BookingComSearchMonitor:
             price_source=price_source,
             assisted_diagnoses=assisted_diagnoses,
             offer_meal_plan=chosen.meal_plan,
+            offer_room=None if chosen.exact_label_match(booking) else chosen.room_label,
+            offer_room_better=chosen.better_room,
         )
 
     def _record(self, result: CheckResult) -> None:

@@ -17,10 +17,11 @@ FR-1 to FR-5.
 
 ## Assigned requirements
 
-FR-1 to FR-5. See ../../requirements.md.
+FR-1 to FR-6. See ../../requirements.md.
 
 ## Stories
 
 | Story | Title | Bolt |
 |---|---|---|
 | US-258 | Jev judges the booked room and each rate's terms | 106-jev-judges-room-and-rate-terms |
+| US-261 | A cheaper same-or-better room counts as a saving | 109-same-or-better-room |

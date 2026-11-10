@@ -81,7 +81,10 @@ def _map_extracted_observation(raw: Mapping[str, Any]) -> TypedObservation:
                     meal_text=(
                         str(item["meal_text"]) if item.get("meal_text") is not None else None
                     ),
-                    booked_room=item.get("booked_room") is True,
+                    room_match=(
+                        str(item["room_match"])
+                        if item.get("room_match") in {"same", "better"} else None
+                    ),
                 )
             )
     except (KeyError, TypeError, ValueError, InvalidOperation) as exc:

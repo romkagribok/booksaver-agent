@@ -4,6 +4,8 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from booksaver.application.browser_executor import PriceExecutionOutcome
 from booksaver.domain.browser_executor import (
     AllInEvidence,
@@ -52,7 +54,7 @@ def _outcome(
     status: PriceExecutionStatus = PriceExecutionStatus.OBSERVED,
     rejection: ValidationRejection | None = None,
     meal_text: str | None = None,
-    booked_room: bool = False,
+    room_match: str | None = None,
 ) -> PriceExecutionOutcome:
     booking = make_booking()
     if status is not PriceExecutionStatus.OBSERVED:
@@ -110,7 +112,7 @@ def _outcome(
                     offer.total,
                     offer.refundability_text or "",
                     meal_text,
-                    booked_room,
+                    room_match,
                 ),
             )
         ),
@@ -192,14 +194,23 @@ def test_qualified_room_equivalence_preserves_room_variant_boundaries() -> None:
         assert result.failure_reason.detail.startswith("No matching room type found: ")
 
 
-def test_a_room_jev_judged_to_be_the_booked_room_is_compared() -> None:
-    """Live: booked "Standard Double Room", the hotel page offers "Double Room" (ADR-064)."""
-    check = _AgenticCheck(_outcome(room_label="Double Room", booked_room=True))
+@pytest.mark.parametrize("verdict", ["same", "better"])
+def test_a_room_jev_judged_same_or_better_is_compared(verdict: str) -> None:
+    """Live: AIRINN no longer sells the booked "Standard Double Room" (ADR-065)."""
+    check = _AgenticCheck(_outcome(room_label="Standard Double Room with Balcony",
+                                   room_match=verdict))
     result = _monitor(check)[0].run_authenticated(make_booking(), _snapshot())
     assert result.outcome is CheckOutcome.SUCCESS
-    unjudged = _AgenticCheck(_outcome(room_label="Double Room"))
-    result = _monitor(unjudged)[0].run_authenticated(make_booking(), _snapshot())
-    assert result.outcome is CheckOutcome.FAILURE
+    assert result.offer_room == "Standard Double Room with Balcony"
+    assert result.offer_room_better is (verdict == "better")
+    unjudged = _AgenticCheck(_outcome(room_label="Standard Double Room with Balcony"))
+    assert _monitor(unjudged)[0].run_authenticated(
+        make_booking(), _snapshot()).outcome is CheckOutcome.FAILURE
+
+
+def test_an_exactly_named_room_is_not_described_as_another_room() -> None:
+    result = _monitor(_AgenticCheck(_outcome()))[0].run_authenticated(make_booking(), _snapshot())
+    assert result.offer_room is None and not result.offer_room_better
 
 
 def test_agentic_provider_failure_is_terminal_without_legacy_retry() -> None:
