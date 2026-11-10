@@ -114,7 +114,7 @@ _PER_NIGHT = re.compile(
     re.IGNORECASE,
 )
 _NIGHTS = re.compile(r"\b(\d{1,2})\s+nights?\b", re.IGNORECASE)
-# Jev's rate terms (refund, taxes, meals) count only when it names the stating line this surely.
+# Jev's rate terms (refund, taxes, meals) count only when it is this sure and names a stating line.
 _MIN_TERM_CONFIDENCE = 0.8
 _MEAL_CLASSES = ("breakfast", "half_board", "full_board", "all_inclusive")
 # Label status is deliberately narrow: only a line that IS the label, or an amount line that
@@ -566,7 +566,9 @@ def ground_rate(
     nights_consistent = not stated_nights or stated_nights == {nights}
 
     refund_choice = result.choice("refund").choice
-    line_choice = _sure(result, "refund_line") or "none"
+    # The line is Jev's top pick: several lines often state the same thing ("Flexible +
+    # Breakfast" and "Breakfast included"), which splits its confidence without making it wrong.
+    line_choice = result.choice("refund_line").choice
     refund_line: str | None = None
     if line_choice.startswith("l") and line_choice[1:].isdigit():
         index = int(line_choice[1:])
@@ -586,14 +588,14 @@ def ground_rate(
         refundability = "unknown"
 
     card_lines = _card_lines(room, rate)
-    taxes_named = _names_line(_sure(result, "taxes_line"), "t", len(card_lines))
+    taxes_named = _names_line(result.choice("taxes_line").choice, "t", len(card_lines))
     if result.choice("taxes").choice == "included":
         all_in = "explicit" if taxes_named and _sure(result, "taxes") else "conflicting"
     else:
         all_in = "unknown"
 
     meal = _sure(result, "meal")
-    meal_named = _names_line(_sure(result, "meal_line"), "l", len(rate))
+    meal_named = _names_line(result.choice("meal_line").choice, "l", len(rate))
     # An included plan needs its stating line; an unsure answer stays unknown (only excludes).
     meal_plan = meal if meal == "none" or (meal in _MEAL_CLASSES and meal_named) else None
     return _RateEvidence(

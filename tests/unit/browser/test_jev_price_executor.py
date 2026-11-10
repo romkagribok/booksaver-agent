@@ -1121,6 +1121,27 @@ def test_an_included_meal_needs_its_named_line_and_a_sure_answer() -> None:
     assert meal() == "none"
 
 
+def test_a_sure_class_counts_when_its_line_confidence_is_split() -> None:
+    """Live AIRINN: "Flexible + Breakfast" and "Very good breakfast included" split the line."""
+    rate = ("Flexible + Breakfast", "Max. people: 2", "Very good breakfast included in the price",
+            "Free cancellation", "Price $319", "1 night")
+    room = RoomSnapshot(ROOM_LINES, (rate,))
+    _state, questions, prices = rate_questions("Standard King Room", room, rate, nights=1)
+    split = ChoiceAnswer("l2", 0.69, {"l0": 0.31, "l2": 0.69})
+    answers = {
+        "total": _choice(questions["total"]["criteria"],  # type: ignore[arg-type]
+                         _option(prices, lambda v: v.startswith("Price $"))),
+        "refund": _choice(questions["refund"]["criteria"], "free_cancellation"),  # type: ignore[arg-type]
+        "refund_line": ChoiceAnswer("l3", 0.6, {"l3": 0.6, "none": 0.4}),
+        "taxes": _choice(questions["taxes"]["criteria"], "not_stated"),  # type: ignore[arg-type]
+        **_terms(questions, meal="breakfast"),
+        "meal_line": split,
+    }
+    evidence = ground_rate(SystemOneResult("jev-1.13.0", answers, 10, 0), room, rate, prices,
+                           expected_currency="USD", nights=1)
+    assert (evidence.meal_plan, evidence.refundability) == ("breakfast", "explicit_refundable")
+
+
 def _room_extract(jev: ScriptedJev, room_type: str) -> tuple[Any, LocalJevPriceRuntime]:
     runtime = LocalJevPriceRuntime()
     request = _request()

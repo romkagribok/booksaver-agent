@@ -26,6 +26,9 @@ whether it is better.
 - Savings appear even when the exact room type is sold out.
 - "Better" is Jev's judgement; the alert shows the room so the guest decides.
 - Different bed setups (twin for double) are never better.
+- Amends ADR-064's line rule: the class needs 0.8, the stating line only needs to be Jev's top pick.
+  On AIRINN, "Flexible + Breakfast" and "Very good breakfast included" split the line at about
+  0.3/0.7 while breakfast itself was 1.0, which left better rooms' breakfast rates unknown.
 
 ## Alternatives
 
