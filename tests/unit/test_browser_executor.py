@@ -181,6 +181,7 @@ def test_complete_observation_is_validated_without_equivalence_claim() -> None:
         "total",
         "cancellation_text",
         "meal_text",
+        "booked_room",
     }
 
 
@@ -200,8 +201,11 @@ def test_english_booking_property_url_alias_retains_all_price_evidence_gates(
     )
     facts = replace(_facts(), property_reference=observed, property_name=name)
     assert validate_price_observation(request, _result(facts=facts)).accepted
+    # The matching link proves the hotel (ADR-064): a renamed listing is still the booked hotel.
+    renamed = replace(facts, property_name="AIRINN Vilnius Airport Hotel")
+    assert validate_price_observation(request, _result(facts=renamed)).accepted
     for changes, expected in (
-        ({"property_name": name + " Different"}, ValidationRejection.PROPERTY_MISMATCH),
+        ({"property_name": None}, ValidationRejection.PROPERTY_MISMATCH),
         ({"check_out": date(2026, 10, 6)}, ValidationRejection.DATE_MISMATCH),
         ({"occupancy": Occupancy(1)}, ValidationRejection.OCCUPANCY_MISMATCH),
         ({"currency": "USD"}, ValidationRejection.CURRENCY_MISMATCH),

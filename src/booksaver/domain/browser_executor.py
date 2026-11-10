@@ -141,6 +141,8 @@ class TrustedPriceQuery:
     stay_dates: StayDates
     occupancy: Occupancy
     currency: str
+    # The booked room type, so the executor can ask which offered room it is (ADR-064).
+    room_type: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -282,8 +284,10 @@ class ObservedOffer:
     refundability: RefundabilityEvidence
     refundability_text: str | None
     completeness: EvidenceCompleteness
-    # The rate's own meal wording, "none" when it shows none; BookSaver classifies it (ADR-057).
+    # Jev's meal class for the rate (a MealPlan value), None when unread (ADR-064).
     meal_text: str | None = None
+    # Jev judged this offer's room to be the booked room type (ADR-064).
+    booked_room: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "room_label", _bounded_text(self.room_label, "room_label"))
@@ -373,6 +377,7 @@ class ValidatedObservedOffer:
     total: Money
     cancellation_text: str
     meal_text: str | None = None
+    booked_room: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -494,10 +499,11 @@ def query_identity_rejection(
 ) -> ValidationRejection | None:
     """The page must be the requested property, stay and party before any result counts."""
 
-    if (
-        not _property_reference_matches(query, facts)
-        or facts.property_name is None
-        or _normalized_name(facts.property_name) != _normalized_name(query.property_name)
+    if not _property_reference_matches(query, facts) or facts.property_name is None:
+        return ValidationRejection.PROPERTY_MISMATCH
+    # A matching Booking.com link proves the hotel; a name-only booking needs the exact name.
+    if not query.property_reference.strip().casefold().startswith("https://") and (
+        _normalized_name(facts.property_name) != _normalized_name(query.property_name)
     ):
         return ValidationRejection.PROPERTY_MISMATCH
     if facts.check_in != query.stay_dates.check_in or facts.check_out != query.stay_dates.check_out:
@@ -539,6 +545,7 @@ def validate_price_observation(
                     total=offer.total,
                     cancellation_text=cancellation_text,
                     meal_text=offer.meal_text,
+                    booked_room=offer.booked_room,
                 )
             )
         else:

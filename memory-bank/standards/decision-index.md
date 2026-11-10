@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 63
+total_decisions: 64
 ---
 
 # Decision Index
@@ -604,3 +604,10 @@ Use this to find relevant prior decisions when working on related features.
 - **Summary**: All Anthropic, Stagehand and Browser Use agent code, Claude tables, personal Anthropic keys and Claude-era config keys are removed; Jev via `BOOKSAVER_TYPESAFE_API_KEY` is the only model. Supersedes ADRs 009, 015-017, 031, 037, 043-046, 055; amends ADR-056.
 - **Read when**: Adding any model provider, model call, or LLM-related configuration.
 
+### ADR-064: Jev judges room equivalence and rate terms; code keeps identity and totals
+- **Status**: accepted
+- **Date**: 2026-11-10
+- **Bolt**: 106-jev-judges-room-and-rate-terms (jev-judges-room-and-rate-terms)
+- **Path**: `bolts/106-jev-judges-room-and-rate-terms/adr-064-jev-judges-price-offers.md`
+- **Summary**: Jev picks the booked room among the page's priced rooms (asked twice, 0.8), classifies rate meals, and its refund and tax answers count with a named line; a matching Booking.com link proves the hotel. Total grounding, identity and selection stay in code.
+- **Read when**: Changing price-offer room matching, rate meal/refund/tax evidence, or hotel identity checks.
