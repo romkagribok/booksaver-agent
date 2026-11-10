@@ -961,3 +961,109 @@ def test_a_trip_count_that_leaves_out_cancelled_cards_is_verified():
     assert not reading.count_matches(page, active - 1)
     # The cancelled card is still read, so its cancellation is recorded.
     assert any("Canceled" in link.text for link in reading.reservation_targets(page, active))
+
+
+# --- ADR-066: Jev classifies trip cards; code words only when Jev has no answer ---------------
+
+
+def _one_trip(cards, count):
+    browser = Browser()
+    browser.pages[ROOT] = snapshot(ROOT, [(TRIPS[0], f"Trip\n{count} booking{'s' * (count > 1)}")])
+    browser.pages[TRIPS[0]] = snapshot(TRIPS[0], cards)
+    return browser
+
+
+def _jev(answers):
+    """A classifier answering by a word in each card; None for words it does not know."""
+    seen = []
+
+    async def classify(cards):
+        seen.append(cards)
+        return [next((v for k, v in answers.items() if any(k in line for line in card)), None)
+                for card in cards]
+
+    return classify, seen
+
+
+def test_renamed_status_never_drops_an_active_hotel(monkeypatch):
+    # Booking.com renames "Confirmed": the code words see only the cancelled card, whose count
+    # (1, cancelled excluded) matches, and leave the active hotel unopened.
+    cards = [(DETAILS[0], "Hotel A\nCanceled"), (DETAILS[1], "Hotel B\nBooked")]
+    worker, result = harness(monkeypatch, _one_trip(cards, 1))
+    asyncio.run(worker.run())
+    assert result.details_observed == 1
+    worker, result = harness(monkeypatch, _one_trip(cards, 1))
+    worker.classify, seen = _jev({"Canceled": "stay_cancelled", "Booked": "stay_active"})
+    asyncio.run(worker.run())
+    assert result.details_observed == 2 and result.verified_trip_counts == 1
+    assert seen == [[["Hotel A", "Canceled"], ["Hotel B", "Booked"]]]
+
+
+def test_a_flight_card_lets_the_trip_count_verify(monkeypatch):
+    cards = [(DETAILS[0], "Hotel A\nConfirmed"),
+             ("https://flights.booking.com/booking/order-details/1",
+              "Vilnius to Los Angeles\nNov 10\nConfirmed"),
+             ("https://secure.booking.com/apps.html", "Get the free app\nInstall")]
+    worker, result = harness(monkeypatch, _one_trip(cards, 2))
+    asyncio.run(worker.run())
+    assert result.verified_trip_counts == 0 and result.unresolved > 0
+    worker, result = harness(monkeypatch, _one_trip(cards, 2))
+    worker.classify, _ = _jev({"Hotel": "stay_active", "Vilnius": "other_active",
+                               "app": "not_a_booking"})
+    asyncio.run(worker.run())
+    assert (result.verified_trip_counts, result.unresolved, result.nonhotel_skipped) == (1, 0, 1)
+    assert result.details_observed == 1
+
+
+def test_only_a_surely_completed_stay_is_skipped_and_unclassified_cards_are_opened(monkeypatch):
+    cards = [(DETAILS[0], "Hotel A\nFinished"), (DETAILS[1], "Hotel B\nConfirmed"),
+             (DETAILS[2], "Hotel C\n???")]
+    worker, result = harness(monkeypatch, _one_trip(cards, 2))
+    worker.classify, _ = _jev({"Finished": "stay_completed", "Hotel B": "stay_active"})
+    asyncio.run(worker.run())
+    # Hotel C is unclassified: it is opened, and the count cannot prove coverage.
+    assert result.inactive_skipped == 1 and result.details_observed == 2
+    assert result.verified_trip_counts == 0 and result.unresolved > 0
+
+
+def test_no_jev_answer_falls_back_to_the_code_words(monkeypatch):
+    cards = [(DETAILS[0], "Hotel A\nConfirmed"), (DETAILS[1], "Hotel B\nCompleted")]
+
+    async def unavailable(cards):
+        return None
+
+    worker, result = harness(monkeypatch, _one_trip(cards, 1))
+    worker.classify = unavailable
+    asyncio.run(worker.run())
+    assert (result.inactive_skipped, result.details_observed, result.unresolved) == (1, 1, 0)
+
+
+def test_a_non_reservation_card_jev_calls_a_stay_is_unclassified(monkeypatch):
+    cards = [(DETAILS[0], "Hotel A\nConfirmed"),
+             ("https://www.booking.com/attractions/x", "Hotel tour\nConfirmed")]
+    worker, result = harness(monkeypatch, _one_trip(cards, 1))
+    worker.classify, _ = _jev({"Hotel": "stay_active"})
+    asyncio.run(worker.run())
+    assert result.verified_trip_counts == 0 and result.unresolved > 0
+
+
+def test_cards_beyond_the_classification_limit_block_count_proof_and_are_opened(monkeypatch):
+    promos = [(f"https://secure.booking.com/promo{i}.html", f"Offer {i}\nSave now")
+              for i in range(29)]
+    cards = [(DETAILS[0], "Hotel A\nCanceled"), *promos, (DETAILS[1], "Hotel B\nConfirmed")]
+    worker, result = harness(monkeypatch, _one_trip(cards, 1))
+    worker.classify, seen = _jev({"Canceled": "stay_cancelled", "Offer": "not_a_booking"})
+    asyncio.run(worker.run())
+    assert len(seen[0]) == 30
+    assert result.verified_trip_counts == 0 and result.details_observed == 2
+
+
+def test_a_single_line_car_booking_link_is_still_classified(monkeypatch):
+    car = "https://cars.booking.com/my-booking/123456789?preflang=en"
+    worker, result = harness(monkeypatch, _one_trip([(DETAILS[0], "Hotel A\nConfirmed"),
+                                                     (car, "Confirmed")], 2))
+    worker.classify, seen = _jev({"Hotel": "stay_active", "Confirmed": "other_active"})
+    asyncio.run(worker.run())
+    assert seen == [[["Hotel A", "Confirmed"], ["Confirmed"]]]
+    assert (result.verified_trip_counts, result.nonhotel_skipped, result.unresolved) == (1, 1, 0)
+

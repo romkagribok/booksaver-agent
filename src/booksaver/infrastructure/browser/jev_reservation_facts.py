@@ -302,6 +302,18 @@ def check_dates(
     }
 
 
+# Trip-page card classes (ADR-066). Only "stay_*" cards are hotel reservations to open or skip.
+CARD_CLASSES = {
+    "stay_active": "A hotel or other accommodation stay that is confirmed, upcoming or in progress",
+    "stay_completed": "An accommodation stay that is completed (already in the past)",
+    "stay_cancelled": "An accommodation stay that is cancelled",
+    "other_active": "Another kind of booking (car rental, flight, attraction, taxi or transfer) "
+    "that is confirmed or upcoming",
+    "other_inactive": "Another kind of booking that is cancelled or completed",
+    "not_a_booking": "Not a booking: a link, offer, help, the app, or directions",
+}
+
+
 @dataclass
 class JevReservationFacts:
     """One sync's reader: two Jev calls per upcoming page; agreed, checked answers are the facts."""
@@ -501,6 +513,48 @@ class JevReservationFacts:
                 facts, reasons, "room_type",
                 {"room_type": rooms[room_choice]} if room_choice in rooms else None,
             )
+
+    async def classify_cards(self, cards: list[list[str]]) -> list[str | None] | None:
+        """Each trip-page card's class, agreed by two asks at 0.8; None if Jev cannot answer."""
+        if not cards:
+            return []
+        questions = {
+            f"c{index}": choice_question(
+                {
+                    "question": "What is this card on a Booking.com trip page? Card: "
+                    + " | ".join(_safe(redact(lines))[:8]),
+                    "rules": _RULES,
+                },
+                CARD_CLASSES,
+            )
+            for index, lines in enumerate(cards)
+        }
+        try:
+            for _ in range(2):
+                self.meter.admit()
+        except JevBudgetStop:
+            return None
+        deadline = time.monotonic() + _CALL_SECONDS
+        outcomes = await asyncio.gather(
+            *(asyncio.to_thread(self.client.system_one, {}, questions, deadline=deadline)
+              for _ in range(2)),
+            return_exceptions=True,
+        )
+        results: list[SystemOneResult] = []
+        for outcome in outcomes:
+            if isinstance(outcome, TypeSafeError):
+                self.meter.record_failure(outcome)
+            elif isinstance(outcome, BaseException):
+                raise outcome
+            else:
+                self.meter.record(outcome)
+                results.append(outcome)
+        if len(results) != 2:
+            self._count("cards_unavailable")
+            return None
+        classes = [_agreed(results, f"c{index}", 0.8) for index in range(len(cards))]
+        self._count("cards_classified")
+        return classes
 
     def _apply(
         self, facts: dict[str, str], reasons: dict[str, str], name: str,

@@ -328,9 +328,11 @@ class GroupedInventoryReader:
         result: GroupedInventoryRead,
         refresh_root: Callable[[str], Awaitable[bool]] | None = None,
         assist: Callable[[str, dict[str, str], dict[str, str]], Awaitable[None]] | None = None,
+        classify: Callable[[list[list[str]]], Awaitable[list[str | None] | None]] | None = None,
     ) -> None:
         self.session = session
         self.assist = assist
+        self.classify = classify
         self.navigate = navigate
         self.back = back
         self.check = check
@@ -513,6 +515,46 @@ class GroupedInventoryReader:
             }
         )
 
+    @staticmethod
+    def cards(snapshot: InventorySnapshot) -> dict[str, list[str]]:
+        """Booking-like cards: reservation links merged per booking, other multi-line links."""
+        merged: dict[str, list[str]] = {}
+        for link in snapshot.links:
+            kind = inventory_page_kind(link.url)
+            lines = [line.strip() for line in link.text.splitlines() if line.strip()]
+            if kind == "reservation_detail":
+                key = InventoryTraversal._key(link.url)
+            elif kind is None and (len(lines) >= 2 or _car_booking_link(link.url)):
+                # The car route is recognised by URL even when its card shows one line.
+                key = link.url
+            else:
+                continue
+            kept = merged.setdefault(key, [])
+            kept.extend(line for line in lines if line not in kept)
+        return merged
+
+    async def card_classes(self, snapshot: InventorySnapshot) -> dict[str, str | None] | None:
+        """Jev's class per card key (ADR-066); None when Jev gave no answer (code words decide)."""
+        if self.classify is None:
+            return None
+        cards = self.cards(snapshot)
+        asked = list(cards.values())[:30]
+        classes = await self.classify(asked)
+        if classes is None or len(classes) != len(asked):
+            return None
+        # Cards beyond the limit stay unclassified: they block count proof and are opened.
+        classes = [*classes, *([None] * (len(cards) - len(asked)))]
+        details = {
+            InventoryTraversal._key(link.url) for link in snapshot.links
+            if inventory_page_kind(link.url) == "reservation_detail"
+        }
+        result = dict(zip(cards, classes, strict=True))
+        for key, value in result.items():
+            # Only a reservation link can be a stay this reader opens; anything else is unknown.
+            if (value or "").startswith("stay_") and key not in details:
+                result[key] = None
+        return result
+
     def unresolved(self, step: str, count: int = 1) -> None:
         self.result.unresolved += count
         # Fixed internal step names only: never log page text, URLs or booking identifiers.
@@ -559,16 +601,35 @@ class GroupedInventoryReader:
             if group is None:
                 self.unresolved("trip_snapshot")
                 return True
-            nonhotel_count = self.nonhotels(group)
-            count_verified = expected_count is not None and self.count_matches(
-                group, expected_count,
-            )
+            classes = await self.card_classes(group)
+            if classes is not None:
+                stays = {k for k, v in classes.items() if (v or "").startswith("stay_")}
+                active = {k for k in stays if classes[k] == "stay_active"}
+                nonhotel_count = sum(v == "other_active" for v in classes.values())
+                # Every card must be classified before the count can prove coverage.
+                count_verified = (
+                    expected_count is not None
+                    and all(classes.values())
+                    and expected_count in {len(stays) + nonhotel_count,
+                                           len(active) + nonhotel_count}
+                )
+            else:
+                nonhotel_count = self.nonhotels(group)
+                count_verified = expected_count is not None and self.count_matches(
+                    group, expected_count,
+                )
             if count_verified:
                 self.result.verified_trip_counts += 1
             elif expected_count is not None:
                 self.unresolved("trip_card_count")
             self.result.trips_visited += 1
-            details = self.reservation_targets(group, expected_count)
+            if classes is not None:
+                details = [
+                    link for link in self.targets(group, "reservation_detail")
+                    if not count_verified or InventoryTraversal._key(link.url) in stays
+                ]
+            else:
+                details = self.reservation_targets(group, expected_count)
             self.result.auxiliary_links_skipped += (
                 len(self.targets(group, "reservation_detail")) - len(details)
             )
@@ -593,16 +654,24 @@ class GroupedInventoryReader:
                     and InventoryTraversal._key(alias.url) == key
                     for line in alias.text.splitlines()
                 }
-                card_conflict = bool(
-                    lines & _INACTIVE_CARD_STATUSES and lines & _ACTIVE_CARD_STATUSES
-                )
-                if lines & _INACTIVE_CARD_STATUSES:
-                    if not lines & _ACTIVE_CARD_STATUSES:
-                        if "Completed" in lines and not lines & {"Canceled", "Cancelled"}:
-                            self.result.inactive_skipped += 1
-                            continue
-                    else:
-                        self.unresolved("conflicting_card_status")
+                if classes is not None:
+                    card_conflict = False
+                    if classes.get(key) == "stay_completed":
+                        self.result.inactive_skipped += 1
+                        continue
+                    claims_cancelled = classes.get(key) == "stay_cancelled"
+                else:
+                    card_conflict = bool(
+                        lines & _INACTIVE_CARD_STATUSES and lines & _ACTIVE_CARD_STATUSES
+                    )
+                    if lines & _INACTIVE_CARD_STATUSES:
+                        if not lines & _ACTIVE_CARD_STATUSES:
+                            if "Completed" in lines and not lines & {"Canceled", "Cancelled"}:
+                                self.result.inactive_skipped += 1
+                                continue
+                        else:
+                            self.unresolved("conflicting_card_status")
+                    claims_cancelled = bool(lines & {"Canceled", "Cancelled"})
                 if not await self.follow(detail.url):
                     self.unresolved("detail_navigation")
                     return True
@@ -621,9 +690,7 @@ class GroupedInventoryReader:
                 self.result.details_observed += 1
                 if snapshot is not None:
                     cancelled = self.cancelled_facts(snapshot)
-                    cancellation_card = (
-                        bool(lines & {"Canceled", "Cancelled"}) and not card_conflict
-                    )
+                    cancellation_card = claims_cancelled and not card_conflict
                     if cancellation_card and cancelled is None:
                         self.unresolved("cancellation_not_verified")
                     reasons: dict[str, str] = {}

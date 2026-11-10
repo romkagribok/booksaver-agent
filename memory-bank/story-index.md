@@ -902,3 +902,13 @@ Per-user check limit sized for real bookings; Jev daily cap per user, not shared
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-260` | Remove the booking cap that was never enforced | Limits | Complete | `002-remove-booking-cap/stories/001-remove-booking-cap.md` |
+
+## 037-jev-classifies-trip-cards
+
+Jev classifies trip cards during discovery.
+
+### 001-jev-classifies-trip-cards
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-262` | Jev classifies trip cards | Jev sync | Planned | `001-jev-classifies-trip-cards/stories/001-jev-classifies-trip-cards.md` |
