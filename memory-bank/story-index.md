@@ -895,3 +895,9 @@ Per-user check limit sized for real bookings; Jev daily cap per user, not shared
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-259` | Each user has their own Jev daily cap and a check limit that fits their bookings | Limits | Complete | `001-per-user-jev-cap/stories/001-per-user-jev-cap.md` |
+
+### 002-remove-booking-cap
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-260` | Remove the booking cap that was never enforced | Limits | Complete | `002-remove-booking-cap/stories/001-remove-booking-cap.md` |

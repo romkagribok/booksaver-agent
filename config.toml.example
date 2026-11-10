@@ -1,6 +1,4 @@
-# Removed keys (the old [agent] model and step settings, [extraction], routing,
-# inventory_routing, max_llm_calls_per_user_per_day) are ignored with one warning
-# at startup; existing config files still load.
+# Keys this version does not know (such as settings from older releases) are ignored.
 
 [schedule]
 # Every eligible booking participates in one random slot per broad UTC window.

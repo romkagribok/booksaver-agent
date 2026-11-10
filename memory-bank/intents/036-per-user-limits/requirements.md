@@ -3,7 +3,7 @@ intent: 036-per-user-limits
 phase: construction
 status: complete
 created: "2026-11-10T00:46:00Z"
-updated: "2026-11-10T00:46:00Z"
+updated: "2026-11-10T01:14:14Z"
 ---
 
 # Requirements: Per-user limits sized for real bookings
@@ -27,7 +27,12 @@ is currently one USD 0.25 total shared by every user, so one user's loop would s
 - **FR-3.** The default `max_checks_per_user_per_day` is 150 (50 bookings at three checks a day), in
   code, `config.toml.example` and the `init` template, matching production.
 
+- **FR-4.** (Amendment 2026-11-10) `[limits] max_bookings_per_user` is removed: it was configured
+  (production 3) but nothing enforced it (user 4 has five active bookings). The retired-keys list and
+  its startup warning are deleted too: config loading already ignores unknown keys, so old files load
+  without it; production's stale line is deleted at deploy.
+
 ## Out of scope
 
-Enforcing `max_bookings_per_user` (configured but never enforced; owner to decide); persisting the
+Persisting the
 in-memory check counter across restarts; changing `messages_per_minute_per_chat`.

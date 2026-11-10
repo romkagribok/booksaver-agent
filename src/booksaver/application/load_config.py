@@ -24,39 +24,6 @@ from booksaver.domain.value_objects import (
 
 from .ports import ConfigSource
 
-# Keys that configured the removed Claude model path or legacy routing (FR-14). Existing
-# config files keep loading; one warning names whichever of these a file still sets.
-_IGNORED_KEYS: dict[str, frozenset[str]] = {
-    "agent": frozenset({
-        "primary_model",
-        "model",
-        "escalation_model",
-        "max_steps",
-        "max_llm_calls",
-        "check_timeout_seconds",
-        "max_recovery_calls_per_step",
-        "recovery_timeout_seconds",
-        "max_deployment_daily_cost_usd",
-        "reserve_opus_diagnostic_for_ambiguous_episode",
-        "screenshot_after_no_progress",
-        "max_semantic_action_executions",
-    }),
-    "limits": frozenset({"max_llm_calls_per_user_per_day"}),
-    "agentic_browser": frozenset({"routing", "inventory_routing"}),
-}
-
-
-def _ignored_keys(raw: dict[str, Any]) -> list[str]:
-    ignored = [
-        f"{section}.{key}"
-        for section, keys in _IGNORED_KEYS.items()
-        for key in raw.get(section, {})
-        if key in keys
-    ]
-    if "extraction" in raw:
-        ignored += [f"extraction.{key}" for key in raw["extraction"]] or ["[extraction]"]
-    return sorted(ignored)
-
 
 def _usd_micro(raw: object, *, field: str, maximum: str) -> int:
     try:
@@ -75,14 +42,6 @@ def _usd_micro(raw: object, *, field: str, maximum: str) -> int:
 def load_config(source: ConfigSource) -> Config:
     raw: dict[str, Any] = source.read()
     errors: list[str] = []
-    ignored = _ignored_keys(raw)
-    if ignored:
-        warnings.warn(
-            "Ignoring config keys that no longer have any effect (TypeSafe Jev is the only "
-            f"model provider): {', '.join(ignored)}",
-            UserWarning,
-            stacklevel=2,
-        )
 
     schedule_raw = raw.get("schedule", {})
     check_interval: CheckInterval | None = None
@@ -172,9 +131,6 @@ def load_config(source: ConfigSource) -> Config:
     try:
         limits_defaults = LimitsSettings()
         limits_settings = LimitsSettings(
-            max_bookings_per_user=int(
-                limits_raw.get("max_bookings_per_user", limits_defaults.max_bookings_per_user)
-            ),
             max_checks_per_user_per_day=int(
                 limits_raw.get(
                     "max_checks_per_user_per_day", limits_defaults.max_checks_per_user_per_day
