@@ -515,7 +515,7 @@ class JevReservationFacts:
         self._count(f"read_{name}")
 
     def record(self, db_path: Path, *, user_id: int, execution_id: str) -> None:
-        """Count this sync's spend toward the shared daily cap."""
+        """Count this sync's spend toward the user's daily cap."""
         # A call cut off by the sync deadline may still be billed; charge it conservatively.
         self.meter.abandon_in_flight()
         usage = self.meter.snapshot()
@@ -542,14 +542,16 @@ class JevReservationFacts:
             logger.warning("Could not record Jev reservation-facts spend", exc_info=True)
 
 
-def remaining_daily_nano_usd(db_path: Path, settings: JevComparisonSettings, now: datetime) -> int:
-    """What is left of the shared Jev daily cap; zero when the ledger cannot be read."""
+def remaining_daily_nano_usd(
+    db_path: Path, settings: JevComparisonSettings, now: datetime, user_id: int
+) -> int:
+    """What is left of this user's Jev daily cap; zero when the ledger cannot be read."""
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     try:
         with SqliteStore(db_path) as store:
             spent = SqliteJevPriceRunRepository(store).cost_since(
-                day_start
-            ) + SqlitePriceComparisonRepository(store).jev_cost_since(day_start)
+                day_start, user_id
+            ) + SqlitePriceComparisonRepository(store).jev_cost_since(day_start, user_id)
     except Exception:
         logger.warning("Jev spend ledger unavailable; not asking Jev", exc_info=True)
         return 0

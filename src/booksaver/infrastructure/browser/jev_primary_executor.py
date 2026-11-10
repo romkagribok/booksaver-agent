@@ -80,7 +80,7 @@ class JevPrimaryPriceExecutor:
     def execute(self, request: PriceExecutionRequest) -> PriceExecutionResult:
         now = self._clock()
         started = time.monotonic()
-        remaining = self._remaining_daily_nano_usd(now)
+        remaining = self._remaining_daily_nano_usd(now, request.owner_user_id)
         if remaining <= 0:
             logger.warning(
                 "Jev price run refused execution_id=%s reason=daily_cost_limit",
@@ -107,13 +107,13 @@ class JevPrimaryPriceExecutor:
         )
         return result
 
-    def _remaining_daily_nano_usd(self, now: datetime) -> int:
+    def _remaining_daily_nano_usd(self, now: datetime, user_id: int) -> int:
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         try:
             with SqliteStore(self._db_path) as store:
                 spent = SqliteJevPriceRunRepository(store).cost_since(
-                    day_start
-                ) + SqlitePriceComparisonRepository(store).jev_cost_since(day_start)
+                    day_start, user_id
+                ) + SqlitePriceComparisonRepository(store).jev_cost_since(day_start, user_id)
         except Exception:
             # Without a readable ledger the cap cannot be proven; fail closed.
             logger.warning("Jev spend ledger unavailable; refusing the run", exc_info=True)

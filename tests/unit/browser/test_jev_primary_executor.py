@@ -130,6 +130,27 @@ def test_daily_cap_counts_earlier_runs_and_then_refuses_without_running(tmp_path
     assert _runs(tmp_path)[-1][:3] == ("budget_exhausted", 0, 0)
 
 
+def test_another_users_spend_never_reduces_this_users_cap(tmp_path: Path) -> None:
+    fake = FakeJev()
+    primary = _primary(tmp_path, fake, cap_nano=1_000_000)
+    with SqliteStore(tmp_path / "booksaver.db") as store:
+        SqliteJevPriceRunRepository(store).record(
+            JevPriceRun(
+                execution_id="other-user-today",
+                user_id=2,
+                booking_id="booking-2",
+                created_at=datetime(2026, 10, 9, 1, 0, tzinfo=UTC),
+                status="observed",
+                usage=JevUsage(calls=50, cost_nano_usd=5_000_000),
+                latency_ms=1,
+                adapter=JEV_ADAPTER_VERSION,
+            )
+        )
+    result = primary.execute(_request())  # owner_user_id=1
+    assert result.status is not PriceExecutionStatus.BUDGET_EXHAUSTED
+    assert fake.caps == [1_000_000]
+
+
 def test_cap_resets_at_the_utc_day_boundary(tmp_path: Path) -> None:
     fake = FakeJev()
     _primary(tmp_path, fake, cap_nano=1_000_000).execute(_request())

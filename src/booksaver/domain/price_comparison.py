@@ -46,7 +46,7 @@ class JevComparisonSettings:
     model: str = JEV_MODEL
     max_calls_per_arm: int = 100
     arm_timeout_seconds: int = 150
-    max_daily_cost_nano_usd: int = 250_000_000  # USD 0.25
+    max_daily_cost_nano_usd: int = 250_000_000  # USD 0.25 per user per UTC day
 
     def __post_init__(self) -> None:
         if self.model != JEV_MODEL:
