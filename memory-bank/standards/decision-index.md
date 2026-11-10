@@ -1,6 +1,6 @@
 ---
 last_updated: 2026-10-12T21:55:29Z
-total_decisions: 65
+total_decisions: 66
 ---
 
 # Decision Index
@@ -619,3 +619,11 @@ Use this to find relevant prior decisions when working on related features.
 - **Path**: `bolts/109-same-or-better-room/adr-065-same-or-better-room.md`
 - **Summary**: Amends ADR-064. Jev compares each priced room with the booked room for the booked guests (same, better, neither; asked twice, 0.8); same or better rooms are compared; the alert names the offered room and whether it is better.
 - **Read when**: Changing which offered rooms count as equivalent, or how alerts describe the offered room.
+
+### ADR-066: Jev classifies trip cards; code status words are only the outage fallback
+- **Status**: accepted
+- **Date**: 2026-11-10
+- **Bolt**: 110-jev-classifies-trip-cards (jev-classifies-trip-cards)
+- **Path**: `bolts/110-jev-classifies-trip-cards/adr-066-jev-classifies-trip-cards.md`
+- **Summary**: Jev classifies each trip card (stay active/completed/cancelled, other booking, not a booking; asked twice, 0.8); the count check, cards to open and skips use the classes; unclassified cards are opened; code words only when TypeSafe is unavailable.
+- **Read when**: Changing how trip cards are classified, counted, skipped or opened during discovery.

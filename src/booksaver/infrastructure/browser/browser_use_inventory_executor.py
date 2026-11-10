@@ -1185,6 +1185,7 @@ class LocalBrowserUseInventoryRuntime:
         reader = GroupedInventoryReader(
             session, navigate=navigate, back=back, check=check,
             refresh_root=refresh_root, assist=self._assist,
+            classify=self._assist.classify_cards if self._assist is not None else None,
             observed_at=datetime.now(UTC), result=result,
         )
         try:
