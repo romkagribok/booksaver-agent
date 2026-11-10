@@ -10,6 +10,9 @@ from .check_result import CheckOutcome, CheckResult
 from .models import Booking
 from .value_objects import Money
 
+# Owner, 2026-11-10: no alert for less than 5 of the booking's own currency (5$, 5€).
+MINIMUM_SAVING = Decimal("5")
+
 
 class RejectionReason(Enum):
     DATES_DIFFER = "dates_differ"
@@ -19,6 +22,7 @@ class RejectionReason(Enum):
     REFUNDABILITY_UNKNOWN = "refundability_unknown"
     CURRENCY_MISMATCH = "currency_mismatch"
     PRICE_NOT_LOWER = "price_not_lower"
+    SAVING_BELOW_MINIMUM = "saving_below_minimum"
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,8 @@ def detect_savings(
         return RejectionReason.PRICE_NOT_LOWER
 
     saved = baseline.amount - live.amount
+    if saved < MINIMUM_SAVING:
+        return RejectionReason.SAVING_BELOW_MINIMUM
     percent = (saved / baseline.amount * 100).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )

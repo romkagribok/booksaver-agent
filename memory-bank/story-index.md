@@ -922,3 +922,13 @@ Bookings are stored and checked in the currency they were made in.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-263` | The booked total is read in the booking's currency | Jev sync | Planned | `001-total-in-booking-currency/stories/001-total-in-booking-currency.md` |
+
+## 039-minimum-saving
+
+A saving alert needs at least 5 in the booking's currency.
+
+### 001-minimum-saving
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-264` | No alert for a saving under 5 in the booking currency | Alerts | Planned | `001-minimum-saving/stories/001-minimum-saving.md` |

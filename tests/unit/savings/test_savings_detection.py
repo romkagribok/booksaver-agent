@@ -133,10 +133,17 @@ def test_higher_price_rejected() -> None:
     assert detection is RejectionReason.PRICE_NOT_LOWER
 
 
-def test_one_cent_cheaper_is_detected() -> None:
-    detection = detect_savings(make_booking(), _check(amount="399.99"))
+@pytest.mark.parametrize("amount", ["399.99", "399.00", "395.01"])
+def test_a_saving_under_five_of_the_booking_currency_is_not_an_opportunity(amount: str) -> None:
+    """Owner, 2026-11-10: a EUR 1 saving was alerted twice; the minimum is 5 (5$, 5€)."""
+    detection = detect_savings(make_booking(), _check(amount=amount))
+    assert detection is RejectionReason.SAVING_BELOW_MINIMUM
+
+
+def test_a_saving_of_exactly_five_is_an_opportunity() -> None:
+    detection = detect_savings(make_booking(), _check(amount="395.00"))
     assert isinstance(detection, SavingsOpportunity)
-    assert detection.amount_saved.amount == Decimal("0.01")
+    assert detection.amount_saved == Money(amount=Decimal("5.00"), currency="EUR")
 
 
 def test_currency_mismatch_rejected() -> None:
