@@ -875,3 +875,13 @@ Jev reads the booked party, meals and (when needed) dates.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-257` | Jev reads the booked party, meals and missing dates | Jev sync | Planned | `001-jev-reads-party-meals-dates/stories/001-jev-reads-party-meals-dates.md` |
+
+## 036-per-user-limits
+
+Per-user check limit sized for real bookings; Jev daily cap per user, not shared.
+
+### 001-per-user-jev-cap
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-259` | Each user has their own Jev daily cap and a check limit that fits their bookings | Limits | Complete | `001-per-user-jev-cap/stories/001-per-user-jev-cap.md` |

@@ -14,14 +14,14 @@ class SqlitePriceComparisonRepository:
     def __init__(self, store: SqliteStore) -> None:
         self._store = store
 
-    def jev_cost_since(self, since: datetime) -> int:
-        """Charged Jev nano-USD since ``since`` (unknown-cost arms are not counted here)."""
+    def jev_cost_since(self, since: datetime, user_id: int) -> int:
+        """One user's charged Jev nano-USD since ``since`` (unknown-cost arms are not counted)."""
 
         row = self._store.conn.execute(
             "SELECT COALESCE(SUM(a.cost_nano_usd), 0) FROM price_comparison_arms a "
             "JOIN price_comparisons c ON c.comparison_id = a.comparison_id "
-            "WHERE a.arm = 'jev' AND c.created_at >= ?",
-            (since.isoformat(),),
+            "WHERE a.arm = 'jev' AND c.created_at >= ? AND c.user_id = ?",
+            (since.isoformat(), user_id),
         ).fetchone()
         return int(row[0])
 
@@ -69,10 +69,12 @@ class SqliteJevPriceRunRepository:
         )
         self._store.conn.commit()
 
-    def cost_since(self, since: datetime) -> int:
+    def cost_since(self, since: datetime, user_id: int) -> int:
+        """One user's Jev nano-USD since ``since``: the daily cap is per user."""
         row = self._store.conn.execute(
-            "SELECT COALESCE(SUM(cost_nano_usd), 0) FROM jev_price_runs WHERE created_at >= ?",
-            (since.isoformat(),),
+            "SELECT COALESCE(SUM(cost_nano_usd), 0) FROM jev_price_runs "
+            "WHERE created_at >= ? AND user_id = ?",
+            (since.isoformat(), user_id),
         ).fetchone()
         return int(row[0])
 

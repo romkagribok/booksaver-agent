@@ -29,7 +29,7 @@ class TestLimitsConfig:
     def test_defaults_when_section_absent(self):
         cfg = load_config(DictSource(_base()))
         assert cfg.limits_settings.max_bookings_per_user == 3
-        assert cfg.limits_settings.max_checks_per_user_per_day == 48
+        assert cfg.limits_settings.max_checks_per_user_per_day == 150
         assert cfg.limits_settings.messages_per_minute_per_chat == 20
 
     def test_overriding_all_fields_parses(self):
@@ -65,7 +65,7 @@ class TestLimitsSettingsValueObject:
     def test_defaults_are_valid(self):
         settings = LimitsSettings()
         assert settings.max_bookings_per_user == 3
-        assert settings.max_checks_per_user_per_day == 48
+        assert settings.max_checks_per_user_per_day == 150
         assert settings.messages_per_minute_per_chat == 20
 
     def test_each_field_must_be_at_least_one(self):

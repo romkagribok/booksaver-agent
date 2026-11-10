@@ -192,7 +192,7 @@ class LimitsSettings:
     like today (small personal deployments)."""
 
     max_bookings_per_user: int = 3
-    max_checks_per_user_per_day: int = 48
+    max_checks_per_user_per_day: int = 150
     messages_per_minute_per_chat: int = 20
 
     def __post_init__(self) -> None:
