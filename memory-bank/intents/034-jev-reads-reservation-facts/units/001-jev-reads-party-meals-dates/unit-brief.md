@@ -2,7 +2,7 @@
 unit: 001-jev-reads-party-meals-dates
 intent: 034-jev-reads-reservation-facts
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-08T18:31:21Z"

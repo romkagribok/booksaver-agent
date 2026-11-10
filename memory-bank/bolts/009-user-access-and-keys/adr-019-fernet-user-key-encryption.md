@@ -1,6 +1,6 @@
 # ADR-019: Fernet (via `cryptography`) for personal-key encryption at rest
 
-- **Status**: accepted
+- **Status**: accepted, amended by ADR-063 (personal Anthropic keys, `/setkey` and `/deletekey` removed; Fernet with `BOOKSAVER_SECRET_KEY` still encrypts sessions and diagnostics)
 - **Date**: 2026-07-11
 - **Bolt**: 009-user-access-and-keys (user-access-and-keys)
 

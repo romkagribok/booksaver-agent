@@ -1,7 +1,7 @@
 ---
 intent: 032-jev-no-availability
 phase: construction
-status: construction
+status: complete
 created: "2026-11-06T16:53:03Z"
 updated: "2026-11-06T16:53:03Z"
 ---

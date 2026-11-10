@@ -1,7 +1,7 @@
 ---
 intent: 034-jev-reads-reservation-facts
 phase: construction
-status: construction
+status: complete
 created: "2026-11-08T18:31:21Z"
 updated: "2026-11-08T18:31:21Z"
 ---

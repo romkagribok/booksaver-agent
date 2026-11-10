@@ -21,7 +21,7 @@ FR-14.
 
 ## Acceptance criteria
 
-- [ ] Given a config with Claude model keys, when loaded, then one warning is logged and it loads.
+- [x] Given a config with Claude model keys, when loaded, then one warning is logged and it loads.
 
 ## Out of scope
 

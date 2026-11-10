@@ -3,13 +3,13 @@ id: 105-jev-reads-party-meals-dates
 unit: 001-jev-reads-party-meals-dates
 intent: 034-jev-reads-reservation-facts
 type: simple-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-jev-reads-party-meals-dates
 created: "2026-11-08T18:31:21Z"
 started: "2026-11-08T18:31:21Z"
-completed: null
-current_stage: test
+completed: "2026-11-10T00:55:35Z"
+current_stage: null
 stages_completed:
   - name: plan
     completed: "2026-11-08T18:31:21Z"

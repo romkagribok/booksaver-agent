@@ -2,7 +2,7 @@
 unit: 001-trip-count-ignores-cancelled
 intent: 031-cancelled-card-trip-count
 created: "2026-11-05T23:59:59Z"
-last_updated: "2026-11-05T23:59:59Z"
+last_updated: "2026-11-10T00:55:40Z"
 ---
 
 # Construction Log: 001-trip-count-ignores-cancelled
@@ -25,7 +25,7 @@ last_updated: "2026-11-05T23:59:59Z"
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
-| 102-trip-count-ignores-cancelled | US-254 | ⏳ in-progress | - |
+| 102-trip-count-ignores-cancelled | US-254 | ✅ completed | - |
 
 ## Execution History
 
@@ -36,3 +36,7 @@ last_updated: "2026-11-05T23:59:59Z"
 | 2026-11-06T00:21:42Z | 102-trip-count-ignores-cancelled | approved | Owner: "yes please proceed sounds good"; commit, merge and deploy approved |
 | 2026-11-06T01:23:40Z | 102-trip-count-ignores-cancelled | evidence | Production read-back: dad sync 2026-11-06T01:10Z complete; superseded reservation absent |
 | 2026-11-06T01:23:40Z | 102-trip-count-ignores-cancelled | completed | Closed with bolt-complete.cjs |
+
+## Notes
+
+2026-11-10T00:55:40Z: the Current Bolt Structure row was left at in-progress after the bolt completed on 2026-11-06T01:23:40Z, and US-254's four criteria were left unticked; both corrected at the AI-DLC close-out. Criteria 1 and 4 rest on the live replay and the production read-back of user 4's real trip; criteria 2 and 3 on `test_a_trip_count_that_leaves_out_cancelled_cards_is_verified`.
