@@ -87,6 +87,27 @@ def test_refund_deadline_is_parsed_by_code_with_a_timezone_margin(
     assert (result or {}).get("refund_deadline") == deadline
 
 
+@pytest.mark.parametrize(
+    ("sentence", "now"),
+    [
+        ("Free cancellation until November 1, 2026.", NOW),
+        ("You'll get a full refund if you cancel before 11:59 PM on November 1, 2026.", NOW),
+    ],
+)
+def test_a_passed_free_cancellation_date_is_read_as_ended(sentence: str, now: datetime) -> None:
+    result = check_refund("free_until_date", sentence, date(2026, 11, 11), now)
+    assert result == {"refundability": "explicit_nonrefundable",
+                      "refundability_text": "Free cancellation ended on 1 Nov 2026."}
+
+
+def test_a_date_that_may_still_be_running_somewhere_stays_unread() -> None:
+    late_on_the_day_after = datetime(2026, 11, 2, 13, tzinfo=UTC)
+    assert check_refund(
+        "free_until_date", "Free cancellation until November 1, 2026.", date(2026, 11, 11),
+        late_on_the_day_after,
+    ) is None
+
+
 def test_non_refundable_needs_jevs_agreed_class() -> None:
     result = check_refund("non_refundable", "Cancellation policy Non-refundable", None, NOW)
     assert result == {"refundability": "explicit_nonrefundable",

@@ -55,12 +55,9 @@ def render_alert(
         live_price_line += "  (public rate — member deals may be cheaper)"
     source_lines = ""
     if price_source is not None:
-        source_lines = (
-            "\nPrice source : authenticated mobile web "
-            f"({price_source.profile_id.value})"
-        )
+        source_lines = "\nChecked as   : signed in to your Booking.com account"
         if price_source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT:
-            source_lines += "\nGenius       : evidence visible on the rendered page"
+            source_lines += "\nGenius       : Genius prices were shown"
     if offer_room_better:
         stay = "your stay, in a room judged better than yours"
         stay_meals = "your stay and meal plan, in a room judged better than yours"

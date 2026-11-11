@@ -30,6 +30,7 @@ from booksaver.domain.mobile_web import (
     PriceSourceProvenance,
 )
 from booksaver.domain.models import Booking
+from booksaver.domain.savings import SavingsOpportunity
 from booksaver.domain.schedule import ScheduledCheckSlot, SlotIdentity
 from booksaver.domain.user_session import UserSessionMetadata, UserSessionSnapshot
 from booksaver.domain.value_objects import (
@@ -53,6 +54,7 @@ from booksaver.infrastructure.persistence.scheduled_check_slots import (
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteAccountReservationRepository,
     SqliteCheckHistoryRepository,
+    SqliteSavingsRepository,
     SqliteStore,
     SqliteUserRepository,
 )
@@ -476,7 +478,7 @@ def test_bookings_only_lists_future_upcoming_reservations(tmp_path: Path) -> Non
     text = "\n".join(message for _chat_id, message in sent)
     assert "CONF-future-eligible" in text
     assert "CONF-future-ineligible" in text
-    assert "Can't check prices: non-refundable" in text
+    assert "Can't check prices: no free cancellation" in text
     assert "CONF-past" not in text
     assert "CONF-current" not in text
     assert "CONF-cancelled" not in text
@@ -960,7 +962,7 @@ def test_checks_picker_callback_renders_recent_history(tmp_path: Path) -> None:
     )
 
     assert client.answered == ["cb-1"]
-    assert "timeout" in client.edits[0][2]
+    assert "the check took too long" in client.edits[0][2]
 
 
 def test_checks_picker_renders_even_when_callback_acknowledgement_fails(
@@ -985,7 +987,7 @@ def test_checks_picker_renders_even_when_callback_acknowledgement_fails(
     )
 
     assert len(client.edits) == 1
-    assert "No checks recorded" in client.edits[0][2]
+    assert "No checks yet for Hotel Test" in client.edits[0][2]
     assert "Could not answer checks callback" in caplog.text
 
 
@@ -1030,7 +1032,7 @@ def test_checks_picker_callback_cannot_read_another_users_booking(tmp_path: Path
         )
     )
 
-    assert "No checks recorded" in client.edits[0][2]
+    assert "None of your bookings matches that" in client.edits[0][2]
 
 
 def test_help_hides_admin_for_non_owner_when_owner_check_is_wired(tmp_path: Path) -> None:
@@ -1058,7 +1060,8 @@ def test_checks_reports_recent_history_including_failures(tmp_path: Path) -> Non
 
     router.dispatch(_cmd("/checks", args="b-1", chat_id=1))
     text = sent[0][1]
-    assert "timeout" in text
+    assert "the check took too long" in text
+    assert "timeout" not in text
 
 
 def test_checks_reports_authenticated_mobile_source_without_unobserved_genius_status(
@@ -1086,7 +1089,8 @@ def test_checks_reports_authenticated_mobile_source_without_unobserved_genius_st
     router.dispatch(_cmd("/checks", args="b-1", chat_id=1))
 
     text = sent[0][1]
-    assert "source=authenticated mobile web (android-chromium)" in text
+    assert "350.00 EUR, 50.00 EUR below what you paid" in text
+    assert "android-chromium" not in text
     assert "Genius" not in text
 
 
@@ -1106,7 +1110,8 @@ def test_checks_accepts_unique_displayed_booking_id_prefix(tmp_path: Path) -> No
 
     router.dispatch(_cmd("/checks", args="f42b63a9", chat_id=1))
 
-    assert "agent_gave_up" in sent[0][1]
+    assert "the price page could not be read" in sent[0][1]
+    assert "agent_gave_up" not in sent[0][1]
 
 
 def test_checks_rejects_ambiguous_displayed_booking_id_prefix(tmp_path: Path) -> None:
@@ -1126,7 +1131,7 @@ def test_checks_rejects_ambiguous_displayed_booking_id_prefix(tmp_path: Path) ->
 
     router.dispatch(_cmd("/checks", args="f42b63a9", chat_id=1))
 
-    assert sent[0][1] == "No checks recorded for booking 'f42b63a9'."
+    assert sent[0][1] == "None of your bookings matches that. Send /checks to choose one."
 
 
 def test_checks_rejects_prefix_shorter_than_displayed_id(tmp_path: Path) -> None:
@@ -1141,7 +1146,7 @@ def test_checks_rejects_prefix_shorter_than_displayed_id(tmp_path: Path) -> None
 
     router.dispatch(_cmd("/checks", args="f42b63a", chat_id=1))
 
-    assert sent[0][1] == "No checks recorded for booking 'f42b63a'."
+    assert sent[0][1] == "None of your bookings matches that. Send /checks to choose one."
 
 
 def test_checks_does_not_resolve_another_users_prefix(tmp_path: Path) -> None:
@@ -1154,7 +1159,7 @@ def test_checks_does_not_resolve_another_users_prefix(tmp_path: Path) -> None:
 
     router.dispatch(_cmd("/checks", args="f42b63a9", chat_id=2))
 
-    assert sent[0][1] == "No checks recorded for booking 'f42b63a9'."
+    assert sent[0][1] == "None of your bookings matches that. Send /checks to choose one."
 
 
 def test_checks_unknown_booking_reports_none_found(tmp_path: Path) -> None:
@@ -1164,7 +1169,7 @@ def test_checks_unknown_booking_reports_none_found(tmp_path: Path) -> None:
         seed_booking(store, _booking(), user_id=user_id)
 
     router.dispatch(_cmd("/checks", args="unknown-id", chat_id=1))
-    assert "No checks recorded for booking" in sent[0][1]
+    assert "None of your bookings matches that" in sent[0][1]
 
 
 def test_checks_another_users_booking_reports_none_found(tmp_path: Path) -> None:
@@ -1185,4 +1190,49 @@ def test_checks_another_users_booking_reports_none_found(tmp_path: Path) -> None
     del user_b
 
     router.dispatch(_cmd("/checks", args="b-1", chat_id=2))
-    assert sent[0][1] == "No checks recorded for booking 'b-1'."
+    assert sent[0][1] == "None of your bookings matches that. Send /checks to choose one."
+
+
+def test_bookings_show_free_cancellation_date_and_readable_stay(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    booking = _booking("free", check_in=date(2099, 11, 12))
+    _sync_observations(
+        db_path, user_id, (replace(_observation(booking), refund_deadline=date(2099, 11, 10)),),
+    )
+
+    router.dispatch(_cmd("/bookings", chat_id=1))
+
+    text = "\n".join(message for _chat_id, message in sent)
+    assert "12 – 16 Nov 2099" in text
+    assert "Free cancellation until 10 Nov 2099" in text
+
+
+def test_savings_name_the_hotel_and_stay_without_ids(tmp_path: Path) -> None:
+    db_path, router, sent, _sched = _setup(tmp_path)
+    user_id = _register_caller(db_path, telegram_id=1)
+    booking = _booking("b-1", check_in=date(2099, 4, 15))
+    check = CheckResult.success(
+        "b-1", datetime.now(UTC), Money(Decimal("377.52"), "EUR"), ExtractionMethod.DOM,
+    )
+    with SqliteStore(db_path) as store:
+        seed_booking(store, booking, user_id=user_id)
+        SqliteCheckHistoryRepository(store).add(check)
+        SqliteSavingsRepository(store).add(SavingsOpportunity(
+            opportunity_id="9aa082ff-4a0c-44f4-8536-cd168e7076d0",
+            booking_id="b-1",
+            check_id=check.check_id,
+            baseline_price=Money(Decimal("400.00"), "EUR"),
+            live_price=Money(Decimal("377.52"), "EUR"),
+            amount_saved=Money(Decimal("22.48"), "EUR"),
+            percent_saved=Decimal("5.62"),
+            validated_at=datetime(2099, 3, 1, 19, 2, tzinfo=UTC),
+        ))
+
+    router.dispatch(_cmd("/savings", chat_id=1))
+
+    text = sent[0][1]
+    assert "Hotel Test · 15 – 19 Apr 2099" in text
+    assert "You paid 400.00 EUR; found 377.52 EUR" in text
+    assert "Save 22.48 EUR (5.62%) · found 1 Mar, 19:02 UTC" in text
+    assert "9aa082ff" not in text

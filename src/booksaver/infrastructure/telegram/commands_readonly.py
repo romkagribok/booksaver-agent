@@ -18,7 +18,6 @@ from booksaver.domain.account_sync import (
     InventoryCompleteness,
     ReservationLifecycle,
 )
-from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.user import User
 from booksaver.domain.user_session import UserSessionHealth, UserSessionStatusView
 from booksaver.domain.value_objects import DataDirectory
@@ -40,6 +39,7 @@ from booksaver.infrastructure.persistence.sqlite_store import (
 from .client import TelegramBotClient
 from .command_catalog import help_text
 from .inventory_messages import empty_upcoming_message, refresh_failure_guidance
+from .plain_text import day, failure_text, moment, money, stay, versus_paid
 from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCommand
 
 Reply = Callable[[int, str], None]
@@ -70,8 +70,8 @@ _ELIGIBILITY_LABELS = {
     EligibilityReason.PAST_OR_COMPLETED: "stay is past or completed",
     EligibilityReason.CANCELLED: "cancelled",
     EligibilityReason.NOT_UPCOMING: "not an upcoming stay",
-    EligibilityReason.NON_REFUNDABLE: "non-refundable",
-    EligibilityReason.REFUNDABILITY_UNKNOWN: "refundability unavailable",
+    EligibilityReason.NON_REFUNDABLE: "no free cancellation",
+    EligibilityReason.REFUNDABILITY_UNKNOWN: "cancellation terms unknown",
     EligibilityReason.MISSING_CONFIRMATION: "confirmation unavailable",
     EligibilityReason.MISSING_PROPERTY: "property identity unavailable",
     EligibilityReason.MISSING_STAY_DATES: "stay dates unavailable",
@@ -120,13 +120,6 @@ def _format_session_status(status: UserSessionStatusView) -> list[str]:
         UserSessionHealth.INVALID: "needs reconnecting",
     }[status.health]
     return [f"Booking.com login: {health}", "Send /connect to sign in to Booking.com."]
-
-
-def _format_price_source(source: PriceSourceProvenance) -> str:
-    detail = f"source=authenticated mobile web ({source.profile_id.value})"
-    if source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT:
-        detail += "; Genius evidence visible"
-    return detail
 
 
 def _format_incident_status(status: IncidentStatusProjection) -> list[str]:
@@ -343,7 +336,7 @@ def register_readonly_commands(
             item = reservation.observation
             name = item.property_name or item.confirmation_id or "Reservation"
             dates = (
-                f"{item.check_in}→{item.check_out}"
+                stay(item.check_in, item.check_out)
                 if item.check_in is not None and item.check_out is not None
                 else "dates unavailable"
             )
@@ -365,11 +358,17 @@ def register_readonly_commands(
                     for reason in reservation.eligibility.reasons
                 )
                 eligibility = f"Can't check prices: {reasons}"
+            cancellation = (
+                f"  Free cancellation until {day(item.refund_deadline)}\n"
+                if item.refundable is True and item.refund_deadline is not None
+                else ""
+            )
             entries.append(
                 f"{name}\n"
                 f"  Confirmation: {item.confirmation_id or 'unavailable'}\n"
                 f"  {dates} · {total} · {item.lifecycle.value}\n"
                 f"  Meals: {item.meal_plan.label}\n"
+                f"{cancellation}"
                 f"  {eligibility}"
             )
 
@@ -432,17 +431,28 @@ def register_readonly_commands(
                 reply(cmd.chat_id, _NOT_RECOGNIZED)
                 return
             opportunities = SqliteSavingsRepository(store).list_all_for_user(user.user_id)
+            bookings = {
+                booking.booking_id: booking
+                for booking in SqliteBookingRepository(store).list_all_for_user(user.user_id)
+            }
         if not opportunities:
             reply(cmd.chat_id, "No savings opportunities detected yet.")
             return
-        lines = ["Savings opportunities:"]
+        entries = ["Savings found:"]
         for opp in opportunities[:10]:
-            lines.append(
-                f"{opp.opportunity_id[:8]} — booking {opp.booking_id[:8]}: "
-                f"saved {opp.amount_saved.amount} {opp.amount_saved.currency} "
-                f"({opp.percent_saved}%)"
+            booking = bookings.get(opp.booking_id)
+            title = (
+                f"{booking.property.name} · "
+                f"{stay(booking.stay_dates.check_in, booking.stay_dates.check_out)}"
+                if booking is not None else "A booking you no longer have"
             )
-        reply(cmd.chat_id, "\n".join(lines))
+            entries.append(
+                f"{title}\n"
+                f"  You paid {money(opp.baseline_price)}; found {money(opp.live_price)}\n"
+                f"  Save {money(opp.amount_saved)} ({opp.percent_saved}%) · "
+                f"found {moment(opp.validated_at)}"
+            )
+        reply(cmd.chat_id, "\n\n".join(entries))
 
     def _checks_text(telegram_user_id: int, booking_id: str) -> str:
         if not db_path.exists():
@@ -454,10 +464,11 @@ def register_readonly_commands(
             # Telegram displays the first eight characters of booking UUIDs.
             # Resolve that prefix only within the caller's own booking scope;
             # ambiguous/short/cross-user prefixes use the same not-found reply.
-            owned_ids = [
-                booking.booking_id
+            owned = {
+                booking.booking_id: booking
                 for booking in SqliteBookingRepository(store).list_all_for_user(user.user_id)
-            ]
+            }
+            owned_ids = list(owned)
             resolved_booking_id: str | None
             if booking_id in owned_ids:
                 resolved_booking_id = booking_id
@@ -471,23 +482,29 @@ def register_readonly_commands(
             if resolved_booking_id is None:
                 # Same message for "doesn't exist" and "not yours" — don't
                 # leak which booking ids exist to a different user.
-                return f"No checks recorded for booking '{booking_id}'."
+                return "None of your bookings matches that. Send /checks to choose one."
             results = SqliteCheckHistoryRepository(store).get_recent(
                 resolved_booking_id, limit=5
             )
+        booking = owned[resolved_booking_id]
+        title = (
+            f"{booking.property.name} · "
+            f"{stay(booking.stay_dates.check_in, booking.stay_dates.check_out)}"
+        )
         if not results:
-            return f"No checks recorded for booking '{booking_id}'."
-        lines = [f"Recent checks for {booking_id}:"]
+            return f"No checks yet for {title}."
+        lines = [f"Recent price checks for {title}", f"You paid {money(booking.baseline_price)}"]
         for result in results:
-            if result.failure_reason is not None:
-                detail = f"{result.failure_reason.code.value}: {result.failure_reason.detail[:40]}"
-            elif result.live_price is not None:
-                detail = f"{result.live_price.amount} {result.live_price.currency}"
+            if result.live_price is not None:
+                detail = (
+                    f"{money(result.live_price)}, "
+                    f"{versus_paid(result.live_price, booking.baseline_price)}"
+                )
+            elif result.failure_reason is not None:
+                detail = failure_text(result.failure_reason)
             else:
-                detail = "ok"
-            if result.price_source is not None:
-                detail += f"  {_format_price_source(result.price_source)}"
-            lines.append(f"{result.checked_at.isoformat()[:19]}  {result.outcome.value}  {detail}")
+                detail = "no price found"
+            lines.append(f"{moment(result.checked_at)}: {detail}")
         return "\n".join(lines)
 
     def _checks(cmd: IncomingCommand) -> None:
