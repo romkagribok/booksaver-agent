@@ -17,8 +17,9 @@ _FAILURES = {
     FailureCode.PROPERTY_NOT_FOUND: "the hotel's page could not be found",
     FailureCode.CURRENCY_MISMATCH: "prices were shown in another currency than your booking",
     FailureCode.BOT_WALL: f"Booking.com asked for a robot check; {_RETRY}",
-    FailureCode.BUDGET_EXCEEDED: "skipped: today's price-check budget is used up",
-    FailureCode.JOB_COST_LIMIT: "skipped: today's price-check budget is used up",
+    # Also raised by one check's own call or spend envelope, so not "today's budget".
+    FailureCode.BUDGET_EXCEEDED: "the check reached a spending limit; a later check will try again",
+    FailureCode.JOB_COST_LIMIT: "the check reached a spending limit; a later check will try again",
     FailureCode.DAILY_COST_LIMIT: "skipped: today's price-check budget is used up",
     FailureCode.USER_CHECK_LIMIT_REACHED: "skipped: today's check limit is reached",
     FailureCode.CALLER_REVOKED: "skipped: your access is paused",

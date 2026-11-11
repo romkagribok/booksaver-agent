@@ -55,3 +55,9 @@ def test_no_availability_is_told_apart_from_no_matching_offer() -> None:
     unmatched = FailureReason(FailureCode.NO_EQUIVALENT_OFFER, "No matching room type found")
     assert failure_text(unavailable) == "no rooms available for your dates"
     assert failure_text(unmatched) == "no offer matched your room, meals and cancellation terms"
+
+
+def test_only_the_daily_limit_says_todays_budget_is_used_up() -> None:
+    for code in (FailureCode.BUDGET_EXCEEDED, FailureCode.JOB_COST_LIMIT):
+        assert "today" not in failure_text(FailureReason(code, ""))
+    assert "today's" in failure_text(FailureReason(FailureCode.DAILY_COST_LIMIT, ""))
