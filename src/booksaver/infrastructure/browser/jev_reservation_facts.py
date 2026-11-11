@@ -238,7 +238,13 @@ def check_refund(
         deadline = (window_end - _TIMEZONE_MARGIN).date()
     else:
         return None
-    if now.astimezone(UTC) >= window_end - _TIMEZONE_MARGIN or deadline > check_in:
+    if deadline > check_in:
+        return None
+    # A dated deadline runs to the end of that day somewhere on Earth; only after that has it ended.
+    if dates and now.astimezone(UTC) >= window_end + timedelta(days=1) + _TIMEZONE_MARGIN:
+        ended = f"Free cancellation ended on {deadline.day} {deadline:%b %Y}."
+        return {"refundability": "explicit_nonrefundable", "refundability_text": ended}
+    if now.astimezone(UTC) >= window_end - _TIMEZONE_MARGIN:
         return None
     return {"refundability": "explicit_refundable", "refundability_text": sentence,
             "refund_deadline": deadline.isoformat()}

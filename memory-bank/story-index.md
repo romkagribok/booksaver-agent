@@ -932,3 +932,15 @@ A saving alert needs at least 5 in the booking's currency.
 | Story | Title | Tag | Status | File |
 |-------|-------|-----|--------|------|
 | `US-264` | No alert for a saving under 5 in the booking currency | Alerts | Complete | `001-minimum-saving/stories/001-minimum-saving.md` |
+
+## 040-legible-reports
+
+Accurate, legible reports for users.
+
+### 001-legible-reports
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-265` | A passed free-cancellation date is read as ended | Jev sync | Planned | `001-legible-reports/stories/001-cancellation-ended.md` |
+| `US-266` | /bookings and /savings are legible | Telegram | Planned | `001-legible-reports/stories/002-bookings-and-savings.md` |
+| `US-267` | /checks, /checknow and the alert speak plainly | Telegram | Planned | `001-legible-reports/stories/003-checks-and-alert.md` |

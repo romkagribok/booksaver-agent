@@ -12,8 +12,8 @@ from booksaver.daemon.check_coordinator import (
     ImmediateCompletionKind,
 )
 from booksaver.domain.check_result import CheckOutcome
-from booksaver.domain.mobile_web import GeniusEvidence, PriceSourceProvenance
 from booksaver.domain.models import Booking
+from booksaver.domain.savings import MINIMUM_SAVING
 from booksaver.infrastructure.persistence.sqlite_store import (
     SqliteBookingRepository,
     SqliteStore,
@@ -21,6 +21,7 @@ from booksaver.infrastructure.persistence.sqlite_store import (
 )
 
 from .client import TelegramBotClient
+from .plain_text import checked_as, failure_text, money, versus_paid
 from .router import CallbackRouter, CommandRouter, IncomingCallback, IncomingCommand
 
 logger = logging.getLogger(__name__)
@@ -29,13 +30,6 @@ Reply = Callable[[int, str], None]
 Send = Callable[[int, str, dict[str, Any] | None], None]
 
 _UNAVAILABLE = "That booking is not available. Choose one of your active bookings."
-
-
-def _format_price_source(source: PriceSourceProvenance) -> str:
-    detail = f" Source: authenticated mobile web ({source.profile_id.value})"
-    if source.genius_evidence is GeniusEvidence.APPLIED_OR_PRESENT:
-        detail += "; Genius evidence visible"
-    return f"{detail}."
 
 
 def register_check_now_command(
@@ -69,33 +63,27 @@ def register_check_now_command(
         matches = [booking for booking in bookings if booking.booking_id.startswith(selector)]
         return matches[0] if len(matches) == 1 else None
 
-    def _format_completion(completion: ImmediateCompletion) -> str:
+    def _format_completion(completion: ImmediateCompletion, booking: Booking) -> str:
         if completion.kind is ImmediateCompletionKind.UNAVAILABLE:
             return completion.unavailable_detail or _UNAVAILABLE
         result = completion.result
         if result is None:
             return "The live check could not be completed. Please try again later."
-        prefix = result.check_id[:8]
-        property_name = completion.property_name or "booking"
+        name = completion.property_name or booking.property.name
+        paid = booking.baseline_price
         if result.outcome is CheckOutcome.SUCCESS and result.live_price is not None:
-            source = (
-                _format_price_source(result.price_source)
-                if result.price_source is not None
-                else ""
-            )
-            return (
-                f"Live check complete for {property_name}: "
-                f"{result.live_price.amount} {result.live_price.currency} "
-                f"(check {prefix}).{source}"
-            )
+            live = result.live_price
+            text = f"{name}: {money(live)} now, {versus_paid(live, paid)} ({money(paid)})."
+            saved = paid.amount - live.amount
+            if live.currency == paid.currency and 0 < saved < MINIMUM_SAVING:
+                text += f" That is under the {MINIMUM_SAVING} {paid.currency} alert minimum."
+            if result.price_source is not None:
+                text += f"\nChecked while {checked_as(result.price_source)}."
+            return text
         reason = result.failure_reason
         if reason is None:
-            return f"Live check failed for {property_name} (check {prefix})."
-        detail = " ".join(reason.detail.split())[:180]
-        return (
-            f"Live check failed for {property_name}: {reason.code.value} — "
-            f"{detail} (check {prefix})."
-        )
+            return f"{name}: the check could not finish. The next check will try again."
+        return f"{name}: no price this time; {failure_text(reason)}."
 
     def _request(telegram_user_id: int, chat_id: int, booking: Booking) -> str:
         if coordinator is None:
@@ -122,7 +110,7 @@ def register_check_now_command(
         assert coordinator is not None
 
         def _complete(completion: ImmediateCompletion) -> None:
-            send(chat_id, _format_completion(completion), None)
+            send(chat_id, _format_completion(completion, booking), None)
 
         admission = coordinator.request_immediate(
             telegram_user_id, booking.booking_id, _complete

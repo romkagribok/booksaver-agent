@@ -325,8 +325,8 @@ def test_success_completion_names_property_price_and_check(tmp_path: Path) -> No
     )
 
     assert "Own Hotel" in sent[-1][1]
-    assert "315.50 EUR" in sent[-1][1]
-    assert result.check_id[:8] in sent[-1][1]
+    assert "315.50 EUR now, 84.50 EUR below what you paid (400 EUR)." in sent[-1][1]
+    assert result.check_id[:8] not in sent[-1][1]
 
 
 def test_success_completion_reports_authenticated_mobile_and_genius_observed(
@@ -353,8 +353,10 @@ def test_success_completion_reports_authenticated_mobile_and_genius_observed(
         )
     )
 
-    assert "Source: authenticated mobile web (android-chromium)" in sent[-1][1]
-    assert "Genius evidence visible" in sent[-1][1]
+    assert "Checked while signed in to your Booking.com account (Genius prices were shown)." in (
+        sent[-1][1]
+    )
+    assert "android-chromium" not in sent[-1][1]
 
 
 def test_success_completion_omits_unobserved_genius_status(tmp_path: Path) -> None:
@@ -379,7 +381,7 @@ def test_success_completion_omits_unobserved_genius_status(tmp_path: Path) -> No
         )
     )
 
-    assert "Source: authenticated mobile web (android-chromium)" in sent[-1][1]
+    assert "Checked while signed in to your Booking.com account." in sent[-1][1]
     assert "Genius" not in sent[-1][1]
 
 
@@ -407,7 +409,29 @@ def test_currency_failure_is_actionable_in_completion(tmp_path: Path) -> None:
         )
     )
 
-    assert "currency_mismatch" in sent[-1][1]
-    assert "Baseline EUR" in sent[-1][1]
-    assert "rendered in USD" in sent[-1][1]
-    assert result.check_id[:8] in sent[-1][1]
+    assert "prices were shown in another currency than your booking" in sent[-1][1]
+    assert "currency_mismatch" not in sent[-1][1]
+    assert result.check_id[:8] not in sent[-1][1]
+
+
+def test_success_under_the_alert_minimum_says_so(tmp_path: Path) -> None:
+    coordinator = FakeCoordinator()
+    db_path, router, _callbacks, _client, sent = _setup(tmp_path, coordinator)
+    booking = _booking("11111111-1111-4111-8111-111111111111", "Own Hotel")
+    _add_user_booking(db_path, 101, booking)
+    router.dispatch(IncomingCommand(101, 101, "/checknow", booking.booking_id, "raw"))
+    result = CheckResult.success(
+        booking.booking_id, datetime.now(UTC), Money(Decimal("396.22"), "EUR"),
+        ExtractionMethod.DOM,
+    )
+
+    coordinator.completions[0](
+        ImmediateCompletion(
+            ImmediateCompletionKind.RESULT, result=result, property_name="Own Hotel"
+        )
+    )
+
+    assert sent[-1][1] == (
+        "Own Hotel: 396.22 EUR now, 3.78 EUR below what you paid (400 EUR). "
+        "That is under the 5 EUR alert minimum."
+    )

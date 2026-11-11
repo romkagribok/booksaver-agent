@@ -296,8 +296,9 @@ def test_pipeline_alert_identifies_authenticated_mobile_genius_observed() -> Non
     )
 
     _, body = email.sent[0]
-    assert "authenticated mobile web (android-chromium)" in body
-    assert "Genius       : evidence visible on the rendered page" in body
+    assert "Checked as   : signed in to your Booking.com account" in body
+    assert "Genius       : Genius prices were shown" in body
+    assert "android-chromium" not in body
 
 
 def test_pipeline_alert_omits_unobserved_genius_status() -> None:
@@ -309,7 +310,7 @@ def test_pipeline_alert_omits_unobserved_genius_status() -> None:
     )
 
     _, body = email.sent[0]
-    assert "authenticated mobile web (android-chromium)" in body
+    assert "Checked as   : signed in to your Booking.com account" in body
     assert "Genius" not in body
 
 
