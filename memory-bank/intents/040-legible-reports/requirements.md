@@ -1,7 +1,7 @@
 ---
 intent: 040-legible-reports
-phase: inception
-status: units-defined
+phase: construction
+status: construction
 created: "2026-11-11T00:10:37Z"
 updated: "2026-11-11T00:10:37Z"
 ---

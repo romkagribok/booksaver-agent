@@ -1,8 +1,8 @@
 ---
 unit: 001-legible-reports
 intent: 040-legible-reports
-phase: inception
-status: stories-defined
+phase: construction
+status: in-progress
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-11T00:10:37Z"
