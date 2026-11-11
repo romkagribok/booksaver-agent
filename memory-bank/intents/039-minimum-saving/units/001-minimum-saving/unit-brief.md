@@ -2,7 +2,7 @@
 unit: 001-minimum-saving
 intent: 039-minimum-saving
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-10T14:50:41Z"

@@ -2,11 +2,11 @@
 id: 001-total-in-booking-currency
 unit: 001-total-in-booking-currency
 intent: 038-booking-currency
-status: draft
+status: complete
 priority: must
 created: "2026-11-10T13:26:27Z"
 assigned_bolt: 111-total-in-booking-currency
-implemented: false
+implemented: true
 ---
 
 # Story: US-263 The booked total is read in the booking's currency
@@ -19,11 +19,11 @@ implemented: false
 
 ## Acceptance Criteria
 
-- [ ] **Given** "approx. € 132" and "US$147.78", **When** synced, **Then** the total is USD 147.78.
-- [ ] **Given** a total in another currency than the amount-only lines, **When** synced, **Then** it is never offered or saved.
-- [ ] **Given** no amount-only line, **When** synced, **Then** every price line is offered as today.
-- [ ] **Given** a single-currency page (AIRINN, EUR), **When** synced, **Then** it is read as before.
-- [ ] **Given** the real pages on staging, **When** synced, **Then** Ayres becomes USD 147.78, the others keep their totals, and Ayres' check runs in USD.
+- [x] **Given** "approx. € 132" and "US$147.78", **When** synced, **Then** the total is USD 147.78.
+- [x] **Given** a total in another currency than the amount-only lines, **When** synced, **Then** it is never offered or saved.
+- [x] **Given** no amount-only line, **When** synced, **Then** every price line is offered as today.
+- [x] **Given** a single-currency page (AIRINN, EUR), **When** synced, **Then** it is read as before.
+- [x] **Given** the real pages on staging, **When** synced, **Then** Ayres becomes USD 147.78, the others keep their totals, and Ayres' check runs in USD.
 
 ## Technical Notes
 

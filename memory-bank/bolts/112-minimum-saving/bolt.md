@@ -3,13 +3,13 @@ id: 112-minimum-saving
 unit: 001-minimum-saving
 intent: 039-minimum-saving
 type: simple-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-minimum-saving
 created: "2026-11-10T14:50:41Z"
 started: "2026-11-10T14:50:41Z"
-completed: null
-current_stage: test
+completed: "2026-11-10T23:58:35Z"
+current_stage: null
 stages_completed:
   - name: plan
     completed: "2026-11-10T14:50:41Z"
@@ -35,4 +35,4 @@ owner's standing waiver (CLAUDE.local.md point 4).
 
 ## Stories Included
 
-- [ ] US-264: No alert for a saving under 5 in the booking currency (001-minimum-saving; Must)
+- [x] US-264: No alert for a saving under 5 in the booking currency (001-minimum-saving; Must)

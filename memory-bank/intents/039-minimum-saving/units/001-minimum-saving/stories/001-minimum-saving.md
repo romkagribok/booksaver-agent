@@ -2,11 +2,11 @@
 id: 001-minimum-saving
 unit: 001-minimum-saving
 intent: 039-minimum-saving
-status: draft
+status: complete
 priority: must
 created: "2026-11-10T14:50:41Z"
 assigned_bolt: 112-minimum-saving
-implemented: false
+implemented: true
 ---
 
 # Story: US-264 No alert for a saving under 5 in the booking currency
@@ -19,9 +19,9 @@ implemented: false
 
 ## Acceptance Criteria
 
-- [ ] **Given** a booked EUR 133 and a live EUR 132, **When** checked, **Then** no opportunity is stored or alerted.
-- [ ] **Given** a booked USD 105 and a live USD 100, **When** checked, **Then** an opportunity of USD 5 is stored and alerted.
-- [ ] **Given** a saving of USD 4.99, **When** checked, **Then** it is rejected as below the minimum.
+- [x] **Given** a booked EUR 133 and a live EUR 132, **When** checked, **Then** no opportunity is stored or alerted.
+- [x] **Given** a booked USD 105 and a live USD 100, **When** checked, **Then** an opportunity of USD 5 is stored and alerted.
+- [x] **Given** a saving of USD 4.99, **When** checked, **Then** it is rejected as below the minimum.
 
 ## Technical Notes
 
