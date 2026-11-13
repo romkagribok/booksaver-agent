@@ -30,20 +30,25 @@ _SNAPSHOT_TEMPLATE = r"""
     }
     return false;
   };
-  const rendered = e => !!e && !e.closest(hidden) && !struck(e) &&
+  const visible = (e, excluded) => !!e && !e.closest(excluded) && !struck(e) &&
     (typeof e.checkVisibility !== 'function' ||
      e.checkVisibility({checkOpacity: true, checkVisibilityCSS: true}));
+  const rendered = e => visible(e, hidden);
+  // The desktop room table wraps its displayed price in aria-hidden markup.
+  const renderedInTable = e => visible(e, '[inert],script,style,noscript,template');
   const PRICE = /(?:US\$|CA\$|C\$|A\$|AU\$|NZ\$|HK\$|S\$|MX\$|R\$|€|£|¥|₹|\$|\b[A-Z]{3}\s?)\s?\d/;
-  const linesOf = (root, skip) => {
+  // amountsIn: when given, a line with an amount counts only inside that element.
+  const linesOf = (root, skip, shown = rendered, amountsIn = null) => {
     const out = [];
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let node;
     while ((node = walker.nextNode()) && out.length < MAX_LINES) {
       const parent = node.parentElement;
-      if (!parent || !rendered(parent)) continue;
+      if (!parent || !shown(parent)) continue;
       if (skip && skip.some(s => s.contains(parent))) continue;
       const value = node.textContent.replace(/\s+/g, ' ').trim();
       if (!value || value === '•') continue;
+      if (amountsIn && PRICE.test(value) && !amountsIn.contains(parent)) continue;
       const line = value.slice(0, MAX_CHARS);
       if (out.length && out[out.length - 1] === line) continue;
       out.push(line);
@@ -51,7 +56,12 @@ _SNAPSHOT_TEMPLATE = r"""
     return out;
   };
   let rateCards = [...document.querySelectorAll('[data-testid="rate-card"]')].filter(rendered);
-  if (!rateCards.length) {
+  // Desktop room table (silent desktop trial, intent 041): one row per rate, and the room's
+  // cell spans the rows of its rates.
+  // shortcut: keyed on Booking.com's #hprt-table and cell classes, make it structural if the
+  // trial is kept.
+  const table = rateCards.length ? null : document.querySelector('#hprt-table');
+  if (!rateCards.length && !table) {
     // Generic fallback: the innermost card-like ancestor of each rendered price text.
     const seen = new Set();
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -66,6 +76,28 @@ _SNAPSHOT_TEMPLATE = r"""
   }
   const rooms = [];
   const roomIndex = new Map();
+  if (table) {
+    const search = new URLSearchParams(location.search);
+    const adults = Number(search.get('group_adults')) || 0;
+    const children = Number(search.get('group_children')) || 0;
+    let entry = null;
+    for (const row of table.querySelectorAll('tbody > tr')) {
+      const cell = row.querySelector(':scope > .hprt-table-cell-roomtype');
+      if (cell) {
+        entry = rooms.length < MAX_ROOMS ? {element: cell, rates: [], table: true} : null;
+        if (entry) rooms.push(entry);
+      }
+      const price = row.querySelector(':scope > .hprt-table-cell-price');
+      if (!entry || !price || !rendered(row) || entry.rates.length >= MAX_RATES) continue;
+      const stated = (row.querySelector(':scope > .hprt-table-cell-occupancy') || row).textContent;
+      const max = kind => Number((new RegExp('Max\\. ' + kind + ':\\s*(\\d+)', 'i')
+        .exec(stated) || [0, Infinity])[1]);
+      // A rate for a smaller party than searched is not an offer for this stay.
+      if (max('people') < adults + children || max('adults') < adults ||
+          max('children') < children) continue;
+      entry.rates.push(row);
+    }
+  }
   for (const rate of rateCards) {
     // Without an explicit room card, never guess a wider container: it could span several
     // room types and credit one room's rate to another. The rate card then names its own room.
@@ -107,11 +139,17 @@ _SNAPSHOT_TEMPLATE = r"""
     title: document.title.slice(0, MAX_CHARS),
     headings,
     viewport_text: viewportLines.join('\n').slice(0, 4000),
-    rooms: rooms.map(room => ({
+    rooms: rooms.filter(room => room.rates.length).map(room => room.table ? {
+      lines: linesOf(room.element, null),
+      // Amounts outside the price cell (paid breakfast, the room-count selector) are extras.
+      rates: room.rates.map(rate => linesOf(
+        rate, [room.element, ...rate.querySelectorAll('select')], renderedInTable,
+        rate.querySelector(':scope > .hprt-table-cell-price'))),
+    } : {
       lines: room.rates.length && room.rates[0] !== room.element
         ? linesOf(room.element, room.rates) : [],
       rates: room.rates.map(rate => linesOf(rate, null)),
-    })),
+    }),
   };
 })()
 """

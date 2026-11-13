@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -9,7 +9,7 @@ from typing import Any
 from booksaver.domain.agent import AgentSettings
 from booksaver.domain.browser_executor import AgenticBrowserSettings, PriceExecutorKind
 from booksaver.domain.errors import ConfigValidationError
-from booksaver.domain.mobile_web import MobileWebSettings
+from booksaver.domain.mobile_web import DesktopTrialSettings, MobileWebSettings
 from booksaver.domain.models import Config
 from booksaver.domain.price_comparison import ComparisonParticipants, JevComparisonSettings
 from booksaver.domain.remote_auth import RemoteAuthSettings
@@ -227,6 +227,20 @@ def load_config(source: ConfigSource) -> Config:
     except (ValueError, TypeError) as e:
         errors.append(f"agentic_browser: {e}")
 
+    desktop_trial_settings = DesktopTrialSettings()
+    trial_raw = raw.get("desktop_trial", {})
+    try:
+        trial_users = trial_raw.get("user_ids", [])
+        if not isinstance(trial_users, list) or any(type(item) is not int for item in trial_users):
+            raise ValueError("user_ids must be a list of user ids")
+        trial_ends = trial_raw.get("ends_on")
+        desktop_trial_settings = DesktopTrialSettings(
+            user_ids=frozenset(trial_users),
+            ends_on=date.fromisoformat(str(trial_ends)) if trial_ends is not None else None,
+        )
+    except (ValueError, TypeError) as e:
+        errors.append(f"desktop_trial: {e}")
+
     jev_comparison_settings: JevComparisonSettings | None = None
     jev_raw = raw.get("jev_comparison", {})
     try:
@@ -304,4 +318,5 @@ def load_config(source: ConfigSource) -> Config:
         schedule_settings=schedule_settings,
         agentic_browser_settings=agentic_browser_settings,
         jev_comparison_settings=jev_comparison_settings,
+        desktop_trial_settings=desktop_trial_settings,
     )

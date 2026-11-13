@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -13,6 +13,8 @@ class MobileProfileId(StrEnum):
 
     ANDROID_CHROMIUM = "android-chromium"
     ANDROID_CHROMIUM_COMPACT = "android-chromium-compact"
+    # Desktop identity of the silent price trial (intent 041); code-owned, not selectable in config.
+    DESKTOP_CHROMIUM_TRIAL = "desktop-chromium-trial"
 
 
 @dataclass(frozen=True)
@@ -20,6 +22,7 @@ class MobileWebProfile:
     profile_id: MobileProfileId
     playwright_device_name: str
     browser_engine: str = "chromium"
+    mobile: bool = True
 
     def __post_init__(self) -> None:
         if self.browser_engine != "chromium":
@@ -42,14 +45,24 @@ class MobileWebProfile:
         }
         user_agent = str(options.get("user_agent", ""))
         viewport = options.get("viewport")
-        if (
-            "Android" not in user_agent
-            or "Mobile" not in user_agent
-            or options.get("is_mobile") is not True
-            or options.get("has_touch") is not True
-            or not isinstance(viewport, dict)
-        ):
-            raise ValueError("Playwright device descriptor is not Android mobile Chromium")
+        if self.mobile:
+            matches = (
+                "Android" in user_agent
+                and "Mobile" in user_agent
+                and options.get("is_mobile") is True
+                and options.get("has_touch") is True
+            )
+        else:
+            matches = (
+                "Mobile" not in user_agent
+                and options.get("is_mobile") is False
+                and options.get("has_touch") is False
+            )
+        if not matches or not isinstance(viewport, dict):
+            raise ValueError(
+                "Playwright device descriptor is not "
+                + ("Android mobile Chromium" if self.mobile else "desktop Chromium")
+            )
         options.update(
             screen=dict(viewport),
             locale=locale,
@@ -65,6 +78,11 @@ _PROFILES: dict[MobileProfileId, MobileWebProfile] = {
     MobileProfileId.ANDROID_CHROMIUM_COMPACT: MobileWebProfile(
         profile_id=MobileProfileId.ANDROID_CHROMIUM_COMPACT,
         playwright_device_name="Pixel 5",
+    ),
+    MobileProfileId.DESKTOP_CHROMIUM_TRIAL: MobileWebProfile(
+        profile_id=MobileProfileId.DESKTOP_CHROMIUM_TRIAL,
+        playwright_device_name="Desktop Chrome",
+        mobile=False,
     ),
 }
 
@@ -96,10 +114,13 @@ class MobileWebSettings:
         locale: str = "en-US",
         timezone_id: str = "UTC",
     ) -> MobileWebSettings:
+        configurable = [item for item in MobileProfileId if _PROFILES[item].mobile]
         try:
             selected = MobileProfileId(profile_id.strip().lower())
+            if selected not in configurable:
+                raise ValueError(profile_id)
         except ValueError as exc:
-            allowed = ", ".join(item.value for item in MobileProfileId)
+            allowed = ", ".join(item.value for item in configurable)
             raise ValueError(
                 f"Unknown mobile device_profile {profile_id!r}; allowed: {allowed}"
             ) from exc
@@ -111,6 +132,21 @@ class MobileWebSettings:
             locale=self.locale,
             timezone_id=self.timezone_id,
         )
+
+
+@dataclass(frozen=True)
+class DesktopTrialSettings:
+    """Silent desktop price trial (intent 041): whose scheduled checks get a desktop reading."""
+
+    user_ids: frozenset[int] = frozenset()
+    ends_on: date | None = None
+
+    def __post_init__(self) -> None:
+        if self.user_ids and self.ends_on is None:
+            raise ValueError("ends_on is required when user_ids is set")
+
+    def active_for(self, user_id: int, today: date) -> bool:
+        return self.ends_on is not None and user_id in self.user_ids and today < self.ends_on
 
 
 class AuthenticationEvidence(StrEnum):

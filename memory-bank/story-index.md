@@ -944,3 +944,14 @@ Accurate, legible reports for users.
 | `US-265` | A passed free-cancellation date is read as ended | Jev sync | Planned | `001-legible-reports/stories/001-cancellation-ended.md` |
 | `US-266` | /bookings and /savings are legible | Telegram | Planned | `001-legible-reports/stories/002-bookings-and-savings.md` |
 | `US-267` | /checks, /checknow and the alert speak plainly | Telegram | Planned | `001-legible-reports/stories/003-checks-and-alert.md` |
+
+## 041-desktop-price-trial
+
+One-week silent desktop price trial (GitHub issue #7).
+
+### 001-desktop-price-trial
+
+| Story | Title | Tag | Status | File |
+|-------|-------|-----|--------|------|
+| `US-268` | A desktop profile reads a Booking.com price | Trial | Planned | `001-desktop-price-trial/stories/001-desktop-profile-reads-prices.md` |
+| `US-269` | Trial users get a silent desktop reading after each scheduled slot | Trial | Planned | `001-desktop-price-trial/stories/002-silent-desktop-readings.md` |

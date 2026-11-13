@@ -94,15 +94,16 @@ class BookingComSearchMonitor:
 
     def run_authenticated(self, booking: Booking, snapshot: UserSessionSnapshot) -> CheckResult:
         """Run one fail-closed owner-bound check and persist its result."""
-        result = self._run_agentic_authenticated(booking, snapshot)
+        result = self.observe(booking, snapshot)
         self._record(result)
         return result
 
-    def _run_agentic_authenticated(
+    def observe(
         self,
         booking: Booking,
         snapshot: UserSessionSnapshot,
     ) -> CheckResult:
+        """Run the fail-closed check without recording history or tracking failures."""
         recorder = TraceRecorder(booking.booking_id)
         self._last_llm_calls_used = 0
         self._last_agentic_outcome = None

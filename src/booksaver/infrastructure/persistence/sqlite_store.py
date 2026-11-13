@@ -79,7 +79,7 @@ from booksaver.domain.value_objects import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 _SCHEMA_SQL = Path(__file__).parent / "schema.sql"
 _MACHINE_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
@@ -236,6 +236,7 @@ def _delete_booking_rows(conn: sqlite3.Connection, booking_id: str) -> None:
     )
     conn.execute("DELETE FROM price_comparisons WHERE booking_id = ?", (booking_id,))
     conn.execute("DELETE FROM jev_price_runs WHERE booking_id = ?", (booking_id,))
+    conn.execute("DELETE FROM desktop_trial_readings WHERE booking_id = ?", (booking_id,))
     conn.execute("DELETE FROM bookings WHERE booking_id = ?", (booking_id,))
 
 
@@ -748,6 +749,7 @@ def _migrate_v24(conn: sqlite3.Connection) -> None:
 # v20 -> v21: booked meal plan on reservations and bookings (intent 027).
 # v22 -> v23: booked total provenance (code or Jev) on reservations and bookings (ADR-060).
 # v23 -> v24: drop the Claude spend/qualification ledgers and clear personal Anthropic keys.
+# v24 -> v25: silent desktop price trial readings, purely additive (intent 041).
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_v2,
     5: _migrate_v5,
@@ -2994,6 +2996,7 @@ class SqliteUserRepository:
         )
         conn.execute("DELETE FROM price_comparisons WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM jev_price_runs WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM desktop_trial_readings WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM invite_codes WHERE used_by = ?", (user_id,))
         conn.execute("UPDATE invite_codes SET issued_by = NULL WHERE issued_by = ?", (user_id,))
         conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))

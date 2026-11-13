@@ -458,6 +458,21 @@ CREATE TABLE IF NOT EXISTS jev_price_runs (
 CREATE INDEX IF NOT EXISTS idx_jev_price_runs_created
     ON jev_price_runs(created_at);
 
+-- v25: silent desktop price trial (intent 041). One desktop reading beside one mobile check;
+-- nothing user-facing reads this table. Drop it when the trial is retired.
+CREATE TABLE IF NOT EXISTS desktop_trial_readings (
+    check_id       TEXT PRIMARY KEY,  -- the mobile check in check_history this pairs with
+    user_id        INTEGER NOT NULL,
+    booking_id     TEXT NOT NULL,
+    observed_at    TEXT NOT NULL,
+    outcome        TEXT NOT NULL,
+    failure_code   TEXT,
+    failure_detail TEXT,
+    live_amount    TEXT,
+    live_currency  TEXT,
+    offer_room     TEXT
+);
+
 -- v22: a user was told a monitored reservation has stalled; removed when it recovers.
 CREATE TABLE IF NOT EXISTS monitoring_stall_notices (
     booking_id  TEXT PRIMARY KEY,  -- holds the account reservation id

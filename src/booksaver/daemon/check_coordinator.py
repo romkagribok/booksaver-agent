@@ -28,6 +28,7 @@ from booksaver.application.user_sessions import (
     AuthenticatedSessionProvider,
     UserSessionRepository,
 )
+from booksaver.daemon.desktop_trial import run_desktop_trial
 from booksaver.domain.account_sync import (
     AccountReservation,
     InventoryCompleteness,
@@ -250,6 +251,7 @@ class CheckCoordinator:
         agentic_executor_factory: AgenticExecutorFactory | None = None,
         agentic_inventory_executor_factory: AgenticInventoryExecutorFactory | None = None,
         bookings_inventory_executor_factory: AgenticInventoryExecutorFactory | None = None,
+        desktop_trial_executor_factory: AgenticExecutorFactory | None = None,
         session_verifier: Callable[[bytes, datetime], SessionVerificationResult] | None = None,
         session_uncertain_notifier: AuthRequiredNotifier | None = None,
         session_clock: Callable[[], datetime] | None = None,
@@ -275,6 +277,7 @@ class CheckCoordinator:
         self._agentic_executor_factory = agentic_executor_factory
         self._agentic_inventory_executor_factory = agentic_inventory_executor_factory
         self._bookings_inventory_executor_factory = bookings_inventory_executor_factory
+        self._desktop_trial_executor_factory = desktop_trial_executor_factory
         self._job_local = threading.local()
         # Callers waiting on an in-flight inventory sync, keyed by Telegram user. A
         # /bookings sent while that user's sync (e.g. post-connect) is running joins
@@ -1067,6 +1070,7 @@ class CheckCoordinator:
         ):
             self._send_capped_notice(store, capped_user_id, already_marked=True)
 
+        checked: list[tuple[Booking, CheckResult]] = []
         for planned_user_id, booking in plan.ordered:
             if self._stop_event.is_set() or not self._is_active_user(store, planned_user_id):
                 break
@@ -1085,6 +1089,7 @@ class CheckCoordinator:
                     planned_user_id,
                     booking,
                 )
+            checked.append((booking, result))
             self._record_post_browser_incidents(result)
             if (
                 self._auth_required_notifier is not None
@@ -1092,6 +1097,21 @@ class CheckCoordinator:
                 and result.failure_reason.code is FailureCode.AUTH_REQUIRED
             ):
                 self._notify_auth_required(planned_user_id)
+
+        # Silent desktop price trial (intent 041): after every normal check of the slot, so a
+        # reading cannot use the time allowance those checks share.
+        if (
+            self._desktop_trial_executor_factory is not None
+            and self._config.desktop_trial_settings.active_for(user_id, datetime.now(UTC).date())
+        ):
+            run_desktop_trial(
+                store=store,
+                executor_factory=self._desktop_trial_executor_factory,
+                sessions=AuthenticatedSessionProvider(users, self._session_repository),
+                user_id=user_id,
+                checked=checked,
+                stop_event=self._stop_event,
+            )
 
     def _synchronize_user_job(
         self,
