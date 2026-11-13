@@ -1,7 +1,7 @@
 ---
 intent: 041-desktop-price-trial
 phase: construction
-status: construction
+status: complete
 created: "2026-11-13T03:02:27Z"
 updated: "2026-11-13T03:02:27Z"
 ---
@@ -149,5 +149,5 @@ Nothing a user can see changes. The rest of issue #7 is out of scope until the t
 
 | Question | Owner | Due Date | Resolution |
 |----------|-------|----------|------------|
-| Does a desktop profile keep the mobile session valid? | Engineering | Before enabling user 4 | Live qualification on the owner's session |
-| Does desktop ever beat mobile by 5 or more? | Owner | After `ends_on` | The trial's result |
+| Does a desktop profile keep the mobile session valid? | Engineering | Before enabling user 4 | Yes so far: the owner's session on 2026-11-13 in staging, and user 4's first trial slot. Watched for the rest of the week |
+| Does desktop ever beat mobile by 5 or more? | Owner | After `ends_on` | Pending: evaluation scheduled for 2026-11-20T14:00Z (FR-5). First slot: both verified pairs equal |

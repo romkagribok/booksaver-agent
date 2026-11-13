@@ -2,7 +2,7 @@
 version: desktoptrial-34d89a8
 environment: production
 created: "2026-11-13T03:27:17Z"
-status: deployed
+status: complete
 ---
 
 # Deployment and verification history
@@ -13,4 +13,5 @@ status: deployed
 
 Build → Development → Staging (live replay on the owner's session with the daemon paused, then the
 release image's reader on fixtures) → Production with backup, config section and rollback tag →
-read-back on user 4's 2026-11-13 12:36Z slot (pending) → evaluation after 2026-11-20 (pending).
+read-back on user 4's 2026-11-13 12:36Z slot (four pairs, both verified pairs equal) → evaluation
+scheduled for 2026-11-20T14:00Z (pending).

@@ -3,14 +3,14 @@ id: 114-desktop-price-trial
 unit: 001-desktop-price-trial
 intent: 041-desktop-price-trial
 type: simple-construction-bolt
-status: in-progress
+status: complete
 stories:
   - 001-desktop-profile-reads-prices
   - 002-silent-desktop-readings
 created: "2026-11-13T03:02:27Z"
 started: "2026-11-13T03:04:06Z"
-completed: null
-current_stage: test
+completed: "2026-11-13T13:22:43Z"
+current_stage: null
 stages_completed:
   - name: plan
     completed: "2026-11-13T03:04:25Z"
@@ -45,8 +45,8 @@ Human stage checkpoints skipped under the owner's standing waiver (CLAUDE.local.
 
 ## Stories Included
 
-- [ ] US-268: A desktop profile reads a Booking.com price (001-desktop-profile-reads-prices; Must)
-- [ ] US-269: Trial users get a silent desktop reading after each scheduled slot (002-silent-desktop-readings; Must)
+- [x] US-268: A desktop profile reads a Booking.com price (001-desktop-profile-reads-prices; Must)
+- [x] US-269: Trial users get a silent desktop reading after each scheduled slot (002-silent-desktop-readings; Must)
 
 ## Bolt Type
 
@@ -57,4 +57,4 @@ Human stage checkpoints skipped under the owner's standing waiver (CLAUDE.local.
 
 - [x] **1. Plan**: Complete → implementation-plan.md (checkpoint skipped under the standing waiver)
 - [x] **2. Implement**: Complete → implementation-walkthrough.md (checkpoint skipped under the standing waiver)
-- [x] **3. Test**: Complete → test-walkthrough.md (checkpoint skipped under the standing waiver); the bolt closes after the production read-back
+- [x] **3. Test**: Complete → test-walkthrough.md (checkpoint skipped under the standing waiver); closed after the production read-back of 2026-11-13

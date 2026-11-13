@@ -2,8 +2,8 @@
 version: desktoptrial-34d89a8
 commit: 34d89a8
 created: "2026-11-13T03:26:07Z"
-status: deployed
-recorded: "2026-11-13T03:27:17Z"
+status: deployed-verified
+recorded: "2026-11-13T13:22:40Z"
 ---
 
 # One-week silent desktop price trial (intent 041, GitHub issue #7)
@@ -57,11 +57,35 @@ Bolt 114 (US-268, US-269).
 
 ## Production read-back
 
-Pending: user 4's first slot after the promotion is planned for 2026-11-13T12:36:02Z. To record:
-readings stored for that slot, his mobile results and session unaffected, no user-visible change.
+Read 2026-11-13T13:20Z. User 4's slot planned for 12:36:02Z completed. It checked his four active
+bookings on mobile (12:38:43Z to 12:40:17Z), then took four desktop readings (12:40:17Z to
+12:42:44Z, about two and a half minutes), one per booking, each joined to its mobile check:
+
+| Booking | Mobile | Desktop |
+|---|---|---|
+| Ayres Hotel Vista Carlsbad | USD 146 | USD 146 |
+| AIRINN Vilnius Airport Hotel | EUR 157 | EUR 157 |
+| Park Plaza Lodge | no price verified (`extraction_failed`) | no price verified (`extraction_failed`) |
+| Residence Kalipè | no availability (`no_equivalent_offer`) | no availability (`no_equivalent_offer`) |
+
+- **Both verified pairs match exactly; desktop was not cheaper.** The two failures have the same
+  cause on both sides: the run diagnostics agree line for line (same room and rate counts, no room
+  named for Park Plaza, unavailable for Kalipè). Both bookings were already failing on mobile
+  before the trial.
+- **Nothing else was written.** No check history row carries a desktop source, no savings
+  opportunity or alert since the promotion, and no reading shares a check id with one. His session
+  file was last written at 12:40, by the last mobile check, not by the readings.
+- **His checks look as before.** No `auth_required` or `bot_wall` for any user since the
+  promotion; his outcome mix for the slot (2 verified, 1 `extraction_failed`, 1
+  `no_equivalent_offer`) is the mix of the previous two days.
+- **Cost and health.** Four `jev-price-desktop-trial` runs, USD 0.0051 in total, 27 to 41 seconds
+  each. Container healthy, no restarts, schema 25. The log has no trial warning; Telegram polling
+  had its usual transient connection resets, which retried.
 
 ## Evaluation (FR-5)
 
-Pending: after 2026-11-20. Pairs taken, pairs where both sides verified a price, pairs where
+Pending, scheduled for 2026-11-20T14:00Z, after the trial has ended by config. Bolt 114 and the
+intent are closed on the read-back above; this evaluation is the one remaining operations step.
+Pairs taken, pairs where both sides verified a price, pairs where
 desktop was cheaper by 5 or more in the booking currency, desktop failure reasons, and the owner's
 decision to keep or retire.
