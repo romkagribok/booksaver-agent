@@ -2,7 +2,7 @@
 unit: 001-desktop-price-trial
 intent: 041-desktop-price-trial
 created: "2026-11-13T03:04:06Z"
-last_updated: "2026-11-13T03:27:17Z"
+last_updated: "2026-11-13T13:23:07Z"
 ---
 
 # Construction Log: 001-desktop-price-trial
@@ -25,7 +25,7 @@ last_updated: "2026-11-13T03:27:17Z"
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
-| 114-desktop-price-trial | US-268, US-269 | ⏳ in-progress | - |
+| 114-desktop-price-trial | US-268, US-269 | ✅ complete | 2026-11-13T13:23:07Z |
 
 ## Execution History
 
@@ -36,3 +36,5 @@ last_updated: "2026-11-13T03:27:17Z"
 | 2026-11-13T03:13:38Z | 114-desktop-price-trial | stage-complete | implement and test recorded together: code and tests were written in one pass after the plan; suite 2653 passed, 1 skipped; checkpoints skipped under the standing waiver. Bolt stays in progress until the release is live and read back |
 | 2026-11-13T03:21:22Z | 114-desktop-price-trial | review-fix | Codex on `bf53372`: P1 a rate's capacity was compared with the adults only, now with the whole party (people, adults, children); P2 a blocked mobile check later in the slot now prevents every reading, not only the following ones. Two tests added; suite 2655 passed, 1 skipped |
 | 2026-11-13T03:27:17Z | 114-desktop-price-trial | released | PR #123 merged as `34d89a8` after the Codex gate; promoted 2026-11-13T03:26:07Z through the operations agent with the trial on for user 4 until 2026-11-20. Bolt stays in progress until the read-back of his 12:36Z slot |
+| 2026-11-13T13:22:40Z | 114-desktop-price-trial | read-back | Production read-back of user 4's 12:36Z slot recorded in the release record through the operations agent: four pairs stored, both verified pairs equal, nothing user-visible written. Closing with bolt-complete.cjs |
+| 2026-11-13T13:23:07Z | 114-desktop-price-trial | completed | All 3 stages done; closed with bolt-complete.cjs after the production read-back. The FR-5 evaluation after 2026-11-20 is an operations step recorded in the release record |

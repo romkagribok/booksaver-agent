@@ -2,11 +2,11 @@
 id: 001-desktop-profile-reads-prices
 unit: 001-desktop-price-trial
 intent: 041-desktop-price-trial
-status: draft
+status: complete
 priority: must
 created: "2026-11-13T03:02:27Z"
 assigned_bolt: 114-desktop-price-trial
-implemented: false
+implemented: true
 ---
 
 # Story: US-268 A desktop profile reads a Booking.com price
@@ -19,13 +19,13 @@ implemented: false
 
 ## Acceptance Criteria
 
-- [ ] **Given** the desktop trial profile, **When** its context options are built from Playwright's "Desktop Chrome", **Then** they are accepted with `is_mobile` and `has_touch` false.
-- [ ] **Given** `[browser] device_profile = "desktop-chromium"`, **When** config loads, **Then** it is rejected as unknown.
-- [ ] **Given** a mobile profile, **When** its options are built from a desktop descriptor, **Then** they are rejected as before.
-- [ ] **Given** a desktop room table with two rooms of two rates each, **When** the page is read, **Then** each room has its name and two rates, and each rate has its whole-stay price and cancellation lines.
-- [ ] **Given** a rate row with a paid-breakfast amount and a room-count selector, **When** it is read, **Then** neither amount is among the rate's lines.
-- [ ] **Given** a row that states fewer guests than the search, **When** the table is read, **Then** that row is not a rate.
-- [ ] **Given** a mobile page with rate cards, **When** it is read, **Then** the result is the same as before this change.
+- [x] **Given** the desktop trial profile, **When** its context options are built from Playwright's "Desktop Chrome", **Then** they are accepted with `is_mobile` and `has_touch` false.
+- [x] **Given** `[browser] device_profile = "desktop-chromium"`, **When** config loads, **Then** it is rejected as unknown.
+- [x] **Given** a mobile profile, **When** its options are built from a desktop descriptor, **Then** they are rejected as before.
+- [x] **Given** a desktop room table with two rooms of two rates each, **When** the page is read, **Then** each room has its name and two rates, and each rate has its whole-stay price and cancellation lines.
+- [x] **Given** a rate row with a paid-breakfast amount and a room-count selector, **When** it is read, **Then** neither amount is among the rate's lines.
+- [x] **Given** a row that states fewer guests than the search, **When** the table is read, **Then** that row is not a rate.
+- [x] **Given** a mobile page with rate cards, **When** it is read, **Then** the result is the same as before this change.
 
 ## Technical Notes
 
