@@ -63,7 +63,7 @@ class TestSchemaV9Migration:
             owner = SqliteUserRepository(store).get_owner()
             version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
 
-        assert version[0] == SCHEMA_VERSION == 24
+        assert version[0] == SCHEMA_VERSION == 25
         assert "telegram_username" in columns
         assert owner.telegram_username is None
 
@@ -90,7 +90,7 @@ class TestSchemaV9Migration:
         assert invited.telegram_username is None
         assert key[0] is None  # v24 clears retired personal Anthropic keys
         assert tuple(invite) == ("preserved-code", 2)
-        assert versions == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        assert versions == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
 
     def test_v9_migration_is_guarded_and_idempotent(self, tmp_path: Path) -> None:
         db_path = tmp_path / "partial-v9.db"
@@ -111,7 +111,7 @@ class TestSchemaV9Migration:
             ]
 
         assert columns.count("telegram_username") == 1
-        assert versions == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        assert versions == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
 
 
 class TestTelegramUsernameRepository:

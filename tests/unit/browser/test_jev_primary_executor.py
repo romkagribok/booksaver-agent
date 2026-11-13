@@ -210,3 +210,18 @@ def test_purge_and_booking_removal_delete_run_records(tmp_path: Path) -> None:
         assert "no_rooms_after_6" in detail
         users.purge(user.user_id)
         assert store.conn.execute("SELECT COUNT(*) FROM jev_price_runs").fetchone()[0] == 0
+
+
+def test_a_run_is_recorded_under_the_adapter_name_it_was_built_with(tmp_path: Path) -> None:
+    """Intent 041: desktop trial runs stay distinguishable from the price method's own."""
+    JevPrimaryPriceExecutor(
+        client=object(),  # type: ignore[arg-type]
+        lease_broker=InMemorySessionLeaseBroker(),
+        settings=JevComparisonSettings(),
+        db_path=tmp_path / "booksaver.db",
+        executor_factory=lambda _broker, _cap: FakeJev(),
+        clock=lambda: datetime(2026, 10, 9, 12, 0, tzinfo=UTC),
+        adapter="jev-price-desktop-trial",
+    ).execute(_request())
+
+    assert _runs(tmp_path)[0][3] == "jev-price-desktop-trial"

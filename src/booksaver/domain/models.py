@@ -8,7 +8,7 @@ from enum import Enum
 from .agent import AgentSettings
 from .browser_executor import AgenticBrowserSettings
 from .meal_plan import MealPlan
-from .mobile_web import MobileWebSettings
+from .mobile_web import DesktopTrialSettings, MobileWebSettings
 from .price_comparison import JevComparisonSettings
 from .remote_auth import RemoteAuthSettings
 from .schedule import ScheduleSettings
@@ -100,6 +100,7 @@ class Config:
     agentic_browser_settings: AgenticBrowserSettings = field(
         default_factory=AgenticBrowserSettings
     )
+    desktop_trial_settings: DesktopTrialSettings = field(default_factory=DesktopTrialSettings)
     jev_comparison_settings: JevComparisonSettings = field(
         default_factory=JevComparisonSettings
     )

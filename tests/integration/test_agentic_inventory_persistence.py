@@ -150,7 +150,7 @@ def test_schema_v17_migration_preserves_existing_sync_runs(tmp_path: Path) -> No
             "SELECT user_id FROM booking_sync_runs WHERE run_id = 'preserved-v16-run'"
         ).fetchone()
 
-        assert version == SCHEMA_VERSION == 24
+        assert version == SCHEMA_VERSION == 25
         assert preserved is not None
         assert preserved[0] == user_id
         assert (
@@ -1097,6 +1097,6 @@ def test_schema_v23_migration_adds_the_source_columns_with_a_code_default(
         store.conn.commit()
 
     with SqliteStore(db_path) as store:
-        assert store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0] == 24
+        assert store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0] == 25
         user_id = SqliteUserRepository(store).get_owner().user_id
         assert _source_columns(store, user_id) == ("code", "code")

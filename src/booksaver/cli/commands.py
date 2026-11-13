@@ -544,6 +544,7 @@ def _make_check_coordinator(
         agentic_executor_factory=price_executor_factory,
         agentic_inventory_executor_factory=_browser_use_inventory_executor,
         bookings_inventory_executor_factory=_browser_use_inventory_executor,
+        desktop_trial_executor_factory=_make_desktop_trial_executor_factory(cfg),
     )
 
 
@@ -615,6 +616,41 @@ def _make_price_executor_factory(cfg: Config) -> Any:
             settings=settings,
             db_path=db_path,
             mobile_settings=cfg.mobile_web_settings,
+        )
+
+    return _factory
+
+
+def _make_desktop_trial_executor_factory(cfg: Config) -> Any:
+    """Jev on the desktop trial profile (intent 041), or none when the trial is not configured.
+
+    The reading never refreshes the saved session, is recorded under its own adapter name, and
+    stops once the user's Jev spend for the day passes half the daily cap.
+    """
+    typesafe_key = os.environ.get("BOOKSAVER_TYPESAFE_API_KEY", "").strip()
+    if not cfg.desktop_trial_settings.user_ids or not typesafe_key:
+        return None
+    from dataclasses import replace
+
+    from booksaver.domain.mobile_web import MobileProfileId
+    from booksaver.infrastructure.browser.jev_primary_executor import JevPrimaryPriceExecutor
+    from booksaver.infrastructure.llm.typesafe_client import TypeSafeClient
+
+    jev = cfg.jev_comparison_settings
+    settings = replace(jev, max_daily_cost_nano_usd=max(1, jev.max_daily_cost_nano_usd // 2))
+    client = TypeSafeClient(typesafe_key, model=settings.model)
+    db_path = cfg.data_directory.path / "booksaver.db"
+    desktop = replace(cfg.mobile_web_settings, profile_id=MobileProfileId.DESKTOP_CHROMIUM_TRIAL)
+
+    def _factory(lease_broker: Any) -> Any:
+        return JevPrimaryPriceExecutor(
+            client=client,
+            lease_broker=lease_broker,
+            settings=settings,
+            db_path=db_path,
+            mobile_settings=desktop,
+            adapter="jev-price-desktop-trial",
+            allow_session_refresh=False,
         )
 
     return _factory

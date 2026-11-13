@@ -61,8 +61,11 @@ class JevPrimaryPriceExecutor:
         mobile_settings: MobileWebSettings | None = None,
         executor_factory: JevExecutorFactory | None = None,
         clock: Callable[[], datetime] | None = None,
+        adapter: str = JEV_ADAPTER_VERSION,
+        allow_session_refresh: bool = True,
     ) -> None:
         self._leases = lease_broker
+        self._adapter = adapter
         self._settings = settings
         self._db_path = db_path
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -73,7 +76,7 @@ class JevPrimaryPriceExecutor:
                 max_calls=settings.max_calls_per_arm,
                 max_cost_nano_usd=cap,
                 mobile_settings=mobile_settings,
-                allow_session_refresh=True,
+                allow_session_refresh=allow_session_refresh,
             )
         )
 
@@ -140,7 +143,7 @@ class JevPrimaryPriceExecutor:
                         status=result.status.value if result is not None else "raised",
                         usage=usage,
                         latency_ms=latency_ms,
-                        adapter=JEV_ADAPTER_VERSION,
+                        adapter=self._adapter,
                         diagnostic=diagnostic,
                     )
                 )

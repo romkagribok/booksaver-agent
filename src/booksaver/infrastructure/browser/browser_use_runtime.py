@@ -702,6 +702,7 @@ class BrowserUseSessionHost:
             viewport=viewport,
             device_scale_factor=float(mobile_options["device_scale_factor"]),
             user_agent=str(mobile_options["user_agent"]),
+            mobile=mobile_options["is_mobile"] is True,
         )
         await self._deny_downloads(session)
         await self._install_network_guard(session)
@@ -717,8 +718,9 @@ class BrowserUseSessionHost:
         viewport: Mapping[str, int],
         device_scale_factor: float,
         user_agent: str,
+        mobile: bool = True,
     ) -> None:
-        """Complete the mobile context options Browser Use's profile cannot express."""
+        """Complete the device context options Browser Use's profile cannot express."""
 
         page_targets = session.get_page_targets()
         if len(page_targets) != 1:
@@ -736,17 +738,21 @@ class BrowserUseSessionHost:
                 "width": width,
                 "height": height,
                 "deviceScaleFactor": device_scale_factor,
-                "mobile": True,
+                "mobile": mobile,
                 "screenWidth": width,
                 "screenHeight": height,
-                "screenOrientation": {"type": "portraitPrimary", "angle": 0},
+                "screenOrientation": {
+                    "type": "portraitPrimary" if mobile else "landscapePrimary",
+                    "angle": 0,
+                },
             },
             session_id=session_id,
         )
-        await cdp.send.Emulation.setTouchEmulationEnabled(
-            params={"enabled": True, "maxTouchPoints": 5},
-            session_id=session_id,
-        )
+        if mobile:
+            await cdp.send.Emulation.setTouchEmulationEnabled(
+                params={"enabled": True, "maxTouchPoints": 5},
+                session_id=session_id,
+            )
         await cdp.send.Emulation.setTimezoneOverride(
             params={"timezoneId": self._mobile_settings.timezone_id},
             session_id=session_id,
@@ -759,7 +765,7 @@ class BrowserUseSessionHost:
             params={
                 "userAgent": user_agent,
                 "acceptLanguage": self._mobile_settings.locale,
-                "platform": "Android",
+                "platform": "Android" if mobile else "Win32",
             },
             session_id=session_id,
         )

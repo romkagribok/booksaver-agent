@@ -59,10 +59,10 @@ def test_v13_to_v18_is_additive_and_preserves_existing_data(tmp_path: Path) -> N
             ).fetchall()
         }
 
-    assert versions[-11:] == [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+    assert versions[-12:] == [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
     assert owner[0] == 111
     assert invite[0] == "preserve-me"
-    assert SCHEMA_VERSION == 24
+    assert SCHEMA_VERSION == 25
     assert {"dom_drift_incidents", "dom_drift_alerts", "dom_drift_diagnostics"} <= tables
     assert not {t for t in tables if t.startswith("llm_")}
 
@@ -113,4 +113,4 @@ def test_v23_to_v24_drops_claude_ledgers_and_clears_keys(tmp_path: Path) -> None
         assert not {name for name in tables if "llm_" in name}
         assert [tuple(row) for row in keys] == [(None,)]
         assert invite[0] == "preserve-me"
-        assert version[0] == SCHEMA_VERSION == 24
+        assert version[0] == SCHEMA_VERSION == 25
