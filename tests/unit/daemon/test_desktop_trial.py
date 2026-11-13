@@ -66,6 +66,7 @@ def _trial(
     factory: Any,
     *,
     mobile_code: FailureCode = FailureCode.STEP_FAILED,
+    last_mobile_code: FailureCode | None = None,
     stop: bool = False,
     seed_session: bool = True,
 ) -> tuple[list[CheckResult], Any]:
@@ -84,9 +85,10 @@ def _trial(
         mobile = []
         for booking in bookings:
             seed_booking(store, booking, user_id=owner.user_id)
+            code = last_mobile_code if last_mobile_code and booking is bookings[-1] else mobile_code
             mobile.append(
                 CheckResult.failure(
-                    booking.booking_id, datetime.now(UTC), FailureReason(mobile_code, "mobile")
+                    booking.booking_id, datetime.now(UTC), FailureReason(code, "mobile")
                 )
             )
         run_desktop_trial(
@@ -170,6 +172,8 @@ def test_a_budget_refusal_is_stored_and_the_next_booking_is_still_read(tmp_path:
     "scenario",
     [
         {"mobile_code": FailureCode.AUTH_REQUIRED},
+        # A later booking's mobile check hit a bot wall: no page loads for the earlier ones either.
+        {"last_mobile_code": FailureCode.BOT_WALL},
         {"stop": True},
         {"seed_session": False},
     ],

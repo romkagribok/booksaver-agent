@@ -51,9 +51,12 @@ def run_desktop_trial(
 ) -> None:
     """Store one desktop reading per checked booking; never raises into the slot."""
     try:
+        # A blocked mobile check anywhere in the slot means no further page loads at all.
+        if any(_stops(mobile) for _, mobile in checked):
+            return
         history = SqliteCheckHistoryRepository(store)
         for booking, mobile in checked:
-            if stop_event.is_set() or _stops(mobile):
+            if stop_event.is_set():
                 return
             resolution = sessions.resolve(user_id)
             if not resolution.is_ready or resolution.snapshot is None:

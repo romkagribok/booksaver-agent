@@ -8,7 +8,7 @@ created: "2026-11-13T03:13:38Z"
 
 ### Summary
 
-- **Tests**: 2653/2653 passed, 1 skipped (full suite, `python3 -m pytest`); 37 new
+- **Tests**: 2655/2655 passed, 1 skipped (full suite, `python3 -m pytest`); 39 new
 - **Lint and types**: `ruff check src tests` and `mypy src` clean
 
 ### Test Files
@@ -33,7 +33,9 @@ created: "2026-11-13T03:13:38Z"
 
 ### Issues Found
 
-None in the suite.
+None in the suite. Codex review of `bf53372` found two: a rate's capacity was compared with the
+adults only (P1), and a bot wall on a later mobile check did not prevent readings for earlier
+bookings (P2). Both fixed with a test each.
 
 ### Notes
 

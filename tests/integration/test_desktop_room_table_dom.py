@@ -72,11 +72,11 @@ def page():
         browser.close()
 
 
-def _read(page: Page, body: str) -> OfferPageSnapshot:
-    page.route(URL, lambda route: route.fulfill(content_type="text/html; charset=utf-8", body=body))
-    page.goto(URL)
+def _read(page: Page, body: str, url: str = URL) -> OfferPageSnapshot:
+    page.route(url, lambda route: route.fulfill(content_type="text/html; charset=utf-8", body=body))
+    page.goto(url)
     snapshot = parse_offer_snapshot(page.evaluate(OFFER_SNAPSHOT_JS))
-    page.unroute(URL)
+    page.unroute(url)
     assert snapshot is not None
     return snapshot
 
@@ -102,6 +102,23 @@ def test_table_rates_ground_to_their_whole_stay_total(page: Page) -> None:
     for rate, choice, expected in ((discounted, "p4", "331"), (plain, "p4", "387")):
         total, reason = _ground_total(choice, rate, _price_options(rate), "EUR", 2)
         assert reason == "ok" and total is not None and total.amount == Decimal(expected)
+
+
+def test_a_rate_too_small_for_the_whole_party_is_not_an_offer(page: Page) -> None:
+    """Two adults and a child: capacity is compared with the party, not only its adults."""
+    table = (
+        '<table id="hprt-table"><tbody>'
+        + _row("Family Room", 2, PLAIN, "")
+        + _row("", 3, PLAIN, "")
+        + _row("Suite", 2, PLAIN, "").replace("Max. people: 2", "Max. adults: 2. Max. children: 1")
+        + _row("", 2, PLAIN, "").replace("Max. people: 2", "Max. adults: 1. Max. children: 2")
+        + "</tbody></table>"
+    )
+    rooms = _read(page, table, URL + "&group_children=1").rooms
+    assert [(room.lines[0], [rate[0] for rate in room.rates]) for room in rooms] == [
+        ("Family Room", ["Max. people: 3"]),
+        ("Suite", ["Max. adults: 2. Max. children: 1"]),
+    ]
 
 
 def test_rate_cards_are_read_as_before_even_beside_a_room_table(page: Page) -> None:

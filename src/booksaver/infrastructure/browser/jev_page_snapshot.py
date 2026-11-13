@@ -77,7 +77,9 @@ _SNAPSHOT_TEMPLATE = r"""
   const rooms = [];
   const roomIndex = new Map();
   if (table) {
-    const adults = Number(new URLSearchParams(location.search).get('group_adults')) || 0;
+    const search = new URLSearchParams(location.search);
+    const adults = Number(search.get('group_adults')) || 0;
+    const children = Number(search.get('group_children')) || 0;
     let entry = null;
     for (const row of table.querySelectorAll('tbody > tr')) {
       const cell = row.querySelector(':scope > .hprt-table-cell-roomtype');
@@ -87,10 +89,12 @@ _SNAPSHOT_TEMPLATE = r"""
       }
       const price = row.querySelector(':scope > .hprt-table-cell-price');
       if (!entry || !price || !rendered(row) || entry.rates.length >= MAX_RATES) continue;
-      const people = /Max\. (?:people|adults):\s*(\d+)/i.exec(
-        (row.querySelector(':scope > .hprt-table-cell-occupancy') || row).textContent);
-      // A rate for fewer guests than searched is not an offer for this stay.
-      if (people && Number(people[1]) < adults) continue;
+      const stated = (row.querySelector(':scope > .hprt-table-cell-occupancy') || row).textContent;
+      const max = kind => Number((new RegExp('Max\\. ' + kind + ':\\s*(\\d+)', 'i')
+        .exec(stated) || [0, Infinity])[1]);
+      // A rate for a smaller party than searched is not an offer for this stay.
+      if (max('people') < adults + children || max('adults') < adults ||
+          max('children') < children) continue;
       entry.rates.push(row);
     }
   }
