@@ -19,4 +19,5 @@ scheduled for 2026-11-20T14:00Z (pending).
 
 2026-11-16: the trial was widened from user 4 to every user (`user_ids = [1, 3, 4]`) by a config
 change through the operations agent; candidate config validated in the container, backup taken,
-container recreated and healthy. The evaluation date is unchanged.
+container recreated and healthy. Read-back of user 1's 04:27Z slot: mobile and desktop both
+USD 536, session untouched. The evaluation date is unchanged.

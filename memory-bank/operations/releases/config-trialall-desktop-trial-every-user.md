@@ -2,8 +2,8 @@
 version: config-trialall
 commit: 34d89a8
 created: "2026-11-16T03:15:03Z"
-status: deployed
-recorded: "2026-11-16T03:20:00Z"
+status: deployed-verified
+recorded: "2026-11-16T05:00:28Z"
 ---
 
 # Desktop price trial widened to every user (config only, intent 041, GitHub issue #7)
@@ -64,7 +64,23 @@ session. Neither hotel shows a mobile-only price, so equal prices are what the s
 
 ## Production read-back
 
-Pending: user 1's first slot with a desktop reading is planned for 2026-11-16T04:27:31Z.
+Read on 2026-11-16T05:00:28Z, read-only, through the operations agent: user 1's first slot under
+the widened trial (planned 04:27:31Z, ran 04:27:31Z to 04:30:01Z, completed).
+
+| | Mobile check | Desktop reading |
+|---|---|---|
+| Time | 04:29:21Z | 04:30:01Z |
+| Outcome, price | success, USD 536 | success, USD 536 |
+| Jev run | observed, USD 0.00136, 26.4 s | observed, USD 0.00125, 40.2 s |
+| Rooms, rates, priced | 5, 11, 11 | 5, 11, 11 |
+
+- The slot wrote one `check_history` row, the mobile check; its session authentication is
+  `validated` and the session revision is the one of user 1's three checks on 2026-11-15, so the
+  reading did not write or disturb the saved session.
+- `desktop_trial_readings`: user 1 one row, user 4 twenty-nine. No `auth_required` or `bot_wall`
+  for any user since the change. Container healthy, restart count 0, started 03:15:27Z.
+- User 3 has no active booking, so its slots take no reading; user 4's next slot is 07:15:45Z and
+  runs as it has since 2026-11-13.
 
 ## Evaluation (FR-5)
 
