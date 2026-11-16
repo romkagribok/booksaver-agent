@@ -42,12 +42,15 @@ status: complete
 | 2026-11-13 | Desktop reading never writes the session; qualify on the owner's session before enabling user 4 | Unknown whether Booking.com tolerates the session on a desktop profile | Engineering |
 | 2026-11-13 | Config needs an end date; no report command | The trial must stop without anyone remembering it; the evaluation is one query | Engineering |
 | 2026-11-13 | Human checkpoints skipped | Standing waiver, CLAUDE.local.md point 4 | Owner standing waiver |
+| 2026-11-16 | Trial population widened from user 4 to every user (`user_ids = [1, 3, 4]`); `ends_on` unchanged | 27 pairs in three days came from two hotels and all 15 priced pairs were equal; more hotels wanted before deciding | Owner: "let's expand the test to all bookings (without users knowing for now) and wait a few more days and then decide" |
+| 2026-11-16 | Amendment made through the inception agent; clarifying questions and review checkpoints skipped | Standing waiver, CLAUDE.local.md point 4 | Owner standing waiver |
 
 ## Scope Changes
 
 | Date | Change | Reason | Impact |
 |------|--------|--------|--------|
 | 2026-11-13 | Issue #7's dual-channel selection, alerts, provenance and concurrency left out | The owner wants evidence first | Decided after the evaluation |
+| 2026-11-16 | Trial covers every user, not only user 4 | Thin sample; the owner asked for all bookings | Configuration only: no unit, story, bolt, code or schema change. Adds one booking today (user 1); desktop readings now load pages on every user's saved session |
 
 ## Ready for Construction
 
