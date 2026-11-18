@@ -1,7 +1,7 @@
 ---
 intent: 041-desktop-price-trial
 phase: construction
-status: construction
+status: complete
 created: "2026-11-13T03:02:27Z"
 updated: "2026-11-18T13:00:53Z"
 ---

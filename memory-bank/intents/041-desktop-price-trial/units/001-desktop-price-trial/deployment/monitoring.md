@@ -8,6 +8,10 @@ status: verified
 
 # Monitoring handoff
 
+**Retired on 2026-11-18T13:12:35Z (release `retiretrial-e6d1044`).** The trial code, its config
+section and `desktop_trial_readings` are gone; nothing below needs watching any more. What remains
+is ordinary monitoring of the mobile checks. The notes below describe the trial while it ran.
+
 - After each trial user's slot (user 4 from 2026-11-13, every user from 2026-11-16),
   `desktop_trial_readings` gains one row per booking the slot checked,
   and `jev_price_runs` one `jev-price-desktop-trial` row per reading.
