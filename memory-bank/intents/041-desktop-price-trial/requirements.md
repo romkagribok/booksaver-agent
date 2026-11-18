@@ -3,7 +3,7 @@ intent: 041-desktop-price-trial
 phase: construction
 status: complete
 created: "2026-11-13T03:02:27Z"
-updated: "2026-11-13T03:02:27Z"
+updated: "2026-11-16T03:14:17Z"
 ---
 
 # Requirements: One-week silent desktop price trial
@@ -21,12 +21,20 @@ This intent adds a silent desktop reading beside the normal mobile check for the
 config (user 4 in production), stores the pairs, and stops by itself after the trial's end date.
 Nothing a user can see changes. The rest of issue #7 is out of scope until the trial is judged.
 
+**Amendment, 2026-11-16 (population).** After three days user 4's bookings gave pairs from only two
+hotels, every one equal. Owner: "let's expand the test to all bookings (without users knowing for
+now) and wait a few more days and then decide". The trial now names every user in production
+(`user_ids = [1, 3, 4]`); `ends_on` stays 2026-11-20. This is configuration only: FR-1 to FR-5 are
+unchanged and already apply to whichever users the config names. On 2026-11-16 user 1 has one
+active booking, user 3 none and user 4 three, so the change adds about three pairs a day from one
+more hotel.
+
 ## Business Goals
 
 | Goal | Success Metric | Priority |
 |------|----------------|----------|
-| Know whether desktop prices matter | A week of paired mobile and desktop readings for user 4's bookings | Must |
-| The trial user notices nothing | No message, history row, alert or check limit changes because of the trial | Must |
+| Know whether desktop prices matter | A week of paired mobile and desktop readings: user 4's bookings from 2026-11-13, every user's from 2026-11-16 | Must |
+| No trial user notices anything | No message, history row, alert or check limit changes because of the trial | Must |
 | Cheap to remove | The trial is one config section, one table and code that names the trial | Should |
 
 ---
@@ -131,7 +139,7 @@ Nothing a user can see changes. The rest of issue #7 is out of scope until the t
 
 ### Business Constraints
 - Owner decision in the request; standing waiver for human checkpoints (CLAUDE.local.md point 4).
-- The trial user is not told and must not notice.
+- Trial users are not told and must not notice (every user from 2026-11-16).
 
 ---
 
@@ -139,9 +147,9 @@ Nothing a user can see changes. The rest of issue #7 is out of scope until the t
 
 | Assumption | Risk if Invalid | Mitigation |
 |------------|-----------------|------------|
-| Booking.com accepts the saved session from a desktop profile | It signs the session out or asks for verification, which would also break the user's mobile checks | Qualify on the owner's own session first; the reading never writes cookies; readings stop for the slot at a sign-out; `user_ids = []` turns the trial off |
+| Booking.com accepts the saved session from a desktop profile | It signs the session out or asks for verification, which would also break the user's mobile checks | Qualify on the owner's own session first; the reading never writes cookies; readings stop for the slot at a sign-out; `user_ids = []` turns the trial off. From 2026-11-16 this risk covers every user's session; user 4's held for 27 readings over three days |
 | The signed-in desktop page uses the room table seen on public pages | Readings fail closed and the trial yields no pairs | Live qualification before enabling; failure reasons are stored |
-| Twice the page loads for one user does not trigger the edge block | The VPS IP is refused for every user | Readings stop for the slot at a bot wall; trial limited to one user and one week |
+| Twice the page loads for one user does not trigger the edge block | The VPS IP is refused for every user | Readings stop for the slot at a bot wall; one week. From 2026-11-16 every user is in the trial: four active bookings in all, so about 12 extra page loads a day |
 
 ---
 

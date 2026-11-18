@@ -8,10 +8,11 @@ status: verified
 
 # Monitoring handoff
 
-- After each user 4 slot, `desktop_trial_readings` gains one row per booking the slot checked,
+- After each trial user's slot (user 4 from 2026-11-13, every user from 2026-11-16),
+  `desktop_trial_readings` gains one row per booking the slot checked,
   and `jev_price_runs` one `jev-price-desktop-trial` row per reading.
-- User 4's mobile checks must look as they did before: no new `auth_required`, no `bot_wall`.
-  Either one, or a sign-in request to him, means stop: set `[desktop_trial] user_ids = []` and
+- Each trial user's mobile checks must look as they did before: no new `auth_required`, no
+  `bot_wall`. Either one, or a sign-in request to a user, means stop: set `[desktop_trial] user_ids = []` and
   recreate the container.
 - No reading on or after 2026-11-20.
 
