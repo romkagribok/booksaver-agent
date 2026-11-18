@@ -1,9 +1,9 @@
 ---
 intent: 041-desktop-price-trial
 phase: construction
-status: complete
+status: construction
 created: "2026-11-13T03:02:27Z"
-updated: "2026-11-16T03:14:17Z"
+updated: "2026-11-18T13:00:53Z"
 ---
 
 # Requirements: One-week silent desktop price trial
@@ -98,6 +98,27 @@ more hotel.
 - **Priority**: Must
 - **Related Stories**: US-269 (data); the evaluation is an operations step
 
+**Outcome, 2026-11-18.** Read at 13:00:20Z: 53 pairs (user 4: 46, user 1: 7) from five hotels,
+three of which gave a price. 27 pairs had a verified price on both sides and all 27 were equal;
+desktop was never cheaper. 25 pairs failed on both sides (10 `extraction_failed` on both, 14
+`no_equivalent_offer` on both, 1 mixed). One pair was one-sided: on 2026-11-16, the day before
+check-in, mobile found no equivalent room and desktop offered a different room at EUR 167 against
+a booking at EUR 102, so not a saving. 53 desktop runs cost USD 0.0494 and took 35.1 s on average.
+No sign-out or bot wall. Owner, 2026-11-17: "Retire tomorrow at 8am and close the issue".
+
+### FR-6: Retire the trial
+- **Description**: The trial is removed: the desktop profile and room-table reader, the reading
+  loop and its call, the trial executor, the `[desktop_trial]` configuration and the
+  `desktop_trial_readings` table. Mobile web stays the only price source (ADR-025). The
+  `jev_price_runs` rows of the trial stay: they are the spend ledger.
+- **Acceptance Criteria**: No trial code, test or config key remains; schema 26 drops the table
+  on an existing database and a new database never has it; a config file that still has a
+  `[desktop_trial]` section loads (the section is ignored, like any unknown section); the suite
+  is green; production runs without the section and without the table; issue #7 is closed with
+  the numbers.
+- **Priority**: Must
+- **Related Stories**: US-270
+
 ---
 
 ## Non-Functional Requirements
@@ -158,4 +179,4 @@ more hotel.
 | Question | Owner | Due Date | Resolution |
 |----------|-------|----------|------------|
 | Does a desktop profile keep the mobile session valid? | Engineering | Before enabling user 4 | Yes so far: the owner's session on 2026-11-13 in staging, and user 4's first trial slot. Watched for the rest of the week |
-| Does desktop ever beat mobile by 5 or more? | Owner | After `ends_on` | Pending: evaluation scheduled for 2026-11-20T14:00Z (FR-5). First slot: both verified pairs equal |
+| Does desktop ever beat mobile by 5 or more? | Owner | After `ends_on` | No: 27 priced pairs, all equal (2026-11-18). The owner retires the trial (FR-6) |

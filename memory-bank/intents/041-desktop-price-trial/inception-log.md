@@ -27,10 +27,10 @@ status: complete
 
 | Metric | Count |
 |--------|-------|
-| Functional Requirements | 5 |
+| Functional Requirements | 6 |
 | Units | 1 |
-| Stories | 2 |
-| Bolts Planned | 1 |
+| Stories | 3 |
+| Bolts Planned | 2 |
 
 ## Decision Log
 
@@ -44,12 +44,17 @@ status: complete
 | 2026-11-13 | Human checkpoints skipped | Standing waiver, CLAUDE.local.md point 4 | Owner standing waiver |
 | 2026-11-16 | Trial population widened from user 4 to every user (`user_ids = [1, 3, 4]`); `ends_on` unchanged | 27 pairs in three days came from two hotels and all 15 priced pairs were equal; more hotels wanted before deciding | Owner: "let's expand the test to all bookings (without users knowing for now) and wait a few more days and then decide" |
 | 2026-11-16 | Amendment made through the inception agent; clarifying questions and review checkpoints skipped | Standing waiver, CLAUDE.local.md point 4 | Owner standing waiver |
+| 2026-11-18 | Retire the trial: FR-6, US-270, bolt 115; close issue #7 | 53 pairs, 27 priced, all equal; desktop never cheaper | Owner, 2026-11-17: "Retire tomorrow at 8am and close the issue" |
+| 2026-11-18 | Retirement stays in intent 041, not a new intent | FR-5 already names a follow-up bolt that removes the trial | Engineering |
+| 2026-11-18 | Schema 26 drops the table; `jev_price_runs` rows of the trial are kept | Production is at schema 25; the Jev rows are the spend ledger | Engineering |
+| 2026-11-18 | Inception checkpoints skipped | Standing waiver, CLAUDE.local.md point 4 | Owner standing waiver |
 
 ## Scope Changes
 
 | Date | Change | Reason | Impact |
 |------|--------|--------|--------|
 | 2026-11-13 | Issue #7's dual-channel selection, alerts, provenance and concurrency left out | The owner wants evidence first | Decided after the evaluation |
+| 2026-11-18 | The rest of issue #7 (dual-channel checks) will not be built | The trial found no desktop price below mobile | Issue #7 is closed with the numbers after the removal is live |
 | 2026-11-16 | Trial covers every user, not only user 4 | Thin sample; the owner asked for all bookings | Configuration only: no unit, story, bolt, code or schema change. Adds one booking today (user 1); desktop readings now load pages on every user's saved session |
 
 ## Ready for Construction
