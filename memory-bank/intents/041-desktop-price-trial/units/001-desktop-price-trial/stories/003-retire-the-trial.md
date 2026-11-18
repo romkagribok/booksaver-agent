@@ -44,7 +44,7 @@ drops the table, since production is at 25. `jev_price_runs` rows with adapter
 
 | Scenario | Expected Behavior |
 |----------|-------------------|
-| The release is rolled back to the trial image after the table is dropped | The old image at schema 25 refuses a schema 26 database; rollback restores the database backup taken before promotion |
+| The release is rolled back to the trial image after the table is dropped | The trial image opens the schema 26 database and recreates the table empty (checked with both trees on one database); the 53 readings are gone unless the backup is restored. If the removal is promoted again the empty table stays and is dropped by hand |
 | Production config still has the section when the new image starts | Ignored; the promotion removes it |
 
 ## Out of Scope

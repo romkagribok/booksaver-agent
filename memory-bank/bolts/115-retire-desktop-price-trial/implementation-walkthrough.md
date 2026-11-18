@@ -51,5 +51,9 @@ None.
 
 ### Developer Notes
 
-The trial image cannot open a schema 26 database. Rolling this release back means restoring the
-database backup taken before promotion, not only the image tag.
+Rollback, checked by opening one database with the trial tree and this tree in turn: the trial
+image opens a schema 26 database and recreates the table empty, so rolling back is the image tag
+and the config file; the database backup is only needed to get the 53 readings back. The store
+has no guard against a database newer than the code. If the removal were promoted again after a
+rollback, the database is already at 26, the migration does not run and the empty table stays
+until dropped by hand.

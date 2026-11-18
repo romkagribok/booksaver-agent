@@ -38,8 +38,9 @@ equal. Mobile web is again the only place a Booking.com price is read.
 `git diff 34d89a8^1 34d89a8 -- src tests` applied in reverse, then the schema handled by hand as
 above. Before the patch every name it removes is searched for in `src/`, `scripts/` and `tests/`
 so nothing outside the patch still imports it. `jev_price_runs` rows with adapter
-`jev-price-desktop-trial` stay: they are the users' recorded spend. The old image cannot open a
-schema 26 database, so the release backs the database up before promotion and rollback restores it.
+`jev-price-desktop-trial` stay: they are the users' recorded spend. The release backs the
+database up before promotion; whether the trial image can open a schema 26 database is checked in
+the implement stage.
 
 ### Acceptance Criteria
 
