@@ -84,8 +84,32 @@ bookings on mobile (12:38:43Z to 12:40:17Z), then took four desktop readings (12
 
 ## Evaluation (FR-5)
 
-Pending, scheduled for 2026-11-20T14:00Z, after the trial has ended by config. Bolt 114 and the
-intent are closed on the read-back above; this evaluation is the one remaining operations step.
-Pairs taken, pairs where both sides verified a price, pairs where
-desktop was cheaper by 5 or more in the booking currency, desktop failure reasons, and the owner's
-decision to keep or retire.
+Read from production on 2026-11-18T13:00:20Z, before the removal (read-only, through the
+operations agent). The trial covered user 4 from 2026-11-13 and every user from 2026-11-16.
+
+| | User 4 | User 1 | Total |
+|---|---|---|---|
+| Pairs taken | 46 | 7 | 53 |
+| Both sides verified a price | 24 | 3 | 27 |
+| Of those, equal price | 24 | 3 | 27 |
+| Desktop cheaper by 5 or more | 0 | 0 | 0 |
+| Both failed | 21 | 4 | 25 |
+| One-sided | 1 | 0 | 1 |
+
+- **Hotels.** Five in all; three gave priced pairs (15, 9 and 3 pairs). No currency differed.
+- **Both failed.** 10 `extraction_failed` on both sides, 14 `no_equivalent_offer` on both, 1 mixed.
+  They are two properties that never yielded a price on either side and, from 2026-11-17, user 1's
+  hotel, which was sold out for the booked dates (seen on the public page in both profiles).
+- **One-sided.** 2026-11-16T11:19Z, the day before check-in: mobile `no_equivalent_offer`,
+  desktop a different room ("Business Double Room with Kitchenette") at EUR 167 against a booking
+  at EUR 102. Checked by hand: not a saving. The slot before had the same room at EUR 167 on both
+  sides and the slot after failed on both.
+- **Cost and latency.** 53 desktop runs, USD 0.0494 in total, 35.1 s on average.
+- **Safety.** No `auth_required` or `bot_wall` for any user since 2026-11-13T03:26Z. Mobile
+  success rates did not change with the trial.
+- **End.** The trial was removed on 2026-11-18T13:12:35Z, before its `ends_on`; no reading exists
+  after that.
+
+**Decision.** Owner, 2026-11-17 22:48 EST: "Retire tomorrow at 8am and close the issue". Desktop
+never showed a price below mobile for the same room, so the dual-channel checks of issue #7 are
+not built. Removed by bolt 115; release record `e6d1044-retire-desktop-price-trial.md`.

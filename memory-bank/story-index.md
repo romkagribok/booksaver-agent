@@ -955,4 +955,4 @@ One-week silent desktop price trial (GitHub issue #7).
 |-------|-------|-----|--------|------|
 | `US-268` | A desktop profile reads a Booking.com price | Trial | Complete | `001-desktop-price-trial/stories/001-desktop-profile-reads-prices.md` |
 | `US-269` | Trial users get a silent desktop reading after each scheduled slot | Trial | Complete | `001-desktop-price-trial/stories/002-silent-desktop-readings.md` |
-| `US-270` | The desktop price trial is removed | Trial | Planned | `001-desktop-price-trial/stories/003-retire-the-trial.md` |
+| `US-270` | The desktop price trial is removed | Trial | Complete | `001-desktop-price-trial/stories/003-retire-the-trial.md` |

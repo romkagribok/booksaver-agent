@@ -2,7 +2,7 @@
 unit: 001-desktop-price-trial
 intent: 041-desktop-price-trial
 created: "2026-11-13T03:04:06Z"
-last_updated: "2026-11-18T13:07:07Z"
+last_updated: "2026-11-18T13:20:43Z"
 ---
 
 # Construction Log: 001-desktop-price-trial
@@ -27,7 +27,7 @@ last_updated: "2026-11-18T13:07:07Z"
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
 | 114-desktop-price-trial | US-268, US-269 | ✅ complete | 2026-11-13T13:23:07Z |
-| 115-retire-desktop-price-trial | US-270 | 🔄 in-progress | 2026-11-18T13:02:17Z |
+| 115-retire-desktop-price-trial | US-270 | ✅ complete | 2026-11-18T13:20:43Z |
 
 ## Execution History
 
@@ -44,3 +44,6 @@ last_updated: "2026-11-18T13:07:07Z"
 | 2026-11-18T13:02:17Z | 115-retire-desktop-price-trial | started | Stage 1: plan, through the construction agent. Owner go-ahead 2026-11-17; human stage checkpoints skipped under the standing waiver (CLAUDE.local.md point 4). Final numbers were read from production at 13:00:20Z before any removal |
 | 2026-11-18T13:02:17Z | 115-retire-desktop-price-trial | stage-complete | plan → implement; checkpoint skipped under the standing waiver |
 | 2026-11-18T13:07:07Z | 115-retire-desktop-price-trial | stage-complete | implement and test recorded together: the merge of PR #123 was reversed in `src/` and `tests/` in one step and the tests run straight after; schema 26 drops the table; suite 2628 passed, 1 skipped; checkpoints skipped under the standing waiver. Bolt stays in progress until the release is live and read back |
+| 2026-11-18T13:12:35Z | 115-retire-desktop-price-trial | released | PR #127 merged as `e6d1044` after the Codex gate (no findings on `fd3fd69`); built, staged on a copy of the live database and promoted through the operations agent with the `[desktop_trial]` config section removed. Schema 26, table dropped |
+| 2026-11-18T13:20:24Z | 115-retire-desktop-price-trial | read-back | Production read-back of user 1's 13:17Z slot recorded in the release record through the operations agent: sync and mobile check ran, no desktop run, no error. Closing with bolt-complete.cjs |
+| 2026-11-18T13:20:43Z | 115-retire-desktop-price-trial | completed | All 3 stages done; closed with bolt-complete.cjs after the production read-back. FR-5 evaluation and the owner's decision are in the release records; issue #7 is closed with the numbers once these records are merged |

@@ -84,4 +84,6 @@ the widened trial (planned 04:27:31Z, ran 04:27:31Z to 04:30:01Z, completed).
 
 ## Evaluation (FR-5)
 
-Unchanged: 2026-11-20T14:00Z, now over every user's pairs. The owner decides keep or retire.
+Done on 2026-11-18, two days early, at the owner's decision: 53 pairs, 27 priced, all 27 equal.
+The numbers and the decision are in `34d89a8-desktop-price-trial.md`; the trial was removed by
+`e6d1044-retire-desktop-price-trial.md`, which also removed this config section.

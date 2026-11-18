@@ -2,7 +2,7 @@
 unit: 001-desktop-price-trial
 intent: 041-desktop-price-trial
 phase: construction
-status: in-progress
+status: complete
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-13T03:02:27Z"
