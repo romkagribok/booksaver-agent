@@ -2,11 +2,11 @@
 unit: 001-desktop-price-trial
 intent: 041-desktop-price-trial
 phase: construction
-status: complete
+status: in-progress
 unit_type: backend
 default_bolt_type: simple-construction-bolt
 created: "2026-11-13T03:02:27Z"
-updated: "2026-11-13T03:02:27Z"
+updated: "2026-11-18T13:00:53Z"
 ---
 
 # Unit Brief: Desktop price trial
@@ -34,6 +34,7 @@ decide whether issue #7 is worth building.
 | FR-2 | Read the desktop room table | Must |
 | FR-3 | Silent desktop reading after a scheduled slot | Must |
 | FR-4 | The trial changes nothing the user can see or rely on | Must |
+| FR-6 | Retire the trial | Must |
 
 ## Stories
 
@@ -41,6 +42,7 @@ decide whether issue #7 is worth building.
 |-------|-------|----------|------|
 | US-268 | A desktop profile reads a Booking.com price | Must | 114-desktop-price-trial |
 | US-269 | Trial users get a silent desktop reading after each scheduled slot | Must | 114-desktop-price-trial |
+| US-270 | The desktop price trial is removed | Must | 115-retire-desktop-price-trial |
 
 ## Data Storage
 

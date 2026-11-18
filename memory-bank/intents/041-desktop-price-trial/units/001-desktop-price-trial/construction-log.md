@@ -2,7 +2,7 @@
 unit: 001-desktop-price-trial
 intent: 041-desktop-price-trial
 created: "2026-11-13T03:04:06Z"
-last_updated: "2026-11-13T13:23:07Z"
+last_updated: "2026-11-18T13:07:07Z"
 ---
 
 # Construction Log: 001-desktop-price-trial
@@ -20,12 +20,14 @@ last_updated: "2026-11-13T13:23:07Z"
 
 | Date | Action | Change | Reason | Approved |
 |------|--------|--------|--------|----------|
+| 2026-11-18T13:02:17Z | Bolt added | 115-retire-desktop-price-trial (US-270, FR-6) | The evaluation found no desktop price below mobile; the owner retired the trial on 2026-11-17 | Owner: "Retire tomorrow at 8am and close the issue" |
 
 ## Current Bolt Structure
 
 | Bolt ID | Stories | Status | Changed |
 |---------|---------|--------|---------|
 | 114-desktop-price-trial | US-268, US-269 | ✅ complete | 2026-11-13T13:23:07Z |
+| 115-retire-desktop-price-trial | US-270 | 🔄 in-progress | 2026-11-18T13:02:17Z |
 
 ## Execution History
 
@@ -39,3 +41,6 @@ last_updated: "2026-11-13T13:23:07Z"
 | 2026-11-13T13:22:40Z | 114-desktop-price-trial | read-back | Production read-back of user 4's 12:36Z slot recorded in the release record through the operations agent: four pairs stored, both verified pairs equal, nothing user-visible written. Closing with bolt-complete.cjs |
 | 2026-11-13T13:23:07Z | 114-desktop-price-trial | completed | All 3 stages done; closed with bolt-complete.cjs after the production read-back. The FR-5 evaluation after 2026-11-20 is an operations step recorded in the release record |
 | 2026-11-16T03:15:03Z | (none, config only) | scope-amended | Owner asked for the trial on all bookings. Requirements amended through the inception agent; `user_ids = [4]` -> `[1, 3, 4]` applied through the operations agent (release record `config-trialall-desktop-trial-every-user.md`). No bolt: no code, schema or image change. Checkpoints skipped under the standing waiver |
+| 2026-11-18T13:02:17Z | 115-retire-desktop-price-trial | started | Stage 1: plan, through the construction agent. Owner go-ahead 2026-11-17; human stage checkpoints skipped under the standing waiver (CLAUDE.local.md point 4). Final numbers were read from production at 13:00:20Z before any removal |
+| 2026-11-18T13:02:17Z | 115-retire-desktop-price-trial | stage-complete | plan → implement; checkpoint skipped under the standing waiver |
+| 2026-11-18T13:07:07Z | 115-retire-desktop-price-trial | stage-complete | implement and test recorded together: the merge of PR #123 was reversed in `src/` and `tests/` in one step and the tests run straight after; schema 26 drops the table; suite 2628 passed, 1 skipped; checkpoints skipped under the standing waiver. Bolt stays in progress until the release is live and read back |

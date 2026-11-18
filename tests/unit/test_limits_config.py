@@ -1,5 +1,7 @@
 """US-031: [limits] config section parsing and validation."""
 
+from dataclasses import replace
+
 import pytest
 
 from booksaver.application.load_config import load_config
@@ -72,3 +74,11 @@ class TestLimitsSettingsValueObject:
         ):
             with pytest.raises(ValueError, match=field_name):
                 LimitsSettings(**{field_name: 0})
+
+
+def test_a_leftover_retired_section_is_ignored():
+    """US-270: a config file written during the desktop trial still loads after its removal."""
+    data = _base()
+    data["desktop_trial"] = {"user_ids": [1, 3, 4], "ends_on": "2026-11-20"}
+    plain = load_config(DictSource(_base()))
+    assert replace(load_config(DictSource(data)), loaded_at=plain.loaded_at) == plain

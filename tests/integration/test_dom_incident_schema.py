@@ -59,10 +59,10 @@ def test_v13_to_v18_is_additive_and_preserves_existing_data(tmp_path: Path) -> N
             ).fetchall()
         }
 
-    assert versions[-12:] == [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+    assert versions[-13:] == [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
     assert owner[0] == 111
     assert invite[0] == "preserve-me"
-    assert SCHEMA_VERSION == 25
+    assert SCHEMA_VERSION == 26
     assert {"dom_drift_incidents", "dom_drift_alerts", "dom_drift_diagnostics"} <= tables
     assert not {t for t in tables if t.startswith("llm_")}
 
@@ -113,4 +113,44 @@ def test_v23_to_v24_drops_claude_ledgers_and_clears_keys(tmp_path: Path) -> None
         assert not {name for name in tables if "llm_" in name}
         assert [tuple(row) for row in keys] == [(None,)]
         assert invite[0] == "preserve-me"
-        assert version[0] == SCHEMA_VERSION == 25
+        assert version[0] == SCHEMA_VERSION == 26
+
+
+def test_v25_to_v26_drops_the_desktop_trial_readings(tmp_path: Path) -> None:
+    db_path = tmp_path / "v25.db"
+    with SqliteStore(db_path) as store:
+        store.conn.execute(
+            "INSERT INTO invite_codes "
+            "(code, issued_by, issued_at, expires_at, used_by, used_at) "
+            "VALUES ('preserve-me', 1, '2026-11-18T00:00:00+00:00', NULL, NULL, NULL)"
+        )
+        store.conn.commit()
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE desktop_trial_readings (
+            check_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, booking_id TEXT NOT NULL
+        );
+        CREATE INDEX idx_desktop_trial_readings_booking ON desktop_trial_readings(booking_id);
+        INSERT INTO desktop_trial_readings VALUES ('c-1', 4, 'b-1');
+        DELETE FROM schema_meta WHERE version > 25;
+        INSERT INTO schema_meta (version, applied_at) VALUES (25, '2026-11-13T00:00:00+00:00');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    for _ in range(2):  # the second open must be a no-op
+        with SqliteStore(db_path) as store:
+            names = {
+                row[0]
+                for row in store.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table', 'index')"
+                ).fetchall()
+            }
+            invite = store.conn.execute("SELECT code FROM invite_codes").fetchone()
+            version = store.conn.execute("SELECT MAX(version) FROM schema_meta").fetchone()
+
+        assert not {name for name in names if "desktop_trial" in name}
+        assert invite[0] == "preserve-me"
+        assert version[0] == SCHEMA_VERSION == 26
